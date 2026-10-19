@@ -40,6 +40,16 @@ const node = z.union([...scalars, z.array(json), z.record(json)]);
 
 const input = z.discriminatedUnion('type', [
   z.object({ type: z.literal('input_text'), text }).strict(),
+  z
+    .object({
+      type: z.literal('input_image'),
+      image_url: z
+        .string()
+        .max(1000000)
+        .regex(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
+      detail: z.enum(['auto', 'low', 'high']).optional(),
+    })
+    .strict(),
 ]);
 const output = z
   .object({ type: z.literal('output_text'), text, annotations: z.array(z.never()).max(0) })
@@ -79,7 +89,13 @@ const message = z.union([
       arguments: text,
     })
     .strict(),
-  z.object({ type: z.literal('function_call_output'), call_id: identifier, output: text }).strict(),
+  z
+    .object({
+      type: z.literal('function_call_output'),
+      call_id: identifier,
+      output: z.union([text, z.array(input).min(1).max(8)]),
+    })
+    .strict(),
 ]);
 
 export const piResponsesSchema = z

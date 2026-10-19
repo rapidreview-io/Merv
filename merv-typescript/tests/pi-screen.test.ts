@@ -107,7 +107,8 @@ test("the agent puts a record on the person's screen: their page goes there and 
   const f = await fixture(t);
   const { work, input } = await f.begun(f.operator);
   const agent: Caller = {
-    ...f.operator,
+    projectId: f.operator.projectId,
+    actorId: f.operator.actorId,
     conversation: {
       id: input.conversationId,
       commandId: input.commandId,
@@ -232,4 +233,44 @@ test('a record that draws itself is looked at as drawn, asking no page of the pe
   );
   await assert.rejects(look(), code('pi_model_ceiling'));
   assert.equal(sent.filter((url) => !url.includes('browser-run')).length, 1, 'never read again');
+});
+
+test('a board returns direct image content over MCP without a screen or intermediary model', async (t) => {
+  const f = await fixture(t);
+  const { work, input } = await f.begun(f.operator);
+  const agent: Caller = {
+    projectId: f.operator.projectId,
+    actorId: f.operator.actorId,
+    conversation: {
+      id: input.conversationId,
+      commandId: input.commandId,
+      runtimeId: work.command.runtimeId,
+      epoch: work.command.epoch,
+    },
+  };
+  const image = { data: Buffer.from('jpeg').toString('base64'), mimeType: 'image/jpeg' as const };
+  const viewport = { x: 0, y: 0, width: 400, height: 300 };
+  const views: unknown[] = [];
+  t.after(
+    f.tools.contributePicture('board_', async (_caller, _id, _focus, view) => {
+      views.push(view);
+      return { html: '', path: '/ui/boards/board_1', width: 400, height: 300, image, viewport };
+    }),
+  );
+  const ctx = new Context();
+  ctx.provide('pi', f.pi);
+  ctx.provide('tools', f.tools);
+  await ctx.plugin(piToolsPlugin);
+  t.after(() => ctx.fiber.dispose());
+  const result = await f.tools.invoke('screen.look', agent, {
+    at: { record: 'board_1' },
+    view: { action: 'fit' },
+  });
+  assert.deepEqual(result.mcp?.content[1], { type: 'image', ...image });
+  assert.deepEqual(views, [{ action: 'fit' }]);
+  assert.deepEqual((result.value as any).viewport, viewport);
+  await assert.rejects(
+    f.pi.look(agent, { at: { page: 'Work' }, view: { action: 'fit' } }),
+    /Camera controls require/,
+  );
 });

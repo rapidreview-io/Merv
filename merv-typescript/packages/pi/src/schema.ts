@@ -1,3 +1,4 @@
+import { viewSchema } from '@merv/contracts/board-view';
 import { z } from 'zod';
 import { idSchema } from '@merv/contracts/schemas';
 import { messageChars } from './limits.js';
@@ -35,6 +36,7 @@ export const lookInput = z
     question: z.string().max(1_000).default(''),
     /** A record or page the person is not on: their page draws it out of sight to look at it. */
     at: showInput.optional(),
+    view: viewSchema.optional(),
   })
   .strict();
 /** pi.screen: the person's page answers what was asked of it: a look with a snapshot of itself,

@@ -1,3 +1,4 @@
+import type { View, Region } from '@merv/contracts/board-view';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@merv/contracts';
@@ -177,17 +178,24 @@ export interface Tools {
   contributePicture(prefix: string, draw: PictureDrawer): () => void;
   /** The picture of a record whose prefix has a drawer, focused on one of its parts; undefined
    *  where none draws it. */
-  picture(caller: Caller, id: string, focus?: string): Promise<Picture | undefined>;
+  picture(caller: Caller, id: string, focus?: string, view?: View): Promise<Picture | undefined>;
 }
 /** A record drawn for looking at: a page with no scripts, at the size it is meant to be seen. */
 export interface Picture {
+  image?: { data: string; mimeType: 'image/jpeg' };
+  viewport?: Region;
   html: string;
   width: number;
   height: number;
   /** Where the record opens in the app, for what the agent says. */
   path: string;
 }
-export type PictureDrawer = (caller: Caller, id: string, focus?: string) => Promise<Picture>;
+export type PictureDrawer = (
+  caller: Caller,
+  id: string,
+  focus?: string,
+  view?: View,
+) => Promise<Picture>;
 declare module 'cordis' {
   interface Context {
     tools: Tools;

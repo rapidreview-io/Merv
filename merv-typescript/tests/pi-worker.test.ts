@@ -16,12 +16,13 @@ const token = `piw_flt_test.${'a'.repeat(43)}`;
 const relayToken = `pir_${'b'.repeat(43)}`;
 const expires = () => new Date(Date.now() + 15_000).toISOString();
 const digest = (content: string) => createHash('sha256').update(content).digest('hex');
-const tool = {
+const globalTool = {
   name: 'project.get',
   description: 'Read project',
   inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
 };
 
+const tool = globalTool;
 function sseItem(item: object, index = 0): string {
   return (
     `data: ${JSON.stringify({ type: 'response.output_item.added', output_index: index, item })}\n\n` +
@@ -35,13 +36,14 @@ const message = (text: string) => ({
   status: 'completed',
   content: [{ type: 'output_text', text, annotations: [] }],
 });
-const call = {
+const globalCall = {
   id: 'fc_1',
   type: 'function_call',
   call_id: 'call_1',
   name: 'project_get',
   arguments: '{}',
 };
+const call = globalCall;
 function sse(items: object[], text?: string, cutOff = false): string {
   const output = items
     .map((item, index) =>
@@ -73,6 +75,7 @@ async function stderrOf(run: () => Promise<unknown>): Promise<string> {
 async function fixture(
   options: {
     toolCall?: boolean;
+    screenImage?: boolean;
     calls?: number;
     cancel?: boolean;
     checkpoint?: PiWork['checkpoint'];
@@ -103,6 +106,8 @@ async function fixture(
     shell?: boolean;
   } = {},
 ) {
+  const tool = { ...globalTool, ...(options.screenImage ? { name: 'screen.look' } : {}) };
+  const call = { ...globalCall, ...(options.screenImage ? { name: 'screen_look' } : {}) };
   const controller = new AbortController();
   const completions: PiCompletion[] = [];
   const modelRequests: Record<string, unknown>[] = [];
@@ -153,7 +158,7 @@ async function fixture(
         // A role without a terminal never sends one; with one, exactly the library's five.
         const offered = options.shell
           ? ['bash', 'grep', 'ls', 'project_get', 'read', 'write']
-          : ['project_get'];
+          : [options.screenImage ? 'screen_look' : 'project_get'];
         assert.ok(validPiPayload(parsed.data, offered));
         assert.deepEqual(
           (body.tools as { name: string }[]).map((tool) => tool.name).sort(),
@@ -332,7 +337,7 @@ async function fixture(
         return json({ apply: begun <= (options.turns ?? 1) });
       }
       if (path === '/pi-worker/tool') {
-        assert.equal(body.name, 'project.get');
+        assert.equal(body.name, tool.name);
         assert.deepEqual(body.input, {});
         toolRequests++;
         if (toolFailures.length) return unavailable(toolFailures.shift()!);
@@ -2025,4 +2030,43 @@ test('a compacted conversation past the relay item cap keeps its summary and its
   });
   assert.equal(saved.entries[0].type, 'compaction');
   assert.ok(saved.entries.length <= 300);
+});
+
+test('board image travels through the real Pi worker as image content, with metadata-only outcomes', async () => {
+  const data = Buffer.alloc(100000, 1).toString('base64');
+  const app = await fixture({
+    toolCall: true,
+    screenImage: true,
+    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
+  });
+  await app.run();
+  assert.equal(app.failures.length, 0);
+  const request = piResponsesSchema.parse(app.modelRequests[1]);
+  const output = request.input.find(
+    (item) => 'type' in item && item.type === 'function_call_output',
+  );
+  assert.ok(output && 'output' in output && Array.isArray(output.output));
+  assert.deepEqual(output.output[1], {
+    type: 'input_image',
+    detail: 'auto',
+    image_url: `data:image/jpeg;base64,${data}`,
+  });
+  assert.deepEqual(app.completions[0].outcomes[0].output, { seen: 'Board' });
+});
+
+test('repeated large board images stay bounded in relay history and saved checkpoint', async () => {
+  const data = Buffer.alloc(450000, 1).toString('base64');
+  const app = await fixture({
+    screenImage: true,
+    sections: Array(6).fill('Looking'),
+    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
+  });
+  await app.run();
+  assert.equal(app.failures.length, 0);
+  const final = app.modelRequests.at(-1)!;
+  const encoded = JSON.stringify(final);
+  assert.equal(encoded.split('data:image/jpeg;base64,').length - 1, 2);
+  assert.ok(Buffer.byteLength(encoded) < 2000000);
+  assert.ok(Buffer.byteLength(app.completions[0].checkpoint) < 2000000);
+  assert.match(encoded, /Earlier board image omitted/);
 });

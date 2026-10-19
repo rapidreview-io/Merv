@@ -1,3 +1,4 @@
+import { screenImage } from './tool-image.js';
 /** One result as the model is shown it, about 10,000 tokens: later turns replay it (the worker
  * clips older results first). UTF-8 bytes track tokens better than characters. */
 const resultBytes = 32_000;
@@ -55,6 +56,8 @@ const newest = (value: unknown, count: number, cut: string[], name = 'items'): u
  * first of these that fits, each saying how to read the rest. A write's receipt goes the same way:
  * it still says the write succeeded, and keeps its ids. */
 export function fit(name: string, result: unknown): unknown {
+  // A bounded, validated image is transported as pixels, never clipped as JSON text.
+  if (name === 'screen.look' && screenImage(result)) return result;
   // Text a tool reads from an offset (an artifact's, a document section's): a slice, and where
   // to read on.
   const paged = result as { content?: unknown; offset?: unknown } | null;

@@ -232,7 +232,7 @@ export interface Pi {
     options?: { allowProfile: boolean },
   ): Promise<{ sessionId: string; sdp: string }>;
   /** screen.look {question}: the agent sees the person's screen, answered in words (screen.ts). */
-  look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }>;
+  look(caller: Caller, input: unknown): Promise<ScreenLook>;
   /** screen.show {record | page}: the agent puts a record or a page on the person's screen. */
   show(caller: Caller, input: unknown): Promise<{ opened?: string; title?: string; said?: string }>;
   /** pi.screen: the person's page answers a look with a snapshot of itself, a show with where
@@ -292,4 +292,11 @@ declare module 'cordis' {
   interface Context {
     pi: PiRuntime;
   }
+}
+
+export interface ScreenLook {
+  page?: string;
+  seen: string;
+  image?: { data: string; mimeType: 'image/jpeg' };
+  viewport?: import('@merv/contracts/board-view').Region;
 }

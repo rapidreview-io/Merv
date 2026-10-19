@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postbuild": "node --import tsx scripts/copy-runtime-assets.ts",
+    "postbuild": "node scripts/build-board-renderer.mjs && node --import tsx scripts/copy-runtime-assets.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "node scripts/test-schemas.mjs 6",
     "test": "node --import tsx --test tests/*.test.ts",
@@ -37,7 +37,8 @@
     "test:ui": "node --import tsx --test tests/ui*.test.ts",
     "demo:ui": "node --import tsx scripts/ui-demo.ts",
     "docs:architecture": "node --import tsx scripts/dependency-map.ts",
-    "postinstall": "patch-package --patch-dir vendor/merv-sandboxes/typescript/patches"
+    "postinstall": "patch-package --patch-dir vendor/merv-sandboxes/typescript/patches",
+    "build:board-renderer": "node scripts/build-board-renderer.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3",

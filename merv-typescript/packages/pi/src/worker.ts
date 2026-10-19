@@ -1,3 +1,4 @@
+import { screenImage, recentImages } from './tool-image.js';
 import { retryTransient, type RetryOptions } from './model-retry.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -440,7 +441,7 @@ async function executeTurn(
     provider: 'openai',
     baseUrl: work.modelBaseUrl,
     reasoning: true,
-    input: ['text'],
+    input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     // The model's own maximum applies: an answer is sent no max_output_tokens. Pi reads 0 as none,
@@ -572,7 +573,9 @@ async function executeTurn(
       const canonicalCallId = callId.split('|')[0];
       if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId))
         throw stop(new Error('Invalid tool result'));
-      const text = JSON.stringify(output.result) ?? 'null';
+      const visual = tool.name === 'screen.look' ? screenImage(output.result) : null;
+      const result = visual ? visual.metadata : output.result;
+      const text = JSON.stringify(result) ?? 'null';
       const size = Buffer.byteLength(text);
       const cut = tool.readOnly !== false && size > toolBytes;
       const kept = cut ? Buffer.from(text).subarray(0, toolBytes).toString() : text;
@@ -583,10 +586,16 @@ async function executeTurn(
         name: tool.name,
         input: input as PiToolOutcome['input'],
         output: (shown === text
-          ? output.result
+          ? result
           : { truncated: true, text: kept }) as PiToolOutcome['output'],
       });
-      return { content: [{ type: 'text', text: shown }], details: undefined };
+      return {
+        content: [
+          { type: 'text' as const, text: shown },
+          ...(visual ? [{ type: 'image' as const, ...visual.image }] : []),
+        ],
+        details: undefined,
+      };
     },
   }));
   // A role with a terminal works in its conversation's own folder on this machine, with the
@@ -724,6 +733,7 @@ async function executeTurn(
     const projected = session.agent.transformContext;
     session.agent.transformContext = async (messages, signal) => {
       let context = projected ? await projected(messages, signal) : messages;
+      context = recentImages(context);
       if (narrow) context = within(context, room);
       if (!work.context) return context;
       const at = context.findLastIndex((message) => message.role === 'user');
@@ -950,7 +960,14 @@ function shorten(entry: Entry, room: number): Entry {
     typeof message.content === 'string'
       ? clip(message.content)
       : message.content.map((part) =>
-          typeof part.text === 'string' ? { ...part, text: clip(part.text) } : part,
+          (part as { type?: string }).type === 'image'
+            ? {
+                type: 'text',
+                text: '[Earlier board image omitted; use screen.look to inspect it again.]',
+              }
+            : typeof part.text === 'string'
+              ? { ...part, text: clip(part.text) }
+              : part,
         );
   return { ...entry, message: { ...message, content } };
 }

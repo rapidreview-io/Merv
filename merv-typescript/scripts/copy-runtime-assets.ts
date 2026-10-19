@@ -16,3 +16,12 @@ if (existsSync(new URL('index.html', uiSource))) {
   mkdirSync(uiDestination, { recursive: true });
   cpSync(uiSource, uiDestination, { recursive: true });
 }
+
+const boardBundle = new URL('../packages/board/dist/renderer.js', import.meta.url);
+const boardBundleDest = new URL('../dist/packages/board/dist/renderer.js', import.meta.url);
+mkdirSync(dirname(fileURLToPath(boardBundleDest)), { recursive: true });
+copyFileSync(boardBundle, boardBundleDest);
+copyFileSync(
+  new URL('../packages/board/dist/fonts.json', import.meta.url),
+  new URL('../dist/packages/board/dist/fonts.json', import.meta.url),
+);

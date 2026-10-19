@@ -73,13 +73,22 @@ export const piToolsPlugin = {
       {
         name: 'screen.look',
         description:
-          "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them; at.focus (a board's shape or frame id) zooms to that part so it reads at full size. A record that draws itself, such as a board, is drawn directly with at, without the person's screen or tab, so prefer at for a board even when it is open. For a record's contents, its own tool reads it exactly.",
+          "See the screen the person is looking at in Merv right now, and get its image for a board, or a text description for other pages. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them; at.focus (a board's shape or frame id) zooms to that part so it reads at full size. A record that draws itself, such as a board, is drawn directly with at, without the person's screen or tab, so prefer at for a board even when it is open. For boards, optional view controls the camera: fit, region (x,y,width,height), pan (dx,dy), or zoom (factor, optional center). Omitted view preserves this conversation’s last view of that board; fit again after expanding it. Images come from actual Excalidraw. For a record's contents, its own tool reads it exactly.",
         inputSchema: lookInput,
         readOnly: true,
         worker: 'never' as const,
         // Waits on the person's page, Cloudflare and the model, then writes its charge: no snapshot.
         openWorld: true,
         handler: (caller: Caller, input: unknown) => ctx.pi.look(caller, input),
+        present: (value: unknown) => {
+          const { image, ...metadata } = value as import('./types.js').ScreenLook;
+          return {
+            content: [
+              { type: 'text' as const, text: JSON.stringify(metadata) },
+              ...(image ? [{ type: 'image' as const, ...image }] : []),
+            ],
+          };
+        },
       },
       {
         name: 'screen.show',
