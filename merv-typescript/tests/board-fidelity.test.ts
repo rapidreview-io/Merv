@@ -127,3 +127,18 @@ test('dense reference labels can fit native source-scale boxes and keep size whe
     false,
   );
 });
+
+test('dense reference arrow labels use the requested text size', () => {
+  const d = new Drawing([], true);
+  const input = drawSchema.parse({
+    ops: [
+      { op: 'box', key: 'a', text: '', width: 50, height: 24, at: [0, 0] },
+      { op: 'box', key: 'b', text: '', width: 50, height: 24, at: [200, 0] },
+      { op: 'arrow', from: 'a', to: 'b', label: 'Linear/Angular Twist', fontSize: 8 },
+    ],
+  });
+  for (const op of input.ops) d.apply(op);
+  const label = live(d).find((e) => e.type === 'text')!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'Linear/Angular Twist');
+});

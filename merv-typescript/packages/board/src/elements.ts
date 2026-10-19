@@ -566,7 +566,7 @@ export class Drawing {
     }
     for (const edge of op.edges) this.arrow(edge.from, edge.to, edge.label);
   }
-  private arrow(fromRef: string, toRef: string, label?: string) {
+  private arrow(fromRef: string, toRef: string, label?: string, fontSize = 16) {
     const from = this.find(fromRef);
     const to = this.find(toRef);
     // Excalidraw binds an arrow to a box, an ellipse, a diamond, text or a frame, never to a pen
@@ -593,7 +593,7 @@ export class Drawing {
     this.route(el, { from, to });
     if (BINDABLE.has(from.type)) this.bind(from, 'arrow', el.id);
     if (BINDABLE.has(to.type)) this.bind(to, 'arrow', el.id);
-    if (label) this.label(el, label, 16);
+    if (label) this.label(el, label, fontSize);
     return el;
   }
   /** What moves with a shape: its own text, and a frame's shapes. */
@@ -717,7 +717,7 @@ export class Drawing {
         return this.keyed(op.key, el);
       }
       case 'arrow':
-        return this.keyed(op.key, this.arrow(op.from, op.to, op.label));
+        return this.keyed(op.key, this.arrow(op.from, op.to, op.label, op.fontSize));
       case 'frame': {
         const held = [...new Set((op.holds ?? []).flatMap((ref) => this.members(ref)))];
         const box = bounds(held.map(rectOf));

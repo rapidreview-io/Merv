@@ -144,7 +144,14 @@ export const opSchema = z.discriminatedUnion('op', [
     })
     .strict(),
   z
-    .object({ op: z.literal('arrow'), key, from: shape, to: shape, label: text.optional() })
+    .object({
+      op: z.literal('arrow'),
+      key,
+      from: shape,
+      to: shape,
+      label: text.optional(),
+      fontSize: z.number().finite().min(8).max(96).optional(),
+    })
     .strict(),
   z
     .object({
