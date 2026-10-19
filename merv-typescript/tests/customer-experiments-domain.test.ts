@@ -945,7 +945,7 @@ test('service_experiment@4 grants the executor the progress its brief asks for',
   for (const version of [2, 3, 4])
     assert.match(
       await brief(version),
-      /for a long run, end your visit with session\.await_compute/,
+      /for a long run, where session\.await_compute is offered, end your visit with it/,
     );
   assert.doesNotMatch(await brief(1), /session\.await_compute/);
 });
