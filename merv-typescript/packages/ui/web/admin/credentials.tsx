@@ -49,8 +49,9 @@ const Named = (props: { what: string; name: string; title?: string }) => (
   </span>
 );
 
-const keyOf = (target: CredentialTarget) =>
-  'env' in target ? target.env : `${target.provider}:${target.field}`;
+/** A row's own key: two entries may name one variable, and each row opens alone. */
+const keyOf = (row: PlatformSecret | ProviderKey) =>
+  'env' in row ? `${row.plugin}:${row.field}` : `${row.provider}:${row.field}`;
 const targetOf = (row: PlatformSecret | ProviderKey): CredentialTarget =>
   'env' in row ? { env: row.env } : { provider: row.provider, field: row.field };
 
@@ -168,7 +169,7 @@ function useActs(reload: () => void) {
   const controls = (row: PlatformSecret | ProviderKey, revealable: boolean) => {
     if (!row.editable) return null;
     const target = targetOf(row);
-    const key = keyOf(target);
+    const key = keyOf(row);
     const on = (act: string) => open?.key === key && open.act === act;
     return (
       <span className="admin-acts">
@@ -196,7 +197,7 @@ function useActs(reload: () => void) {
   /** What stands under the row: the value, the form, or what the change reloaded. */
   const under = <T extends PlatformSecret | ProviderKey>(row: T): ReactNode => {
     const target = targetOf(row);
-    const key = keyOf(target);
+    const key = keyOf(row);
     const [what, name] = namesOf(row);
     if (open?.key === key && open.act === 'change')
       return (
@@ -227,7 +228,7 @@ function useActs(reload: () => void) {
     return null;
   };
   const unfolded = <T extends PlatformSecret | ProviderKey>(row: T) => ({
-    className: cx(open?.key === keyOf(targetOf(row)) && 'admin-unfolded'),
+    className: cx(open?.key === keyOf(row) && 'admin-unfolded'),
   });
   return { controls, under, unfolded };
 }
@@ -263,7 +264,7 @@ export function CredentialsView() {
       <Named
         what={s.purpose}
         name={s.env}
-        title={[`${s.plugin} · ${s.field}`, ...s.sharedWith.map((o) => `= ${o.env}`)].join('\n')}
+        title={[`${s.plugin} · ${s.field}`, ...s.sharedWith.map((env) => `= ${env}`)].join('\n')}
       />
     )),
     col<PlatformSecret>('state', 'State', (s) => (
@@ -332,7 +333,7 @@ export function CredentialsView() {
             template="minmax(0, 2.4fr) 84px repeat(3, 100px) minmax(116px, 0.8fr)"
             columns={secrets}
             rows={rows}
-            keyOf={(s) => `${s.env}:${s.field}`}
+            keyOf={keyOf}
             row={acts.unfolded}
             under={acts.under}
           />
@@ -346,7 +347,7 @@ export function CredentialsView() {
             template="minmax(0, 1fr) minmax(0, 2fr) 84px minmax(116px, 0.8fr)"
             columns={keys}
             rows={providers}
-            keyOf={(p) => keyOf(targetOf(p))}
+            keyOf={keyOf}
             row={acts.unfolded}
             under={acts.under}
           />

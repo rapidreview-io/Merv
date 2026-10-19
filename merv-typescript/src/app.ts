@@ -34,18 +34,15 @@ const issued = (purpose: string) => /· (encryption key|signing secret)$/.test(p
 
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
 
-/** The `.describe()` a zod config schema gives the field at `path`, through its wrappers,
- *  unions, arrays and records. */
+/** The `.describe()` a zod config schema gives the field at `path`, through wrappers and unions. */
 function describedAt(schema: unknown, path: readonly string[]): string | undefined {
   const def = (schema as { _def?: Record<string, any> } | null | undefined)?._def;
   if (!def) return undefined;
   if (!path.length && def.description) return def.description;
   const [key, ...rest] = path;
   if (def.typeName === 'ZodObject') return key && describedAt(def.shape()[key], rest);
-  if (def.typeName === 'ZodArray') return describedAt(def.type, rest);
-  if (def.typeName === 'ZodRecord') return describedAt(def.valueType, rest);
   if (def.options) return def.options.map((o: unknown) => describedAt(o, path)).find(Boolean);
-  return describedAt(def.innerType ?? def.schema ?? def.in ?? def.type ?? def.getter?.(), path);
+  return describedAt(def.innerType ?? def.schema, path);
 }
 
 /** Composition and readiness policy only. Cordis owns the dependency graph and its lifecycle. */
@@ -184,7 +181,13 @@ export async function createApp(options: ConfigurationOptions) {
           409,
         );
         const secrets = ctx.get('secrets');
-        check(secrets, 'secrets_unavailable', 'Stored platform secrets are unavailable', 503);
+        check(
+          secrets?.platformAvailable,
+          'secrets_unavailable',
+          'Stored platform secrets are unavailable',
+          503,
+        );
+        const next = typeof value === 'string' ? value : await value();
         const ids = [...new Set(refs.map((ref) => ref.plugin))];
         const previous = process.env[env];
         const apply = async (to: string | undefined) => {
@@ -204,7 +207,7 @@ export async function createApp(options: ConfigurationOptions) {
         };
         let reloaded: string[];
         try {
-          reloaded = await apply(value);
+          reloaded = await apply(next);
         } catch (error) {
           await restore();
           // A refusal names the problem; a plugin that failed with the value names nothing of it.
@@ -212,7 +215,7 @@ export async function createApp(options: ConfigurationOptions) {
           throw new MervError('credential_rejected', 'The new value did not load', 422);
         }
         try {
-          await secrets.setPlatformSecret(env, value, by);
+          await secrets!.setPlatformSecret(env, next, by);
         } catch (error) {
           await restore();
           throw error;

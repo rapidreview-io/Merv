@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { check, MervError, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
-import { dailyTokens, ownLimits, tokenLedger } from './model-ledger.js';
+import { dailyTokens, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedAstraPlatform, hostedCodexPlatform } from './hosted-codex.js';
@@ -150,28 +150,19 @@ const refusals = {
   ceiling: [workerTokensSpent, "The person's daily model tokens for workers are used up"],
 } as const;
 const day = () => new Date().toISOString().slice(0, 10);
-const ledger = dailyTokens('fleet_model_usage');
+/** People's own daily limits (founder ruling 2026-09-25), set by them or the platform admin. */
+const ledger = dailyTokens('fleet_model_usage', 'fleet_model_limits');
 /** A grant's own budget, the same ledger keyed by the grant. */
 const grantLedger = tokenLedger('fleet_grant_tokens', ['grant_id']);
 
-/** People's own daily limits (founder ruling 2026-09-25), set by them or the platform admin. */
-const limits = ownLimits('fleet_model_limits', 'tokens');
-/** A person's daily Fleet model tokens: their own limit, else the deployment's. */
-async function ceiling(sql: Sql, person: string, fallback: number) {
-  return (await limits.of(sql, [person])).get(person) ?? fallback;
-}
 /** A person's Fleet model tokens over the UTC days [from, to), and the daily limit that holds. */
-export async function modelTokensIn(
+export const modelTokensIn = async (
   sql: Sql,
   person: string,
   fallback: number,
   from: string,
   to: string,
-): Promise<ModelTokens> {
-  const own = (await limits.of(sql, [person])).get(person);
-  const [used] = await ledger.used(sql, [person], from, to);
-  return { used: used!, limit: own ?? fallback, own: own !== undefined };
-}
+): Promise<ModelTokens> => (await ledger.used(sql, [person], from, to, fallback))[0]!;
 /** A refusal stops new Fleet rent, and new work on a machine already rented, until the UTC
  *  reset or the person sets their limit; refunds of calls in flight do not lift it. */
 export async function modelBudgetStatus(state: State, person: string, fallback: number) {
@@ -180,7 +171,7 @@ export async function modelBudgetStatus(state: State, person: string, fallback: 
 /** `modelBudgetStatus` read in the caller's own transaction. */
 export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const today = day();
-  const tokens = await ceiling(sql, person, fallback);
+  const tokens = await ledger.limit(sql, person, fallback);
   const used = await sql.get<{ tokens: number | string }>(
     'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
     person,
@@ -211,7 +202,7 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
  *  limit still cannot fund it. */
 export async function setDailyTokens(state: State, person: string, tokens: number | null) {
   await state.transaction(async (tx) => {
-    await limits.set(tx, person, tokens);
+    await ledger.setLimit(tx, person, tokens);
     await tx.run('DELETE FROM fleet_model_blockers WHERE person=? AND day=?', person, day());
   });
 }
@@ -320,8 +311,7 @@ export function codexModelRelay(
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
       const today = day();
       const refused = await state.transaction(async (tx) => {
-        const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
-        if (!(await ledger.charge(tx, grant.person, today, most, limit))) {
+        if (!(await ledger.charge(tx, grant.person, today, most, options.dailyTokensPerPerson))) {
           // The day's largest refusal stands until the reset or a changed limit: a smaller call
           // that still passes, or one in flight settling below its reservation, leaves the
           // refused visit waiting.

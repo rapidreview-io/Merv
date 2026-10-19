@@ -57,10 +57,12 @@ metadata. Decryption errors have a fixed message with no ciphertext or key detai
 per environment variable name, sealed the same way under the same key with the name as its
 authenticated binding, beside when and by whom it changed. `setPlatformSecret`,
 `platformSecret` (decrypt; null without the key) and `platformSecrets` (names and times, never
-values) are the whole API; only the admin calls the first, only the composition root the second.
+values) are the whole API; only the composition root calls the first two (in `override` and at
+boot), and the admin reads only the third.
 At boot the composition root loads State and Secrets alone, puts every stored value into the
-process environment, then loads everything else; after a change it applies the value and
-reloads only the entries whose config names it. A record the key cannot open stops the boot.
+process environment (except names State and Secrets read), then loads everything else; after a change it applies the value and
+reloads only the entries whose config names it. A record the key cannot open is logged (`secrets.platform_unopened`) and the deployment's value
+stays.
 
 ## Download broker
 

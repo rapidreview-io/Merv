@@ -839,7 +839,8 @@ export interface Composition {
    *  back): the ids reloaded and whatever `then` answers. Refused for a name not overridable. */
   override(
     env: string,
-    value: string,
+    /** A function is read inside the serialized change, from the environment as it stands then. */
+    value: string | (() => Promise<string>),
     by: { issuer: string; subject: string },
     then?: () => Promise<string[]>,
   ): Promise<string[]>;
