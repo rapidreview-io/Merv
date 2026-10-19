@@ -39,7 +39,7 @@ export interface Payments {
   checkout(input: CheckoutInput): Promise<{ id: string; url: string; expiresAt: number }>;
   /** The handler of `product`'s paid checkouts, which must be idempotent on `paymentId`. */
   fulfil(product: string, handler: (paid: Paid) => Promise<void>): () => void;
-  /** The webhook: verified, once per event, to its product's fulfiller. */
+  /** The webhook: verified, each delivery to its product's fulfiller. */
   receive(raw: Buffer, signature: unknown): Promise<{ received: true }>;
 }
 

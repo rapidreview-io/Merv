@@ -200,8 +200,8 @@ async function fixture(
       computePreparations.push(caller.projectId);
     },
   };
-  // Payments over a fake Stripe: the real webhook's dedupe and dispatch, a fake signature.
-  const payments = new PaymentsService(state, {
+  // Payments over a fake Stripe: the real webhook's dispatch, a fake signature.
+  const payments = new PaymentsService({
     live: false,
     async checkout(input) {
       checkoutCalls.push(input);
@@ -217,7 +217,6 @@ async function fixture(
       return JSON.parse(bytes.toString()) as Paid;
     },
   });
-  await payments.initialize();
   const emails: Parameters<ResultMailer['send']>[0][] = [];
   const delivery = { fail: false };
   const mailer: ResultMailer = {

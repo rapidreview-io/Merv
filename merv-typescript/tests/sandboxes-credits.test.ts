@@ -24,7 +24,7 @@ async function fixture(t: TestContext) {
   process.env.MERV_TEST_SANDBOXES_VAULT_KEY = Buffer.alloc(32, 7).toString('base64url');
   const funded = { name: 'cloud', plugin: 'fake', connection_id: 'cloud', cloud_account: 'cloud' };
   await startHost(t, ctx, 'MERV_TEST_SANDBOXES_VAULT_KEY', {
-    settings: { providers: [funded] },
+    settings: { providers: [funded], console: { top_ups: [25, 50] } },
   });
   await ctx.sbxProviders.connections.registerIn(ctx.sbxDb, {
     id: 'cloud',
@@ -40,7 +40,7 @@ async function fixture(t: TestContext) {
   ctx.provide('sandboxesPeople', people);
   const call = mountCaller(ctx, person(alice));
   const checkouts: CheckoutInput[] = [];
-  const payments = new PaymentsService(state, {
+  const payments = new PaymentsService({
     live: false,
     async checkout(input) {
       checkouts.push(input);
@@ -50,7 +50,6 @@ async function fixture(t: TestContext) {
       return JSON.parse(raw.toString()) as Paid;
     },
   });
-  await payments.initialize();
   const unprovide = ctx.provide('payments', payments);
   const fiber = ctx.plugin(sandboxesCreditsPlugin);
   t.after(async () => await fiber.dispose());

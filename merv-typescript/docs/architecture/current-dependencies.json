@@ -43,7 +43,7 @@
     "scope": 32,
     "secrets": 2,
     "sessions": 10,
-    "state": 27,
+    "state": 26,
     "tasks": 4,
     "tools": 27,
     "ui": 17,
@@ -63,7 +63,7 @@
     "sbxSnapshots": 1,
     "sbxDb": 3,
     "sbxClock": 2,
-    "sbxSettings": 2
+    "sbxSettings": 3
   },
   "plugins": [
     {
@@ -672,7 +672,6 @@
         "payments"
       ],
       "requires": [
-        "state",
         "api"
       ],
       "optional": [],
@@ -972,7 +971,8 @@
       "requires": [
         "api",
         "sandboxesPeople",
-        "sbxProviders"
+        "sbxProviders",
+        "sbxSettings"
       ],
       "optional": [
         "payments"

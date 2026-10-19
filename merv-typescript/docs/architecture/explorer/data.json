@@ -1701,7 +1701,6 @@
         "payments"
       ],
       "requires": [
-        "state",
         "api"
       ],
       "optional": [],
@@ -2535,7 +2534,8 @@
       "requires": [
         "api",
         "sandboxesPeople",
-        "sbxProviders"
+        "sbxProviders",
+        "sbxSettings"
       ],
       "optional": [
         "payments"
@@ -4132,11 +4132,6 @@
     },
     {
       "from": "payments",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "payments",
       "to": "api",
       "optional": false
     },
@@ -4508,6 +4503,11 @@
     {
       "from": "merv-sandboxes-credits",
       "to": "sandboxesPeople",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "sbxMerv",
       "optional": false
     },
     {

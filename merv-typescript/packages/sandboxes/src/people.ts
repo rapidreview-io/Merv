@@ -35,7 +35,7 @@ export class SandboxesPeople implements People {
     private readonly credits: NewPersonCredits,
   ) {}
 
-  ensure({ issuer, subject, label }: Person): Promise<{ accountId: string }> {
+  ensure({ issuer, subject, label }: Person): Promise<{ accountId: string; personId: string }> {
     return refusals.call(async () => {
       const { persons } = this.sbx.auth;
       // A new person comes with their own account, them its admin, in their home namespace.
@@ -43,8 +43,9 @@ export class SandboxesPeople implements People {
         (await persons.byIdentity(issuer, subject)) ??
         (await persons.ensureIdentity({ issuer, subject, displayName: label }));
       const { account_id: accountId } = await this.sbx.accounts.namespace(person.home_namespace!);
+      const own = { accountId, personId: person.id };
       const offered = Object.entries(this.credits);
-      if (!offered.length) return { accountId };
+      if (!offered.length) return own;
       const { credits } = this.sbx.billing;
       const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
       // Connections, not `modes.of`'s funded: CreditService admits credit only on a registered one.
@@ -74,7 +75,7 @@ export class SandboxesPeople implements People {
           });
         });
       }
-      return { accountId };
+      return own;
     });
   }
 
@@ -83,11 +84,7 @@ export class SandboxesPeople implements People {
       const person = await this.sbx.auth.persons.byIdentity(issuer, subject);
       if (!person?.home_namespace) return null;
       const { account_id } = await this.sbx.accounts.namespace(person.home_namespace);
-      return {
-        accountId: account_id,
-        namespace: person.home_namespace,
-        name: person.display_name || person.email || null,
-      };
+      return { accountId: account_id, name: person.display_name || person.email || null };
     });
   }
 
@@ -103,36 +100,6 @@ export class SandboxesPeople implements People {
     await this.#credit(accountId, input.provider, input.enabled, () =>
       this.sbx.billing.credits.setSchedule({ ...input, accountId }),
     );
-  }
-
-  /** The project in its admin's own account, which pays for its compute: left alone where it
-   *  is there already (or, `onlyUnlinked`, anywhere); moved there from another account with its
-   *  namespace, which revokes the tokens minted for it there (its agents reconnect on their next
-   *  lease). */
-  link(projectId: string, admin: Person, onlyUnlinked = false): Promise<void> {
-    return refusals.call(async () => {
-      const { accounts, auth, db, clock } = this.sbx;
-      const before = await accounts.linked(projectId);
-      if (before && onlyUnlinked) return;
-      const { accountId } = await this.ensure(admin);
-      if (before?.account_id === accountId) return;
-      const person = await auth.persons.byIdentity(admin.issuer, admin.subject);
-      // Scope decided the admin: the host moves the project without an admin of its old account.
-      await linkProject(
-        { db, accounts, clock },
-        person!.id,
-        projectId,
-        { account_id: accountId, only_unlinked: onlyUnlinked },
-        { internal: true },
-      );
-      if (before)
-        log({
-          event: 'sandboxes.projects.relinked',
-          projectId,
-          from: before.account_id,
-          accountId,
-        });
-    });
   }
 
   /** The credit write, then the account's access to the provider's operator connections where
@@ -163,7 +130,7 @@ export class SandboxesPeople implements People {
   }
   /** In the background, after the links asked before it: a failure is logged and stops none. */
   adminChanged(projectId: string, admin: Person): void {
-    if (!this.#closed) this.#link(async () => await this.#linked(projectId, admin));
+    if (!this.#closed) this.#link(() => this.#linked(projectId, admin));
   }
   /** Everyone already signed in, one at a time, once; then every project with an admin and no
    *  link yet. One linked already stays where someone put it. */
@@ -199,10 +166,36 @@ export class SandboxesPeople implements People {
           cause: cause(error),
         }),
     );
-  #linked = (projectId: string, admin: Person, onlyUnlinked = false) =>
-    this.link(projectId, admin, onlyUnlinked).catch((error) =>
-      log({ event: 'sandboxes.projects.link_failed', projectId, cause: cause(error) }),
-    );
+  /** The project in its admin's own account, which pays for its compute: left alone where it
+   *  is there already (or, `onlyUnlinked`, anywhere); moved there from another account with its
+   *  namespace, which revokes the tokens minted for it there (its agents reconnect on their next
+   *  lease). A failure is logged. */
+  #linked = async (projectId: string, admin: Person, onlyUnlinked = false) => {
+    try {
+      const { accounts, db, clock } = this.sbx;
+      const before = await accounts.linked(projectId);
+      if (before && onlyUnlinked) return;
+      const { accountId, personId } = await this.ensure(admin);
+      if (before?.account_id === accountId) return;
+      // Scope decided the admin: the host moves the project without an admin of its old account.
+      await linkProject(
+        { db, accounts, clock },
+        personId,
+        projectId,
+        { account_id: accountId, only_unlinked: onlyUnlinked },
+        { internal: true },
+      );
+      if (before)
+        log({
+          event: 'sandboxes.projects.relinked',
+          projectId,
+          from: before.account_id,
+          accountId,
+        });
+    } catch (error) {
+      log({ event: 'sandboxes.projects.link_failed', projectId, cause: cause(error) });
+    }
+  };
   #link(work: () => Promise<void>): void {
     const next = this.#links.then(work);
     this.#links = next.catch(() => {});

@@ -114,12 +114,7 @@ test('credit comes with access to spend it; a disabled schedule and an access an
   const alice = { issuer, subject: 'alice' };
   assert.equal(await people.accountOf(alice), null);
   const { accountId } = await people.ensure(alice);
-  const { home_namespace } = (await f.ctx.sbxAuth.persons.byIdentity(issuer, 'alice'))!;
-  assert.deepEqual(await people.accountOf(alice), {
-    accountId,
-    namespace: home_namespace,
-    name: null,
-  });
+  assert.deepEqual(await people.accountOf(alice), { accountId, name: null });
   assert.deepEqual(await access(accountId), []);
   await people.grant(alice, { ...terms, id: 'g1', validFrom: now, expiresAt: null });
   assert.deepEqual(await access(accountId), [['cloud', true]]);
@@ -246,7 +241,7 @@ test('a project lives in its admin’s own account: linked at creation, moved wi
   };
   assert.equal(await holder(), await own('alice'));
   // Linked there already, it is left alone.
-  await people.link(project.id, { issuer, subject: 'alice' });
+  people.adminChanged(project.id, { issuer, subject: 'alice' });
   await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
   const bob = await f.signIn('bob');
   // Bob takes billing on; then hands it back, and Alice hands it to him again.

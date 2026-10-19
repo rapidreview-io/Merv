@@ -11,8 +11,6 @@ import type { SandboxesPeople } from './types.js';
 
 /** What a top-up's Checkout sells: credit on one provider of the buyer's own account. */
 export const CREDITS_PRODUCT = 'merv-sandbox-credits-v1';
-/** The founder's fixed top-ups, in USD. */
-const TOP_UPS = [25, 50, 100, 250] as const;
 /** Where Checkout returns: the console's Providers page inside Merv's Sandboxes view. */
 const back = '/ui/sandboxes/providers';
 const refusals = mervRefusals(MervError);
@@ -20,6 +18,8 @@ const refusals = mervRefusals(MervError);
 interface Sbx {
   people: SandboxesPeople;
   providers: SbxProviders;
+  /** The top-ups the console offers, in USD: the host's `console.top_ups`. */
+  topUps: readonly number[];
   /** Payments while it is loaded: without it nothing is sold. */
   payments(): Payments | undefined;
 }
@@ -28,13 +28,14 @@ type Person = { issuer: string; subject: string };
 const checkoutInput = z
   .object({
     provider: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-    amountUsd: z.number().refine((usd) => TOP_UPS.some((top) => top === usd)),
+    amountUsd: z.number(),
     requestId: z.string().uuid(),
   })
   .strict();
 async function checkout(sbx: Sbx, person: Person, input: z.infer<typeof checkoutInput>) {
   const payments = sbx.payments();
   check(payments, 'checkout_unavailable', 'Payments are not configured', 503);
+  check(sbx.topUps.includes(input.amountUsd), 'invalid_input', 'Not a top-up on offer', 400);
   // Money is never taken for credit the account has no funded instance to spend on.
   const own = await sbx.people.accountOf(person);
   const modes = own ? await sbx.providers.modes.of(own.accountId) : [];
@@ -99,7 +100,7 @@ function computeRoutes(sbx: Sbx): MountHandler {
  *  balances from Sandboxes itself. Loaded by the integration beside its people. */
 export const sandboxesCreditsPlugin = {
   name: 'merv-sandboxes-credits',
-  inject: ['api', 'sandboxesPeople', 'sbxProviders'],
+  inject: ['api', 'sandboxesPeople', 'sbxProviders', 'sbxSettings'],
   apply(ctx: Context) {
     const people = ctx.sandboxesPeople;
     ctx.inject(['payments'], (ctx) => {
@@ -108,6 +109,7 @@ export const sandboxesCreditsPlugin = {
     const sbx: Sbx = {
       people,
       providers: ctx.sbxProviders,
+      topUps: ctx.sbxSettings.console.top_ups,
       payments: () => ctx.get('payments'),
     };
     ctx.effect(() => ctx.api.mount('/compute', computeRoutes(sbx)));

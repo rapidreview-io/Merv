@@ -8,7 +8,6 @@ import type { Paid } from '@merv/contracts/payments';
 import type { ApiRequest, MountHandler } from '@merv/api/types';
 import { paymentsPlugin } from '../packages/payments/src/index.js';
 import { StripeGateway } from '../packages/payments/src/stripe.js';
-import { openState } from './fixtures/state.js';
 
 const secret = 'whsec_test_payments';
 const stripe = new Stripe('sk_test_payments_fixture');
@@ -53,13 +52,10 @@ const gateway = (live = false, secretKey = 'sk_test_payments_fixture') =>
 
 /** The plugin over real Stripe signatures, its webhook called as the API would call it. */
 async function fixture(t: TestContext) {
-  const state = await openState();
-  t.after(async () => await state.close());
   process.env.MERV_TEST_STRIPE_KEY = 'sk_test_payments_fixture';
   process.env.MERV_TEST_STRIPE_WEBHOOK = secret;
   const routes = new Map<string, MountHandler>();
   const ctx = new Context();
-  ctx.provide('state', state);
   ctx.provide('api', {
     mount: (prefix: string, handler: MountHandler) => (routes.set(prefix, handler), () => {}),
   });
@@ -85,10 +81,10 @@ async function fixture(t: TestContext) {
         bytes: async () => Buffer.from(payload),
       } as unknown as ApiRequest,
     );
-  return { ctx, state, webhook };
+  return { ctx, webhook };
 }
 
-test('the webhook fulfils each paid Merv checkout once, by its product', async (t) => {
+test('the webhook hands each delivery of a paid Merv checkout to its product’s fulfiller', async (t) => {
   const f = await fixture(t);
   const fulfilled: Paid[] = [];
   const dispose = f.ctx.payments.fulfil('merv-test-v1', async (paid) => {
@@ -108,20 +104,20 @@ test('the webhook fulfils each paid Merv checkout once, by its product', async (
     code: 'invalid_webhook',
   });
   assert.equal(fulfilled.length, 0);
-  for (let delivery = 0; delivery < 3; delivery++)
+  // Each delivery reaches the fulfiller, which is idempotent on the payment.
+  for (let delivery = 0; delivery < 2; delivery++)
     assert.deepEqual(await f.webhook(session('merv-test-v1')), { received: true });
-  assert.deepEqual(fulfilled, [
-    {
-      product: 'merv-test-v1',
-      reference: 'ref_1',
-      metadata: { provider: 'fake' },
-      paymentId: 'pi_1',
-      amountUsd: 25,
-      eventId: 'evt_1',
-      createdAt: '2025-10-09T08:53:20.000Z',
-    },
-  ]);
-  // A fulfiller that fails leaves the event unrecorded, for Stripe's retry to fulfil.
+  const paid = {
+    product: 'merv-test-v1',
+    reference: 'ref_1',
+    metadata: { provider: 'fake' },
+    paymentId: 'pi_1',
+    amountUsd: 25,
+    eventId: 'evt_1',
+    createdAt: '2025-10-09T08:53:20.000Z',
+  };
+  assert.deepEqual(fulfilled, [paid, paid]);
+  // A fulfiller that fails fails the webhook, for Stripe's retry to fulfil.
   dispose();
   f.ctx.payments.fulfil('merv-test-v1', async () => {
     throw new MervError('busy', 'Try again', 503);
@@ -132,10 +128,6 @@ test('the webhook fulfils each paid Merv checkout once, by its product', async (
       code: 'busy',
     },
   );
-  const events = await f.state.read((sql) =>
-    sql.all('SELECT event_id,product,reference FROM payments_stripe_events'),
-  );
-  assert.deepEqual(events, [{ event_id: 'evt_1', product: 'merv-test-v1', reference: 'ref_1' }]);
 });
 
 test('only authentic paid same-mode Checkouts of a Merv product this deployment opened are paid', async () => {
