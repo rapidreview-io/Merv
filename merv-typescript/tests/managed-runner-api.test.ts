@@ -349,6 +349,8 @@ async function credentialGate(t: TestContext) {
       authenticate: reach('sessions.managed.authenticate', managed),
       enroll: reach('sessions.managed.enroll', { controlToken: 'mr_new' }),
     },
+    // An attach's prompt asks whether the visit may wait for its compute: here it may not.
+    computeWaits: { available: async () => false },
   } as unknown as SessionRoutes;
   const code = {
     nextCommand: reach('code.nextCommand', null),
