@@ -805,12 +805,14 @@ export function StageThreads({
   loadedAt,
   onOpen: setOpened,
   below,
+  strip,
 }: {
   graph: ProcessGraph;
   threads: readonly ThreadView[];
   loadedAt?: string;
   onOpen(threadId: string): void;
   below?: (state: string) => ReactNode;
+  strip?: boolean;
 }) {
   const now = clock(undefined, loadedAt, Date.now(), 20_000);
   const aside = (state: string) => {
@@ -843,5 +845,5 @@ export function StageThreads({
       );
     });
   };
-  return <StageList graph={graph} aside={aside} below={below} />;
+  return <StageList graph={graph} aside={aside} below={below} strip={strip} />;
 }

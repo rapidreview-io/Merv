@@ -492,6 +492,7 @@ export function UnitView({
           threads={threads}
           loadedAt={loadedAt}
           onOpen={setOpened}
+          strip={wide}
           below={(state) => {
             const here = staged!.get(state);
             return here?.length ? (

@@ -34,6 +34,19 @@ import {
 import type { CustomerCompute } from './compute.js';
 import { CustomerAccess } from './access.js';
 
+/** The customer's stage for each state of the experiment's own program. */
+type CustomerStage = 'planning' | 'running' | 'reviewing' | 'complete' | 'failed';
+const CUSTOMER_STAGE: Record<string, CustomerStage> = {
+  planning: 'planning',
+  ready: 'planning',
+  awaiting_payment: 'planning',
+  running: 'running',
+  finalizing: 'running',
+  results_review: 'reviewing',
+  complete: 'complete',
+  failed: 'failed',
+};
+
 /** Commands the server sends into the intake conversation when the customer submits the plan;
  *  no customer or agent message may use the prefix. */
 export const PLAN_SUBMIT = 'plan-submit-';
@@ -265,25 +278,30 @@ export class CustomerService {
       expiresAt: record.expiresAt,
     };
   }
-  /** The status page: the customer's four stages, time and compute against their limits, and
-   *  what the executing worker reported. Nothing internal (sessions, leases, reviews). */
+  /** The status page: the customer's four stages and when each was reached, time and compute
+   *  against their limits, and what the executing worker reported. Nothing internal (sessions,
+   *  leases, reviews). */
   private async progress(
     caller: Caller,
     exp: CustomerExperiment,
     usage: { budgets: { scopeId: string; maxWallMs: number | null }[] } | null,
   ) {
     const { paidAt, lines } = await this.domain.progress(caller, exp.id, this.store.state.ambient);
-    const state = exp.workflow.state;
-    const stage =
-      state === 'complete'
-        ? 'complete'
-        : state === 'failed'
-          ? 'failed'
-          : state === 'results_review'
-            ? 'reviewing'
-            : state === 'running' || state === 'finalizing'
-              ? 'running'
-              : 'planning';
+    const stage = CUSTOMER_STAGE[exp.workflow.state] ?? 'planning';
+    // When the experiment first reached each of the customer's stages, from its own crossings.
+    const graph = await this.domain.workflows.process(
+      caller,
+      exp.id,
+      { checks: false },
+      this.store.state.ambient,
+    );
+    const entered: Partial<Record<CustomerStage, string>> = {};
+    const reached = (at: string | null | undefined, to: string) => {
+      const name = CUSTOMER_STAGE[to];
+      if (at && name && (!entered[name] || at < entered[name])) entered[name] = at;
+    };
+    for (const node of graph.nodes) if (node.initial) reached(node.firstEnteredAt, node.state);
+    for (const edge of graph.edges) for (const step of edge.traversals) reached(step.at, edge.to);
     const current = lines.filter((line) => line.attempt === exp.attempts);
     const results = new Map<string, { name: string; score: number; total: number }>();
     for (const line of current) if (line.result) results.set(line.result.name, line.result);
@@ -293,6 +311,7 @@ export class CustomerService {
     const waiting = stage === 'running' && !!(await this.stalled(caller, exp));
     return {
       stage,
+      entered,
       waiting,
       attempt: Math.max(1, exp.attempts),
       maxAttempts: limits?.maxAttempts ?? 2,

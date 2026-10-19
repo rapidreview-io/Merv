@@ -275,14 +275,17 @@ export function TimeInStatus({
   spent,
   aside,
   below,
+  strip,
 }: {
   steps: Step[];
   spent?: Map<string, number>;
   aside?: (state: string) => ReactNode;
   below?: (state: string) => ReactNode;
+  /** Sideways, a column a stage, where the page has the width for it. */
+  strip?: boolean;
 }) {
   return (
-    <section className="stage-card" aria-label="Time in status">
+    <section className={cx('stage-card', strip && 'stage-card--strip')} aria-label="Time in status">
       <p className="stage-card-title">Time in status</p>
       <ol className="stages">
         {steps.map((step, at) => {
@@ -317,10 +320,12 @@ export function StageList({
   graph,
   aside,
   below,
+  strip,
 }: {
   graph: ProcessGraph;
   aside?: (state: string) => ReactNode;
   below?: (state: string) => ReactNode;
+  strip?: boolean;
 }) {
   return (
     <TimeInStatus
@@ -328,6 +333,7 @@ export function StageList({
       spent={stageTimes(graph, useNow(graph.terminal ? 0 : 30_000))}
       aside={aside}
       below={below}
+      strip={strip}
     />
   );
 }

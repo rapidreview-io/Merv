@@ -6928,22 +6928,23 @@ button.role-mark--disc {
 .running-sidebar--unit .stage-card {
   max-width: none;
 }
-/* Maximized, the stages run sideways: a column each, its time on the word's line, its chips
-   and its thread under them, and the rule over it says where the record stands. */
-.running-plane[data-full] .running-sidebar--unit .stage-card {
+/* Sideways, the stages run as a column each, its time on the word's line, its chips and its
+   thread under them, and the rule over it says where the record stands. */
+.stage-card--strip {
+  max-width: none;
   padding: 0;
   border: 0;
   background: none;
 }
-.running-plane[data-full] .running-sidebar--unit .stage-card-title {
+.stage-card--strip .stage-card-title {
   display: none;
 }
-.running-plane[data-full] .running-sidebar--unit .stages {
+.stage-card--strip .stages {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-3) var(--space-4);
 }
-.running-plane[data-full] .running-sidebar--unit .stage {
+.stage-card--strip .stage {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: 'glyph word time' 'aside aside aside' 'thread thread thread';
@@ -6954,29 +6955,29 @@ button.role-mark--disc {
   padding-top: var(--space-2);
   border-top: 2px solid var(--faint);
 }
-.running-plane[data-full] .running-sidebar--unit .stage--here {
+.stage-card--strip .stage--here {
   border-top-color: var(--text);
 }
-.running-plane[data-full] .running-sidebar--unit .stage--ahead {
+.stage-card--strip .stage--ahead {
   border-top-color: var(--line);
 }
-.running-plane[data-full] .running-sidebar--unit :is(.stage-time, .stage-aside, .stage-thread) {
+.stage-card--strip :is(.stage-time, .stage-aside, .stage-thread) {
   margin: 0;
   padding: 0;
 }
-.running-plane[data-full] .running-sidebar--unit .stage > .stage-glyph {
+.stage-card--strip .stage > .stage-glyph {
   grid-area: glyph;
 }
-.running-plane[data-full] .running-sidebar--unit .stage-word {
+.stage-card--strip .stage-word {
   grid-area: word;
 }
-.running-plane[data-full] .running-sidebar--unit .stage-time {
+.stage-card--strip .stage-time {
   grid-area: time;
 }
-.running-plane[data-full] .running-sidebar--unit .stage-aside {
+.stage-card--strip .stage-aside {
   grid-area: aside;
 }
-.running-plane[data-full] .running-sidebar--unit .stage-thread {
+.stage-card--strip .stage-thread {
   grid-area: thread;
 }
 /* The tabs stay at the top of the view once the stages have scrolled away, and the unit's

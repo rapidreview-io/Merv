@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useNow } from '../components';
+import { cx, useNow } from '../components';
+import { TimeInStatus, type Step } from '../process';
 import { customerRequest } from './api';
 
 /** The `progress` the request snapshot carries once the experiment is paid for. */
 export interface Progress {
   stage: 'planning' | 'running' | 'reviewing' | 'complete' | 'failed';
+  /** When the experiment first reached each stage. */
+  entered?: Partial<Record<Progress['stage'], string>>;
   /** The run stopped and resumes by itself shortly. */
   waiting?: boolean;
   attempt: number;
@@ -26,6 +29,7 @@ export interface Delivered {
 }
 
 const STAGES = ['planning', 'running', 'reviewing', 'complete'] as const;
+type Stage = (typeof STAGES)[number];
 
 /** A delivered artifact's short-lived download address, read once it is wanted. */
 function useDownload(id: string | null) {
@@ -90,14 +94,6 @@ function Results({ result }: { result: Delivered }) {
   );
 }
 
-const WORD: Record<Progress['stage'], string> = {
-  planning: 'Planning',
-  running: 'Running',
-  reviewing: 'Reviewing',
-  complete: 'Complete',
-  failed: 'Failed',
-};
-
 const span = (ms: number) => {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
   const hours = Math.floor(minutes / 60);
@@ -111,49 +107,91 @@ const dollars = (usd: number) =>
   }).format(usd);
 
 /**
- * Where a paid experiment stands: four stages, what it is doing now, time and compute against
- * their limits, scores as they finish, and what it has done; once complete, its report.
+ * Where a paid experiment stands, on the same stage card as a record in the app: its four
+ * stages sideways, how long it stood in each, and what the worker reported while it was there
+ * under the stage; then what it is doing now, time and compute against their limits, and
+ * scores as they finish. Complete, the report is the one thing to read, its files beside it,
+ * under tabs that stay at the top of the view.
  */
 export function Status({ progress, result }: { progress: Progress; result?: Delivered | null }) {
   const now = useNow(30_000);
   const at = progress.stage === 'failed' ? 3 : STAGES.indexOf(progress.stage);
   const started = progress.startedAt ? Date.parse(progress.startedAt) : null;
-  const elapsed = started ? now - started : null;
+  const elapsedMs = started ? now - started : null;
   const live = progress.stage === 'running' || progress.stage === 'reviewing';
-  return (
-    <section className="cx-run" aria-label="Status">
-      <ol className="cx-stages">
-        {STAGES.map((stage, index) => {
-          const failed = progress.stage === 'failed' && index === 3;
-          const state = failed ? 'bad' : index < at ? 'done' : index === at ? 'here' : 'ahead';
-          return (
-            <li
-              key={stage}
-              className={`cx-stage cx-stage--${state}`}
-              aria-current={index === at ? 'step' : undefined}
-            >
-              <span className="cx-stage-dot" aria-hidden="true" />
-              <span className="cx-stage-word">{failed ? WORD.failed : WORD[stage]}</span>
-              {stage === 'running' && progress.attempt > 1 && (
-                <span className="cx-stage-note">
-                  Attempt {progress.attempt} of {progress.maxAttempts}
-                </span>
-              )}
-            </li>
-          );
-        })}
+  const entered = progress.entered ?? {};
+  // Each stage from when it was reached to when the next was, the one in hand until now; a
+  // line the worker wrote stands under the stage the experiment was in then.
+  const from = (index: number) => {
+    const stage = index === 3 && progress.stage === 'failed' ? 'failed' : STAGES[index]!;
+    return entered[stage] ? Date.parse(entered[stage]!) : null;
+  };
+  const steps: Step[] = STAGES.map((stage, index) => {
+    const failed = progress.stage === 'failed' && index === 3;
+    return {
+      state: failed ? 'failed' : stage,
+      end: index === 3,
+      stopped: failed,
+      current: index === at,
+      entered: index <= at,
+    };
+  });
+  const spent = new Map<string, number>();
+  for (let index = 0; index <= at; index++) {
+    const since = from(index);
+    const until = index === at ? now : from(index + 1);
+    if (since && until && until > since) spent.set(steps[index]!.state, until - since);
+  }
+  const under = (state: string) => {
+    const index = steps.findIndex((step) => step.state === state);
+    const since = from(index);
+    const until = index < 3 ? from(index + 1) : null;
+    const lines = progress.activity.filter((line) => {
+      const when = Date.parse(line.at);
+      return since !== null && when >= since && (until === null || when < until);
+    });
+    return lines.length ? (
+      <ol className="thread thread--stage">
+        {[...lines].reverse().map((line, index) => (
+          <li className="feed-entry feed-line" key={`${line.at}-${index}`}>
+            <span className="feed-mark">
+              <span className="thread-dot" />
+            </span>
+            <p className="feed-said">{line.text}</p>
+            {started && (
+              <time className="feed-when tabular" dateTime={line.at}>
+                {span(Date.parse(line.at) - started)}
+              </time>
+            )}
+          </li>
+        ))}
       </ol>
-
-      {progress.stage === 'complete' && result && <Results result={result} />}
+    ) : null;
+  };
+  const delivered = progress.stage === 'complete' && result;
+  const [tab, setTab] = useState<'document' | 'artifacts'>('document');
+  return (
+    <section className={cx('cx-run', live && 'cx-run--live')} aria-label="Status">
+      <TimeInStatus
+        steps={steps}
+        spent={spent}
+        strip
+        aside={(state) =>
+          state === 'running' && progress.attempt > 1
+            ? `Attempt ${progress.attempt} of ${progress.maxAttempts}`
+            : null
+        }
+        below={under}
+      />
 
       {progress.now && <p className="cx-now">{progress.now}</p>}
 
       <dl className="cx-meters">
-        {elapsed !== null && (
+        {elapsedMs !== null && (
           <div>
             <dt>Time</dt>
             <dd>
-              {span(elapsed)}
+              {span(elapsedMs)}
               {progress.maxWallMs ? ` of ${span(progress.maxWallMs)}` : ''}
             </dd>
           </div>
@@ -197,17 +235,40 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
         </table>
       )}
 
-      {progress.activity.length > 0 && (
-        <ol className={`cx-activity${live ? ' cx-activity--live' : ''}`}>
-          {progress.activity.map((line, index) => (
-            <li key={`${line.at}-${index}`}>
-              <time className="tabular" dateTime={line.at}>
-                {started ? span(Date.parse(line.at) - started) : ''}
-              </time>
-              <span>{line.text}</span>
-            </li>
-          ))}
-        </ol>
+      {delivered && (
+        <>
+          <div className="unit-pin">
+            <div className="tabs tabs--strip unit-tabs" role="group" aria-label="Results">
+              <button
+                type="button"
+                aria-pressed={tab === 'document'}
+                onClick={() => setTab('document')}
+              >
+                Document
+              </button>
+              <button
+                type="button"
+                aria-pressed={tab === 'artifacts'}
+                onClick={() => setTab('artifacts')}
+              >
+                Artifacts<span className="state-n">{result.artifacts.length}</span>
+              </button>
+            </div>
+          </div>
+          {tab === 'document' ? (
+            <Results result={result} />
+          ) : (
+            <ul className="unit-rows">
+              {result.artifacts.map((artifact) => (
+                <li key={artifact.id}>
+                  <button type="button" className="unit-row" onClick={() => void open(artifact.id)}>
+                    <span className="unit-row-name">{artifact.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

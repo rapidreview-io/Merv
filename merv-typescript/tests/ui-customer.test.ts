@@ -761,6 +761,7 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
         step: { done: 4, total: 8 },
         results: [{ name: 'Clef', score: 17, total: 24 }],
         activity: [{ at: new Date().toISOString(), text: 'Started Clef-flash' }],
+        entered: { planning: paidAt, running: new Date(Date.now() - 60 * 60_000).toISOString() },
       },
     },
   });
@@ -774,19 +775,22 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
       .hash,
     `#token=${CAPABILITY}`,
   );
+  // The stages are the app's own stage card, sideways, with the worker's lines under the
+  // stage the experiment was in when it wrote them.
   assert.deepEqual(
-    [...status.querySelectorAll('.cx-stage-word')].map((n) => n.textContent),
-    ['Planning', 'Running', 'Reviewing', 'Complete'],
+    [...status.querySelectorAll('.stage-word')].map((n) => n.textContent),
+    ['planning', 'running', 'reviewing', 'complete'],
   );
-  assert.equal(
-    status.querySelector('[aria-current="step"] .cx-stage-word')!.textContent,
-    'Running',
+  assert.equal(status.querySelector('[aria-current="step"] .stage-word')!.textContent, 'running');
+  assert.match(
+    status.querySelector('.stage--here .stage-thread')!.textContent!,
+    /Started Clef-flash/,
   );
+  assert.match(status.querySelector('.stage--here .stage-time')!.textContent!, /1h/);
   assert.equal(status.querySelector('.cx-now')!.textContent, 'Benchmarking Clef-flash on 24 cases');
   assert.match(status.querySelector('.cx-meters')!.textContent!, /1h 12m of 24h/);
   assert.match(status.querySelector('.cx-meters')!.textContent!, /\$14 of \$1,000/);
   assert.match(status.querySelector('.cx-results')!.textContent!, /Clef17 \/ 24/);
-  assert.match(status.querySelector('.cx-activity')!.textContent!, /Started Clef-flash/);
   // The chat waits behind its button rather than floating over the status.
   assert.equal(document.querySelector('.cx-chat-reopen')!.textContent, 'Chat');
 });
@@ -824,10 +828,7 @@ test('a complete experiment shows its answer, the report pages and its files', a
   await open();
   await settle(80);
   const status = document.querySelector('.cx-run')!;
-  assert.equal(
-    status.querySelector('[aria-current="step"] .cx-stage-word')!.textContent,
-    'Complete',
-  );
+  assert.equal(status.querySelector('[aria-current="step"] .stage-word')!.textContent, 'complete');
   // The executor's handoff summary is the reviewer's, not the customer's.
   assert.equal(status.querySelector('.cx-summary'), null);
   assert.equal(
