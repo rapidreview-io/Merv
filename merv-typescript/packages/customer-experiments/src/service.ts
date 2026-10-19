@@ -16,7 +16,8 @@ import { z } from 'zod';
 import { CustomerExperiments } from './domain.js';
 import { RequestStore, type RequestRecord } from './store.js';
 import { validateDataset, type DatasetStorage } from './data.js';
-import type { Payments, ResultMailer, PaidCheckout } from './payment.js';
+import type { ResultMailer } from './mail.js';
+import type { Paid, Payments } from '@merv/contracts/payments';
 import {
   planDocumentSchema,
   planSchema,
@@ -25,6 +26,7 @@ import {
 } from './schema.js';
 import { plansDocument } from './program.js';
 import {
+  contractTitle,
   isDocumentContract,
   withoutBuyer,
   type CustomerExperiment,
@@ -49,6 +51,8 @@ const CUSTOMER_STAGE: Record<string, CustomerStage> = {
 
 /** Commands the server sends into the intake conversation when the customer submits the plan;
  *  no customer or agent message may use the prefix. */
+/** The product an experiment's Checkout sells, which Payments fulfils through `paid`. */
+export const CUSTOMER_PRODUCT = 'merv-customer-experiment-v1';
 export const PLAN_SUBMIT = 'plan-submit-';
 /** A turn's words as its customer reads them: the server's instruction to verify a submitted
  *  plan is the customer's press of Submit. */
@@ -172,7 +176,8 @@ export class CustomerService {
     private artifacts: Artifacts,
     private pi: PiRuntime,
     readonly storage: DatasetStorage | undefined,
-    readonly payments: Payments | undefined,
+    /** Index.ts gives it Payments while that is loaded. */
+    public payments: Payments | undefined,
     private mailer: ResultMailer | undefined,
     readonly options: CustomerServiceOptions,
     private compute?: CustomerCompute,
@@ -1226,13 +1231,20 @@ export class CustomerService {
     // Provider I/O stays outside state transactions. Funding grants no assignment;
     // execution still requires this exact contract's confirmed payment.
     await this.compute.prepareExecution(caller);
-    const checkout = await this.payments.checkout({
-      requestId: record.id,
-      contract,
+    const back = `${this.options.publicOrigin}/customer-experiments/r/${encodeURIComponent(record.id)}`;
+    const { sessionId: id, ...opened } = await this.payments.checkout({
+      product: CUSTOMER_PRODUCT,
+      reference: record.id,
+      amountUsd: contract.price.amountCents / 100,
+      description: contractTitle(contract),
+      metadata: { contractHash: contract.hash, contractId: contract.id },
+      successUrl: `${back}?checkout=returned`,
+      cancelUrl: `${back}?checkout=cancelled`,
+      idempotencyKey: `merv-experiment-v2-${record.id}-${contract.hash}-${generation}`,
       email: input.email,
-      generation,
       previousId,
     });
+    const checkout = { id, ...opened };
     await this.store.mutate(record.id, (r) => {
       check(
         r.checkout?.contractHash === contract.hash && r.checkout.generation === generation,
@@ -1244,20 +1256,15 @@ export class CustomerService {
     });
     return checkout;
   }
-  async paid(paid: PaidCheckout) {
-    const record = await this.store.get(paid.requestId),
-      caller = await this.caller(record);
-    if (
-      await this.store.state.snapshotTransaction((tx) =>
-        tx.get(
-          'SELECT event_id FROM customer_experiment_stripe_events WHERE event_id=?',
-          paid.eventId,
-        ),
-      )
-    )
-      return;
+  /** A paid checkout of CUSTOMER_PRODUCT, as Payments fulfils it. */
+  async paid(paid: Paid) {
+    const record = await this.store.get(paid.reference),
+      caller = await this.caller(record),
+      contractHash = paid.metadata.contractHash;
+    // Paid already: a repeated payment needs no provider.
+    if ((await this.domain.get(caller, record.experimentId!)).paymentId === paid.paymentId) return;
     check(
-      record.checkout?.contractHash === paid.contractHash,
+      record.checkout?.contractHash === contractHash,
       'stale_checkout',
       'Payment belongs to a different contract',
       409,
@@ -1265,17 +1272,10 @@ export class CustomerService {
     check(this.compute, 'compute_unavailable', 'Internal compute is not configured', 503);
     await this.compute.prepareExecution(caller);
     await this.store.mutate(record.id, async (r, tx) => {
-      if (
-        await tx.get(
-          'SELECT event_id FROM customer_experiment_stripe_events WHERE event_id=?',
-          paid.eventId,
-        )
-      )
-        return;
       // A delayed signed webhook from an earlier session still pays this exact agreement.
       // The domain deduplicates the payment and checks the accepted version and amount.
       check(
-        r.checkout?.contractHash === paid.contractHash,
+        r.checkout?.contractHash === contractHash,
         'stale_checkout',
         'Payment belongs to a different contract',
         409,
@@ -1284,10 +1284,10 @@ export class CustomerService {
         caller,
         {
           id: r.experimentId!,
-          contractHash: paid.contractHash,
+          contractHash,
           paymentId: paid.paymentId,
-          amountCents: paid.amountCents,
-          currency: paid.currency,
+          amountCents: Math.round(paid.amountUsd * 100),
+          currency: 'usd',
           // Each Stripe event has its own receipt; the domain deduplicates payment IDs.
           requestId: `stripe-event-${paid.eventId}`,
           // v3 collects the results address in Stripe Checkout, not at acceptance.
@@ -1299,12 +1299,6 @@ export class CustomerService {
       );
       if (!r.submissionKey && r.notifiedSubmission !== paid.paymentId)
         r.submissionEmailPending = true;
-      await tx.run(
-        'INSERT INTO customer_experiment_stripe_events(event_id,request_id,received_at) VALUES(?,?,?)',
-        paid.eventId,
-        r.id,
-        new Date().toISOString(),
-      );
     });
     // Email failure must not undo payment or stop execution. Reconciliation retries it.
     await this.notifySubmitted(await this.store.get(record.id));

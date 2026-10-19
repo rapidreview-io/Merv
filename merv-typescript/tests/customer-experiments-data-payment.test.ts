@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Stripe from 'stripe';
 import { RequestBuckets, validateDataset } from '../packages/customer-experiments/src/data.js';
-import { StripePayments } from '../packages/customer-experiments/src/payment.js';
+import { StripeGateway } from '../packages/payments/src/stripe.js';
 import type { DataRequirement } from '../packages/customer-experiments/src/types.js';
 
 const requirement: DataRequirement = {
@@ -91,7 +91,7 @@ test('request bucket provisioning blocks public access before allowing browser P
 });
 
 const secret = 'whsec_test_customer';
-const payments = new StripePayments({
+const payments = new StripeGateway({
   secretKey: 'sk_test_not_a_live_key',
   webhookSecret: secret,
   publicOrigin: 'https://merv.example.com',
@@ -114,11 +114,8 @@ function event(overrides: Record<string, unknown> = {}, session: Record<string, 
         amount_total: 1000,
         currency: 'usd',
         client_reference_id: 'ce_request',
-        metadata: {
-          product: 'merv-customer-experiment-v1',
-          requestId: 'ce_request',
-          contractHash: 'fixed-contract',
-        },
+        created: 1760000000,
+        metadata: { product: 'merv-customer-experiment-v1', contractHash: 'fixed-contract' },
         ...session,
       },
     },
@@ -128,30 +125,37 @@ function event(overrides: Record<string, unknown> = {}, session: Record<string, 
 function signed(payload: string, timestamp = Math.floor(Date.now() / 1000)) {
   return stripe.webhooks.generateTestHeaderString({ payload, secret, timestamp });
 }
-test('only authentic paid same-mode checkout events can release the exact referenced contract', () => {
+test('only authentic paid same-mode checkout events of a Merv product are paid', async () => {
   const payload = event();
-  assert.deepEqual(payments.verify(Buffer.from(payload), signed(payload)), {
-    eventId: 'evt_customer',
-    requestId: 'ce_request',
-    contractHash: 'fixed-contract',
-    checkoutId: 'cs_test_customer',
+  assert.deepEqual(await payments.verify(Buffer.from(payload), signed(payload)), {
+    product: 'merv-customer-experiment-v1',
+    reference: 'ce_request',
+    metadata: { contractHash: 'fixed-contract' },
     paymentId: 'pi_customer',
-    amountCents: 1000,
-    currency: 'usd',
+    amountUsd: 10,
+    eventId: 'evt_customer',
+    sessionId: 'cs_test_customer',
+    createdAt: '2025-10-09T08:53:20.000Z',
   });
-  const unpaid = event({}, { payment_status: 'unpaid' });
-  assert.equal(payments.verify(Buffer.from(unpaid), signed(unpaid)), null);
-  const other = event({ type: 'payment_intent.succeeded' });
-  assert.equal(payments.verify(Buffer.from(other), signed(other)), null);
+  for (const ignored of [
+    event({}, { payment_status: 'unpaid' }),
+    event({ type: 'payment_intent.succeeded' }),
+    event({}, { metadata: { product: 'another-shop' } }),
+  ])
+    assert.equal(await payments.verify(Buffer.from(ignored), signed(ignored)), null);
+  const refused = (payload: string, signature: string, pattern: RegExp) =>
+    assert.rejects(payments.verify(Buffer.from(payload), signature), pattern);
   const live = event({ livemode: true });
-  assert.throws(() => payments.verify(Buffer.from(live), signed(live)), /wrong payment mode/);
-  assert.throws(() => payments.verify(Buffer.from(payload + ' '), signed(payload)), /signature/);
-  assert.throws(() => payments.verify(Buffer.from(payload), signed(payload, 1)), /signature/);
-  const mismatch = event({}, { client_reference_id: 'some-other-request' });
-  assert.throws(() => payments.verify(Buffer.from(mismatch), signed(mismatch)), /references/);
+  await refused(live, signed(live), /wrong payment mode/);
+  await refused(payload + ' ', signed(payload), /signature/);
+  await refused(payload, signed(payload, 1), /signature/);
+  const unreferenced = event({}, { client_reference_id: null });
+  await refused(unreferenced, signed(unreferenced), /references/);
+  const euros = event({}, { currency: 'eur' });
+  await refused(euros, signed(euros), /references/);
   assert.throws(
     () =>
-      new StripePayments({
+      new StripeGateway({
         secretKey: 'sk_live_disallowed',
         webhookSecret: secret,
         publicOrigin: 'https://merv.example.com',
@@ -162,7 +166,7 @@ test('only authentic paid same-mode checkout events can release the exact refere
 });
 
 test('submission email includes the return URL and its own idempotency key', async (t) => {
-  const { ResendResultMailer } = await import('../packages/customer-experiments/src/payment.js');
+  const { ResendResultMailer } = await import('../packages/customer-experiments/src/mail.js');
   let sent: { subject: string; text: string; to: string[] } | undefined;
   let key: string | null = null;
   t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {

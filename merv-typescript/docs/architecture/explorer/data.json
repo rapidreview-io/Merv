@@ -101,7 +101,8 @@
           "web",
           "sbxMerv",
           "sandboxEvidence",
-          "sandboxesPeople"
+          "sandboxesPeople",
+          "payments"
         ]
       },
       {
@@ -121,6 +122,7 @@
           "api",
           "merv-admin",
           "merv-sandboxes-console",
+          "merv-sandboxes-credits",
           "merv-code-work-api",
           "merv-pi-api",
           "merv-scope-api",
@@ -308,9 +310,11 @@
         "customerExperiments",
         "fleet",
         "merv-fleet-workflow",
+        "payments",
         "pi",
         "sandboxEvidence",
         "merv-sandboxes-console",
+        "merv-sandboxes-credits",
         "sandboxesPeople",
         "secrets",
         "sbxMerv"
@@ -979,7 +983,8 @@
         "api"
       ],
       "optional": [
-        "identity"
+        "identity",
+        "payments"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1687,6 +1692,27 @@
       "owner": "paper",
       "label": "Paper · ui adapter",
       "purpose": "Connects Paper to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-payments",
+      "source": "packages/payments/src/index.ts",
+      "provides": [
+        "payments"
+      ],
+      "requires": [
+        "state",
+        "api"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "payments",
+      "group": "other",
+      "owner": "payments",
+      "label": "payments",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
       "exposedTools": []
     },
     {
@@ -2499,6 +2525,30 @@
       "group": "other",
       "owner": "merv-sandboxes-console",
       "label": "merv-sandboxes-console",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sandboxes-credits",
+      "source": "packages/sandboxes/src/credits.ts",
+      "provides": [],
+      "requires": [
+        "api",
+        "sandboxesPeople",
+        "sbxProviders",
+        "sbxBilling",
+        "sbxVault"
+      ],
+      "optional": [
+        "payments"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-sandboxes-credits",
+      "group": "other",
+      "owner": "merv-sandboxes-credits",
+      "label": "merv-sandboxes-credits",
       "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
       "exposedTools": []
     },
@@ -3751,6 +3801,11 @@
       "optional": true
     },
     {
+      "from": "customerExperiments",
+      "to": "payments",
+      "optional": true
+    },
+    {
       "from": "domainEvents",
       "to": "state",
       "optional": false
@@ -4076,6 +4131,16 @@
       "optional": false
     },
     {
+      "from": "payments",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "payments",
+      "to": "api",
+      "optional": false
+    },
+    {
       "from": "pi",
       "to": "state",
       "optional": false
@@ -4436,6 +4501,36 @@
       "optional": false
     },
     {
+      "from": "merv-sandboxes-credits",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "sandboxesPeople",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-credits",
+      "to": "payments",
+      "optional": true
+    },
+    {
       "from": "sandboxesPeople",
       "to": "scope",
       "optional": false
@@ -4692,10 +4787,10 @@
     }
   ],
   "counts": {
-    "plugins": 79,
-    "providers": 36,
-    "adapters": 43,
-    "dependencies": 254
+    "plugins": 81,
+    "providers": 37,
+    "adapters": 44,
+    "dependencies": 263
   },
   "network": [
     {

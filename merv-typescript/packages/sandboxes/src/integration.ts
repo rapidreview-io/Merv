@@ -5,6 +5,7 @@ import { SandboxEvidence } from './sandbox-evidence.js';
 import { SandboxComputeWaits } from './compute-waits.js';
 import { historicalEvidenceDownloads } from './historical-evidence.js';
 import { sandboxesPeoplePlugin } from './people.js';
+import { sandboxesCreditsPlugin } from './credits.js';
 
 const Config = z
   .object({
@@ -39,6 +40,7 @@ export const sandboxIntegrationPlugin = {
   Config,
   async apply(ctx: Context, config: z.output<typeof Config> = Config.parse({})) {
     ctx.plugin(sandboxesPeoplePlugin, { newPersonCredits: config.newPersonCredits });
+    ctx.plugin(sandboxesCreditsPlugin);
     await ctx.effect(async function* () {
       await ctx.state.migrate('sandbox-runs', sandboxRunMigrations);
       const runs = new SandboxRuns(ctx.state, ctx.scope, ctx.workflows, ctx.sbxMerv);

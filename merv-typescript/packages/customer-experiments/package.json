@@ -21,7 +21,6 @@
     "@merv/sessions": "0.1.0",
     "@merv/workflows": "0.1.0",
     "cordis": "4.0.0-rc.10",
-    "stripe": "^23.0.0",
     "zod": "^3.25.0",
     "@sandboxes/accounts": "0.1.0",
     "@sandboxes/billing": "0.1.0",

@@ -1270,6 +1270,12 @@
       "version": 5,
       "hash": "c1d643f95098cdadfb99c248ad027ece716eb32a82c51c5704ab42ec30298a7a",
       "published": true
+    },
+    {
+      "component": "payments",
+      "version": 1,
+      "hash": "8c449d26aa864a12fc69b47b503207b6572429b9581b270a436f665641f885f7",
+      "published": false
     }
   ]
 }

@@ -39,6 +39,7 @@ flowchart BT
     paper["paper"]
     merv_paper_tools["merv-paper-tools"]
     merv_paper_ui["merv-paper-ui"]
+    payments["payments"]
     pi["pi"]
     merv_pi_api["merv-pi-api"]
     merv_pi_tools["merv-pi-tools"]
@@ -56,6 +57,7 @@ flowchart BT
     reviews["reviews"]
     sandboxEvidence["sandboxEvidence"]
     merv_sandboxes_console["merv-sandboxes-console"]
+    merv_sandboxes_credits["merv-sandboxes-credits"]
     sandboxesPeople["sandboxesPeople"]
     scope["scope"]
     merv_scope_api["merv-scope-api"]
@@ -148,6 +150,7 @@ flowchart BT
   customerExperiments --> tools
   customerExperiments --> api
   customerExperiments -. optional .-> identity
+  customerExperiments -. optional .-> payments
   domainEvents --> state
   experiments --> state
   experiments --> scope
@@ -213,6 +216,8 @@ flowchart BT
   merv_paper_tools --> tools
   merv_paper_ui --> paper
   merv_paper_ui --> ui
+  payments --> state
+  payments --> api
   pi --> state
   pi --> scope
   pi --> fleet
@@ -285,6 +290,12 @@ flowchart BT
   merv_sandboxes_console --> sbxMerv
   merv_sandboxes_console --> sbxMerv
   merv_sandboxes_console --> sbxMerv
+  merv_sandboxes_credits --> api
+  merv_sandboxes_credits --> sandboxesPeople
+  merv_sandboxes_credits --> sbxMerv
+  merv_sandboxes_credits --> sbxMerv
+  merv_sandboxes_credits --> sbxMerv
+  merv_sandboxes_credits -. optional .-> payments
   sandboxesPeople --> scope
   sandboxesPeople --> sbxMerv
   sandboxesPeople --> sbxMerv
