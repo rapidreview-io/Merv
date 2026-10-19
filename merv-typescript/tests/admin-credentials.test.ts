@@ -347,13 +347,13 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
         code: null,
       },
       // Refused as invalid after its last success, and not changed since.
-      dead: true,
+      state: 'dead',
       editable: true,
     },
   );
   assert.deepEqual(
-    pi!.secrets.map((s) => [s.env, s.purpose, s.sharedWith, s.dead]),
-    [['ADMIN_TEST_PI_KEY', 'Agent model calls · OpenAI API key', ['ADMIN_TEST_SHARED'], false]],
+    pi!.secrets.map((s) => [s.env, s.purpose, s.sharedWith, s.state]),
+    [['ADMIN_TEST_PI_KEY', 'Agent model calls · OpenAI API key', ['ADMIN_TEST_SHARED'], 'set']],
   );
   assert.deepEqual(
     machines!.secrets.map((s) => [s.env, s.set, s.sharedWith]),
@@ -406,13 +406,17 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
     ],
   );
 
-  // A key changed here reads as changed then, and its earlier refusal no longer marks it dead.
+  // A key changed here reads as changed then: its earlier refusal no longer marks it dead, and
+  // that refusal is still its last call.
   process.env.ADMIN_TEST_SHARED = rotated;
   await secrets.setPlatformSecret('ADMIN_TEST_SHARED', rotated, admin);
   const [{ updatedAt }] = await secrets.platformSecrets();
   const second = await read();
   const [again] = second.groups[1]!.secrets;
-  assert.deepEqual([again!.lastChanged, again!.sharedWith, again!.dead], [updatedAt, [], false]);
+  assert.deepEqual(
+    [again!.lastChanged, again!.sharedWith, again!.state],
+    [updatedAt, [], 'failing'],
+  );
   assert.deepEqual(second.groups[0]!.secrets[0]!.sharedWith, []);
   // Host health is reused within the minute: Cloudflare was asked once per token path.
   assert.equal(asked.filter((url) => url.endsWith('/tokens/verify')).length, 2);

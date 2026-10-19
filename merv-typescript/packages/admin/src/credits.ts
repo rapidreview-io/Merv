@@ -1,11 +1,10 @@
 import type { Context } from 'cordis';
 import { z, type ZodType, type ZodTypeDef } from 'zod';
 import type {} from '@sandboxes/billing';
-import type {} from '@sandboxes/providers';
 import { PLUGIN_COPY } from '@sandboxes/providers/console-labels';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host';
-import { check, MervError, pathSegment, type PlatformDirectory } from '@merv/contracts';
+import { check, MervError, pathSegment, pooled, type PlatformDirectory } from '@merv/contracts';
 import type { ApiRequest } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import type { PersonUse } from '@merv/fleet/types';
@@ -56,20 +55,16 @@ const limitInput = z.union([
  *  per request: without them, 503. */
 function sandboxes(ctx: Context) {
   const billing = ctx.get('sbxBilling');
-  const providers = ctx.get('sbxProviders');
   const people = ctx.get('sandboxesPeople');
   check(
-    billing && providers && people,
+    billing && people,
     'credits_unavailable',
     'Sandbox credits are not available on this server',
     503,
   );
-  return { billing, providers, people };
+  return { billing, people };
 }
 type Sandboxes = ReturnType<typeof sandboxes>;
-/** Provider plugins with an operator connection: the only providers credits may name. */
-const connected = async (sbx: Sandboxes) =>
-  [...new Set((await sbx.providers.connections.list()).map((c) => c.plugin))].sort();
 
 type Person = PlatformDirectory['people'][number];
 /** Fleet and Pi key a person by their sign-in; the actor names only callers without one. */
@@ -107,7 +102,8 @@ function spans(now = Date.now()): Span[] {
 /**
  * Each person's use of every credit type in each window, read from its owner, with their own
  * Sandboxes account's grants and schedules. An owner not loaded leaves its types out; a provider
- * is listed where the account holds its credit or the operator connected it.
+ * is listed where the account holds its credit or the operator connected it. Three Sandboxes
+ * reads a person, a few people at a time.
  */
 async function uses(
   env: AdminEnv,
@@ -143,55 +139,53 @@ async function uses(
     const rest = limit === null ? null : Math.max(0, limit - used);
     return [{ kind, label, unit, limit, own, used: by as CreditUse['used'], left: left ?? rest }];
   };
-  return await Promise.all(
-    people.map(async (person, i) => {
-      const own = await sbx.people.accountOf(person);
-      const held =
-        own &&
-        (await sbx.billing.credits.usage(
-          own.accountId,
-          windows.map(([, from, to]) => [at(from), at(to)] as const),
-        ));
-      const pools = new Map(held ? held.pools.map((pool) => [pool.provider, pool]) : []);
-      const rented = machines?.[i];
-      const metered = rented?.[0]!.tokens ? rented.map((use) => use.tokens!) : undefined;
-      return {
-        person: {
-          key: `${person.issuer}|${person.subject}`,
-          label: personLabel(env.admins, person) ?? own?.name ?? 'Unnamed',
-        },
-        kinds: [
-          ...kind('agent-tokens', 'Agent tokens', 'tokens', agent?.[i]),
-          ...kind('fleet-tokens', 'Fleet agent tokens', 'tokens', metered),
-          ...kind(
-            'fleet-usd',
-            'Fleet machines',
-            'usd',
-            rented?.map((use) => use.usd),
-          ),
-          ...[...new Set([...pools.keys(), ...providers])].sort().flatMap((provider) => {
-            const pool = pools.get(provider);
-            const granted = Number(pool?.granted ?? 0);
-            const reads = windows.map((_, n) => ({
-              used: Number(pool?.used_in[n] ?? 0),
-              limit: granted,
-              own: false,
-            }));
-            const label = PLUGIN_COPY[provider]?.title ?? provider;
-            return kind(`provider:${provider}`, label, 'usd', reads, Number(pool?.available ?? 0));
-          }),
-        ],
-        grants: held ? held.grants : [],
-        schedules: held ? held.schedules : [],
-      };
-    }),
-  );
+  return await pooled(people, 8, async (person, i) => {
+    const own = await sbx.people.accountOf(person);
+    const held =
+      own &&
+      (await sbx.billing.credits.usage(
+        own.accountId,
+        windows.map(([, from, to]) => [at(from), at(to)] as const),
+      ));
+    const pools = new Map(held ? held.pools.map((pool) => [pool.provider, pool]) : []);
+    const rented = machines?.[i];
+    const metered = rented?.[0]!.tokens ? rented.map((use) => use.tokens!) : undefined;
+    return {
+      person: {
+        key: `${person.issuer}|${person.subject}`,
+        label: personLabel(env.admins, person) ?? own?.name ?? 'Unnamed',
+      },
+      kinds: [
+        ...kind('agent-tokens', 'Agent tokens', 'tokens', agent?.[i]),
+        ...kind('fleet-tokens', 'Fleet agent tokens', 'tokens', metered),
+        ...kind(
+          'fleet-usd',
+          'Fleet machines',
+          'usd',
+          rented?.map((use) => use.usd),
+        ),
+        ...[...new Set([...pools.keys(), ...providers])].sort().flatMap((provider) => {
+          const pool = pools.get(provider);
+          const granted = Number(pool?.granted ?? 0);
+          const reads = windows.map((_, n) => ({
+            used: Number(pool?.used_in[n] ?? 0),
+            limit: granted,
+            own: false,
+          }));
+          const label = PLUGIN_COPY[provider]?.title ?? provider;
+          return kind(`provider:${provider}`, label, 'usd', reads, Number(pool?.available ?? 0));
+        }),
+      ],
+      grants: held ? held.grants : [],
+      schedules: held ? held.schedules : [],
+    };
+  });
 }
 
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
   const { people } = await env.ctx.scope.directory();
-  const rows = await uses(env, sbx, people, spans().slice(0, 1), await connected(sbx));
+  const rows = await uses(env, sbx, people, spans().slice(0, 1), await sbx.people.fundable());
   return {
     people: rows.map(({ person, kinds }) => ({
       ...person,
@@ -225,7 +219,7 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
       const sbx = sandboxes(env.ctx);
       const person = await named(env, segment(r));
       return await refusals.call(async () => {
-        const [found] = await uses(env, sbx, [person], spans(), await connected(sbx));
+        const [found] = await uses(env, sbx, [person], spans(), await sbx.people.fundable());
         return found!;
       });
     },
@@ -246,9 +240,7 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
               ));
       check(set, 'credits_unavailable', 'That credit is not kept on this server', 503);
       await set();
-      await env.audit.record(who, 'credits.limit', `${person.issuer}|${person.subject}`, {
-        ...input,
-      });
+      await env.audit.record(who, 'credits.limit', `${person.issuer}|${person.subject}`, input);
       return input;
     },
     'POST /admin/credits/grants': write('credits.grant', grantInput, (sbx, person, input) =>
@@ -271,10 +263,13 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
         }),
     ),
     'POST /admin/credits/grants/:id/revoke': async (r, who) => {
-      const sbx = sandboxes(env.ctx);
+      const { credits } = sandboxes(env.ctx).billing;
       const grant = pathSegment(r.url.pathname.split('/')[4]!);
-      await refusals.call(() => sbx.billing.credits.revokeGrant(grant));
-      await env.audit.record(who, 'credits.revoke', grant);
+      // The grant names its account, not its person: the account is whose it was.
+      const held = await refusals.call(() => credits.overview());
+      const of = held.find(({ grants }) => grants.some(({ id }) => id === grant));
+      await refusals.call(() => credits.revokeGrant(grant));
+      await env.audit.record(who, 'credits.revoke', grant, { account: of?.account_id ?? null });
       return { id: grant };
     },
   };

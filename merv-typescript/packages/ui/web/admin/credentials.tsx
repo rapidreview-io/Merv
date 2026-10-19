@@ -28,12 +28,6 @@ import { Head, fig, figure, usePost } from './parts';
 /** A revealed value stands this long, then leaves the page. */
 const SHOWN_MS = 30_000;
 
-/** Its last call failed: a failure newer than its last success. */
-const failedLast = ({ lastFailure: failed, lastOk: ok }: PlatformSecret) =>
-  !!failed && (!ok || failed.at > ok.at);
-/** Set, unset, dead, or failing since its last success: red is a key that does not work. */
-const stateOf = (s: PlatformSecret) =>
-  !s.set ? 'unset' : s.dead ? 'dead' : failedLast(s) ? 'failing' : 'set';
 /** A provider key: unset, else its provider's health while that is not ok, else set. */
 const keyState = ({ present: on, health }: ProviderKey) =>
   on === false ? 'unset' : health && health !== 'ok' ? health : on ? 'set' : '';
@@ -241,20 +235,8 @@ function useActs(reload: () => void) {
 }
 
 type Minted = AdminCredentials['minted'][number];
-/** What each kind of credential Merv mints is for. */
-const MINTED_FOR: Record<string, string> = {
-  'pi-model': 'Agent model calls',
-  'pi-worker': 'Agent machines',
-  actor: 'Agent and worker sign-ins',
-  'user-key': "People's API keys",
-  'managed-control': 'Fleet machine control',
-  'managed-enrollment': 'Fleet machine enrollment',
-  'session-execution': 'Agent session runs',
-};
 const MINTED = [
-  col<Minted>('purpose', 'Purpose', (m) => (
-    <Named what={MINTED_FOR[m.kind] ?? words(m.kind)} name={`${m.owner} · ${m.kind}`} />
-  )),
+  col<Minted>('purpose', 'Purpose', (m) => <Named what={words(m.kind)} name={m.owner} />),
   fig<Minted>('live', 'Live', (m) => m.live),
   fig<Minted>('expiry', 'Next expiry', ({ soonestExpiry: at }) =>
     at ? (
@@ -263,7 +245,7 @@ const MINTED = [
       </time>
     ) : null,
   ),
-  fig<Minted>('revoked', 'Revoked 24h', (m) => Number(m.revokedLastDay) || null),
+  fig<Minted>('revoked', 'Revoked 24h', (m) => m.revokedLastDay || null),
   fig<Minted>('issued', 'Last issued', (m) => <Ago at={m.newestIssued} />),
 ];
 
@@ -272,7 +254,10 @@ export function CredentialsView() {
   const acts = useActs(read.reload);
   const groups = read.data?.groups ?? [];
   const providers = read.data?.providers ?? [];
-  const states = [...groups.flatMap((g) => g.secrets.map(stateOf)), ...providers.map(keyState)];
+  const states = [
+    ...groups.flatMap((g) => g.secrets.map((s) => s.state)),
+    ...providers.map(keyState),
+  ];
   const counted = (state: string) => states.filter((s) => s === state).length;
   const secrets = [
     col<PlatformSecret>('purpose', 'Purpose', (s) => (
@@ -282,13 +267,11 @@ export function CredentialsView() {
         title={[`${s.plugin} · ${s.field}`, ...s.sharedWith.map((env) => `= ${env}`)].join('\n')}
       />
     )),
-    col<PlatformSecret>('state', 'State', (s) => (
-      <Word tone={TONE[stateOf(s)]!} value={stateOf(s)} />
-    )),
+    col<PlatformSecret>('state', 'State', (s) => <Word tone={TONE[s.state]!} value={s.state} />),
     figure<PlatformSecret>('changed', 'Changed', ({ lastChanged: at }) => at && <Ago at={at} />),
     // The newer of its last success and its last failure, red when it failed.
     figure<PlatformSecret>('call', 'Last call', (s) => {
-      const failed = failedLast(s) && s.lastFailure;
+      const failed = (s.state === 'dead' || s.state === 'failing') && s.lastFailure;
       const last = failed || s.lastOk;
       return (
         last && (
@@ -327,10 +310,10 @@ export function CredentialsView() {
           )
         }
       />
-      <LoadState {...read} columns={6} />
+      <LoadState {...read} columns={5} />
       {groups.map(({ purpose, secrets: rows }) => (
         <section className="stack admin-purpose" key={purpose}>
-          <h2 className="section-title admin-group">{purpose}</h2>
+          <h2 className="section-title">{purpose}</h2>
           <Ruled
             label={purpose}
             template="minmax(0, 2.4fr) 84px 100px 140px minmax(116px, 0.8fr)"
@@ -344,7 +327,7 @@ export function CredentialsView() {
       ))}
       {providers.length > 0 && (
         <section className="stack">
-          <h2 className="section-title admin-group">Sandbox providers</h2>
+          <h2 className="section-title">Sandbox providers</h2>
           <Ruled
             label="Sandbox providers"
             template="minmax(0, 1fr) minmax(0, 2fr) 84px minmax(116px, 0.8fr)"

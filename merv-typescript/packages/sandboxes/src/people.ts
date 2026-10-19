@@ -51,8 +51,7 @@ export class SandboxesPeople implements People {
       if (!offered.length) return own;
       const { credits } = this.sbx.billing;
       const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
-      // Connections, not `modes.of`'s funded.
-      const connected = new Set((await this.sbx.providers.connections.list()).map((c) => c.plugin));
+      const connected = new Set(await this.fundable());
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
         const id = `welcome:${provider}:${key}`;
@@ -102,6 +101,13 @@ export class SandboxesPeople implements People {
     const { accountId } = await this.ensure(person);
     await this.#credit(accountId, input.provider, input.enabled, () =>
       this.sbx.billing.credits.setSchedule({ ...input, accountId }),
+    );
+  }
+
+  /** Connections, not `modes.of`'s funded: CreditService admits credit on a connected one. */
+  fundable() {
+    return refusals.call(async () =>
+      [...new Set((await this.sbx.providers.connections.list()).map((c) => c.plugin))].sort(),
     );
   }
 

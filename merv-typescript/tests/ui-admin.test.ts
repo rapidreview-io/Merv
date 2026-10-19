@@ -290,7 +290,7 @@ const secret = (env: string, purpose: string, over: Record<string, unknown> = {}
   lastChanged: null,
   lastOk: null,
   lastFailure: null,
-  dead: false,
+  state: 'set',
   editable: true,
   ...over,
 });
@@ -331,7 +331,7 @@ const credentials = {
         secret('FLEET_OPENAI_KEY', 'Fleet agent model calls · OpenAI', {
           plugin: 'fleet',
           field: 'agent.keyEnv',
-          dead: true,
+          state: 'dead',
           lastFailure: failure(30, 'invalid_api_key', 401),
         }),
       ],
@@ -344,6 +344,7 @@ const credentials = {
           field: 'cloudflare.tokenEnv',
           lastOk: { at: ago(10), relay: 'cloudflare', model: 'vm' },
           lastFailure: failure(2, 'expired', 403),
+          state: 'failing',
         }),
       ],
     },
@@ -355,6 +356,7 @@ const credentials = {
           plugin: 'mail',
           field: 'resend.keyEnv',
           set: false,
+          state: 'unset',
         }),
       ],
     },
@@ -374,17 +376,17 @@ const credentials = {
     {
       owner: 'sessions',
       kind: 'session-execution',
-      live: '8',
+      live: 8,
       soonestExpiry: new Date(Date.now() + 3.5 * 3_600_000).toISOString(),
-      revokedLastDay: '0',
+      revokedLastDay: 0,
       newestIssued: ago(1),
     },
     {
       owner: 'billing',
       kind: 'invoice-signer',
-      live: '1',
+      live: 1,
       soonestExpiry: null,
-      revokedLastDay: '0',
+      revokedLastDay: 0,
       newestIssued: ago(60),
     },
   ],
@@ -399,13 +401,14 @@ test('credentials: purposes lead, names faint, no fingerprint, provider keys the
   signedIn();
   serve('/admin/credentials', { body: credentials });
   await open('/admin/credentials');
-  const groups = [...document.querySelectorAll('.admin-group')].map((h) => h.textContent);
+  const groups = [...document.querySelectorAll('h2')].map((h) => h.textContent);
   assert.deepEqual(groups, [
     'Agent',
     'Fleet agents',
     'Fleet machines',
     'Platform services',
     'Sandbox providers',
+    'Machine credentials',
   ]);
   // What it is for, then the name it is kept under, faint and in the mono, beneath.
   const agent = rowOf('Agent', /OPENAI_API_KEY/);
@@ -450,11 +453,11 @@ test('credentials: purposes lead, names faint, no fingerprint, provider keys the
   );
   assert.doesNotMatch(text(), /modal-main|lambda-main/, 'a provider by its name, not its id');
   assert.equal(document.querySelectorAll('[aria-label="Agent"] .ruled-row').length, 1);
-  // Machine credentials stand at the foot, each by what it is for, its owner and kind faint.
+  // Machine credentials stand at the foot, each by its kind, its owner faint.
   const minted = [...document.querySelectorAll('[aria-label="Machine credentials"] .ruled-row')];
   assert.deepEqual(
     minted.map((row) => row.querySelector('[role="cell"]')!.textContent),
-    ['Agent session runssessions · session-execution', 'invoice-signerbilling · invoice-signer'],
+    ['session-executionsessions', 'invoice-signerbilling'],
   );
   assert.match(minted[0]!.textContent!, /in 3h/, 'an expiry still to come');
 });

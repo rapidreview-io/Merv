@@ -64,7 +64,8 @@ export interface PlatformSecret extends EnvName {
   lastChanged: string | null;
   lastOk: Outcome | null;
   lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
-  dead: boolean;
+  /** Unset; dead (refused, and nothing worked or changed since); failing (its last call failed). */
+  state: 'set' | 'unset' | 'dead' | 'failing';
   /** The admin may reveal and change it here (a stored override replaces the env value). */
   editable: boolean;
 }
@@ -87,9 +88,9 @@ export interface AdminCredentials {
     secrets: PlatformSecret[];
   }[];
   providers: ProviderKey[];
-  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
+  /** Machine and agent credentials Merv minted, by owner and kind. */
   minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
-    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
+    Record<'live' | 'revokedLastDay', number> & { soonestExpiry: string | null })[];
 }
 /** `POST /admin/credentials/reveal` (→ `{ value }`) names one; `/change` (→ `{ ok, reloaded }`,
  *  the plugin entries reloaded and provider instances rebound) gives an env its `value`, or a

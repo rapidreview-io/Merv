@@ -29,3 +29,24 @@ export async function everyAsync<T>(
     if (!(await fn(values[index], index))) return false;
   return true;
 }
+/** `fn` over `values`, at most `width` at a time, in input order; a failure stops the rest. */
+export async function pooled<T, U>(
+  values: readonly T[],
+  width: number,
+  fn: (value: T, index: number) => Promise<U>,
+) {
+  const results: U[] = [];
+  let next = 0;
+  let failed = false;
+  const lane = async () => {
+    while (!failed && next < values.length) {
+      const index = next++;
+      results[index] = await fn(values[index]!, index).catch((error: unknown) => {
+        failed = true;
+        throw error;
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, values.length) }, lane));
+  return results;
+}

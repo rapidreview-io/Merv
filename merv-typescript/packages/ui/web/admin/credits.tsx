@@ -387,16 +387,15 @@ function Drawer(props: {
 export function CreditsView() {
   const credits = useTool<AdminCredits>('/admin/credits', {}, { every: 60_000 });
   const data = credits.data;
-  const filter = useListFilter(
-    data?.people.map((p): Person => ({ ...p, id: p.key })),
-    { labels: (person) => [person.label] },
-  );
+  const everyone = data?.people.map((p): Person => ({ ...p, id: p.key }));
+  const filter = useListFilter(everyone, { labels: (person) => [person.label] });
   // A column per credit type, in the order the people carry them, named as their owner names it.
   const kinds = new Map(data?.people.flatMap((p) => p.kinds.map((k) => [k.kind, k.label])));
   const [openId, setOpen] = useState<string>();
   const [span, setSpan] = useState<Span>('day');
   const roomy = useRoomy();
-  const person = filter.rows.find((p) => p.id === openId);
+  // From everyone: a search that hides the open person leaves their drawer open.
+  const person = everyone?.find((p) => p.id === openId);
   const close = () => setOpen(undefined);
   useSidebarEscape(!!person, close);
   // Closing hands the cursor back to the name that opened the drawer.
@@ -475,7 +474,7 @@ export function CreditsView() {
               )
             }
             emptyTitle="No one holds credit"
-            columns={5}
+            columns={kinds.size + 1}
           />
         </div>
         <aside

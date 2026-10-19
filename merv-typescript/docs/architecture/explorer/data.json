@@ -341,8 +341,8 @@
       "id": "merv-admin",
       "group": "other",
       "owner": "merv-admin",
-      "label": "merv-admin",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Platform admin",
+      "purpose": "Serves /admin to the configured platform admins: work, credits and credentials across every project, composed from each owner's own reads and writes, every write audited.",
       "exposedTools": []
     },
     {

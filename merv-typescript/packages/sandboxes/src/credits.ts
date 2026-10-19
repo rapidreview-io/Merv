@@ -79,7 +79,6 @@ async function topUp(people: SandboxesPeople, paid: Paid) {
 /** `/compute/checkout`: a top-up of the signed-in person's own account, which the console asks for. */
 function computeRoutes(sbx: Sbx): MountHandler {
   return async (req, res, r) => {
-    res.setHeader('Cache-Control', 'no-store');
     const principal = r.principal;
     check(
       principal && !('caller' in principal) && principal.kind === 'user',
