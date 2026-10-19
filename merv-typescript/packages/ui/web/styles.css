@@ -5707,220 +5707,273 @@ html:has(.pi-page) body {
   color: var(--faint);
 }
 
-/* Under the title line: the map, then what is live. The map is the page, so it stands in
-   air of its own — as much above it as below, growing with the window — and the line of what
-   is live sits clear of its last row. With neither to draw, the block is not there. */
+/* The map of work (views/work-map.tsx): a mark and a name for every unit, prerequisites to
+   the left of what waits on them, one quiet curve between them with no head. The mark is the
+   stage's own glyph — a circle for an experiment, a square for a task — red only as the ring
+   of what needs a person, green only as the dot of what is live. Ended work keeps its place
+   and steps back; a long chain's finished head folds to its marks alone. */
 .wmap-stage {
-  --wmap-air: clamp(40px, 7vh, 80px);
   display: flex;
   flex-direction: column;
-  gap: var(--wmap-air);
-  /* Less what the page already leaves under its title line. */
-  padding-top: calc(var(--wmap-air) - 30px);
+  gap: var(--space-3);
 }
-.wmap-stage:not(:has(.wmap-node, .live-head)) {
-  display: none;
-}
-/* The drawing: one measured frame, the lines behind the cards. */
 .wmap {
   position: relative;
+  min-height: 24px;
 }
 .wmap:focus-visible {
-  outline-offset: 4px;
+  outline: 2px solid var(--line-strong);
+  outline-offset: 6px;
 }
-/* A timed map's axis: each row's time at its head, the day over the first row of each day,
-   on a rule down the left of the drawing. */
-.wmap:has(.wmap-tick)::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 80px;
-  border-left: 1px solid var(--ghost);
-}
-.wmap-tick {
-  position: absolute;
-  left: 0;
-  width: 72px;
-  display: grid;
-  justify-items: end;
-  gap: 2px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-.wmap-tick::after {
-  content: '';
-  position: absolute;
-  top: 7px;
-  right: -12px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ghost);
-}
-.wmap-tick-day {
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-}
-/* Lines: straight runs and right angles, in the ink of what is drawn and never read;
-   dashed while the prerequisite is unsettled, ink for the card in hand. */
 .wmap-wires {
   position: absolute;
   inset: 0;
   overflow: visible;
   pointer-events: none;
 }
-.wmap-wire path {
+.wmap-wire {
   fill: none;
-  stroke: var(--ghost);
+  stroke: var(--line-strong);
   stroke-width: 1.25;
+  transition: opacity 120ms ease;
 }
-.wmap-wire--waiting path:first-child {
-  stroke-dasharray: 4 4;
+.wmap-wire--waiting {
+  stroke-dasharray: 2 4;
 }
-.wmap-wire.on path {
-  stroke: var(--text);
+.wmap-wire.on {
+  stroke: var(--muted);
+  stroke-width: 1.5;
 }
 .wmap-wire.dim {
-  opacity: 0.42;
+  opacity: 0.25;
 }
-/* A quiet pulse runs down a line whose upper end is being worked now. */
-.wmap-wire .wmap-pulse {
-  stroke: var(--muted);
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-dasharray: 8 92;
-  stroke-dashoffset: 8;
-  animation: wmap-flow 2.4s linear infinite;
-}
-@keyframes wmap-flow {
-  to {
-    stroke-dashoffset: -92;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .wmap-wire .wmap-pulse {
-    display: none;
-  }
-}
-/* A card is the object here, so it keeps its frame: what a line ends at and what the
-   pointer picks up. Its ground covers any line passing behind it. */
-.wmap-node {
+.wmap-mark {
   position: absolute;
-  z-index: 1;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  overflow: hidden;
-  padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
   font: inherit;
+  font-size: var(--text-sm);
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition:
-    border-color 180ms ease,
-    box-shadow 180ms ease;
+  transition: opacity 120ms ease;
 }
-.wmap-node:hover {
-  border-color: var(--muted);
+.wmap-mark:hover,
+.wmap-mark.on {
+  background: var(--bg-soft);
 }
-.wmap-node--waiting {
-  border-style: dashed;
-}
-/* A finished unit is drawn in the quiet ink: it is on the map for what waits on it. */
-.wmap-node--done {
-  border-color: var(--line);
-}
-.wmap-node--done .wmap-name {
+.wmap-mark.on .wmap-name {
   font-weight: 500;
-  color: var(--muted);
 }
-.wmap-node--done .stage-mark {
-  color: var(--faint);
+.wmap-mark:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: 0;
 }
-.wmap-node--attn {
-  border-color: var(--refutes);
-}
-/* The card in hand is ringed in ink, not the accent, which is the primary control's. */
-.wmap-node.on {
-  border-color: var(--text);
-  box-shadow: 0 0 0 1px var(--text);
-}
-/* What is not related to the card in hand steps back, and is still read: its inks step
-   down a shade, each still 4.5:1, and only what is drawn and never read fades. A card
-   that needs a person never steps back. */
-.wmap-node.dim {
-  border-color: var(--line);
-}
-.wmap-node.dim .wmap-name {
-  color: var(--muted);
-}
-.wmap-node.dim :is(.wmap-line, .stage-mark) {
-  color: var(--faint);
-}
-.wmap-node.dim :is(.live-dot, .stage-glyph) {
-  opacity: 0.42;
-}
-/* Red on this page is only ever what a person has to do: an end that failed is grey here. */
-.wmap-node .stage-glyph--bad {
-  color: var(--ghost);
-}
-/* A card too full is cut at its foot, never squeezed. */
-.wmap-node > * {
+.wmap-glyph {
+  position: relative;
+  display: inline-flex;
   flex: none;
+  width: 14px;
+  height: 14px;
 }
-.wmap-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 16px;
+.wmap-glyph .live-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
 }
 .wmap-name {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: 18px;
-}
-/* The card's stage, and while a visit works it, the time since its work began. */
-.wmap-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-}
-.wmap-timer {
-  font-size: var(--text-sm);
-  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
 }
-.wmap-line {
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: var(--text-sm);
-  line-height: 17px;
-  color: var(--muted);
+/* Ended work keeps its place and steps back; a mark in hand keeps its colour. */
+.wmap-mark--done .wmap-name,
+.wmap-mark--done .stage-glyph {
+  opacity: 0.5;
 }
-/* What a person has to do is never cut to one line. */
-.wmap-line.running-attn {
-  -webkit-line-clamp: 2;
+.wmap-mark--waiting .wmap-name {
+  color: var(--faint);
+}
+/* Red is one ring: the mark of what needs a person; its name is then in ink. */
+.wmap-mark--attn .stage-ring,
+.wmap-mark--attn .status-dot {
+  stroke: var(--refutes);
   color: var(--refutes);
 }
-/* What is live. Green only where something is, breathing only while a call is in flight;
-   red where a person is needed; a hollow ring while something is starting. */
+.wmap-mark--attn .wmap-name {
+  color: var(--text);
+}
+.wmap-mark.dim {
+  opacity: 0.3;
+}
+/* Folded, a unit is a small mark without its name; the run says how many, and unfolds. */
+.wmap-mark--folded {
+  width: 16px;
+  padding: 0;
+  justify-content: center;
+}
+.wmap-mark--folded .wmap-glyph,
+.wmap-mark--folded .stage-glyph {
+  width: 10px;
+  height: 10px;
+}
+.wmap-fold {
+  position: absolute;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  cursor: pointer;
+}
+.wmap-fold:hover {
+  color: var(--muted);
+}
+/* The page's one line (WorkBar): the counts, each a filter; dispatch; the shapes; Key. */
+.wbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-height: 36px;
+}
+.wbar-g {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.wbar-word {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.wbar-kind {
+  margin: 0 4px 0 2px;
+  color: var(--faint);
+}
+/* Beside the sidebar the line has no room for the kind words: the shapes say the kind. */
+@container running (max-width: 1100px) {
+  .wbar-kind {
+    display: none;
+  }
+}
+.wbar-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 10px;
+  background: var(--line);
+}
+.wbar-gap {
+  width: 14px;
+}
+.wbar-b {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.wbar-b:hover {
+  color: var(--text);
+}
+.wbar-b.on {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+.wbar-b:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.wbar-n {
+  color: var(--text);
+  font-weight: 500;
+}
+.wbar-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+}
+.wbar-glyph .stage-ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.wbar-glyph .stage-fill,
+.wbar-fill {
+  fill: currentColor;
+}
+.wbar-glyph .stage-sign {
+  fill: none;
+  stroke: var(--bg);
+  stroke-width: 1.6;
+}
+.wbar-glyph--attention .stage-ring {
+  stroke: var(--refutes);
+}
+.wbar-live {
+  fill: var(--supports);
+}
+.wbar-key {
+  margin-left: 4px;
+}
+.wbar-link {
+  padding: 0 10px;
+  text-decoration: none;
+}
+.wbar-link:hover {
+  color: var(--text);
+}
+.wbar > .btn {
+  margin-left: auto;
+}
+.wkey {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 0 0 var(--space-2);
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.wkey li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.wbar-line {
+  width: 22px;
+  height: 14px;
+  overflow: visible;
+}
+.wbar-line path {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+.wbar-line--waiting path {
+  stroke-dasharray: 2 4;
+}
 .live-dot {
   flex: none;
   width: 7px;
@@ -5942,35 +5995,10 @@ html:has(.pi-page) body {
 }
 /* Under the map: how many are working and how many things need a person, then each
    lane's own line with its one control. */
-.live-head {
+.live-notes {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
-  font-size: var(--text-sm);
-}
-.live-head-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-4);
-  min-height: var(--hit);
-}
-.running-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  min-width: 0;
-}
-/* The way to every agent and machine there has been: the line's last word, at its far end. */
-.live-more {
-  margin-left: auto;
-  color: var(--muted);
-}
-.live-more:hover {
-  color: var(--active);
+  gap: var(--space-2);
 }
 .running-note {
   margin-top: 2px;

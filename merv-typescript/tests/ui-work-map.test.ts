@@ -19,9 +19,12 @@ const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const {
   LiveLines,
-  LiveUnder,
+  LiveNotes,
+  WorkBar,
   WorkMap,
   WorkPlane,
+  countsOf,
+  useBoard,
   absorberOf,
   cadenceOf,
   liveLookup,
@@ -87,6 +90,18 @@ let shapes: unknown;
  * The page as the Work view stands it: the map, what is live under it, and — in place of
  * the list, which is the wave's — the lines of who is on two of its units.
  */
+/** The page's one line as the Work view mounts it: counts over the board, nothing narrowed. */
+function Bar() {
+  const live = useBoard();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const counts = countsOf(mapOf(live?.board, wave as any).units, !!live?.now.stale);
+  return createElement(WorkBar, {
+    counts,
+    filter: { only: new Set(), kinds: { experiments: true, tasks: true, ended: true } },
+    onFilter: () => undefined,
+    agents: '/sessions',
+  });
+}
 const under = (nameOf: (id: string) => string | undefined) =>
   createElement(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,7 +109,8 @@ const under = (nameOf: (id: string) => string | undefined) =>
     { nameOf },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     createElement(WorkMap as any, { shapes, wave, onDrawn: (now: boolean) => (drawnNow = now) }),
-    createElement(LiveUnder, { agents: '/sessions' }),
+    createElement(Bar),
+    createElement(LiveNotes),
     createElement(LiveLines, { id: 'wf_index' }),
     createElement(LiveLines, { id: 'wf_ablate' }),
   );
@@ -162,7 +178,7 @@ const button = (label: string, within: ParentNode = document) =>
   );
 const reads = (tool: string) => requests.filter((line) => line === `POST /tools/${tool}`).length;
 
-test('under the map: how many are working, what needs a person in red, and each lane’s line with its control', async (t) => {
+test('the one line above the map: what is live and needs a person of each kind, dispatch, Agents; what is live on no unit stands under it', async (t) => {
   t.after(unmount);
   drawn();
   const given = board();
@@ -173,25 +189,38 @@ test('under the map: how many are working, what needs a person in red, and each 
   };
   answers(given);
   await mount(page());
-  // Two leases are live; one still starting and a machine being rented are not at work yet.
-  assert.match($('.live-head-line')!.textContent!, /^2 working/);
-  // Red beside the count only above zero; a quiet line is ink, and needs nobody.
+  // Each kind's counts, in its own shape, the words live and attention beside them.
+  const bar = $('.wbar')!;
+  assert.match(bar.textContent!, /^experiments\d+live\d+attentiontasks\d+live\d+attention/);
+  const counts = countsOf(mapOf(given, { items: [], edges: [] }).units, false);
   assert.deepEqual(
-    all('.running-needs').map((item) => item.textContent),
-    ['2 need you'],
+    all('.wbar-n').map((item) => item.textContent),
+    [
+      counts.experiments.live,
+      counts.experiments.attention,
+      counts.tasks.live,
+      counts.tasks.attention,
+    ].map(String),
   );
-  assert.ok(!card('work:wf_ablate').classList.contains('wmap-node--attn'));
-  assert.ok(card('work:wf_ablate').textContent!.includes('Launch failed 2 times, retrying'));
+  assert.equal(
+    counts.tasks.attention + counts.experiments.attention,
+    1,
+    'the held task needs a person',
+  );
+  // A quiet line is ink, and needs nobody: the mark is not red, and says nothing of it.
+  assert.ok(!card('work:wf_ablate').classList.contains('wmap-mark--attn'));
+  assert.ok(!card('work:wf_ablate').textContent!.includes('Launch failed'));
+  // Dispatch is its mark and its word; the lane's control is a press away, never the accent.
+  const dispatch = bar.querySelector<HTMLButtonElement>('[title="Pause dispatch"]')!;
+  assert.equal(dispatch.textContent, 'dispatch on');
+  assert.ok(!dispatch.classList.contains('btn--primary'));
+  assert.ok(!text().includes('Dispatch running · Machines 2'));
   // The line ends in the way to every agent and machine there has been: the Agents page.
-  const more = $('.live-head-line a.live-more')!;
+  const more = bar.querySelector('a.wbar-link')!;
   assert.deepEqual([more.textContent, more.getAttribute('href')], ['Agents', '/sessions']);
-  // The Sessions line carries dispatch and its one control, which never wears the accent.
-  const pause = button('Pause dispatch')!;
-  assert.ok(pause && !pause.classList.contains('btn--primary'));
-  assert.ok(text().includes('Dispatch running · Machines 2 · Free slots 1'));
-  // What is live and on no unit of work has a line of its own there, the way to its sidebar.
+  // What is live and on no unit of work has a line of its own under the map.
   assert.deepEqual(
-    all('.live-head .live-line').map((item) => item.dataset.key),
+    all('.live-notes .live-line').map((item) => item.dataset.key),
     ['sandbox:sbx_h100', 'sandbox:sbx_a10'],
   );
 });
@@ -210,8 +239,8 @@ test('what a lane needs of a person has its own line, never cut, with who ends t
   };
   answers(given);
   await mount(page());
-  const line = $('.live-head .running-lane-attn')!;
-  assert.ok(line, 'the red clause stands under the lanes’ line');
+  const line = $('.live-notes .running-lane-attn')!;
+  assert.ok(line, 'the red clause stands under the map');
   assert.equal(line.closest('.running-summary'), null, 'not squeezed into the lane’s own line');
   const red = line.querySelector<HTMLElement>('.running-attn')!;
   assert.equal(red.textContent, 'No machine online · 3 waiting');
@@ -248,7 +277,7 @@ test('a lane whose source has never answered reads a dash, never a zero, and the
   given.lanes.sessions = { nodes: [], summaries: [], needsYou: 0, failed: [], pending: true };
   answers(given);
   await mount(page());
-  assert.match($('.live-head-line')!.textContent!, /^— working/);
+  assert.ok($('.wbar'), 'the line stands, counting what is known');
   // How often the board is read: soon while a source is unknown, often while anything moves.
   assert.equal(cadenceOf(given), 2000);
   assert.equal(cadenceOf(board()), 5000);
@@ -268,11 +297,11 @@ test('without the room to draw there is no map, and what is live is still said u
   listed();
   answers();
   await mount(page());
-  assert.equal(all('.wmap-node').length, 0);
+  assert.equal(all('.wmap-mark').length, 0);
   assert.equal($('svg.wmap-wires'), null);
   assert.equal(drawnNow, false, 'the list under it is told, and says each relation in words');
   assert.equal($('.wmap')!.tabIndex, -1, 'a frame with nothing drawn takes no key');
-  assert.match($('.live-head-line')!.textContent!, /^2 working/);
+  assert.ok($('.wbar'));
   assert.equal(all('.live-line').length, 5);
 });
 
@@ -293,7 +322,7 @@ test('what a card waits on is part of its name, said once, and a prerequisite al
   const named = (key: string) => card(key).getAttribute('aria-label')!;
   assert.equal(
     named('work:wf_review'),
-    'Task, Review citation index, Ready once it settles, Waits on Rebuild citation index',
+    'Task, Review citation index, Waits on Rebuild citation index',
   );
   assert.equal(named('work:wf_draft').match(/Waits on Ablate retrieval depth/g)!.length, 1);
   assert.ok(!named('work:wf_draft').includes('Rebuild citation index'));
@@ -302,16 +331,16 @@ test('what a card waits on is part of its name, said once, and a prerequisite al
   assert.equal(all('.wmap-wire--waiting').length, 2);
 });
 
-test('measured, the cards stand on the drawing, each prerequisite over what waits on it, and pointing lights a card’s lines', async (t) => {
+test('measured, the marks stand on the drawing, each prerequisite left of what waits on it, and pointing lights a mark’s lines', async (t) => {
   t.after(unmount);
   drawn(1200);
   answers();
   await mount(page());
-  const cards = all('.wmap-node');
-  assert.equal(cards.length, 5);
+  const marks = all('.wmap-mark');
+  assert.equal(marks.length, 5);
   assert.equal(drawnNow, true, 'the list under it is told, and does not say the lines again');
-  for (const item of cards)
-    assert.match(item.getAttribute('style') ?? '', /left: \d+px; top: \d+px/);
+  for (const item of marks)
+    assert.match(item.getAttribute('style') ?? '', /left: -?[\d.]+px; top: -?[\d.]+px/);
   const svg = $('svg.wmap-wires')!;
   assert.equal(svg.getAttribute('aria-hidden'), 'true');
   assert.equal(svg.getAttribute('width'), '1200');
@@ -320,15 +349,14 @@ test('measured, the cards stand on the drawing, each prerequisite over what wait
     ['work:wf_index', 'work:wf_review'],
     ['work:wf_ablate', 'work:wf_draft'],
   ]) {
-    assert.equal(at(first!)[0], at(then!)[0], `${then} stands under ${first}`);
-    assert.ok(at(then!)[1]! > at(first!)[1]!);
+    assert.ok(at(then!)[0]! > at(first!)[0]!, `${then} stands right of ${first}`);
   }
-  assert.ok(card('work:wf_review').classList.contains('wmap-node--waiting'));
-  // A pulse runs only down a line whose upper end is being worked now.
+  assert.ok(card('work:wf_review').classList.contains('wmap-mark--waiting'));
+  // One quiet curve a line, with no head and nothing moving along it.
   assert.equal(all('.wmap-wire').length, 2);
-  assert.equal(all('.wmap-pulse').length, 2);
+  assert.equal(all('.wmap-pulse').length, 0);
   assert.equal(all('.wmap-wire.on').length, 0);
-  // Pointing at a card lights its lines while nothing is in hand.
+  // Pointing at a mark lights its lines while nothing is in hand.
   await act(async () => {
     card('work:wf_draft').dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
   });
@@ -336,7 +364,7 @@ test('measured, the cards stand on the drawing, each prerequisite over what wait
   assert.equal(all('.wmap-wire.dim').length, 1);
 });
 
-test('a card says where its unit stands, and who is on it and where', async (t) => {
+test('a mark is its unit’s stage in its kind’s shape, and its name; the rest is the sidebar’s', async (t) => {
   t.after(unmount);
   t.after(() => {
     wave = { items: [], edges: [] };
@@ -409,32 +437,30 @@ test('a card says where its unit stands, and who is on it and where', async (t) 
   ];
   answers();
   await mount(page());
-  assert.equal(all('.wmap-node').length, 6);
+  assert.equal(all('.wmap-mark').length, 6);
   assert.equal($('[data-key="work:wf_old"]'), null);
-  // The stage: its mark and its word, the one way everywhere.
+  // The stage is the mark itself: a square for a task, filled as far as the work is along.
   const index = card('work:wf_index');
-  const stage = index.querySelector('.stage-mark')!;
-  assert.equal(stage.textContent, 'in progress');
-  assert.ok(stage.querySelector('svg.stage-glyph--work'));
-  // Who is on it and where takes the place of the board's own line, which said less.
-  assert.deepEqual(
-    [...index.querySelectorAll('.wmap-line')].map((line) => line.textContent),
-    ['Rebuild citation index on mac-studio'],
-  );
+  assert.ok(index.querySelector('svg.stage-glyph--work rect.stage-ring'));
+  assert.equal(index.querySelector('.stage-mark'), null, 'no word beside it');
+  // Who is on it and where is the sidebar's; the mark says the name and nothing of the board's line.
+  assert.equal(index.querySelector('.wmap-name')!.textContent, 'Rebuild citation index');
   assert.ok(!index.textContent!.includes('Producer on it'));
-  // With nobody on it, the board's line says why.
-  assert.ok(card('work:wf_review').textContent!.includes('Waits on Rebuild citation index'));
-  // A finished prerequisite is quiet, checked, and gives the line its upper end.
+  // What a unit waits on is in its name for a reader, never drawn as words on the map.
+  assert.ok(
+    card('work:wf_review').getAttribute('aria-label')!.includes('Waits on Rebuild citation index'),
+  );
+  assert.ok(!card('work:wf_review').textContent!.includes('Waits on'));
+  // A finished prerequisite steps back, checked, and gives the line its left end.
   const pin = card('work:wf_pin');
-  assert.ok(pin.classList.contains('wmap-node--done'));
-  assert.equal(pin.querySelector('.stage-mark')!.textContent, 'done');
+  assert.ok(pin.classList.contains('wmap-mark--done'));
   assert.ok(pin.querySelector('svg.stage-glyph--done .stage-sign'));
   assert.equal(all('.wmap-wire').length, 3);
   // One line for each relation, however many owners say it.
   assert.equal(all('.wmap-wire--waiting').length, 2);
   assert.equal(
     card('work:wf_index').getAttribute('aria-label'),
-    'Task, Rebuild citation index, in progress, Rebuild citation index',
+    'Task, Rebuild citation index, in progress',
   );
 });
 
@@ -838,8 +864,8 @@ test('the map’s keys leave a modified key to the browser, and a control under 
   }
   assert.equal(await pressed(first, 'j', { ctrlKey: true }), true);
   assert.equal(document.activeElement, first);
-  // An arrow on Pause dispatch stays with it rather than jumping to the first card.
-  const pause = button('Pause dispatch')!;
+  // An arrow on dispatch stays with it rather than jumping to the first mark.
+  const pause = $('.wbar [title="Pause dispatch"]') as HTMLButtonElement;
   pause.focus();
   assert.equal(await pressed(pause, 'ArrowDown'), true);
   assert.equal(document.activeElement, pause);
@@ -887,21 +913,16 @@ test('a key link in a sidebar swaps what it shows in place, and Close leaves the
   assert.equal(document.activeElement, card('work:wf_review'));
 });
 
-test('red is only what a person has to do: a card, a line — and never a clock of itself', async (t) => {
+test('red is only what a person has to do: a mark’s ring, a line — and never a clock of itself', async (t) => {
   t.after(unmount);
   drawn();
   answers();
   await mount(page());
   // The held task, and the experiment whose agent has gone quiet: the card wears what any
   // of who is on it needs.
-  const red = all('.wmap-node--attn').map((item) => item.dataset.key);
+  const red = all('.wmap-mark--attn').map((item) => item.dataset.key);
   assert.deepEqual(red.sort(), ['work:wf_ablate', 'work:wf_table']);
-  assert.deepEqual(
-    all('.wmap-node .live-dot--attn')
-      .map((item) => item.closest<HTMLElement>('[data-key]')!.dataset.key)
-      .sort(),
-    red.sort(),
-  );
+  assert.equal(all('.wmap-mark .live-dot--attn').length, 0, 'red is the ring, never a dot');
   assert.deepEqual(
     all('.live-line')
       .filter((item) => item.querySelector('.live-dot--attn'))
@@ -909,15 +930,13 @@ test('red is only what a person has to do: a card, a line — and never a clock 
       .sort(),
     ['sandbox:sbx_h100', 'session:session_ablate'],
   );
-  // What a person has to do stands where the unit's own line would.
+  // What a person has to do of the unit itself follows its name; what its agent needs is
+  // the agent's line, and the mark only wears the ring.
   assert.equal(
-    card('work:wf_table').querySelector('.wmap-line.running-attn')!.textContent,
-    'Waiting on a person to merge the pull request',
+    card('work:wf_table').querySelector('.wmap-say')!.textContent,
+    ' · Waiting on a person to merge the pull request',
   );
-  assert.equal(
-    card('work:wf_ablate').querySelector('.wmap-line.running-attn')!.textContent,
-    'Ablate retrieval depth · Quiet 34m',
-  );
+  assert.equal(card('work:wf_ablate').querySelector('.wmap-say'), null);
   await press(card('sandbox:sbx_h100'));
   const rows = all('.running-facts .kv-row');
   const row = (label: string) =>
@@ -939,14 +958,14 @@ test('a finished unit steps back in quiet ink, except for the red line saying wh
   answers();
   await mount(page());
   const held = card('work:wf_table');
-  assert.ok(held.classList.contains('wmap-node--done'));
-  assert.ok(held.classList.contains('wmap-node--attn'), 'and keeps its red frame');
-  assert.equal(getComputedStyle(held.querySelector('.wmap-name')!).color, 'var(--muted)');
-  const red = held.querySelector<HTMLElement>('.wmap-line.running-attn')!;
+  assert.ok(held.classList.contains('wmap-mark--done'));
+  assert.ok(held.classList.contains('wmap-mark--attn'), 'and keeps its red ring');
+  assert.equal(getComputedStyle(held.querySelector('.wmap-name')!).color, 'var(--text)');
+  const red = held.querySelector<HTMLElement>('.wmap-say.running-attn')!;
   assert.equal(getComputedStyle(red).color, 'var(--refutes)');
 });
 
-test('a quiet line is ink wherever it stands: on a card, on an agent’s line, in a sidebar’s head and under the map', async (t) => {
+test('a quiet line is ink wherever it stands: never on a mark, on an agent’s line, in a sidebar’s head and under the map', async (t) => {
   t.after(unmount);
   t.after(styled());
   drawn();
@@ -969,26 +988,24 @@ test('a quiet line is ink wherever it stands: on a card, on an agent’s line, i
   panel.header.attention = quiet;
   answers(given, { 'session:session_ablate': panel });
   await mount(page());
+  // Only a machine needs anyone: no unit's count says attention, and no mark wears the ring.
   assert.deepEqual(
-    all('.running-needs').map((item) => item.textContent),
-    ['1 needs you'],
-    'only a machine needs anyone',
+    all('.wbar-n')
+      .map((item) => item.textContent)
+      .filter((_, n) => n % 2 === 1),
+    ['0', '0'],
   );
   for (const key of ['work:wf_ablate', 'work:wf_table']) {
     const held = card(key);
-    assert.ok(!held.classList.contains('wmap-node--attn'), key);
+    assert.ok(!held.classList.contains('wmap-mark--attn'), key);
     assert.equal(held.querySelector('.running-attn, .live-dot--attn'), null, key);
+    assert.equal(held.querySelector('.wmap-say'), null, 'a quiet line is not said on the map');
   }
-  const lines = (key: string) => [...card(key).querySelectorAll<HTMLElement>('.wmap-line')];
-  const said = lines('work:wf_ablate').find((line) => line.textContent!.includes(quiet.says[0]));
-  assert.equal(getComputedStyle(said!).color, 'var(--muted)');
-  assert.equal(lines('work:wf_table')[0]!.textContent, 'Ready · launch failed 2 times, retrying');
-  assert.equal(getComputedStyle(lines('work:wf_table')[0]!).color, 'var(--muted)');
   // The agent's own line says it too, in ink, with a green dot and not a red one.
   const agent = card('session:session_ablate');
   assert.ok(agent.textContent!.includes(quiet.says[0]));
   assert.equal(agent.querySelector('.running-attn, .live-dot--attn'), null);
-  const lane = $('.live-head .running-lane-attn')!;
+  const lane = $('.live-notes .running-lane-attn')!;
   assert.equal(lane.textContent, 'Dispatch waiting');
   assert.equal(lane.querySelector('.running-attn'), null);
   await press(agent);
@@ -1435,7 +1452,7 @@ test('machine text prints an id inside it by its head and its tail, and titles a
   assert.equal(copied, branch, 'the copy is the branch an operator fetches, whole');
 });
 
-test('a card is named by what it draws, and one that needs a person says what in its name', async (t) => {
+test('a mark is named by what it draws, and one that needs a person says what in its name', async (t) => {
   t.after(unmount);
   drawn();
   answers();
@@ -1443,26 +1460,20 @@ test('a card is named by what it draws, and one that needs a person says what in
   const named = (key: string) => card(key).getAttribute('aria-label')!;
   assert.equal(
     named('work:wf_table'),
-    'Task, Sensitivity table, Waiting on a person to merge the pull request, Code check',
+    'Task, Sensitivity table, Waiting on a person to merge the pull request',
   );
-  assert.equal(
-    named('work:wf_index'),
-    'Task, Rebuild citation index, Producer on it, Rebuild citation index',
-  );
+  assert.equal(named('work:wf_index'), 'Task, Rebuild citation index');
   assert.equal(
     named('work:wf_review'),
     'Task, Review citation index, Waits on Rebuild citation index',
   );
-  // Its clocks are left out, so the name of a card in hand holds still while they tick.
-  assert.equal(
-    named('work:wf_ablate'),
-    'Experiment, Ablate retrieval depth, running, Ablate retrieval depth, GPU run',
-  );
-  for (const item of all('.wmap-node'))
+  // Its clocks are left out, so the name of a mark in hand holds still while they tick.
+  assert.equal(named('work:wf_ablate'), 'Experiment, Ablate retrieval depth');
+  for (const item of all('.wmap-mark'))
     assert.doesNotMatch(item.getAttribute('aria-label')!, /\d+[smhd]\b|\bago\b|\bleft\b/);
 });
 
-test('the keyboard walks the cards in reading order, and straight down a chain', async (t) => {
+test('the keyboard walks the marks in reading order, and down to the chain under', async (t) => {
   t.after(unmount);
   drawn(1600);
   answers();
@@ -1475,8 +1486,12 @@ test('the keyboard walks the cards in reading order, and straight down a chain',
   assert.equal(first.dataset.key, 'work:wf_table');
   await key(first, 'j');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
-  await key(document.activeElement!, 'ArrowDown');
+  // Reading order runs along a chain; down goes to the chain under it, and up comes back.
+  await key(document.activeElement!, 'j');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_review');
+  await key(document.activeElement!, 'k');
+  await key(document.activeElement!, 'ArrowDown');
+  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_ablate');
   await key(document.activeElement!, 'ArrowUp');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
 });
@@ -1503,9 +1518,13 @@ test('with nothing on the board nothing is said; a lane that did not load or wen
   drawn();
   answers(emptyBoard());
   await mount(page());
-  assert.equal($('.live-head'), null);
-  assert.equal(all('.wmap-node').length, 0);
-  assert.equal(text(), '');
+  assert.equal($('.live-notes'), null);
+  assert.equal(all('.wmap-mark').length, 0);
+  assert.deepEqual(
+    all('.wbar-n').map((item) => item.textContent),
+    ['0', '0', '0', '0'],
+  );
+  assert.equal(text().replace($('.wbar')!.textContent!, ''), '');
   await unmount();
   drawn();
   const given = board();

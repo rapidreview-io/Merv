@@ -153,22 +153,27 @@ const hueOf = (step: Step, states: StateWords): Hue =>
  * at the finish, one with a cross where the record ended another way. A stage the record
  * has not reached (`ahead`) is the empty grey ring whatever it will be.
  */
-function StageGlyph({
+export function StageGlyph({
   steps,
   at,
   size = 14,
   ahead,
+  shape = 'circle',
 }: {
   steps: Step[];
   at: number;
   size?: number;
   ahead?: boolean;
+  /** A square is a task's mark on the map; the pie is then a bar filled from the left. */
+  shape?: 'circle' | 'square';
 }) {
   const states = useStateWords();
   const step = steps[at]!;
   const hue = ahead ? 'idle' : hueOf(step, states);
   const begun = steps.filter((item) => !item.end && hueOf(item, states) !== 'idle');
-  const turn = ((begun.indexOf(step) + 1) / (begun.length + 1)) * 2 * Math.PI;
+  const part = (begun.indexOf(step) + 1) / (begun.length + 1);
+  const turn = part * 2 * Math.PI;
+  const square = shape === 'square';
   return (
     <svg
       className={`stage-glyph stage-glyph--${hue}`}
@@ -179,7 +184,11 @@ function StageGlyph({
     >
       {step.end && !ahead ? (
         <>
-          <circle className="stage-fill" cx="7" cy="7" r="6.5" />
+          {square ? (
+            <rect className="stage-fill" x="0.5" y="0.5" width="13" height="13" rx="2.5" />
+          ) : (
+            <circle className="stage-fill" cx="7" cy="7" r="6.5" />
+          )}
           <path
             className="stage-sign"
             d={step.stopped ? 'M4.9 4.9l4.2 4.2M9.1 4.9l-4.2 4.2' : 'M4.2 7.3 6.2 9.2 9.9 5.1'}
@@ -187,13 +196,20 @@ function StageGlyph({
         </>
       ) : (
         <>
-          <circle className="stage-ring" cx="7" cy="7" r="5.75" />
-          {hue !== 'idle' && (
-            <path
-              className="stage-fill"
-              d={`M7 7V3.5A3.5 3.5 0 ${turn > Math.PI ? 1 : 0} 1 ${7 + 3.5 * Math.sin(turn)} ${7 - 3.5 * Math.cos(turn)}Z`}
-            />
+          {square ? (
+            <rect className="stage-ring" x="1.25" y="1.25" width="11.5" height="11.5" rx="2.5" />
+          ) : (
+            <circle className="stage-ring" cx="7" cy="7" r="5.75" />
           )}
+          {hue !== 'idle' &&
+            (square ? (
+              <rect className="stage-fill" x="3.5" y="3.5" width={7 * part} height="7" />
+            ) : (
+              <path
+                className="stage-fill"
+                d={`M7 7V3.5A3.5 3.5 0 ${turn > Math.PI ? 1 : 0} 1 ${7 + 3.5 * Math.sin(turn)} ${7 - 3.5 * Math.cos(turn)}Z`}
+              />
+            ))}
         </>
       )}
     </svg>
@@ -201,13 +217,13 @@ function StageGlyph({
 }
 
 /** Where a record read from a list stands: the program it names, and its state. */
-type Standing = { workflow?: string; version?: number; state: string };
+export type Standing = { workflow?: string; version?: number; state: string };
 /**
  * That program's steps with the record's place marked, in the shape of the record's own version,
  * else, for a version no longer registered, its program's newest; none for a program with no
  * shape here.
  */
-function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
+export function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
   const named = shapes?.filter((item) => item.name === workflow.workflow) ?? [];
   const shape =
     named.find((item) => workflow.version === undefined || item.version === workflow.version) ??

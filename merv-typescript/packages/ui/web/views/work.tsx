@@ -5,7 +5,7 @@ import type { WorkflowDecision } from '@merv/workflows/models';
 import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
-import { Chips, ListPage, useListFilter } from '../list-filters';
+import { ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, type Pickable } from '../record-picker';
 import { useSession, writes } from '../session';
 import { firstSentence } from '@merv/contracts/text';
@@ -20,7 +20,20 @@ import { useActorNames } from './people';
 import { CreateReflection } from './research-programs';
 import type { Task } from '@merv/tasks/models';
 import { isResolution } from '@merv/tasks/resolution';
-import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map';
+import {
+  LiveLines,
+  LiveNotes,
+  WorkBar,
+  WorkMap,
+  WorkPlane,
+  countsOf,
+  mapOf,
+  shown,
+  useBoard,
+  type Wave,
+  type WorkFilter,
+} from './work-map';
+import { runningKey } from '@merv/contracts/running';
 
 /**
  * The wave of work the project is on, in one page: the cycle that frames it in
@@ -30,9 +43,6 @@ import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map'
  * list on a wide screen. Nothing on this page is composed by the browser: the
  * cycle names the work it depends on and the rest is each record's own standing.
  */
-
-/** The tab that narrows nothing: every kind of work the wave holds. */
-const ALL = 'all';
 
 /** One row of the wave, whichever kind of record it is. */
 interface Item {
@@ -283,11 +293,11 @@ export function CreateResearch({
  * the same row that narrows them, and are listed only where there is no room to draw.
  */
 function WaveList({ shell }: { shell: ShellData }) {
-  const [chosen, setChosen] = useState<string>();
   const { actor } = useSession();
   const nameOf = useActorNames();
-  const [kind, setKind] = useState<string>(ALL);
-  const [merges, setMerges] = useState<'hidden' | 'shown'>('hidden');
+  // The page's one line: which kinds are drawn, and what is live or needs a person of each.
+  const [bar, setBar] = useState<WorkFilter>(EVERYTHING);
+  const live = useBoard();
   const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
   const tasksRow = rowOf('tasks');
   const experimentsRow = rowOf('experiments');
@@ -300,10 +310,7 @@ function WaveList({ shell }: { shell: ShellData }) {
   const { tasks, experiments, reviews, research: cycles, reflections: waves } = home.data ?? {};
   const all = newest(cycles ?? [], (item) => item.workflow.updatedAt);
   const navigate = useNavigate();
-  // The cycle the head shows is the one the narrowing means.
-  const cycle =
-    cycles?.find((item) => item.id === chosen) ??
-    currentCycle(cycles ?? undefined, shell.workflows);
+  const cycle = currentCycle(cycles ?? undefined, shell.workflows);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
   const inCycle = new Set(cycle?.researchDependencies);
   /** What every unit of the wave says alike, from its record and the row whose page it opens. */
@@ -353,8 +360,18 @@ function WaveList({ shell }: { shell: ShellData }) {
     ],
     tasks ?? [],
   );
-  const under = (of: string) => (item: Item) =>
-    of === ALL || (of === 'cycle' ? item.named : item.kind === of);
+  // Whether the page's one line keeps a unit, by what the board says of it.
+  const nodes = new Map((live?.board?.lanes.work.nodes ?? []).map((node) => [node.key, node]));
+  const passes = (item: Item) =>
+    shown(
+      {
+        kind: item.kind === 'tasks' ? 'Task' : 'Experiment',
+        node: nodes.get(runningKey('work', item.id)),
+        done: ended(shell.workflows, item.flow, item.end),
+      },
+      bar,
+      live?.now.stale ?? false,
+    );
   const filter = useListFilter(items, {
     stateOf: (item) => item.state,
     // Open work: in no program's end state, as the deployed shapes declare them.
@@ -362,24 +379,10 @@ function WaveList({ shell }: { shell: ShellData }) {
     mine: (item) => item.mine,
     labels: (item) => item.labels,
     ids: (item) => [item.id, item.owner],
-    also: (item) => under(kind)(item) && (merges === 'shown' || !item.support),
+    also: (item) => passes(item) && !item.support,
   });
-  const hidden = new Set(
-    merges === 'shown' ? [] : items.filter((item) => item.support).map((item) => item.id),
-  );
-  // The first narrowing: which kind of work, and the work this cycle itself names. A tab
-  // with nothing under it is not drawn, unless it is the one in force and so the way back;
-  // and where only one of them holds anything there is nothing to choose between. Which
-  // tabs there are is read from the whole wave, so they stand still; the number on each
-  // is what pressing it would show under the search, the scope and the state in force.
-  const narrowings = (
-    [
-      ['tasks', 'Tasks'],
-      ['experiments', 'Experiments'],
-      ['reflections', 'Reflections'],
-      ['cycle', 'In this cycle'],
-    ] as const
-  ).filter(([value]) => items.some(under(value)) || kind === value);
+  // Support work, a merge of deliveries, is never drawn; its lines pass through it.
+  const hidden = new Set(items.filter((item) => item.support).map((item) => item.id));
   // One read makes the list, and a failure that leaves rows on screen degrades to a line
   // rather than blanking them. A list whose row is here but whose part did not answer is a
   // failure too: its records would otherwise vanish without a word.
@@ -403,8 +406,8 @@ function WaveList({ shell }: { shell: ShellData }) {
   // What the map draws, and every line between two of them, each said once by the task at one
   // end of it. As the page opens that is every record still open or named by the cycle, with
   // what the board holds in flight; once the page is narrowed it is the kept rows and no other.
-  const only =
-    filter.state !== OPEN || !!filter.query || filter.scope !== 'everyone' || kind !== ALL;
+  const narrowed = bar.only.size > 0 || !bar.kinds.experiments || !bar.kinds.tasks;
+  const only = filter.state !== OPEN || !!filter.query || filter.scope !== 'everyone' || narrowed;
   const kept = new Set(filter.rows);
   const read: Wave = {
     only,
@@ -416,7 +419,9 @@ function WaveList({ shell }: { shell: ShellData }) {
         name: item.name,
         flow: item.flow,
         at: item.at,
-        held: only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named,
+        held:
+          passes(item) &&
+          (only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named),
       })),
     edges: bridged(
       (tasks ?? []).flatMap((task) => [
@@ -438,42 +443,53 @@ function WaveList({ shell }: { shell: ShellData }) {
   const same = JSON.stringify(read);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wave = useMemo(() => read, [same]);
+  // What is live and what needs a person, counted over the whole wave, whatever is narrowed.
+  const counts = countsOf(
+    mapOf(live?.board, {
+      ...read,
+      only: false,
+      items: read.items.map((item) => ({ ...item, held: true })),
+    }).units,
+    live?.now.stale ?? false,
+  );
   return (
     <ListPage
       load={load}
-      // The cycle stands where every other page's title line stands, its one move beside
-      // it, and after that the one word that narrows the map and the one that starts work.
+      bare
+      // The cycle stands where every other page's title line stands, its one move beside it;
+      // under it the page's one line: what is so right now, the filters, and what it can start.
       lede={(ends) => (
-        <CycleHead
-          shell={shell}
-          cycle={cycle}
-          pulse={JSON.stringify(
-            items.filter((item) => item.named).map((item) => [item.id, item.state]),
-          )}
-          onSaved={home.reload}
-          ends={ends}
-        />
+        <>
+          <CycleHead
+            shell={shell}
+            cycle={cycle}
+            pulse={JSON.stringify(
+              items.filter((item) => item.named).map((item) => [item.id, item.state]),
+            )}
+            onSaved={home.reload}
+          />
+          <WorkBar
+            counts={counts}
+            filter={bar}
+            onFilter={setBar}
+            ends={ends}
+            agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path}
+          />
+        </>
       )}
       // Reset is offered only once the reader has narrowed the page away from how it opened.
       reset={
-        filter.state !== filter.initial ||
-        filter.query ||
-        filter.scope !== 'everyone' ||
-        kind !== ALL ||
-        merges !== 'hidden' ||
-        chosen
+        filter.state !== filter.initial || filter.query || filter.scope !== 'everyone' || narrowed
           ? () => {
               filter.reset();
-              setKind(ALL);
-              setMerges('hidden');
-              setChosen(undefined);
+              setBar(EVERYTHING);
             }
           : undefined
       }
       drawn={
         <div className="wmap-stage">
           <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
-          <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
+          <LiveNotes />
         </div>
       }
       listed={!drawn}
@@ -482,83 +498,31 @@ function WaveList({ shell }: { shell: ShellData }) {
       placeholder="Name, question or person"
       filter={{
         ...filter,
-        filtering: filter.filtering || kind !== ALL,
+        filtering: filter.filtering || narrowed,
         clear() {
           filter.clear();
-          setKind(ALL);
+          setBar(EVERYTHING);
         },
       }}
-      narrow={
-        <>
-          {all.length > 1 && (
-            <Chips
-              label="Research cycle"
-              options={all.map((item) => ({
-                value: item.id,
-                label: item.name,
-                count: words(item.workflow.state),
-              }))}
-              value={cycle!.id}
-              onChange={setChosen}
-            />
-          )}
-          {narrowings.length > 1 && (
-            <Chips
-              label="Kind of work"
-              options={[[ALL, 'All'] as const, ...narrowings].map(([value, label]) => ({
-                value,
-                label,
-                count: filter.tabbed.filter(under(value)).length,
-              }))}
-              value={kind}
-              onChange={setKind}
-            />
-          )}
-          {items.some((item) => item.support) && (
-            <Chips
-              label="Merges"
-              options={[
-                { value: 'hidden' as const, label: 'Hide merges' },
-                {
-                  value: 'shown' as const,
-                  label: 'Show merges',
-                  count: items.filter((item) => item.support).length,
-                },
-              ]}
-              value={merges}
-              onChange={(value) => setMerges(value === 'shown' ? 'shown' : 'hidden')}
-            />
-          )}
-        </>
-      }
       emptyTitle="No work yet"
       create={
-        // Under its own tab the thing to start is a reflection; anywhere else, a cycle.
-        kind === 'reflections'
-          ? {
-              label: 'New reflection',
-              shown: writes(actor),
-              form: () => (
-                <CreateReflection onCreated={(wave) => navigate(`${wavesRow!.path}/${wave.id}`)} />
-              ),
-            }
-          : cyclesRow && {
-              label: 'New cycle',
-              shown: writes(actor),
-              form: (close) => (
-                <CreateResearch
-                  follows={
-                    cycle && !cycle.successorId && ended(shell.workflows, cycle.workflow)
-                      ? { id: cycle.id, name: cycle.name }
-                      : undefined
-                  }
-                  onSaved={() => {
-                    close();
-                    home.reload();
-                  }}
-                />
-              ),
-            }
+        cyclesRow && {
+          label: 'New cycle',
+          shown: writes(actor),
+          form: (close) => (
+            <CreateResearch
+              follows={
+                cycle && !cycle.successorId && ended(shell.workflows, cycle.workflow)
+                  ? { id: cycle.id, name: cycle.name }
+                  : undefined
+              }
+              onSaved={() => {
+                close();
+                home.reload();
+              }}
+            />
+          ),
+        }
       }
       line={(item) => {
         const review = currentReview(reviews ?? undefined, item.id);
@@ -763,24 +727,27 @@ export function CycleMove({
   );
 }
 
+/** The one line as the page opens: every kind drawn, ended work too, nothing singled out. */
+const EVERYTHING: WorkFilter = {
+  only: new Set(),
+  kinds: { experiments: true, tasks: true, ended: true },
+};
+
 /** The cycle that frames the wave: what it is called, where it stands, its one move. */
 function CycleHead({
   shell,
   cycle,
   pulse,
   onSaved,
-  ends,
 }: {
   shell: ShellData;
   cycle?: MapCycle;
   pulse: string;
   onSaved(): void;
-  /** What the page hangs at the end of its title line: its filter, and what it can start. */
-  ends: ReactNode;
 }) {
   const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
   // With no cycle the page is its title.
-  if (!cycle || !cyclesRow) return <PageHeader title="Work" actions={ends} />;
+  if (!cycle || !cyclesRow) return <PageHeader title="Work" />;
   return (
     <PageHeader
       title={<Link to={`${cyclesRow.path}/${cycle.id}`}>{cycle.name}</Link>}
@@ -790,7 +757,6 @@ function CycleHead({
           {cycle.writable && (
             <CycleMove cycle={cycle} shell={shell} pulse={pulse} onSaved={onSaved} />
           )}
-          {ends}
         </>
       }
     />

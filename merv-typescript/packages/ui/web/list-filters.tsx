@@ -393,6 +393,7 @@ export function ListPage<T extends { id: string }>({
   drawn,
   listed = true,
   lede,
+  bare,
   reset,
   after,
 }: {
@@ -432,6 +433,8 @@ export function ListPage<T extends { id: string }>({
    * its end, the ones that narrow the list behind the one word `Filter`.
    */
   lede?(ends: ReactNode): ReactNode;
+  /** The page draws its own narrowing: the title line carries only what it can start. */
+  bare?: boolean;
   /** The way back to how the page opens, given only while it is narrowed away from that. */
   reset?(): void;
   /** What a page states after its rows, where it holds a second list of another kind. */
@@ -539,7 +542,7 @@ export function ListPage<T extends { id: string }>({
         <div className="page-lede">
           {lede(
             <>
-              {total > 0 && (
+              {total > 0 && !bare && (
                 <Narrowing reset={reset}>
                   {narrow}
                   {filters}

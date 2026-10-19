@@ -17,21 +17,22 @@ import {
   type RunningLaneName,
   type RunningNode,
 } from '@merv/contracts/running';
-import { useTool } from '../api';
+import { readOnly, refreshTools, useTool } from '../api';
 import { Ago, LoadState, cx, kindOf, useNow, useSidebarEscape, words } from '../components';
-import { clock, duration, type Clock } from '../liveness';
-import { StageMark } from '../process';
+import { clock, type Clock } from '../liveness';
+import { useCommand } from '../mutations';
+import { StageGlyph, ended as endedBy, stepsOf } from '../process';
 import { useRoomy } from '../theme';
 import type { WorkflowShape } from '../shell-types';
 import type { Flow } from './map-data';
 import { Act, RunningSidebar } from './running-panel';
 import { Phrase, Reading, Target, steadyText, type RunningReading } from './running-phrase';
-import { beneath, workMapLayout, type MapBox, type MapEdge } from './work-map-layout';
+import { beneath, workMapLayout, type MapEdge, type MapPlace } from './work-map-layout';
 
 /**
- * The map of work and what is live on it. Every unit of work is a card, a line runs from
- * each prerequisite down to what waits on it, and beside the map docks the sidebar of
- * whatever is in hand. What moves — the agents on a unit, the machines they run on, what
+ * The map of work and what is live on it. Every unit of work is a mark and a name, a quiet
+ * line runs from each prerequisite to what waits on it, and beside the map docks the sidebar
+ * of whatever is in hand. What moves — the agents on a unit, the machines they run on, what
  * needs a person — is the board's (`ui.running`), written by the plugin that owns each
  * thing; what a unit is and where its workflow stands is the wave's own records. This page
  * joins the two by key and lays them out. Green is only a dot on what is live, and red is
@@ -44,11 +45,9 @@ import { beneath, workMapLayout, type MapBox, type MapEdge } from './work-map-la
  */
 
 const LANES: readonly RunningLaneName[] = ['work', 'sessions', 'hardware'];
-/** A total not yet known is the em dash, never a zero. */
-const EM = '—';
 /** Wide enough for the sidebar to stand beside the page; narrower, it takes the page over. */
 
-const needs = (node: RunningNode) => !!node.attention && !node.attention.quiet;
+export const needs = (node: RunningNode) => !!node.attention && !node.attention.quiet;
 /** Something moves: a dot on the board, or a lane's own line asking for a person. */
 const moving = (board: RunningBoard) =>
   LANES.some(
@@ -87,11 +86,6 @@ export function absorberOf(board: RunningBoard, key: RunningKey): RunningNode | 
       if (node.key === key || node.aliases?.includes(key)) return node;
   return undefined;
 }
-
-const dayOf = (at: string) =>
-  new Date(at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-const timeOf = (at: string) =>
-  new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
 /** One unit of work on the map: what the wave's records say of it, and what the board does. */
 interface MapUnit {
@@ -235,6 +229,8 @@ const Plane = createContext<{ selected: RunningKey | null; onSelect(key: Running
   selected: null,
   onSelect: () => undefined,
 });
+/** The board as the plane last read it, for what stands above the map. */
+export const useBoard = () => useContext(LiveContext);
 /** Reads the board at the pace of what moves on it; every clock is the payload's own. */
 export function useLive() {
   const board = useTool<RunningBoard>('ui.running', {}, { every: cadenceOf });
@@ -299,112 +295,111 @@ export function LiveLines({ id, nodes }: { id?: string; nodes?: RunningNode[] })
   );
 }
 
+/** A unit is live while an agent holds it; read from the board's dot. */
+const isLive = (node?: RunningNode) => node?.dot === 'live' || node?.dot === 'moving';
+/** The unit has ended: its program's end state, or the board drawing it quiet. */
+const hasEnded = (shapes: WorkflowShape[] | undefined, unit: MapUnit) =>
+  unit.flow ? endedBy(shapes, unit.flow) : unit.node?.look === 'quiet';
+
 /**
- * A card: its kind, its name, where it stands, and who is on it and where. Each agent and
- * each machine on the unit has a line; with nobody on it, the board's own line says why.
+ * A mark: a circle for an experiment, a square for a task, filled as far as the unit is along
+ * its program; its name beside it, and what a person must do after that. Red is only the ring
+ * of what needs a person, green only the dot of what is live. Folded, it is the mark alone.
  */
-function Card({
+function Mark({
   unit,
-  box,
+  place,
   shapes,
-  live,
-  relations,
+  red,
   selected,
   dim,
+  relations,
   onSelect,
   onHover,
 }: {
   unit: MapUnit;
-  box: MapBox;
+  place: MapPlace;
   shapes: WorkflowShape[] | undefined;
-  live: RunningNode[];
-  relations: string[];
+  red: boolean;
   selected: boolean;
   dim: boolean;
+  relations: string[];
   onSelect(key: RunningKey): void;
   onHover(key: RunningKey | null): void;
 }) {
   const reading = useContext(Reading);
   const { node, flow } = unit;
   const own = !!node && needs(node);
-  const red = own || live.some(needs);
-  // Red is the dot of what needs a person; otherwise green only on what is live, and it
-  // stops breathing once the read it came from is stale.
-  const dot = red ? 'attn' : node?.dot === 'moving' && reading.now.stale ? 'live' : node?.dot;
-  // While a visit works it, the card counts from when its work began, as its owner records it.
-  const started = node?.started && (node.dot === 'moving' || node.dot === 'live') && node.started;
-  // Beside the stage and the lines of who is on it, the board's line would say both again.
-  const line = own || !flow || !live.length ? (node?.attention?.says ?? node?.lines[0]) : undefined;
-  // What the card draws, as its name. Its clocks are left out, so the name of a card in hand
-  // holds still while they tick; a prerequisite its line already names is not said twice.
-  const said = [
-    unit.kind,
-    unit.name,
-    flow && words(flow.state),
-    steadyText(line, reading),
-    ...live.map((on) => on.title),
-  ]
+  const live = isLive(node) && !reading.now.stale;
+  const done = hasEnded(shapes, unit);
+  const steps = flow ? stepsOf(shapes, flow) : [];
+  const at = steps.findIndex((step) => step.current);
+  // What a person has to do stands after the name; with nobody needed, nothing does.
+  const line = own ? node.attention?.says : undefined;
+  const said = [unit.kind, unit.name, flow && words(flow.state), steadyText(line, reading)]
     .filter(Boolean)
     .join(', ');
   return (
     <button
       type="button"
       className={cx(
-        'wmap-node',
-        node?.look === 'dashed' && 'wmap-node--waiting',
-        (!node || node.look === 'quiet') && 'wmap-node--done',
-        red && 'wmap-node--attn',
+        'wmap-mark',
+        done && 'wmap-mark--done',
+        node?.look === 'dashed' && 'wmap-mark--waiting',
+        red && 'wmap-mark--attn',
+        place.folded && 'wmap-mark--folded',
         selected && 'on',
-        // A card that needs a person never steps back.
+        // A mark that needs a person never steps back.
         dim && !red && 'dim',
       )}
       data-key={unit.key}
       aria-pressed={selected}
       aria-controls="running-panel"
       aria-label={[said, ...relations.filter((relation) => !said.includes(relation))].join(', ')}
-      style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+      style={{ left: place.x - 15, top: place.y - 15, maxWidth: place.w }}
       onClick={() => onSelect(unit.key)}
       onMouseEnter={() => onHover(unit.key)}
       onMouseLeave={() => onHover(null)}
       onFocus={() => onHover(unit.key)}
       onBlur={() => onHover(null)}
     >
-      <span className="wmap-head">
-        {/* In the faint small caps and never a kind's colour, which beside what is red
-            here would read as an alarm of its own (a reflection's is red). */}
-        <span className="running-kind">{unit.kind}</span>
-        {dot && <span className={cx('live-dot', `live-dot--${dot}`)} aria-hidden="true" />}
+      <span className="wmap-glyph">
+        {at >= 0 ? (
+          <StageGlyph steps={steps} at={at} shape={unit.kind === 'Task' ? 'square' : 'circle'} />
+        ) : (
+          <span className="status-dot" aria-hidden="true" />
+        )}
+        {live && <span className="live-dot live-dot--live" aria-hidden="true" />}
       </span>
-      <span className="wmap-name">{unit.name}</span>
-      {/* What a person has to do takes the place of where the unit stands: two lines of it. */}
-      {flow && !own && (
-        <span className="wmap-status">
-          <StageMark shapes={shapes} workflow={flow} />
-          {started && (
-            <span className="wmap-timer tabular" title="Time since the work began">
-              {duration(reading.now.at - Date.parse(started))}
+      {!place.folded && (
+        <span className="wmap-name">
+          {unit.name}
+          {!!line?.length && (
+            <span className="wmap-say running-attn">
+              {' · '}
+              <Phrase value={line} />
             </span>
           )}
         </span>
       )}
-      {!!line?.length && (
-        <span className={cx('wmap-line', own && 'running-attn')}>
-          <Phrase value={line} />
-        </span>
-      )}
-      {live.map((on) => {
-        // An agent's second line is where it runs; anything else says how it stands.
-        const where = !on.attention && on.lane === 'sessions' && on.lines[1];
-        return (
-          <span className={cx('wmap-line', needs(on) && 'running-attn')} key={on.key}>
-            {on.title}
-            {where ? ' ' : ' · '}
-            <Phrase value={where || (on.attention?.says ?? on.lines[0] ?? [])} />
-          </span>
-        );
-      })}
     </button>
   );
+}
+
+/** Everything a unit reaches along its lines, up to what it waits on and down to what came of it. */
+function lineage(key: RunningKey, edges: MapEdge[]): Set<string> {
+  const found = new Set<string>([key]);
+  const walk = (from: string, way: 'from' | 'to') => {
+    const other = way === 'from' ? 'to' : 'from';
+    for (const edge of edges)
+      if (edge[way] === from && !found.has(edge[other])) {
+        found.add(edge[other]);
+        walk(edge[other], way);
+      }
+  };
+  walk(key, 'from');
+  walk(key, 'to');
+  return found;
 }
 
 /**
@@ -427,6 +422,7 @@ export function WorkMap({
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<RunningKey | null>(null);
+  const [unfold, setUnfold] = useState(false);
   useEffect(() => {
     const element = frame.current;
     if (!element || typeof ResizeObserver === 'undefined') return setWidth(-1);
@@ -438,47 +434,46 @@ export function WorkMap({
   // The clock ticks every second while anything moves; the map is laid out again only when
   // the board, the wave or the room changes.
   const { units, edges } = useMemo(() => mapOf(board, wave), [board, wave]);
-  // Each unit's last move, which a prerequisite always makes before what waits on it; work the
-  // wave does not hold yet is live, so it stands at the foot.
-  const times = useMemo(() => {
-    const at = new Map((wave.items ?? []).map((item) => [runningKey('work', item.id), item.at]));
-    const now = new Date().toISOString();
-    return new Map(units.map((unit) => [unit.key, at.get(unit.key) ?? now]));
-  }, [units, wave]);
   const layout = useMemo(
     () =>
       workMapLayout(
         units.map((unit) => unit.key),
         edges,
         width,
-        times,
+        {
+          ended: new Set(units.filter((unit) => hasEnded(shapes, unit)).map((unit) => unit.key)),
+          held: new Set(
+            units
+              .filter(({ node }) => isLive(node) || (!!node && needs(node)))
+              .map((unit) => unit.key),
+          ),
+          unfold,
+        },
       ),
-    [units, edges, width, times],
+    [units, edges, width, shapes, unfold],
   );
   const drawn = !!layout;
   // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
   useEffect(() => void (width && onDrawn?.(drawn)), [drawn, width, onDrawn]);
   const names = new Map(units.map((unit) => [unit.key, unit.name]));
-  // The unit in hand: itself, or the one a session or a machine in hand serves. It, or the
-  // one under the pointer, stays lit with what it waits on and holds up.
+  // The unit in hand: itself, or the one a session or a machine in hand serves. Its whole line
+  // of work stays lit, up and down the page; the one under the pointer lights its neighbours.
   const held = selected && board ? absorberOf(board, selected) : undefined;
   const served = held && board!.edges.find((edge) => edge.from === held.key && names.has(edge.to));
   const inHand = [selected, held?.key, served?.to].find((key) => key && names.has(key)) ?? null;
-  const focus = inHand ?? hover;
-  const lit = focus
-    ? new Set([
-        focus,
-        ...edges
-          .filter((edge) => edge.from === focus || edge.to === focus)
-          .flatMap((edge) => [edge.from, edge.to]),
-      ])
-    : null;
-  const worked = new Set(
-    units
-      .filter(({ node }) => node?.dot && node.dot !== 'starting' && !live?.now.stale)
-      .map((unit) => unit.key),
-  );
-  // The keys walk the cards, from a card or from the drawing itself: never with a modifier,
+  const lit = inHand
+    ? lineage(inHand, edges)
+    : hover
+      ? new Set([
+          hover,
+          ...edges
+            .filter((edge) => edge.from === hover || edge.to === hover)
+            .flatMap((edge) => [edge.from, edge.to]),
+        ])
+      : null;
+  const red = (unit: MapUnit) =>
+    (!!unit.node && needs(unit.node)) || (live?.liveOn(unit.key) ?? []).some(needs);
+  // The keys walk the marks, from a mark or from the drawing itself: never with a modifier,
   // which is the browser's (Alt+Left is Back).
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!layout || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -520,9 +515,9 @@ export function WorkMap({
           aria-hidden="true"
         >
           {layout.wires.map((wire) => {
-            const on = !!lit && (wire.from === focus || wire.to === focus);
+            const on = !!lit && lit.has(wire.from) && lit.has(wire.to);
             return (
-              <g
+              <path
                 key={`${wire.from}>${wire.to}`}
                 className={cx(
                   'wmap-wire',
@@ -530,36 +525,31 @@ export function WorkMap({
                   on && 'on',
                   !!lit && !on && 'dim',
                 )}
-              >
-                <path d={wire.d} />
-                <path d={wire.head} />
-                {worked.has(wire.from) && (
-                  <path className="wmap-pulse" d={wire.d} pathLength={100} />
-                )}
-              </g>
+                d={wire.d}
+              />
             );
           })}
         </svg>
       )}
-      {layout?.ticks.map((tick, n) => {
-        const day = dayOf(tick.at);
-        return (
-          <div key={tick.y} className="wmap-tick" style={{ top: tick.y }}>
-            {(n === 0 || day !== dayOf(layout.ticks[n - 1]!.at)) && (
-              <span className="wmap-tick-day">{day}</span>
-            )}
-            <time dateTime={tick.at}>{timeOf(tick.at)}</time>
-          </div>
-        );
-      })}
+      {layout?.folds.map((fold) => (
+        <button
+          type="button"
+          key={fold.y}
+          className="wmap-fold"
+          style={{ left: fold.x - 8, top: fold.y + 9 }}
+          onClick={() => setUnfold(true)}
+        >
+          {fold.count} done
+        </button>
+      ))}
       {layout &&
         units.map((unit) => (
-          <Card
+          <Mark
             key={unit.key}
             unit={unit}
-            box={layout.at.get(unit.key)!}
+            place={layout.at.get(unit.key)!}
             shapes={shapes}
-            live={live?.liveOn(unit.key) ?? []}
+            red={red(unit)}
             relations={edges
               .filter((edge) => edge.to === unit.key && edge.waiting)
               .map((edge) => `Waits on ${names.get(edge.from)}`)}
@@ -573,89 +563,297 @@ export function WorkMap({
   );
 }
 
+/** How many of each kind are live, and how many need a person, for the page's one line. */
+export interface WorkCounts {
+  experiments: { live: number; attention: number };
+  tasks: { live: number; attention: number };
+}
+export function countsOf(units: MapUnit[], stale: boolean): WorkCounts {
+  const counts: WorkCounts = {
+    experiments: { live: 0, attention: 0 },
+    tasks: { live: 0, attention: 0 },
+  };
+  for (const unit of units) {
+    const of = unit.kind === 'Task' ? counts.tasks : counts.experiments;
+    if (isLive(unit.node) && !stale) of.live++;
+    if (unit.node && needs(unit.node)) of.attention++;
+  }
+  return counts;
+}
+/** The one line's filters: what is live or needs a person, of each kind; and which kinds. */
+export type WorkShow =
+  'experiments-live' | 'experiments-attention' | 'tasks-live' | 'tasks-attention';
+export interface WorkFilter {
+  /** Show only these, where any is pressed. */
+  only: Set<WorkShow>;
+  /** Which kinds are drawn, and whether ended work is. */
+  kinds: { experiments: boolean; tasks: boolean; ended: boolean };
+}
+/** Whether a unit passes the page's one line, given what the board says of it. */
+export function shown(
+  unit: { kind: string; node?: RunningNode; done: boolean },
+  filter: WorkFilter,
+  stale: boolean,
+): boolean {
+  const kind = unit.kind === 'Task' ? 'tasks' : 'experiments';
+  if (!filter.kinds[kind] || (unit.done && !filter.kinds.ended)) return false;
+  if (!filter.only.size) return true;
+  const live = isLive(unit.node) && !stale;
+  const attention = !!unit.node && needs(unit.node);
+  return (
+    (filter.only.has(`${kind}-live`) && live) || (filter.only.has(`${kind}-attention`) && attention)
+  );
+}
+
+const Glyph = ({ kind, tone }: { kind: 'experiments' | 'tasks'; tone?: 'live' | 'attention' }) => (
+  <svg
+    className={cx('wbar-glyph', tone && `wbar-glyph--${tone}`)}
+    viewBox="0 0 14 14"
+    aria-hidden="true"
+  >
+    {kind === 'tasks' ? (
+      <rect className="stage-ring" x="1.25" y="1.25" width="11.5" height="11.5" rx="2.5" />
+    ) : (
+      <circle className="stage-ring" cx="7" cy="7" r="5.75" />
+    )}
+    {tone === 'live' && <circle className="wbar-live" cx="12" cy="2" r="3" />}
+  </svg>
+);
+
+/** Dispatch, as the sessions lane offers it: its mark and its word, one press to turn it. */
+function Dispatch() {
+  const live = useContext(LiveContext);
+  const summary = live?.board?.lanes.sessions.summaries.find((item) =>
+    item.actions.some((action) => /dispatch/i.test(action.label)),
+  );
+  const action = summary?.actions.find((item) => /dispatch/i.test(item.label));
+  const command = useCommand<unknown>({
+    tool: action?.tool ?? '',
+    idempotent: true,
+    validate: () => true,
+    onSuccess: () => refreshTools('ui.running', 'ui.running_panel', 'ui.home'),
+  });
+  if (!action) return null;
+  // A dispatch whose owner asks a question or a confirmation keeps its own control.
+  if (action.guard || action.ask) return <Act action={action} />;
+  const paused = /start|resume/i.test(action.label);
+  const label = paused ? 'dispatch paused' : 'dispatch on';
+  return (
+    <button
+      type="button"
+      className="wbar-b"
+      title={action.label}
+      aria-label={`${label}, ${action.label}`}
+      disabled={readOnly() || command.busy}
+      onClick={() => void command.submit(action.input)}
+    >
+      <svg className="wbar-glyph" viewBox="0 0 14 14" aria-hidden="true">
+        {paused ? (
+          <path d="M4.5 3.5h2v7h-2zM7.5 3.5h2v7h-2z" className="wbar-fill" />
+        ) : (
+          <path d="M4 2.5 11 7 4 11.5Z" className="wbar-fill" />
+        )}
+      </svg>
+      <span className="wbar-word">{label}</span>
+    </button>
+  );
+}
+
+/** The marks the line does not teach, named once, under it, while Key is pressed. */
+function KeyLine() {
+  const ring = (inner: ReactNode) => (
+    <svg className="wbar-glyph" viewBox="0 0 14 14" aria-hidden="true">
+      <circle className="stage-ring" cx="7" cy="7" r="5.75" />
+      {inner}
+    </svg>
+  );
+  return (
+    <ul className="wkey" aria-label="Key">
+      <li>{ring(<path className="stage-fill" d="M7 7V3.5A3.5 3.5 0 1 1 3.5 7Z" />)}in progress</li>
+      <li>
+        <svg className="wbar-glyph" viewBox="0 0 14 14" aria-hidden="true">
+          <circle className="wbar-fill" cx="7" cy="7" r="6.5" />
+          <path className="stage-sign" d="M4.2 7.3 6.2 9.2 9.9 5.1" />
+        </svg>
+        done
+      </li>
+      <li>
+        <svg className="wbar-glyph" viewBox="0 0 14 14" aria-hidden="true">
+          <circle className="wbar-fill" cx="7" cy="7" r="6.5" />
+          <path className="stage-sign" d="M4.9 4.9l4.2 4.2M9.1 4.9l-4.2 4.2" />
+        </svg>
+        stopped
+      </li>
+      <li>
+        <Glyph kind="experiments" tone="attention" />
+        needs you
+      </li>
+      <li>
+        <Glyph kind="experiments" tone="live" />
+        live
+      </li>
+      <li>
+        <svg className="wbar-line" viewBox="0 0 22 14" aria-hidden="true">
+          <path d="M1 7H21" />
+        </svg>
+        waits on
+      </li>
+      <li>
+        <svg className="wbar-line wbar-line--waiting" viewBox="0 0 22 14" aria-hidden="true">
+          <path d="M1 7H21" />
+        </svg>
+        not yet settled
+      </li>
+    </ul>
+  );
+}
+
 /**
- * Under the map, once the board has answered: how many agents are working and how many things
- * need a person, each lane's own line with its one control — for sessions, how dispatch
- * stands — and then whatever is live and on no unit of work: a machine nobody is using, an
- * agent between two; and the way to the page of agents and machines (`agents`), which the rail
- * no longer shows.
+ * The page's one line: what is live and what needs a person, of each kind, each count the
+ * filter for it; dispatch; the shapes as the remaining filters; Key; and what the page can
+ * start (`ends`), with the way to every agent and machine there has been (`agents`).
  */
-export function LiveUnder({ agents }: { agents?: string }) {
+export function WorkBar({
+  counts,
+  filter,
+  onFilter,
+  ends,
+  agents,
+}: {
+  counts: WorkCounts;
+  filter: WorkFilter;
+  onFilter(next: WorkFilter): void;
+  ends?: ReactNode;
+  agents?: string;
+}) {
+  const [key, setKey] = useState(false);
+  const count = (kind: 'experiments' | 'tasks', tone: 'live' | 'attention') => {
+    const name: WorkShow = `${kind}-${tone}`;
+    const on = filter.only.has(name);
+    return (
+      <button
+        type="button"
+        className={cx('wbar-b', on && 'on')}
+        aria-pressed={on}
+        title={
+          on
+            ? 'Show everything'
+            : `Show only ${kind} that ${tone === 'live' ? 'are live' : 'need you'}`
+        }
+        onClick={() => {
+          const only = new Set(filter.only);
+          if (on) only.delete(name);
+          else only.add(name);
+          onFilter({ ...filter, only });
+        }}
+      >
+        <Glyph kind={kind} tone={tone} />
+        <span className="wbar-n tabular">{counts[kind][tone]}</span>
+        <span className="wbar-word">{tone}</span>
+      </button>
+    );
+  };
+  const kind = (name: 'experiments' | 'tasks' | 'ended', glyph: ReactNode, title: string) => (
+    <button
+      type="button"
+      className={cx('wbar-b', filter.kinds[name] && 'on')}
+      aria-pressed={filter.kinds[name]}
+      title={title}
+      aria-label={title}
+      onClick={() =>
+        onFilter({ ...filter, kinds: { ...filter.kinds, [name]: !filter.kinds[name] } })
+      }
+    >
+      {glyph}
+    </button>
+  );
+  return (
+    <>
+      <div className="wbar" role="group" aria-label="Work">
+        <span className="wbar-g">
+          <span className="wbar-word wbar-kind">experiments</span>
+          {count('experiments', 'live')}
+          {count('experiments', 'attention')}
+        </span>
+        <span className="wbar-sep" />
+        <span className="wbar-g">
+          <span className="wbar-word wbar-kind">tasks</span>
+          {count('tasks', 'live')}
+          {count('tasks', 'attention')}
+        </span>
+        <span className="wbar-sep" />
+        <Dispatch />
+        <span className="wbar-gap" />
+        {kind('experiments', <Glyph kind="experiments" />, 'Show experiments')}
+        {kind('tasks', <Glyph kind="tasks" />, 'Show tasks')}
+        {kind(
+          'ended',
+          <svg className="wbar-glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <circle className="wbar-fill" cx="7" cy="7" r="5.75" />
+          </svg>,
+          'Show ended',
+        )}
+        <button
+          type="button"
+          className={cx('wbar-b', 'wbar-key', key && 'on')}
+          aria-pressed={key}
+          onClick={() => setKey(!key)}
+        >
+          Key
+        </button>
+        {agents && (
+          <Link className="wbar-word wbar-link" to={agents}>
+            Agents
+          </Link>
+        )}
+        {ends}
+      </div>
+      {key && <KeyLine />}
+    </>
+  );
+}
+
+/**
+ * Under the map, what the board has to say beside its counts: a lane that needs a person, a
+ * lane that failed to load or went stale, and whatever is live and on no unit of work — a
+ * machine nobody is using, an agent between two.
+ */
+export function LiveNotes() {
   const live = useContext(LiveContext);
   if (!live?.board) return null;
   const { board, now } = live;
   const lanes = LANES.map((name) => board.lanes[name]);
-  const needsYou = lanes.reduce((sum, lane) => sum + lane.needsYou, 0);
-  const sessions = board.lanes.sessions;
   const on = new Set(
     board.edges.filter((edge) => edge.verb !== 'waits on').map((edge) => edge.from),
   );
-  const loose = [...sessions.nodes, ...board.lanes.hardware.nodes].filter(
+  const loose = [...board.lanes.sessions.nodes, ...board.lanes.hardware.nodes].filter(
     (node) => !on.has(node.key),
   );
-  // An agent is working while its lease is live; one offered or lapsed is not, nor a machine.
-  const working = sessions.nodes.filter((node) => node.dot === 'live' || node.dot === 'moving');
-  // With nothing live, no lane's line and nothing that failed to load, there is nothing to say.
-  const said = [sessions.nodes, loose, ...lanes.flatMap((lane) => [lane.summaries, lane.failed])];
-  if (!sessions.pending && said.every((list) => !list.length)) return null;
+  const notes = lanes.flatMap((lane) => lane.summaries.filter((summary) => summary.attention));
+  const failed = lanes.some((lane) => lane.failed.length > 0);
+  const stale = lanes.filter((lane) => staleLane(lane, now)).slice(0, 1);
+  if (!notes.length && !failed && !stale.length && !loose.length) return null;
   return (
-    <section className="live-head" aria-label="Live">
-      <div className="live-head-line">
-        <span>
-          <b className="tabular">{sessions.pending ? EM : working.length}</b> working
-        </span>
-        {needsYou > 0 && (
-          <span className="running-needs">
-            {needsYou} {needsYou === 1 ? 'needs you' : 'need you'}
+    <section className="live-notes" aria-label="Live">
+      {notes.map(({ attention, owner, lane }, index) => (
+        <p className="running-note running-lane-attn" key={`${lane}${owner ?? ''}${index}`}>
+          <span className={cx(!attention!.quiet && 'running-attn')}>
+            <Phrase value={attention!.says} />
           </span>
-        )}
-        {lanes.flatMap((lane) =>
-          lane.summaries.map((summary, index) => (
-            <span className="running-summary" key={`${summary.lane}${summary.owner ?? ''}${index}`}>
-              <span className="muted">
-                <Phrase value={summary.says} />
-              </span>
-              {summary.actions.map((action) => (
-                <Act key={`${action.tool}:${action.label}`} action={action} />
-              ))}
-            </span>
-          )),
-        )}
-        {/* Every agent, machine and lease there has been, and what is rarely needed of them. */}
-        {agents && (
-          <Link className="live-more" to={agents}>
-            Agents
-          </Link>
-        )}
-      </div>
-      {lanes.flatMap((lane) =>
-        lane.summaries.map(
-          ({ attention, owner, lane: name }, index) =>
-            attention && (
-              <p className="running-note running-lane-attn" key={`${name}${owner ?? ''}${index}`}>
-                <span className={cx(!attention.quiet && 'running-attn')}>
-                  <Phrase value={attention.says} />
-                </span>
-                {attention.who && <span className="muted">{attention.who}</span>}
-                {attention.to && <Target to={attention.to}>{attention.to.text}</Target>}
-              </p>
-            ),
-        ),
-      )}
-      {lanes.some((lane) => lane.failed.length > 0) && (
+          {attention!.who && <span className="muted">{attention!.who}</span>}
+          {attention!.to && <Target to={attention!.to}>{attention!.to.text}</Target>}
+        </p>
+      ))}
+      {failed && (
         <p className="error-message running-note" role="status">
           Could not load everything.
         </p>
       )}
-      {lanes
-        .filter((lane) => staleLane(lane, now))
-        .slice(0, 1)
-        .map((lane) => (
-          <p className="muted running-note" role="status" key="stale">
-            Could not refresh. Showing the state that loaded{' '}
-            <Phrase value={[{ ago: lane.asOf! }]} />.
-          </p>
-        ))}
+      {stale.map((lane) => (
+        <p className="muted running-note" role="status" key="stale">
+          Could not refresh. Showing the state that loaded <Phrase value={[{ ago: lane.asOf! }]} />.
+        </p>
+      ))}
       <LiveLines nodes={loose} />
     </section>
   );

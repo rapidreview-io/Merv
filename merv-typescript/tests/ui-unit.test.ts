@@ -675,57 +675,6 @@ test('a history document read from another tab opens in Document, and ← Curren
 
 // ─── The card's clock ───────────────────────────────────────────────────────────────────
 
-test('a card counts the time since its work began only while a visit works it', async (t) => {
-  t.after(unmount);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).ResizeObserver = class {
-    constructor(private ran: (entries: { contentRect: { width: number } }[]) => void) {}
-    observe() {
-      this.ran([{ contentRect: { width: 1200 } }]);
-    }
-    disconnect() {}
-  };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  t.after(() => delete (globalThis as any).ResizeObserver);
-  const now = Date.now();
-  const given = board(now);
-  const started = new Date(now - 754_000).toISOString();
-  for (const item of given.lanes.work.nodes)
-    if (item.key === 'work:wf_index' || item.key === 'work:wf_review') item.started = started;
-  serve('/tools/ui.running', { body: { result: given } });
-  const flow = (state: string) => ({ state, updatedAt: at(0), workflow: 'task', version: 6 });
-  const wave = {
-    items: ['wf_index', 'wf_review'].map((id) => ({
-      id,
-      kind: 'tasks',
-      name: id,
-      flow: flow('in_progress'),
-      at: at(0),
-      held: true,
-    })),
-    edges: [],
-  };
-  await mount(
-    createElement(
-      MemoryRouter,
-      { initialEntries: ['/work'] },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(
-        WorkPlane as any,
-        { nameOf: () => undefined },
-        createElement(WorkMap as any, { wave }),
-      ),
-    ),
-  );
-  await settle(20);
-  const timer = (key: string) => $(`[data-key="${key}"] .wmap-timer`);
-  // Worked now (the board lends it a moving dot): 12 minutes and some seconds, in tabular figures.
-  assert.match(timer('work:wf_index')!.textContent!, /^12m 3[4-9]s$/);
-  assert.ok(timer('work:wf_index')!.classList.contains('tabular'));
-  // Waiting on its prerequisite, nobody on it: nothing new on the card.
-  assert.equal(timer('work:wf_review'), null);
-});
-
 // ─── What each owner names as the key artifact ─────────────────────────────────────────
 
 const review = (over: Record<string, unknown>) => ({
