@@ -682,3 +682,71 @@ test('a platform sandbox provider key is revealed and changed here, rebound; a k
   );
   undisclosed([listed, await f.audit()], [host1, host2, user1]);
 });
+
+test('two changes to one provider key in flight each read it inside their turn, so both fields stay', async (t) => {
+  const [token, url] = [secret(), 'https://bridge2.example.test'];
+  environment(t, {
+    ADMIN_TEST_KEY: encryptionKey(),
+    ADMIN_TEST_READER: secret(),
+    ADMIN_TEST_NISA: secret(),
+    ADMIN_TEST_VAULT_KEY: Buffer.alloc(32, 7).toString('base64url'),
+    ADMIN_TEST_CF: JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: 'h' }),
+  });
+  bridges(t, { 'https://bridge.example.test': 'h', [url]: token });
+  const [directory, sandboxes] = await places(t);
+  const f = await operable(t, directory, sandboxes);
+  t.after(async () => await f.app.stop());
+  // Another change holds the queue until both of these have read the key and are waiting.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const held = f.app.ctx.composition.override(
+    'ADMIN_TEST_READER',
+    async () => (await gate, secret()),
+    admin,
+  );
+  const change = (fields: Record<string, string>) =>
+    f.call('POST', '/admin/credentials/change', { provider: 'cf', fields });
+  const both = [change({ bridge_url: url }), change({ bridge_token: token })];
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  release();
+  await Promise.all([held, ...both]);
+  assert.deepEqual(JSON.parse(process.env.ADMIN_TEST_CF!), {
+    bridge_url: url,
+    bridge_token: token,
+  });
+});
+
+test('without Secrets’ key nothing offers a change, and a change is refused before anything reloads', async (t) => {
+  environment(t, {
+    ADMIN_TEST_KEY: '',
+    ADMIN_TEST_READER: secret(),
+    ADMIN_TEST_NISA: secret(),
+    ADMIN_TEST_VAULT_KEY: Buffer.alloc(32, 8).toString('base64url'),
+    ADMIN_TEST_CF: JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: 'h' }),
+  });
+  bridges(t, { 'https://bridge.example.test': 'h' });
+  const [directory, sandboxes] = await places(t);
+  const f = await operable(t, directory, sandboxes);
+  t.after(async () => await f.app.stop());
+  const listed = await f.call<AdminCredentials>('GET', '/admin/credentials');
+  const rows = [...listed.groups.flatMap((group) => group.secrets), ...listed.providers];
+  assert.ok(rows.length && rows.every((row) => !row.editable));
+  // Reading a value never needed the store.
+  assert.deepEqual(
+    await f.call('POST', '/admin/credentials/reveal', { env: 'ADMIN_TEST_READER' }),
+    { value: process.env.ADMIN_TEST_READER },
+  );
+  const reader = f.app.getFiber('reader');
+  const before = reads.length;
+  for (const body of [
+    { env: 'ADMIN_TEST_READER', value: secret() },
+    { provider: 'cf', fields: { bridge_token: secret() } },
+  ])
+    await assert.rejects(
+      f.call('POST', '/admin/credentials/change', body),
+      refused('secrets_unavailable', 503),
+    );
+  assert.equal(f.app.getFiber('reader'), reader);
+  assert.equal(reads.length, before);
+  assert.deepEqual(await f.stored(), []);
+});
