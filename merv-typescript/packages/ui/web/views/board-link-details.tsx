@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { linkExpansionMode } from './board-link-layout';
+import { linkArtifactId, linkExpansionMode } from './board-link-layout';
 import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import { ArtifactBody } from './artifacts';
 import './board-link-details.css';
@@ -29,10 +29,7 @@ export function BoardLinkDetails({
   const details: LinkDetails = {
     title: typeof data.title === 'string' ? data.title : undefined,
     text: typeof data.text === 'string' ? data.text : undefined,
-    artifactId:
-      typeof data.artifactId === 'string' && /^artifact_[a-zA-Z0-9]+$/.test(data.artifactId)
-        ? data.artifactId
-        : undefined,
+    artifactId: linkArtifactId(data.artifactId, ''),
     preview:
       typeof preview.title === 'string'
         ? {
@@ -44,8 +41,7 @@ export function BoardLinkDetails({
   const [expanded, setExpanded] = useState(false);
   const link = element.link ?? '';
   const web = /^https?:\/\//i.test(link);
-  const artifactId =
-    details.artifactId ?? (/^merv:artifact_/.test(link) ? link.slice(5) : undefined);
+  const artifactId = linkArtifactId(details.artifactId, link);
   const mode = linkExpansionMode(details.text, artifactId);
   const anchor = useRef<HTMLElement>(null);
   const dialog = useRef<HTMLElement>(null);

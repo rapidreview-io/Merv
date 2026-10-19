@@ -9,7 +9,7 @@ test('link detail content survives native scene serialization and board.read', (
     title: 'Paper',
     text: 'A claim and its limitation.',
     preview: { title: 'Original paper', description: 'Caller-supplied metadata.' },
-    artifactId: 'artifact_12345678901234567890123456789012',
+    artifactId: 'art_12345678901234567890123456789012',
   };
   const drawing = new Drawing([], true);
   drawing.apply({
@@ -61,5 +61,21 @@ test('expansion follows readable content: links stay compact, notes widen, docum
   assert.equal(linkExpansionMode('x'.repeat(1600)), 'reading');
   assert.equal(linkExpansionMode('x'.repeat(1601)), 'fullscreen');
   assert.equal(linkExpansionMode(Array(26).fill('item').join('\n')), 'fullscreen');
-  assert.equal(linkExpansionMode(undefined, 'artifact_fixture'), 'fullscreen');
+  assert.equal(linkExpansionMode(undefined, 'art_fixture'), 'fullscreen');
+});
+
+test('real artifact IDs route to the viewer from explicit details and native links', async () => {
+  const { linkArtifactId, linkExpansionMode } =
+    await import('../packages/ui/web/views/board-link-layout.js');
+  const actual = 'art_d5ee30c872854cc28c3cdae8ee995e43';
+  assert.equal(linkArtifactId(actual, ''), actual);
+  assert.equal(linkArtifactId(undefined, `merv:${actual}`), actual);
+  assert.equal(
+    linkExpansionMode(undefined, linkArtifactId(undefined, `merv:${actual}`)),
+    'fullscreen',
+  );
+  assert.equal(linkArtifactId({ id: actual }, ''), undefined);
+  assert.equal(linkArtifactId('bad id', ''), undefined);
+  assert.equal(linkArtifactId(undefined, 'merv:task_other'), undefined);
+  assert.equal(linkArtifactId(undefined, `https://example.org/${actual}`), undefined);
 });
