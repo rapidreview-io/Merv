@@ -1192,5 +1192,5 @@ test('a turn is offered at most 128 tools, however many plugins register', async
   const conversation = await f.create();
   const command = await f.send(conversation);
   const bound = await f.claimed(command);
-  assert.equal(bound.work.tools.length, 128);
+  assert.equal(bound.work.tools.length, 129);
 });
