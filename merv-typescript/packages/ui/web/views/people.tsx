@@ -39,6 +39,7 @@ interface Membership {
   actorId: string;
   role: Role;
   active: boolean;
+  signedIn: boolean;
 }
 type Admin = { issuer: string; subject: string } | null;
 interface Members {
@@ -117,7 +118,10 @@ export function PeopleView() {
   const root = `/projects/${encodeURIComponent(project.id)}`;
   const path = `${root}/members`;
   const billed = members?.find((member) => is(member, admin));
-  const payers = members?.filter((member) => member.role === 'operator' && member !== billed);
+  // Scope bills only an operator who has signed in.
+  const payers = members?.filter(
+    (member) => member.role === 'operator' && member.signedIn && member !== billed,
+  );
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
     labels: (member) => [nameOf(member.actorId), member.subject],

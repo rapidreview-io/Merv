@@ -199,7 +199,7 @@ export function scopeRoutes(
       const projectId = pathSegment(adminRoute[1]!);
       projectSelection(req.headers['x-merv-project-id'], projectId);
       return {
-        project: await scope.members.setAdmin(principal, projectId, await r.json(adminInput)),
+        admin: await scope.members.setAdmin(principal, projectId, await r.json(adminInput)),
       };
     }
     const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
@@ -207,10 +207,8 @@ export function scopeRoutes(
       const projectId = pathSegment(memberRoute[1]!);
       const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
       projectSelection(req.headers['x-merv-project-id'], projectId);
-      if (subject === undefined && req.method === 'GET') {
-        const memberships = await scope.members.memberships(principal, projectId);
-        return { memberships, admin: (await scope.project(await r.caller(projectId))).admin };
-      }
+      if (subject === undefined && req.method === 'GET')
+        return await scope.members.memberships(principal, projectId);
       if (subject === undefined && req.method === 'POST') {
         await r.json(addMemberInput);
         // Do not leave an account-ID bypass around the recipient's consent.

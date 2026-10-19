@@ -90,7 +90,7 @@ export const sessionsToolsPlugin = {
           says: 'enabled',
         },
         description:
-          "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
+          "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its admin, billed in Settings → Members), whoever changed either.",
         conversation: 'propose',
         inputSchema: dispatchSchema,
         handler: async (

@@ -175,8 +175,8 @@ export class SandboxesPeople implements People {
       })(),
     );
     this.#link(async () => {
-      for (const { id, admin } of (await scope.directory()).projects)
-        if (admin && !this.#closed) await this.#linked(id, admin);
+      for (const { projectId, source } of await scope.projectOwners())
+        if (source.kind === 'human' && !this.#closed) await this.#linked(projectId, source);
     });
   }
   async settled(): Promise<void> {

@@ -190,7 +190,11 @@ const listings: [string, Operation][] = [
   ['keys(human)', async (f) => assert.equal((await f.scope.userKeys.keys(f.alice)).length, 1)],
   [
     'memberships(human)',
-    async (f) => assert.equal((await f.scope.members.memberships(f.alice, f.project.id)).length, 1),
+    async (f) =>
+      assert.equal(
+        (await f.scope.members.memberships(f.alice, f.project.id)).memberships.length,
+        1,
+      ),
   ],
   [
     'actorCredentials(owner)',

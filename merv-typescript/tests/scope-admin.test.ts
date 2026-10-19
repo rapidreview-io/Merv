@@ -36,7 +36,10 @@ test('the creator is the admin; setAdmin needs admin permission and a signed-in 
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
   const project = await f.scope.members.createProject(alice, { name: 'Billed', requestId: 'r' });
-  assert.deepEqual(project.admin, person('alice'));
+  const members = async () => await f.scope.members.memberships(alice, project.id);
+  assert.deepEqual((await members()).admin, person('alice'));
+  // Agents read the project: it never names the person billed for it.
+  assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
   assert.deepEqual(f.heard, [[project.id, 'alice']]);
   // The request replayed creates nothing and changes no admin.
   await f.scope.members.createProject(alice, { name: 'Billed', requestId: 'r' });
@@ -59,12 +62,18 @@ test('the creator is the admin; setAdmin needs admin permission and a signed-in 
       status: 409,
     });
   assert.equal(f.heard.length, 1);
-  const changed = await f.scope.members.setAdmin(bob, project.id, person('bob'));
-  assert.deepEqual(changed.admin, person('bob'));
-  assert.deepEqual((await f.scope.project(await f.scope.caller(alice, project.id))).admin, {
-    issuer,
-    subject: 'bob',
-  });
+  // The members read says who has signed in, which is who the admin may be.
+  assert.deepEqual(
+    (await members()).memberships.map((m) => [m.subject, m.signedIn]),
+    [
+      ['alice', true],
+      ['bob', true],
+      ['reader', true],
+      ['absent', false],
+    ],
+  );
+  assert.deepEqual(await f.scope.members.setAdmin(bob, project.id, person('bob')), person('bob'));
+  assert.deepEqual((await members()).admin, person('bob'));
   // Setting the admin it has is no change.
   await f.scope.members.setAdmin(alice, project.id, person('bob'));
   assert.deepEqual(f.heard, [
@@ -80,7 +89,6 @@ test('the creator is the admin; setAdmin needs admin permission and a signed-in 
   );
   // The owner is the stored admin, not the longest-standing operator.
   assert.deepEqual(await f.owners(), [[project.id, 'bob']]);
-  assert.deepEqual((await f.scope.directory()).projects[0]!.admin, person('bob'));
 });
 
 test('an admin who stops being an operator hands it to the longest-standing live operator', async (t) => {
@@ -123,12 +131,12 @@ test('scope@12 backfills each admin from the longest-standing signed-in operator
     await tx.run('ALTER TABLE projects DROP COLUMN admin_issuer, DROP COLUMN admin_subject');
     await tx.run("DELETE FROM component_migrations WHERE component='scope' AND version=12");
   });
-  const scope = await createService(new ProjectScope(f.state));
-  const admins = new Map(
-    (await scope.directory()).projects.map((p) => [p.id, p.admin?.subject ?? null]),
+  await createService(new ProjectScope(f.state));
+  const admins = await f.state.read((sql) =>
+    sql.all<{ id: string; admin_subject: string | null }>('SELECT id,admin_subject FROM projects'),
   );
   // bob never signed in, so carol, the next operator, is the one billed.
-  assert.deepEqual(Object.fromEntries(admins), {
+  assert.deepEqual(Object.fromEntries(admins.map((p) => [p.id, p.admin_subject])), {
     [kept.id]: 'alice',
     [moved.id]: 'carol',
     [boot.project.id]: null,

@@ -184,7 +184,8 @@ test('one human has independent project roles and attribution actors; issuer and
   ])
     await assert.rejects(action, { code: 'forbidden' });
   assert.equal(
-    (await f.scope.members.memberships(alice, b.id)).filter((value) => value.active).length,
+    (await f.scope.members.memberships(alice, b.id)).memberships.filter((value) => value.active)
+      .length,
     2,
     'Every human member may read membership history',
   );
@@ -435,7 +436,7 @@ test('role changes and remove/rejoin preserve actor attribution but fence every 
         code: 'membership_required',
       },
     );
-  const history = (await f.scope.members.memberships(alice, project.id)).filter(
+  const history = (await f.scope.members.memberships(alice, project.id)).memberships.filter(
     (value) => value.subject === 'bob',
   );
   assert.deepEqual(
@@ -556,7 +557,7 @@ test('the last verified human operator is protected until another invited operat
   });
 });
 
-test('a project owner is its longest-standing signed-in operator, never an invitation', async (t) => {
+test('a project owner is its admin, then its longest-standing signed-in operator, never an invitation', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
@@ -579,7 +580,7 @@ test('a project owner is its longest-standing signed-in operator, never an invit
   // The platform admin's people: verified sign-ins only, with the project actors they are.
   const { issuer } = alice.user;
   const directory = await f.scope.directory();
-  assert.deepEqual(directory.projects, [{ ...project, admin: { issuer, subject: 'second' } }]);
+  assert.deepEqual(directory.projects, [project]);
   assert.deepEqual(
     directory.people.map(({ subject, actors }) => [subject, actors.length]),
     [
@@ -628,7 +629,7 @@ test('simultaneous self-demotions leave one verified human operator after serial
     'operator',
   );
   assert.equal(
-    (await f.scope.members.memberships(bob, project.id)).filter(
+    (await f.scope.members.memberships(bob, project.id)).memberships.filter(
       (value) => value.active && value.role === 'operator',
     ).length,
     1,
@@ -746,8 +747,9 @@ test('v2 migration preserves local projects and credentials; adoption is explici
     repaired.actorId,
   );
   assert.equal(
-    (await scope.members.memberships(rescuer, legacy.project.id)).filter((value) => value.active)
-      .length,
+    (await scope.members.memberships(rescuer, legacy.project.id)).memberships.filter(
+      (value) => value.active,
+    ).length,
     2,
   );
   const audit = (await state.events(legacy.project.id)).findLast(

@@ -16,7 +16,7 @@ const { setProject } = await import('../packages/ui/web/api.js');
 
 const issuer = 'https://login.example';
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-10-01T00:00:00.000Z' };
-const member = (subject: string, role: string) => ({
+const member = (subject: string, role: string, signedIn = true) => ({
   id: `membership_${subject}`,
   projectId: project.id,
   issuer,
@@ -24,11 +24,13 @@ const member = (subject: string, role: string) => ({
   actorId: `actor_${subject}`,
   role,
   active: true,
+  signedIn,
 });
 const memberships = (role: string) => [
   member('me', role),
   member('bea', 'operator'),
   member('cy', 'reader'),
+  member('dee', 'operator', false),
 ];
 
 async function open(role: string, admin = 'me') {
@@ -48,6 +50,7 @@ async function open(role: string, admin = 'me') {
         { id: 'actor_me', name: 'Me Myself' },
         { id: 'actor_bea', name: 'Bea Payer' },
         { id: 'actor_cy', name: 'Cy Reader' },
+        { id: 'actor_dee', name: 'Dee Invited' },
       ],
     },
   });
@@ -80,7 +83,7 @@ test('the page says who is billed; an operator bills another operator from ⋯',
   const offered = [...document.querySelectorAll('.billed [role="menuitem"]')].map(
     (b) => b.textContent,
   );
-  // Operators only, the one billed now left out.
+  // Operators who have signed in only, the one billed now left out.
   assert.deepEqual(offered, ['Bea Payer']);
   serve(`/projects/${project.id}/members`, {
     body: { memberships: memberships('operator'), admin: { issuer, subject: 'bea' } },

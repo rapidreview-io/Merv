@@ -13,6 +13,7 @@ import {
   type Project,
   type ProjectAdmin,
   type ProjectMembership,
+  type ProjectMembers,
   type ProjectInvitation,
   type Role,
   type SharedUser,
@@ -203,19 +204,27 @@ export class Memberships {
         'The admin must be a signed-in operator of the project',
         409,
       );
-      const before = await this.project(tx, projectId);
-      if (before.admin?.issuer === admin.issuer && before.admin.subject === admin.subject)
-        return before;
+      const before = await this.admin(tx, projectId);
+      if (before?.issuer === admin.issuer && before.subject === admin.subject) return before;
       await this.assignAdmin(tx, projectId, admin);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,
         type: 'project.admin_changed',
         subjectId: projectId,
-        data: { ...admin, before: before.admin },
+        data: { ...admin, before },
       });
-      return await this.project(tx, projectId);
+      return admin;
     });
+  }
+
+  private async admin(sql: Sql, projectId: string): Promise<ProjectAdmin | null> {
+    return (
+      (await sql.get<ProjectAdmin>(
+        'SELECT admin_issuer AS issuer,admin_subject AS subject FROM projects WHERE id=? AND admin_issuer IS NOT NULL',
+        projectId,
+      )) ?? null
+    );
   }
 
   async acceptVerifiedIdentity({ ...identity }: VerifiedIdentity): Promise<HumanPrincipal> {
@@ -420,15 +429,18 @@ export class Memberships {
     });
   }
 
-  async memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]> {
+  async memberships(principal: Principal, projectId: string): Promise<ProjectMembers> {
     return await forRead(this.state, async (tx) => {
       await this.resolve(await this.human(principal, tx), projectId, tx);
-      return (
-        await tx.all<MembershipRow>(
-          'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid',
-          projectId,
-        )
-      ).map(membership);
+      const rows = await tx.all<MembershipRow & { signed_in: boolean }>(
+        `SELECT m.*,EXISTS(SELECT 1 FROM shared_users u WHERE u.issuer=m.issuer AND u.subject=m.subject)
+           AS signed_in FROM project_memberships m WHERE m.project_id=? ORDER BY m._merv_rowid`,
+        projectId,
+      );
+      return {
+        memberships: rows.map((row) => ({ ...membership(row), signedIn: row.signed_in })),
+        admin: await this.admin(tx, projectId),
+      };
     });
   }
 

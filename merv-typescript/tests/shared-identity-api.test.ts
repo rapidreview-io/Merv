@@ -209,11 +209,11 @@ test('verified users discover two projects, administer memberships, and retain p
   );
   // The admin is billed for the project; only an operator names another, who must be one too.
   const setAdmin = (body: object, token?: string) =>
-    f.request<{ project: Project }>(`/projects/${a.id}/admin`, { method: 'PATCH', body, token });
+    f.request<{ admin: unknown }>(`/projects/${a.id}/admin`, { method: 'PATCH', body, token });
   assert.equal((await setAdmin({ issuer, subject: alice }, f.bobToken)).status, 403);
   assert.equal((await setAdmin({ issuer, subject: bob })).status, 409);
   assert.equal((await setAdmin({ issuer, subject: alice, role: 'operator' })).status, 400);
-  assert.deepEqual((await setAdmin({ issuer, subject: alice })).body.project.admin, {
+  assert.deepEqual((await setAdmin({ issuer, subject: alice })).body.admin, {
     issuer,
     subject: alice,
   });

@@ -180,9 +180,9 @@ export class ProjectScope implements Scope {
         'SELECT m.issuer,m.subject,m.actor_id AS "actorId",a.name FROM member_actors m JOIN actors a ON a.id=m.actor_id ORDER BY a.id',
       ))
         people.get(issuer + '|' + subject)?.actors.push(actor);
-      const projects = (
-        await sql.all<ProjectRow>('SELECT * FROM projects ORDER BY created_at DESC,id')
-      ).map(project);
+      const projects = await sql.all<Project>(
+        'SELECT id,name,created_at AS "createdAt" FROM projects ORDER BY created_at DESC,id',
+      );
       return { projects, people: [...people.values()] };
     });
   }

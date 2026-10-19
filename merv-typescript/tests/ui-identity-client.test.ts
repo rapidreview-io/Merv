@@ -52,12 +52,7 @@ const unauthorized = () =>
 const session = (user: string, token: string) =>
   ({ user: { id: user }, access_token: token }) as Session;
 const login = { url: 'https://shared.example', publishableKey: 'sb_publishable_fixture_only' };
-const project = {
-  id: 'project-a',
-  name: 'Project A',
-  createdAt: '2026-09-16T00:00:00.000Z',
-  admin: null,
-};
+const project = { id: 'project-a', name: 'Project A', createdAt: '2026-09-16T00:00:00.000Z' };
 const account = (projects = [project]): Account => ({
   kind: 'user',
   user: { issuer: `${login.url}/auth/v1`, subject: 'user-a', createdAt: project.createdAt },
