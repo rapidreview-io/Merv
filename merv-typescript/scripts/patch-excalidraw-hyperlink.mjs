@@ -9,65 +9,90 @@ if (pkg.version !== '0.18.1') throw new Error('Review rich hyperlink patch for E
 for (const mode of ['dev', 'prod']) {
   const file = resolve(root, `dist/${mode}/index.js`);
   let source = readFileSync(file, 'utf8');
-  if (source.includes('mervRichHyperlinkHook')) {
-    if (
-      !source.includes('renderHyperlinkDetails') ||
-      !source.includes('max(16px, calc(100% - 396px))')
-    )
-      throw new Error(
-        'Installed rich hyperlink patch is stale; reinstall Excalidraw before continuing',
-      );
-    continue;
-  }
   const replace = (before, after) => {
     if (source.split(before).length !== 2)
       throw new Error(`Excalidraw ${mode} patch context changed: ${before.slice(0, 60)}`);
     source = source.replace(before, after);
   };
-  if (mode === 'dev') {
-    replace(
-      '      onLinkOpen,\n      generateLinkForSelection,',
-      '      onLinkOpen,\n      renderHyperlinkDetails: props.renderHyperlinkDetails,\n      generateLinkForSelection,',
-    );
-    replace(
-      'top: `${y}px`,\n        left: `${x}px`,\n        width: POPUP_WIDTH,',
-      'top: appProps.renderHyperlinkDetails ? `clamp(16px, ${y + 85}px, max(16px, calc(100% - 430px)))` : `${y}px`,\n        left: appProps.renderHyperlinkDetails ? `clamp(16px, ${x + 190 + element.width * appState.zoom.value / 2 + 392 < appState.width ? x + 202 + element.width * appState.zoom.value / 2 : x - 202 - element.width * appState.zoom.value / 2}px, max(16px, calc(100% - 396px)))` : `${x}px`,\n        width: POPUP_WIDTH,',
-    );
-    replace(
-      'if (isEditing) {\n        return;\n      }\n      if (timeoutId)',
-      'if (isEditing || appProps.renderHyperlinkDetails) {\n        return;\n      }\n      if (timeoutId)',
-    );
-    replace(
-      'className: "excalidraw-hyperlinkContainer",\n      style:',
-      'className: "excalidraw-hyperlinkContainer" + (appProps.renderHyperlinkDetails ? " merv-rich-hyperlink" : ""),\n      style:',
-    );
-    replace(
-      'children: [\n        isEditing ? /* @__PURE__ */ jsx48(',
-      'children: [\n        !isEditing && appProps.renderHyperlinkDetails?.(element, () => setAppState({ showHyperlinkPopup: false })),\n        isEditing ? /* @__PURE__ */ jsx48(',
-    );
-  } else {
-    replace(
-      'onLinkOpen:S,generateLinkForSelection:I,onPointerDown:_,onPointerUp:k,onScrollChange:R,onDuplicate:M,validateEmbeddable:',
-      'onLinkOpen:S,renderHyperlinkDetails:e.renderHyperlinkDetails,generateLinkForSelection:I,onPointerDown:_,onPointerUp:k,onScrollChange:R,onDuplicate:M,validateEmbeddable:',
-    );
-    replace(
-      'top:`${T}px`,left:`${x}px`,width:iu',
-      'top:l.renderHyperlinkDetails?`clamp(16px, ${T+85}px, max(16px, calc(100% - 430px)))`:`${T}px`,left:l.renderHyperlinkDetails?`clamp(16px, ${x+190+e.width*a.zoom.value/2+392<a.width?x+202+e.width*a.zoom.value/2:x-202-e.width*a.zoom.value/2}px, max(16px, calc(100% - 396px)))`:`${x}px`,width:iu',
-    );
-    replace(
-      'w=S=>{if(u)return;E&&clearTimeout(E),FI(e,o,a,z(S.clientX,S.clientY))',
-      'w=S=>{if(u||l.renderHyperlinkDetails)return;E&&clearTimeout(E),FI(e,o,a,z(S.clientX,S.clientY))',
-    );
-    replace(
-      'className:"excalidraw-hyperlinkContainer",style:',
-      'className:"excalidraw-hyperlinkContainer"+(l.renderHyperlinkDetails?" merv-rich-hyperlink":""),style:',
-    );
-    replace(
-      'width:iu,padding:ru},children:[u?Pi("input"',
-      'width:iu,padding:ru},children:[!u&&l.renderHyperlinkDetails?.(e,()=>t({showHyperlinkPopup:!1})),u?Pi("input"',
-    );
+  if (!source.includes('mervRichHyperlinkHook')) {
+    if (mode === 'dev') {
+      replace(
+        '      onLinkOpen,\n      generateLinkForSelection,',
+        '      onLinkOpen,\n      renderHyperlinkDetails: props.renderHyperlinkDetails,\n      generateLinkForSelection,',
+      );
+      replace(
+        'top: `${y}px`,\n        left: `${x}px`,\n        width: POPUP_WIDTH,',
+        'top: appProps.renderHyperlinkDetails ? `clamp(16px, ${y + 85}px, max(16px, calc(100% - 430px)))` : `${y}px`,\n        left: appProps.renderHyperlinkDetails ? `clamp(16px, ${x + 190 + element.width * appState.zoom.value / 2 + 392 < appState.width ? x + 202 + element.width * appState.zoom.value / 2 : x - 202 - element.width * appState.zoom.value / 2}px, max(16px, calc(100% - 396px)))` : `${x}px`,\n        width: POPUP_WIDTH,',
+      );
+      replace(
+        'if (isEditing) {\n        return;\n      }\n      if (timeoutId)',
+        'if (isEditing || appProps.renderHyperlinkDetails) {\n        return;\n      }\n      if (timeoutId)',
+      );
+      replace(
+        'className: "excalidraw-hyperlinkContainer",\n      style:',
+        'className: "excalidraw-hyperlinkContainer" + (appProps.renderHyperlinkDetails ? " merv-rich-hyperlink" : ""),\n      style:',
+      );
+      replace(
+        'children: [\n        isEditing ? /* @__PURE__ */ jsx48(',
+        'children: [\n        !isEditing && appProps.renderHyperlinkDetails?.(element, () => setAppState({ showHyperlinkPopup: false })),\n        isEditing ? /* @__PURE__ */ jsx48(',
+      );
+    } else {
+      replace(
+        'onLinkOpen:S,generateLinkForSelection:I,onPointerDown:_,onPointerUp:k,onScrollChange:R,onDuplicate:M,validateEmbeddable:',
+        'onLinkOpen:S,renderHyperlinkDetails:e.renderHyperlinkDetails,generateLinkForSelection:I,onPointerDown:_,onPointerUp:k,onScrollChange:R,onDuplicate:M,validateEmbeddable:',
+      );
+      replace(
+        'top:`${T}px`,left:`${x}px`,width:iu',
+        'top:l.renderHyperlinkDetails?`clamp(16px, ${T+85}px, max(16px, calc(100% - 430px)))`:`${T}px`,left:l.renderHyperlinkDetails?`clamp(16px, ${x+190+e.width*a.zoom.value/2+392<a.width?x+202+e.width*a.zoom.value/2:x-202-e.width*a.zoom.value/2}px, max(16px, calc(100% - 396px)))`:`${x}px`,width:iu',
+      );
+      replace(
+        'w=S=>{if(u)return;E&&clearTimeout(E),FI(e,o,a,z(S.clientX,S.clientY))',
+        'w=S=>{if(u||l.renderHyperlinkDetails)return;E&&clearTimeout(E),FI(e,o,a,z(S.clientX,S.clientY))',
+      );
+      replace(
+        'className:"excalidraw-hyperlinkContainer",style:',
+        'className:"excalidraw-hyperlinkContainer"+(l.renderHyperlinkDetails?" merv-rich-hyperlink":""),style:',
+      );
+      replace(
+        'width:iu,padding:ru},children:[u?Pi("input"',
+        'width:iu,padding:ru},children:[!u&&l.renderHyperlinkDetails?.(e,()=>t({showHyperlinkPopup:!1})),u?Pi("input"',
+      );
+    }
+    source += '\n// mervRichHyperlinkHook: pinned native popup extension\n';
   }
-  writeFileSync(file, source + '\n// mervRichHyperlinkHook: pinned native popup extension\n');
+  if (!source.includes('mervRichHyperlinkZoom')) {
+    const dev = mode === 'dev';
+    const props = dev ? 'appProps' : 'l';
+    const state = dev ? 'appState' : 'a';
+    const element = dev ? 'element' : 'e';
+    const z = `${state}.zoom.value`;
+    const oldLeft = dev
+      ? '${x + 190 + element.width * appState.zoom.value / 2 + 392 < appState.width ? x + 202 + element.width * appState.zoom.value / 2 : x - 202 - element.width * appState.zoom.value / 2}'
+      : '${x+190+e.width*a.zoom.value/2+392<a.width?x+202+e.width*a.zoom.value/2:x-202-e.width*a.zoom.value/2}';
+    replace(
+      'max(16px, calc(100% - 430px))',
+      `max(16px, calc(100% - 16px - 430px * ${'${' + z + '}'}))`,
+    );
+    replace(
+      oldLeft,
+      '${' +
+        `x + 190 + ${element}.width * ${z} / 2 + 392 * ${z} < ${state}.width ? x + 190 + (${element}.width / 2 + 12) * ${z} : x + 190 - (${element}.width / 2 + 392) * ${z}` +
+        '}',
+    );
+    replace(
+      'max(16px, calc(100% - 396px))',
+      `max(16px, calc(100% - 16px - 380px * ${'${' + z + '}'}))`,
+    );
+    const width = dev ? 'width: POPUP_WIDTH,' : 'width:iu,';
+    replace(
+      width + (dev ? '\n        padding: POPUP_PADDING' : 'padding:ru'),
+      width +
+        `"--board-popup-zoom":${props}.renderHyperlinkDetails ? ${z} : 1,scale:${props}.renderHyperlinkDetails ? String(${z}) : undefined,transformOrigin:"top left",` +
+        (dev ? 'padding: POPUP_PADDING' : 'padding:ru'),
+    );
+    source += '\n// mervRichHyperlinkZoom: scale the anchored reader with the board\n';
+  }
+  writeFileSync(file, source);
 }
 const types = resolve(root, 'dist/types/excalidraw/types.d.ts');
 let source = readFileSync(types, 'utf8');

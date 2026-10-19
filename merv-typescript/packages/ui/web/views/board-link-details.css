@@ -1,9 +1,9 @@
 /* The native hyperlink container keeps its URL, edit, and remove controls. */
 .excalidraw .excalidraw-hyperlinkContainer.merv-rich-hyperlink {
   flex-wrap: wrap;
-  width: min(380px, calc(100% - 32px)) !important;
+  width: min(380px, calc((100% - 32px) / var(--board-popup-zoom, 1))) !important;
   height: auto;
-  max-height: calc(100% - 32px);
+  max-height: calc((100% - 32px) / var(--board-popup-zoom, 1));
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid var(--color-gray-20, #e8e8ed);
