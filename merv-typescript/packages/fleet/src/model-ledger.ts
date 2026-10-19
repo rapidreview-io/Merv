@@ -36,22 +36,35 @@ export const tokenLedger = (table: string, keys: readonly string[]) => ({
 });
 const among = (persons: readonly string[]) => persons.map(() => '?').join(',') || 'NULL';
 /** A daily token ledger, `table(person,day,tokens)`: a tokenLedger keyed by person and day, under
- *  people's own daily limits, `limitsTable(person,tokens)`, each replacing the deployment's
- *  (`fallback`). */
-export const dailyTokens = (table: string, limitsTable: string) => {
+ *  each person's daily limit: the platform admin's for them in `capsTable(person,tokens)`, else the
+ *  deployment's (`fallback`), and lower where they set their own in `ownTable(person,tokens)`. */
+export const dailyTokens = (table: string, capsTable: string, ownTable?: string) => {
   const ledger = tokenLedger(table, ['person', 'day']);
-  const limits = ownLimits(limitsTable, 'tokens');
-  /** `person`'s daily limit: their own, else `fallback`. */
+  const caps = ownLimits(capsTable, 'tokens');
+  const own = ownTable ? ownLimits(ownTable, 'tokens') : undefined;
+  /** Each of `persons`' cap, whether the admin set it, and the limit that holds under it. */
+  const limits = async (sql: Sql, persons: readonly string[], fallback: number) => {
+    const [set, lowered] = [
+      await caps.of(sql, persons),
+      (await own?.of(sql, persons)) ?? new Map(),
+    ];
+    return persons.map((person) => {
+      const cap = set.get(person) ?? fallback;
+      return { cap, set: set.has(person), limit: Math.min(lowered.get(person) ?? cap, cap) };
+    });
+  };
   const limit = async (sql: Sql, person: string, fallback: number) =>
-    (await limits.of(sql, [person])).get(person) ?? fallback;
+    (await limits(sql, [person], fallback))[0]!;
   return {
     limit,
-    setLimit: limits.set,
+    setLimit: caps.set,
+    setOwn: own?.set,
     charge: async (sql: Sql, person: string, day: string, tokens: number, fallback: number) =>
-      ledger.charge(sql, [person, day], tokens, await limit(sql, person, fallback)),
+      ledger.charge(sql, [person, day], tokens, (await limit(sql, person, fallback)).limit),
     settle: (sql: Sql, person: string, day: string, delta: number) =>
       ledger.settle(sql, [person, day], delta),
-    /** Each of `persons`' tokens over the UTC days [from, to), and the daily limit that holds. */
+    /** Each of `persons`' tokens over the UTC days [from, to), the daily limit that holds, and
+     *  whether the admin set theirs. */
     used: async (
       sql: Sql,
       persons: readonly string[],
@@ -66,11 +79,11 @@ export const dailyTokens = (table: string, limitsTable: string) => {
         ...persons,
       );
       const used = new Map(rows.map((row) => [row.person, Number(row.tokens)]));
-      const own = await limits.of(sql, persons);
-      return persons.map((person) => ({
+      const held = await limits(sql, persons, fallback);
+      return persons.map((person, i) => ({
         used: used.get(person) ?? 0,
-        limit: own.get(person) ?? fallback,
-        own: own.has(person),
+        limit: held[i]!.limit,
+        own: held[i]!.set,
       }));
     },
   };

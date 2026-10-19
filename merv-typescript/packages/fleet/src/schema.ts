@@ -193,4 +193,13 @@ export const modelMigrations = [
     CREATE TRIGGER fleet_workflow_platform_no_update BEFORE UPDATE OR DELETE ON fleet_workflow_platforms
     FOR EACH ROW EXECUTE FUNCTION fleet_workflow_platform_immutable();`,
   },
+  // The platform admin's daily token cap per person (founder ruling 2026-10-19); a person's own
+  // limit (fleet_model_limits) only lowers it. A new table: no prod count.
+  {
+    version: 8,
+    sql: `CREATE TABLE fleet_model_caps (
+    person TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL
+  );`,
+  },
 ];
