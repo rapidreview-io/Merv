@@ -1245,7 +1245,7 @@
       "component": "fleet_workflow",
       "version": 8,
       "hash": "2d729de3f9c87644751b17f2009ebc0c254bf24165bb39be1236b270b684f4e8",
-      "published": false
+      "published": true
     },
     {
       "component": "admin",
