@@ -1239,6 +1239,12 @@
       "component": "fleet_workflow",
       "version": 7,
       "hash": "1bb0457691d829a92e1b1980f7ac405106c98554b45824f256d17809cd613585",
+      "published": true
+    },
+    {
+      "component": "fleet_workflow",
+      "version": 8,
+      "hash": "2d729de3f9c87644751b17f2009ebc0c254bf24165bb39be1236b270b684f4e8",
       "published": false
     },
     {

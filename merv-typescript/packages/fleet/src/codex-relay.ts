@@ -150,8 +150,9 @@ const refusals = {
   ceiling: [workerTokensSpent, "The person's daily model tokens for workers are used up"],
 } as const;
 const day = () => new Date().toISOString().slice(0, 10);
-/** People's own daily limits (founder ruling 2026-09-25), set by them or the platform admin. */
-const ledger = dailyTokens('fleet_model_usage', 'fleet_model_limits');
+/** Each person's daily tokens: the platform admin's cap for them, else the deployment's, and
+ *  lower where they set their own (founder rulings 2026-09-25 and 2026-10-19). */
+const ledger = dailyTokens('fleet_model_usage', 'fleet_model_caps', 'fleet_model_limits');
 /** A grant's own budget, the same ledger keyed by the grant. */
 const grantLedger = tokenLedger('fleet_grant_tokens', ['grant_id']);
 
@@ -171,7 +172,7 @@ export async function modelBudgetStatus(state: State, person: string, fallback: 
 /** `modelBudgetStatus` read in the caller's own transaction. */
 export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const today = day();
-  const tokens = await ledger.limit(sql, person, fallback);
+  const { limit: tokens, cap } = await ledger.limit(sql, person, fallback);
   const used = await sql.get<{ tokens: number | string }>(
     'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
     person,
@@ -189,6 +190,7 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const blocked = remaining <= maxOutputTokens || lastRefusedTokens !== null;
   return {
     tokens,
+    cap,
     usedToday,
     remaining,
     lastRefusedTokens,
@@ -197,15 +199,23 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
     resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
   };
 }
-/** A person's own limit, or none (null) so the deployment's holds again. Changing it lifts
- *  today's refused wait: the next call judges the day again, and is refused, and waits, if the
- *  limit still cannot fund it. */
-export async function setDailyTokens(state: State, person: string, tokens: number | null) {
-  await state.transaction(async (tx) => {
-    await ledger.setLimit(tx, person, tokens);
+/** Changing a limit lifts today's refused wait: the next call judges the day again, and is
+ *  refused, and waits, if the limit still cannot fund it. */
+const lifting = (state: State, person: string, change: (tx: Sql) => Promise<unknown>) =>
+  state.transaction(async (tx) => {
+    await change(tx);
     await tx.run('DELETE FROM fleet_model_blockers WHERE person=? AND day=?', person, day());
   });
-}
+/** The platform admin's daily cap for `person`, or none (null) so the deployment's holds. */
+export const setTokenCap = (state: State, person: string, tokens: number | null) =>
+  lifting(state, person, (tx) => ledger.setLimit(tx, person, tokens));
+/** `person`'s own daily limit, at most their cap (else `fallback`, the deployment's). */
+export const setDailyTokens = (state: State, person: string, tokens: number, fallback: number) =>
+  lifting(state, person, async (tx) => {
+    const { cap } = await ledger.limit(tx, person, fallback);
+    check(tokens <= cap, 'fleet_limit_capped', `Your daily tokens can be at most ${cap}`);
+    await ledger.setOwn!(tx, person, tokens);
+  });
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
 
 /** How long after a relay fault a visit's failed close is put down to it. Codex gives up on a

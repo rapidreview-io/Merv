@@ -59,7 +59,7 @@ import {
 import {
   codexModelRelay,
   modelBudgetStatus,
-  setDailyTokens,
+  setTokenCap,
 } from '../packages/fleet/src/codex-relay.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { NisaService } from '../packages/nisa/src/index.js';
@@ -350,7 +350,7 @@ test('a refused model reservation stops new Fleet rents until its payer has enou
   assert.deepEqual(f.open(), []);
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, true);
   assert.equal((await modelBudgetStatus(f.state, person, 20_000_000)).remaining, 73_425);
-  await setDailyTokens(f.state, person, 20_100_000);
+  await setTokenCap(f.state, person, 20_100_000);
   await f.adapter.reconcile();
   assert.deepEqual(f.requests, [f.caller.projectId]);
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
@@ -440,7 +440,7 @@ test('a rented machine’s person with a spent day gives it no work until their 
     whose: `actor:${payer.actorId}`,
     related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
   });
-  await setDailyTokens(f.state, person, 20_100_000);
+  await setTokenCap(f.state, person, 20_100_000);
   assert.equal(await wait(), null);
   // Only the visit whose own call the relay refused closes as the budget's, and that is no
   // relay fault of the visit's. The visits start after Main did.
@@ -2552,7 +2552,7 @@ test('a current review step’s model calls count toward the project owner', asy
   // The worker's own budget is the voucher's too.
   const worker = await h.sessions.authenticate(machine.secret);
   assert.equal((await h.adapter.modelBudget(worker))?.blocked, false);
-  await setDailyTokens(h.state, voucher, charge.tokens + 1_000);
+  await setTokenCap(h.state, voucher, charge.tokens + 1_000);
   assert.equal((await h.adapter.modelBudget(worker))?.blocked, true);
 });
 

@@ -161,6 +161,8 @@ function Plugins({ shell }: ViewProps) {
 
 interface TokenLimit {
   tokens: number;
+  /** The most they may set: the platform's cap for them. */
+  cap: number;
   usedToday: number;
   /** Fleet's own judgement of the day: it holds new work while this stands. */
   blocked?: boolean;
@@ -194,7 +196,7 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
         type="number"
         aria-label="Fleet tokens per day"
         min={1}
-        max={1_000_000_000}
+        max={limit.cap}
         step={1}
         value={value}
         // While a save's result is unknown its retry sends that number again, so it stays put.
