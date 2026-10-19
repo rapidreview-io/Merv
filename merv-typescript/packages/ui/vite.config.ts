@@ -1,3 +1,4 @@
+import { boardFontManifest } from '../../scripts/board-font-manifest.mjs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { createRequire } from 'node:module';
@@ -42,6 +43,18 @@ const fonts = join(
 );
 const excalidrawFonts = (): Plugin => ({
   name: 'excalidraw-fonts',
+  resolveId(id) {
+    if (id === 'virtual:board-fonts') return '\0virtual:board-fonts';
+  },
+  load(id) {
+    if (id === '\0virtual:board-fonts')
+      return (
+        'export default ' +
+        JSON.stringify(
+          boardFontManifest().map(({ family, url, range }) => ({ family, url, range })),
+        )
+      );
+  },
   configureServer(server) {
     server.middlewares.use('/ui/assets/excalidraw/fonts', (req, res, next) => {
       const file = join(fonts, decodeURIComponent((req.url ?? '').split('?')[0]!));
