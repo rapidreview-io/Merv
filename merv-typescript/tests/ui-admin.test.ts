@@ -213,7 +213,7 @@ test('standalone: its title, the plan it was accepted on, its customer, the chat
   );
   assert.match(text(), /QuestionDoes smoothing help\?/);
   assert.match(text(), /SuccessECE falls by 20%/);
-  assert.match(text(), /Limits3 h · 4M tokens · 2 attempts/);
+  assert.match(text(), /Limits3 h of agent working time · 4M tokens · 2 attempts/);
   assert.match(text(), /Customerpriya@example\.org/);
   assert.match(text(), /waits on approval/);
   const pill = [...document.querySelectorAll('.status')].find((el) => el.textContent === 'ready');

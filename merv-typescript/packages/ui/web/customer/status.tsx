@@ -14,6 +14,8 @@ export interface Progress {
   maxAttempts: number;
   startedAt: string | null;
   maxWallMs: number | null;
+  /** The agent working time the run used, counted as `maxWallMs` is; unread outside a run. */
+  usedWallMs?: number | null;
   compute: { usd: number; limitUsd: number | null } | null;
   now: string | null;
   step: { done: number; total: number } | null;
@@ -187,13 +189,20 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
       {progress.now && <p className="cx-now">{progress.now}</p>}
 
       <dl className="cx-meters">
-        {elapsedMs !== null && (
+        {/* The limit is agent working time: a run whose agent waits for its compute uses none. */}
+        {typeof progress.usedWallMs === 'number' && (
           <div>
-            <dt>Time</dt>
+            <dt>Agent working time</dt>
             <dd>
-              {span(elapsedMs)}
+              {span(progress.usedWallMs)}
               {progress.maxWallMs ? ` of ${span(progress.maxWallMs)}` : ''}
             </dd>
+          </div>
+        )}
+        {elapsedMs !== null && (
+          <div>
+            <dt>Elapsed</dt>
+            <dd>{span(elapsedMs)}</dd>
           </div>
         )}
         {progress.compute && (

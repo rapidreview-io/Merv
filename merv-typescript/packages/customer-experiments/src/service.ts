@@ -284,7 +284,9 @@ export class CustomerService {
   private async progress(
     caller: Caller,
     exp: CustomerExperiment,
-    usage: { budgets: { scopeId: string; maxWallMs: number | null }[] } | null,
+    usage: {
+      budgets: { scopeId: string; maxWallMs: number | null; used: { wallMs: number } }[];
+    } | null,
   ) {
     const { paidAt, lines } = await this.domain.progress(caller, exp.id, this.store.state.ambient);
     const stage = CUSTOMER_STAGE[exp.workflow.state] ?? 'planning';
@@ -309,6 +311,7 @@ export class CustomerService {
     const limits =
       exp.contract && isDocumentContract(exp.contract) ? exp.contract.limits : undefined;
     const waiting = stage === 'running' && !!(await this.stalled(caller, exp));
+    const budget = usage?.budgets.find((b) => b.scopeId === exp.id);
     return {
       stage,
       entered,
@@ -316,9 +319,9 @@ export class CustomerService {
       attempt: Math.max(1, exp.attempts),
       maxAttempts: limits?.maxAttempts ?? 2,
       startedAt: paidAt,
-      maxWallMs:
-        usage?.budgets.find((b) => b.scopeId === exp.id)?.maxWallMs ??
-        (limits?.wallMinutes ? limits.wallMinutes * 60_000 : null),
+      maxWallMs: budget?.maxWallMs ?? (limits?.wallMinutes ? limits.wallMinutes * 60_000 : null),
+      // Agent working time, which a wait for compute uses none of, counted as its limit is.
+      usedWallMs: budget?.used.wallMs ?? null,
       compute: (await this.compute?.spend?.(caller)) ?? null,
       now: waiting
         ? 'Waiting to resume'

@@ -103,10 +103,11 @@ export function PlanCard({
   );
 }
 
-/** An accepted contract's limits in a line: `3 h · 4M tokens · 2 attempts`. */
+/** Accepted limits in a line: `3 h of agent working time · 4M tokens · 2 attempts`. */
 export function limitLine(limits: Record<string, number>): string {
   const parts: string[] = [];
-  if (limits.wallMinutes) parts.push(`${Math.round((limits.wallMinutes / 60) * 10) / 10} h`);
+  if (limits.wallMinutes)
+    parts.push(`${Math.round((limits.wallMinutes / 60) * 10) / 10} h of agent working time`);
   if (limits.maxTokens)
     parts.push(
       `${limits.maxTokens >= 1e6 ? `${Math.round(limits.maxTokens / 1e6)}M` : limits.maxTokens} tokens`,

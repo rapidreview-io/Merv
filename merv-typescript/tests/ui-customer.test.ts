@@ -756,6 +756,7 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
         maxAttempts: 2,
         startedAt: paidAt,
         maxWallMs: 24 * 3600_000,
+        usedWallMs: 41 * 60_000,
         compute: { usd: 14, limitUsd: 1000 },
         now: 'Benchmarking Clef-flash on 24 cases',
         step: { done: 4, total: 8 },
@@ -788,7 +789,9 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
   );
   assert.match(status.querySelector('.stage--here .stage-time')!.textContent!, /1h/);
   assert.equal(status.querySelector('.cx-now')!.textContent, 'Benchmarking Clef-flash on 24 cases');
-  assert.match(status.querySelector('.cx-meters')!.textContent!, /1h 12m of 24h/);
+  // The limit is agent working time, which a wait for compute uses none of; elapsed is its own.
+  assert.match(status.querySelector('.cx-meters')!.textContent!, /Agent working time41m of 24h/);
+  assert.match(status.querySelector('.cx-meters')!.textContent!, /Elapsed1h 12m(?! of)/);
   assert.match(status.querySelector('.cx-meters')!.textContent!, /\$14 of \$1,000/);
   assert.match(status.querySelector('.cx-results')!.textContent!, /Clef17 \/ 24/);
   // The chat waits behind its button rather than floating over the status.
