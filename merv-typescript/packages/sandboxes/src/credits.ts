@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { check, digest, MervError } from '@merv/contracts';
 import type { Paid, Payments } from '@merv/contracts/payments';
 import type { MountHandler } from '@merv/api/types';
-import type { SbxBilling } from '@sandboxes/billing';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
 import type { SbxProviders } from '@sandboxes/providers';
@@ -14,13 +13,13 @@ import type { SandboxesPeople } from './types.js';
 export const CREDITS_PRODUCT = 'merv-sandbox-credits-v1';
 /** The founder's fixed top-ups, in USD. */
 const TOP_UPS = [25, 50, 100, 250] as const;
-const back = '/ui/settings/compute';
+/** Where Checkout returns: the console's Providers page inside Merv's Sandboxes view. */
+const back = '/ui/sandboxes/providers';
 const refusals = mervRefusals(MervError);
 
 interface Sbx {
   people: SandboxesPeople;
   providers: SbxProviders;
-  billing: SbxBilling;
   /** Payments while it is loaded: without it nothing is sold. */
   payments(): Payments | undefined;
 }
@@ -33,42 +32,6 @@ const checkoutInput = z
     requestId: z.string().uuid(),
   })
   .strict();
-const modeInput = z.object({ mode: z.enum(['hosted', 'own']) }).strict();
-
-/** Every provider plugin Sandboxes offers the person's own account, funded ones first: the hosted
- *  credit where a funded instance is the account's to rent, its mode where it can use the plugin
- *  now (null where it cannot yet), and whether it saved a key of its own. Test doubles and the
- *  local plugin only where the deployment funds them. */
-async function compute(sbx: Sbx, person: Person) {
-  const own = await sbx.people.accountOf(person);
-  if (!own) return { topUps: [], providers: [] };
-  const [catalog, modes, report] = await Promise.all([
-    sbx.providers.pluginCatalog(own.namespace),
-    sbx.providers.modes.of(own.accountId),
-    sbx.billing.credits.report(own.accountId),
-  ]);
-  // The catalog hides a test double the account rents on its own key; its mode row still names it.
-  const plugins = new Set([...catalog.map((p) => p.name), ...modes.map((m) => m.plugin)]);
-  const providers = [...plugins].sort().flatMap((plugin) => {
-    const row = modes.find((m) => m.plugin === plugin);
-    const funded = row?.funded ?? false;
-    if (!funded && (plugin === 'fake' || plugin === 'local')) return [];
-    const pool = report.pools.find((p) => p.provider === plugin);
-    return {
-      plugin,
-      label: PLUGIN_COPY[plugin]?.title ?? plugin,
-      funded,
-      mode: row?.mode ?? null,
-      hosted: funded ? { granted: pool?.granted ?? '0', left: pool?.available ?? '0' } : null,
-      ownKey: row?.keyed ?? false,
-    };
-  });
-  return {
-    topUps: sbx.payments() ? TOP_UPS : [],
-    providers: providers.sort((a, b) => Number(b.funded) - Number(a.funded)),
-  };
-}
-
 async function checkout(sbx: Sbx, person: Person, input: z.infer<typeof checkoutInput>) {
   const payments = sbx.payments();
   check(payments, 'checkout_unavailable', 'Payments are not configured', 503);
@@ -112,7 +75,7 @@ async function topUp(people: SandboxesPeople, paid: Paid) {
   );
 }
 
-/** `/compute`: the signed-in person's own account, per provider. */
+/** `/compute/checkout`: a top-up of the signed-in person's own account, which the console asks for. */
 function computeRoutes(sbx: Sbx): MountHandler {
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -124,33 +87,19 @@ function computeRoutes(sbx: Sbx): MountHandler {
       403,
     );
     const person = { issuer: principal.user.issuer, subject: principal.user.subject };
-    const path = r.url.pathname;
-    if (path === '/compute' && req.method === 'GET')
-      return refusals.call(() => compute(sbx, person));
-    if (path === '/compute/checkout' && req.method === 'POST') {
+    if (r.url.pathname === '/compute/checkout' && req.method === 'POST') {
       const input = await r.json(checkoutInput);
       return refusals.call(() => checkout(sbx, person, input));
-    }
-    const mode = /^\/compute\/([a-z][a-z0-9_-]{0,63})\/mode$/.exec(path);
-    if (mode && req.method === 'PUT') {
-      const provider = mode[1]!;
-      const input = await r.json(modeInput);
-      return refusals.call(async () => {
-        const own = await sbx.people.accountOf(person);
-        check(own, 'not_found', 'No Sandboxes account yet', 404);
-        await sbx.providers.modes.set(own.accountId, provider, input.mode);
-        return { plugin: provider, mode: input.mode };
-      });
     }
     throw new MervError('not_found', 'Unknown endpoint', 404);
   };
 }
 
-/** A person's compute: top-ups paid through Stripe, credited at once, and each provider's mode.
- *  Loaded by the integration beside its people. */
+/** A person's top-ups, paid through Stripe and credited at once; the console shows modes and
+ *  balances from Sandboxes itself. Loaded by the integration beside its people. */
 export const sandboxesCreditsPlugin = {
   name: 'merv-sandboxes-credits',
-  inject: ['api', 'sandboxesPeople', 'sbxProviders', 'sbxBilling'],
+  inject: ['api', 'sandboxesPeople', 'sbxProviders'],
   apply(ctx: Context) {
     const people = ctx.sandboxesPeople;
     ctx.inject(['payments'], (ctx) => {
@@ -159,7 +108,6 @@ export const sandboxesCreditsPlugin = {
     const sbx: Sbx = {
       people,
       providers: ctx.sbxProviders,
-      billing: ctx.sbxBilling,
       payments: () => ctx.get('payments'),
     };
     ctx.effect(() => ctx.api.mount('/compute', computeRoutes(sbx)));

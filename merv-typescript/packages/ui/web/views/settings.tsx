@@ -11,7 +11,6 @@ import type { PluginState } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
-import { ComputeSettings } from './compute';
 import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView } from './people';
 import { ProjectIntroduction } from './project-context';
@@ -39,7 +38,6 @@ const SECTIONS = [
   ['members', 'Members'],
   ['integrations', 'Integrations'],
   ['keys', 'Keys'],
-  ['compute', 'Compute'],
   ['connections', 'Connections'],
   ['machines', 'Machines'],
   ['plugins', 'Plugins'],
@@ -336,7 +334,7 @@ const Nothing = ({ icon, said }: { icon: string; said: string }) => (
 );
 
 /** The rooms that belong to a person's account, and so to no bearer credential. */
-const PERSONAL = ['members', 'keys', 'compute'];
+const PERSONAL = ['members', 'keys'];
 
 /** Machine keys, read where every other setting is; the account menu only signs out. */
 function Keys() {
@@ -438,7 +436,6 @@ export function SettingsView(props: ViewProps) {
           <Route path="members" element={<PeopleView />} />
           <Route path="integrations" element={<Integrations {...props} />} />
           <Route path="keys" element={<Keys />} />
-          <Route path="compute" element={<ComputeSettings />} />
           <Route path="connections" element={<Connections {...props} />} />
           <Route path="machines" element={<Machines />} />
           <Route path="plugins" element={<Plugins {...props} />} />

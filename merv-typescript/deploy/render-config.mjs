@@ -183,6 +183,10 @@ if (sandboxesEnabled)
         registerUi: true,
         registerTools: true,
         relayEvents: true,
+        // The console's Providers page offers these top-ups, which Merv sells through Stripe.
+        ...(process.env.MERV_CUSTOMER_STRIPE_SECRET_KEY !== undefined && {
+          settings: { console: { top_ups: [25, 50, 100, 250] } },
+        }),
       },
     },
     {

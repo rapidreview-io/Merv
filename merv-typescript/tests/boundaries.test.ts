@@ -979,13 +979,8 @@ test('Cordis service requirements match the architecture and every accessed capa
       }
       if (name.text === 'merv-sandboxes-credits') {
         assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'credits.ts'));
-        // A person's compute routes over their own account; it sells through Payments when loaded.
-        assert.deepEqual(sorted(declared), [
-          'api',
-          'sandboxesPeople',
-          'sbxBilling',
-          'sbxProviders',
-        ]);
+        // A person's top-ups of their own account, sold through Payments when loaded.
+        assert.deepEqual(sorted(declared), ['api', 'sandboxesPeople', 'sbxProviders']);
         assert.deepEqual(sorted([...optional]), ['payments']);
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate compute orchestration');

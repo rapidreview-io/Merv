@@ -12,7 +12,6 @@ import { openState } from './fixtures/state.js';
 
 const issuer = 'https://identity.example';
 const alice = { issuer, subject: 'alice' };
-type Compute = { topUps: number[]; providers: Record<string, unknown>[] };
 
 /** The credits plugin beside the in-process host, whose operator funds `fake` through the
  *  `cloud` connection; Payments over a fake Stripe. */
@@ -66,19 +65,7 @@ async function fixture(t: TestContext) {
     createdAt: '2026-10-18T10:00:00.000Z',
   });
   const webhook = (event: Paid) => payments.receive(Buffer.from(JSON.stringify(event)), 'sig');
-  /** A key of `plugin` saved in Alice's home namespace. */
-  const key = async (plugin: string) =>
-    await ctx.sbxVault.save({
-      namespace: (await people.accountOf(alice))!.namespace,
-      name: `mine-${plugin}`,
-      plugin,
-      fields: { bridge_url: 'https://user-bridge.example.test', bridge_token: 'own-token' },
-      settings: {},
-      access: 'tunnel',
-      verified: true,
-    });
-  const compute = () => call<Compute>('GET', '/compute');
-  return { ctx, people, call, compute, key, checkouts, paid, webhook, unprovide };
+  return { ctx, people, call, checkouts, paid, webhook, unprovide };
 }
 
 test('a top-up sells only credit a funded instance can spend, and its payment credits it at once, once', async (t) => {
@@ -110,8 +97,8 @@ test('a top-up sells only credit a funded instance can spend, and its payment cr
       amountUsd: 25,
       description: 'Fake credits',
       metadata: { issuer, subject: 'alice', provider: 'fake' },
-      successUrl: '/ui/settings/compute?checkout=paid',
-      cancelUrl: '/ui/settings/compute',
+      successUrl: '/ui/sandboxes/providers?checkout=paid',
+      cancelUrl: '/ui/sandboxes/providers',
       idempotencyKey: undefined,
     },
   );
@@ -127,67 +114,15 @@ test('a top-up sells only credit a funded instance can spend, and its payment cr
     ['stripe:pi_1', 'fake', '25', 'Top-up'],
     ['stripe:pi_2', 'fake', '50', 'Top-up'],
   ]);
-  const [fake, ...rest] = (await f.compute()).providers;
-  assert.deepEqual(fake, {
-    plugin: 'fake',
-    label: 'Fake',
-    funded: true,
-    mode: 'hosted',
-    hosted: { granted: '75', left: '75' },
-    ownKey: false,
-  });
-  // Every other plugin Sandboxes offers follows, unfunded and unusable until a key is saved;
-  // the local plugin only where the deployment funds it.
-  assert.ok(rest.length > 10);
-  assert.ok(rest.every((p) => !p.funded && p.hosted === null && p.mode === null && !p.ownKey));
-  assert.ok(rest.some((p) => p.plugin === 'modal'));
-  assert.ok(!rest.some((p) => p.plugin === 'local' || p.plugin === 'fake'));
 });
 
-test('compute shows each provider’s mode, hosted credit and own key, and sets the mode', async (t) => {
+test('without Payments nothing is sold, and only a signed-in person buys', async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await f.compute(), { topUps: [], providers: [] });
   await f.people.ensure(alice);
-  await f.key('cloudflare');
-  const { topUps, providers } = await f.compute();
-  assert.deepEqual(topUps, [25, 50, 100, 250]);
-  const of = (plugin: string) => providers.find((p) => p.plugin === plugin);
-  // The funded provider leads, with no credit granted yet.
-  assert.deepEqual(providers[0], {
-    plugin: 'fake',
-    label: 'Fake',
-    funded: true,
-    mode: 'hosted',
-    hosted: { granted: '0', left: '0' },
-    ownKey: false,
-  });
-  assert.deepEqual(of('cloudflare'), {
-    plugin: 'cloudflare',
-    label: 'Cloudflare Containers',
-    funded: false,
-    mode: 'own',
-    hosted: null,
-    ownKey: true,
-  });
-  assert.equal(of('modal')!.mode, null);
-  // Sandboxes keeps the rule: no key of its own, no own mode.
-  await assert.rejects(
-    f.call('PUT', '/compute/fake/mode', { mode: 'own' }),
-    refused('sandbox_validation', 400),
-  );
-  await f.key('fake');
-  assert.deepEqual(await f.call('PUT', '/compute/fake/mode', { mode: 'own' }), {
-    plugin: 'fake',
-    mode: 'own',
-  });
-  assert.equal((await f.compute()).providers[0]!.mode, 'own');
-  await assert.rejects(
-    f.call('PUT', '/compute/fake/mode', { mode: 'free' }),
-    refused('invalid_input', 400),
-  );
+  // The console reads modes and balances from Sandboxes; Merv only sells.
+  await assert.rejects(f.call('GET', '/compute'), refused('not_found', 404));
   // Without Payments nothing is sold.
   f.unprovide();
-  assert.deepEqual((await f.compute()).topUps, []);
   await assert.rejects(
     f.call('POST', '/compute/checkout', {
       provider: 'fake',
@@ -198,7 +133,7 @@ test('compute shows each provider’s mode, hosted credit and own key, and sets 
   );
   // Only a person signed in has an account here.
   await assert.rejects(
-    f.call('GET', '/compute', undefined, {
+    f.call('POST', '/compute/checkout', undefined, {
       kind: 'actor',
       actor: { id: 'a', projectId: 'p' },
     } as unknown as Principal),

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { accountRequest, useScopeVersion } from '../api';
+import { useCommand } from '../mutations';
 import type { ViewProps } from './index';
 
 export function SandboxesView({ row }: ViewProps) {
@@ -18,6 +19,15 @@ function Console({ path }: { path: string }) {
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
   const [height, setHeight] = useState(700);
+  // A top-up the console's Providers page asks for, straight to its Stripe Checkout.
+  const topUp = useCommand<{ url: string }>({
+    tool: 'compute.checkout',
+    send: (body) => accountRequest('/compute/checkout', { method: 'POST', body }),
+    validate: (result) => typeof result?.url === 'string',
+    onSuccess: ({ url }) => window.location.assign(url),
+  });
+  const buy = useRef(topUp.submit);
+  buy.current = topUp.submit;
 
   useEffect(() => {
     let cancelled = false;
@@ -72,11 +82,18 @@ function Console({ path }: { path: string }) {
         data.height <= 10000
       )
         setHeight(data.height);
+      if (
+        data?.type === 'sandboxes:top-up' &&
+        typeof data.provider === 'string' &&
+        Number.isFinite(data.amountUsd)
+      )
+        void buy.current({ provider: data.provider, amountUsd: data.amountUsd });
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
   }, [navigate, path]);
 
+  const failure = error ?? topUp.error;
   return (
     <div className="sandboxes-console">
       <button
@@ -87,7 +104,7 @@ function Console({ path }: { path: string }) {
       >
         Reload
       </button>
-      {error && <p role="alert">{error}</p>}
+      {failure && <p role="alert">{failure}</p>}
       {/* Its address carries a one-time sign-in code, which a look at the page never takes. */}
       {src && (
         <iframe

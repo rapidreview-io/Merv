@@ -695,6 +695,7 @@ test('payments compose from the customer Stripe names, which name secrets and ho
   const { run, plugin, output } = renderer(t);
   assert.equal(run({}).status, 0);
   assert.equal(plugin('payments'), undefined);
+  assert.equal(plugin('sandboxes-host').config.settings, undefined);
   const stripe = {
     MERV_CUSTOMER_STRIPE_SECRET_KEY: 'sk_test_private_fixture',
     MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET: 'whsec_private_fixture',
@@ -710,6 +711,9 @@ test('payments compose from the customer Stripe names, which name secrets and ho
       live: false,
       publicOrigin: 'https://merv.example',
     },
+  });
+  assert.deepEqual(plugin('sandboxes-host').config.settings, {
+    console: { top_ups: [25, 50, 100, 250] },
   });
   assert.equal(run({ ...stripe, MERV_CUSTOMER_STRIPE_LIVE: 'true' }).status, 0);
   assert.equal(plugin('payments').config.live, true);

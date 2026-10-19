@@ -10,7 +10,7 @@
   "apiEntries": 44,
   "serverPlugins": 80,
   "machinePlugins": 1,
-  "directDependencyCount": 264,
+  "directDependencyCount": 263,
   "optionalDependencyCount": 19,
   "directConsumers": {
     "api": 12,
@@ -54,7 +54,7 @@
     "sbxObjects": 2,
     "sbxAccounts": 3,
     "sbxAuth": 1,
-    "sbxBilling": 3,
+    "sbxBilling": 2,
     "sbxProviders": 3,
     "sbxVault": 1,
     "sbxResourceLimits": 1,
@@ -972,8 +972,7 @@
       "requires": [
         "api",
         "sandboxesPeople",
-        "sbxProviders",
-        "sbxBilling"
+        "sbxProviders"
       ],
       "optional": [
         "payments"

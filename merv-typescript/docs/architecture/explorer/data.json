@@ -2535,8 +2535,7 @@
       "requires": [
         "api",
         "sandboxesPeople",
-        "sbxProviders",
-        "sbxBilling"
+        "sbxProviders"
       ],
       "optional": [
         "payments"
@@ -4518,11 +4517,6 @@
     },
     {
       "from": "merv-sandboxes-credits",
-      "to": "sbxMerv",
-      "optional": false
-    },
-    {
-      "from": "merv-sandboxes-credits",
       "to": "payments",
       "optional": true
     },
@@ -4796,7 +4790,7 @@
     "plugins": 81,
     "providers": 37,
     "adapters": 44,
-    "dependencies": 264
+    "dependencies": 263
   },
   "network": [
     {

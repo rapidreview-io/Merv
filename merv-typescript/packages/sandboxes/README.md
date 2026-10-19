@@ -40,6 +40,9 @@ transactions, and a project is served only where it is linked.
 `@merv/sandboxes/console` mounts the authenticated console-session endpoint, proxies
 `/sbx/ui/*` and `/sbx/v1/*` (including Terminal WebSockets), and contributes hardware to
 Running. The host registers the permanent Sandboxes view and tools.
+Top-ups are bought on the console's Providers page: its `sandboxes:top-up` message makes the
+Sandboxes view call `POST /compute/checkout` (`merv-sandboxes-credits`, `credits.ts`), whose paid
+webhook grants the credit; the console's amounts are the host's `console.top_ups`, set with Stripe.
 
 The deployment renderer loads all three entries, using `SANDBOXES_DATABASE_URL`,
 `SANDBOXES_VAULT_KEY`, shared `/data` and `MERV_SANDBOXES_PROXY_URL`. Project links and payer authority
