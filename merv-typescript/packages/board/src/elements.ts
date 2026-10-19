@@ -715,7 +715,12 @@ export class Drawing {
                     endArrowhead: null,
                     polygon: true,
                   }
-                : { startBinding: null, endBinding: null, startArrowhead: null, endArrowhead: null }),
+                : {
+                    startBinding: null,
+                    endBinding: null,
+                    startArrowhead: null,
+                    endArrowhead: null,
+                  }),
             });
             first ??= el;
           }
