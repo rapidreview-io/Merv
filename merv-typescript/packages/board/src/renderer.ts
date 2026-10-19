@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser } from 'playwright-core';
 import { MervError } from '@merv/contracts';
-import { camera, type Region, type View } from '@merv/contracts/board-view';
+import type { Region, View } from '@merv/contracts/board-view';
+import { boardCamera as camera } from '@merv/contracts';
 import type { BoardElement } from './models.js';
 
 /** One offline browser, serial exports, and isolated pages. No board data leaves the server. */

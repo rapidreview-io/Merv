@@ -1,4 +1,4 @@
-import { viewSchema } from '@merv/contracts/board-view';
+import { boardViewSchema as viewSchema } from '@merv/contracts';
 import { z } from 'zod';
 import { idSchema } from '@merv/contracts/schemas';
 import { messageChars } from './limits.js';
