@@ -1,9 +1,9 @@
 /* The native hyperlink container keeps its URL, edit, and remove controls. */
 .excalidraw .excalidraw-hyperlinkContainer.merv-rich-hyperlink {
   flex-wrap: wrap;
-  width: min(380px, calc((100% - 32px) / var(--board-popup-zoom, 1))) !important;
+  width: min(380px, calc(100% - 32px)) !important;
   height: auto;
-  max-height: calc((100% - 32px) / var(--board-popup-zoom, 1));
+  max-height: calc(100% - 32px);
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid var(--color-gray-20, #e8e8ed);
@@ -215,7 +215,8 @@
   flex: 1;
 }
 
-/* Opening a reference is a reading action; restore shape controls when it closes. */
+/* Keep styling controls hidden while a reference remains selected. */
+.board-reading-reference .selected-shape-actions,
 .excalidraw:has(.merv-rich-hyperlink .board-link-details) .selected-shape-actions {
   display: none;
 }
