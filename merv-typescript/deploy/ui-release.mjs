@@ -31,11 +31,15 @@ if (args.help) {
 }
 const { PUBLIC, host, production, RELEASES, ssh } = releaseTarget(args);
 const repo = resolve(root, '..');
-/** What a UI release may carry: the bundle's own sources, and files no server reads. */
+/**
+ * What a UI release may carry: the bundle's own sources, and files no server reads — tests,
+ * documents, the deploy ledgers a release writes back to main, and this script.
+ */
 const UI_ONLY = [
   /^merv-typescript\/packages\/ui\/web\//,
   /^merv-typescript\/packages\/ui\/vite\.config\.ts$/,
   /^merv-typescript\/tests\//,
+  /^merv-typescript\/deploy\/(hosted-release\.json|ui-release\.mjs)$/,
   /\.md$/,
 ];
 const fail = (message) => {
