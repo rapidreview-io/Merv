@@ -18,12 +18,12 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  * worker, on a machine that is this process and a model that is the script below. Nothing leaves
  * this computer: Fleet rents by starting the worker here, and the worker's model calls are
  * answered by `scripted` instead of the relay. Everything the page is sent — stages, streamed
- * words, proposals, what Run tells the agent, the machine and its idle release — is what
+ * words, tool calls and their receipts, the machine and its idle release — is what
  * production's page is sent. MERV_DEMO_AGENT_IDLE sets the idle release in seconds (600).
  *
- * The script reads the person's words: `pause` and `start` propose the dispatch switch, `claim`
- * proposes a call that will be refused, `status` and `tasks` read first, `file` proposes a read
- * whose result only the person sees, `screen` looks at the person's screen, `open` or `pull up`
+ * The script reads the person's words: `pause` and `start` flip the dispatch switch, `claim`
+ * makes a call that will be refused, `status` and `tasks` read first, `file` fetches the newest
+ * file's download link, `screen` looks at the person's screen, `open` or `pull up`
  * puts the newest file (or a named page) on it, `board` draws ideas on a new board and opens it
  * (`look at the board` sees the newest one drawn), `new task` creates one,
  * and anything else reads the project
@@ -45,7 +45,7 @@ const LONG = [
 const dispatch = (enabled: boolean): Step[] => [
   { call: 'session.dispatch', input: { enabled } },
   {
-    say: `I’ve proposed ${enabled ? 'starting' : 'pausing'} dispatch. It ${enabled ? 'lets agents take new work again' : 'stops agents from taking new work; work already leased keeps running'}. Run it when you are ready and tell me what happened.`,
+    say: `I’ve ${enabled ? 'started' : 'paused'} dispatch. ${enabled ? 'Agents take new work again' : 'Agents take no new work; work already leased keeps running'}.`,
   },
 ];
 /** The first record of a list the agent was shown, whole or as its index. */
@@ -53,14 +53,6 @@ const newest = (shown: unknown) =>
   ((Array.isArray(shown) ? shown : (shown as { index?: unknown[] })?.index)?.[0] as { id?: string })
     ?.id;
 function plan(asked: string, read: (tool: string) => unknown): Step[] {
-  if (/^Ran \S+[:;]|was refused: /.test(asked))
-    return [
-      {
-        say: asked.startsWith('Ran')
-          ? 'Done, that is in place.'
-          : 'It was refused, so nothing changed.',
-      },
-    ];
   if (/pause/i.test(asked)) return dispatch(false);
   if (/\brose\b/i.test(asked)) {
     const drawn = read('board.draw') as { board?: { id: string } } | undefined;
@@ -187,7 +179,7 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
   if (/claim/i.test(asked))
     return [
       { call: 'review.start', input: { reviewId: 'review_that_is_gone' } },
-      { say: 'I’ve proposed claiming that review for you.' },
+      { say: 'Claiming that review was refused, so nothing changed.' },
     ];
   if (/\b(start|resume)\b/i.test(asked)) return dispatch(true);
   if (/status|running/i.test(asked))
@@ -221,7 +213,7 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
     return [
       { call: 'artifact.list', input: {} },
       ...(first ? [{ call: 'artifact.read', input: { artifactId: first, mode: 'download' } }] : []),
-      { say: 'I’ve proposed downloading that file. Only you see where it is.' },
+      { say: first ? 'I fetched a download link for the newest file.' : 'There are no files yet.' },
     ];
   }
   return [{ call: 'project.get', input: {} }, { say: LONG }];

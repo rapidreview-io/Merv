@@ -29,7 +29,7 @@ type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
 type Read = { pull?: GitHubPullDetails | null; failed?: string };
 
 /**
- * The release canary as the signed-in operator who ran it attests it: whether GitHub let
+ * The release canary as the administrator who ran it attests it: whether GitHub let
  * a deliberately stale merge through. Publication waits on a passing one; a failed one
  * stops it until a later pass and an explicit clear, which is offered only then. A press
  * whose answer never came is the only one left, and only as its retry: another would
