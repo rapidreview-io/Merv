@@ -44,6 +44,8 @@ export interface NounDefinition {
   /** One clause per action, at most 600 characters with the calling rule the helper adds. */
   description: string;
   actions: NounActions;
+  /** As ToolDefinition.for; it also keeps every retired name of its actions from leased workers,
+   *  so a noun that takes one of a worker's tools takes no `for`. */
   for?: 'people' | 'conversations';
   /** Retired names with no executable path, by the action that remains. */
   removed?: Record<string, string>;
@@ -96,6 +98,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   removed?: Record<string, string>;
   /** A kept name's old flat input and text, as a leased session is listed them (NounDefinition). */
   legacy?: NounDefinition['legacy'];
+  /** A name kept by hand until drain, spanning two nouns (nisa.research): listed to no outside
+   *  agent, yet admitted for one called by name as this tool is, as a retired name would be. */
+  became?: string;
 }
 /** How one call is known to rules keyed on a tool's name, whatever form it took: an alias as the
  *  noun action it runs, a noun call as its own action, with that action's arguments flat. `as` is

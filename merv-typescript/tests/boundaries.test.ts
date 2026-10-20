@@ -290,6 +290,7 @@ const capabilityOf = (owner: string) =>
 const contractsRuntimeExports = new Set([
   'async',
   'origins',
+  'pictured',
   'private-directory',
   'schemas',
   'text',

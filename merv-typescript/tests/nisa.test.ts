@@ -876,6 +876,21 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
   const result = JSON.parse((called.content as { text: string }[])[0].text) as NisaPaper;
   assert.equal(result.identifier, 'arxiv:2303.08774');
   assert.equal(fake.seen[0].headers.authorization, `Bearer ${key}`);
+  // nisa.research is listed to no outside agent, yet one that calls it by name, as before the
+  // noun tools, reaches its handler, which refuses a reader's status as it always did.
+  assert.equal(
+    catalog.find(({ name }) => name === 'nisa.research'),
+    undefined,
+  );
+  const research = await mcp.callTool({
+    name: 'nisa.research',
+    arguments: { action: 'status', operation_id: `op_${'a'.repeat(32)}` },
+  });
+  assert.equal(research.isError, true);
+  assert.equal(
+    JSON.parse((research.content as { text: string }[])[0].text).error.code,
+    'forbidden',
+  );
 });
 
 test('text cut to nothing is empty, not a bare ellipsis', () => {

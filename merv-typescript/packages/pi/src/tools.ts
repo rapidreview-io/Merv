@@ -1,7 +1,8 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
-import { pictured, type Caller } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
+import { pictured } from '@merv/contracts/pictured';
 import type {} from './types.js';
 import {
   createInput,

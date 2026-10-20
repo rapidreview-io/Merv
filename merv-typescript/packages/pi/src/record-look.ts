@@ -1,4 +1,5 @@
-import { boardViewSchema, check, pictured, type Caller } from '@merv/contracts';
+import { boardViewSchema, check, type Caller } from '@merv/contracts';
+import { pictured } from '@merv/contracts/pictured';
 import type { z } from 'zod';
 import type { View } from '@merv/contracts/board-view';
 import type { Picture, ToolDefinition, Tools } from '@merv/api/types';
