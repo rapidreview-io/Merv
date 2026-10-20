@@ -121,7 +121,7 @@ async function fixture(t: TestContext) {
   });
   const sources: RunningSources = {
     contributions: () => ui.contributions(),
-    tools: async () => ['session.halt', 'fleet.drain', 'fleet.halt'],
+    tools: async () => ['session.halt', 'fleet'],
     isolated: async (read) => await state.isolated(read),
     workflows: workflowsOf(() => undefined),
   };
@@ -391,15 +391,15 @@ test('a sidebar holds the Fleet machine and what it was rented for, gives up whi
       {
         label: 'Finish and release',
         verb: 'release',
-        tool: 'fleet.drain',
-        input: { id: waiting.id },
+        tool: 'fleet',
+        input: { action: 'drain', id: waiting.id },
         allowed: true,
       },
       {
         label: 'Stop now',
         verb: 'halt',
-        tool: 'fleet.halt',
-        input: { id: waiting.id },
+        tool: 'fleet',
+        input: { action: 'halt', id: waiting.id },
         allowed: true,
         guard: {
           title: 'Stop this agent?',

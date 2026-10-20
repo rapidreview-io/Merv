@@ -128,13 +128,18 @@ test('Running caches linked machines, hides protected rentals and keeps scoped c
   assert.equal((await running.summary!(snapshot))?.lane, 'hardware');
   const panel = await running.panel!(read(), `sandbox:${machine.id}`);
   assert.equal(panel?.route, `/sandboxes/machines/${machine.id}`);
+  const [extend, release] = panel!.actions;
   assert.deepEqual(
-    panel?.actions.map((a) => [a.tool, a.allowed]),
+    panel?.actions.map((a) => [a.tool, a.input.action, a.input.sandbox_id, a.allowed]),
     [
-      ['sandbox.extend', true],
-      ['sandbox.release', true],
+      ['sandboxes.sandbox', 'renew', machine.id, true],
+      ['sandboxes.sandbox', 'delete', machine.id, true],
     ],
   );
+  // Renew sets the lease from now, so Extend asks for an hour more than is left.
+  const left = (Date.parse(machine.lease_expires_at!.toJSON()) - Date.now()) / 1000;
+  assert.ok(Math.abs(Number(extend!.input.lease_seconds) - (left + 3600)) <= 2);
+  assert.deepEqual(Object.keys(release!.input).sort(), ['action', 'sandbox_id']);
   assert.equal(await running.panel!(read(), `sandbox:${protectedMachine.id}`), null);
   const readerPanel = await running.panel!(
     read({ ...caller, actorId: 'reader' }),

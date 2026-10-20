@@ -76,8 +76,8 @@ const READS = new Set(['Read file', 'Searched code', 'Found files', 'Listed file
 const EDITS = new Set(['Wrote file', 'Edited file', 'Edited files', 'Edited notebook']);
 /** A run submitted to a sandbox is a job; polling or reading one is a Merv call. */
 const JOB = /(^|[._-])(runs?|submit|launch|start|exec|command)(?![a-z])/;
-/** A tool's kind from the words Sessions gives it, and a Merv tool's from its name. */
-export function kindOf(name: string | undefined, label: string): Kind {
+/** A tool's kind from the words Sessions gives it, and a Merv tool's from its name and action. */
+export function kindOf(name: string | undefined, label: string, input?: string): Kind {
   if (label === 'Searched web' || label === 'Fetched page') return 'search';
   // Merv's own web tools (`web.search`, `web.fetch`) are searches, not Merv calls.
   if (/^web\.(search|fetch)$/.test(name ?? '')) return 'search';
@@ -85,7 +85,8 @@ export function kindOf(name: string | undefined, label: string): Kind {
   if (EDITS.has(label)) return 'edit';
   if (label === 'Ran shell' || label === 'Ran subagent') return 'run';
   if (label === 'Updated plan') return 'think';
-  const tool = name ?? '';
+  const action = str(fieldsOf(input).action);
+  const tool = `${name ?? ''}${action && `_${action}`}`;
   // A command on a sandbox is a command; a run submitted to one is a job.
   if (tool === 'sandbox.terminal') return 'run';
   return /^sandbox(es)?\./.test(tool) && JOB.test(tool.slice(tool.indexOf('.'))) ? 'job' : 'merv';
@@ -190,7 +191,7 @@ export function momentsOf(
       });
     } else {
       const { label, summary } = toolLine(block.name, block.input);
-      const kind = kindOf(block.name, label);
+      const kind = kindOf(block.name, label, block.input);
       const failed = block.result ? toolFailure(block.result) : undefined;
       moments.push({
         key,

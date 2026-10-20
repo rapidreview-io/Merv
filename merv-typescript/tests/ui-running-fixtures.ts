@@ -508,8 +508,8 @@ export function sandboxPanel(now = Date.now(), withRelease = true): RunningPanel
       {
         label: 'Extend lease',
         verb: 'extend',
-        tool: 'sandbox.extend',
-        input: { id: 'sbx_h100', seconds: 3600 },
+        tool: 'sandboxes.sandbox',
+        input: { action: 'renew', sandbox_id: 'sbx_h100', lease_seconds: 7200 },
         allowed: true,
       },
       ...(withRelease
@@ -517,8 +517,8 @@ export function sandboxPanel(now = Date.now(), withRelease = true): RunningPanel
             {
               label: 'Release machine',
               verb: 'release' as const,
-              tool: 'sandbox.release',
-              input: { id: 'sbx_h100' },
+              tool: 'sandboxes.sandbox',
+              input: { action: 'delete', sandbox_id: 'sbx_h100' },
               allowed: true,
               guard: {
                 title: 'Release this machine?',

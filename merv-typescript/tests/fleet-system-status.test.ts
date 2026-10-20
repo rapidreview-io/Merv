@@ -172,7 +172,8 @@ test('Fleet contributes its system.status sections where Sessions put them', asy
           expectedRevision: 2,
           reason: '2/2 created Fleet machines ended before claiming work.',
           next: 'An administrator may retry this exact revision.',
-          tool: 'fleet.workflow_retry',
+          tool: 'fleet',
+          action: 'workflow_retry',
         },
         {
           instanceId: 'task-2',

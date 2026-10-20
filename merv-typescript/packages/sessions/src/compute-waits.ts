@@ -218,7 +218,7 @@ export class ComputeWaits implements SessionComputeWaits {
     if (unknown.length)
       throw new MervError(
         'compute_target_unknown',
-        `Not a job or workflow of this work's current attempt: ${unknown.map((target) => target.id).join(', ')}. job_list and workflow_list show this work's own; call again with those. Your visit goes on.`,
+        `Not a job or workflow of this work's current attempt: ${unknown.map((target) => target.id).join(', ')}. job and workflow with action=list show this work's own; call again with those. Your visit goes on.`,
         409,
         { unknown: unknown.map((target) => target.id) },
       );
@@ -232,7 +232,7 @@ export class ComputeWaits implements SessionComputeWaits {
     if (read.idle.length)
       throw new MervError(
         'compute_machines_idle',
-        `Machines ${read.idle.join(', ')} run none of the jobs or workflows named, and would bill while you wait: release them with sandbox_delete, or await what runs on them. Your visit goes on.`,
+        `Machines ${read.idle.join(', ')} run none of the jobs or workflows named, and would bill while you wait: release them with sandbox action=delete, or await what runs on them. Your visit goes on.`,
         409,
         { machines: read.idle },
       );
@@ -309,7 +309,7 @@ export class ComputeWaits implements SessionComputeWaits {
               refusal: () =>
                 new MervError(
                   'compute_lease_ending',
-                  `Machine ${lease.machine} is deleted at ${lease.endsAt}, as its lease ends, in under 20 minutes: renew it with sandbox_renew first, or wait inside this visit. Your visit goes on.`,
+                  `Machine ${lease.machine} is deleted at ${lease.endsAt}, as its lease ends, in under 20 minutes: renew it with sandbox action=renew first, or wait inside this visit. Your visit goes on.`,
                   409,
                 ),
             },

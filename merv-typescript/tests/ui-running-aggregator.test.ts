@@ -44,7 +44,7 @@ const attentionOf = (value: unknown) => runningAttention.safeParse(value).data ?
  */
 
 const caller: Caller = { actorId: 'actor_operator', projectId: 'project_running' };
-const TOOLS = ['session.halt', 'session.dispatch', 'sandbox.extend', 'sandbox.release'];
+const TOOLS = ['session.halt', 'session.dispatch', 'sandboxes.sandbox'];
 
 const sources = (contributions: RunningContribution[], tools = TOOLS): RunningSources => {
   const registry = new RunningRegistry();

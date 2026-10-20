@@ -6,7 +6,8 @@ import { ProjectScope } from '@merv/scope';
 import type { FleetRuntimeHandle, FleetMachine } from '@merv/fleet/types';
 import type { RuntimeLauncher } from '@sandboxes/runtimes/launcher';
 import { profiles, createKey, sandbox, receipt, offer, link } from './fixtures/runtime-records.js';
-import { ToolRegistry } from '@merv/api/registry';
+import { describeTool, ToolRegistry } from '@merv/api/registry';
+import { piTool } from '@merv/pi/relay-schema';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
 import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
@@ -705,9 +706,18 @@ test('Fleet tools answer with the redacted view, never the source, person or lau
     attention: null,
     runtime: { sandboxId: 'sbx_1', state: 'ready' },
   };
-  assert.deepEqual(await tools.call('fleet.get', f.caller, { id: allocation.id }), view);
-  assert.deepEqual(await tools.call('fleet.list', f.caller, {}), [view]);
-  const text = JSON.stringify(await tools.call('fleet.drain', f.caller, { id: allocation.id }));
+  const fleet = (input: object) => tools.call('fleet', f.caller, input);
+  const [definition] = (await tools.list()).filter((tool) => tool.name === 'fleet');
+  assert.ok(definition && 'handler' in definition && piTool(describeTool(definition)));
+  assert.deepEqual(await fleet({ action: 'get', id: allocation.id }), view);
+  assert.deepEqual(await fleet({}), [view]);
+  await assert.rejects(fleet({ action: 'get' }), { code: 'invalid_input' });
+  await assert.rejects(fleet({ action: 'list', id: allocation.id }), { code: 'invalid_input' });
+  await assert.rejects(tools.call('fleet.list', f.caller, {}), {
+    code: 'unknown_tool',
+    message: 'renamed: use fleet with action=list',
+  });
+  const text = JSON.stringify(await fleet({ action: 'drain', id: allocation.id }));
   for (const secret of [
     'person-digest',
     f.caller.actorId,
@@ -717,9 +727,7 @@ test('Fleet tools answer with the redacted view, never the source, person or lau
     ':launch',
   ])
     assert.equal(text.includes(secret), false, secret);
-  const halted = (await tools.call('fleet.halt', f.caller, { id: allocation.id })) as {
-    intent: string;
-  };
+  const halted = (await fleet({ action: 'halt', id: allocation.id })) as { intent: string };
   assert.equal(halted.intent, 'stop');
 });
 

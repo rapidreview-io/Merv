@@ -44,7 +44,8 @@ export function hostedCustomerCompute(
         const sponsor = await source();
         const catalogs = await Promise.all(
           config.computeProviders.map((provider) =>
-            ctx.tools.call('sandboxes.sandbox_options', sponsor.caller, {
+            ctx.tools.call('sandboxes.sandbox', sponsor.caller, {
+              action: 'options',
               all_options: true,
               provider,
             }),

@@ -54,12 +54,12 @@ replacement work that refers to the earlier evidence.
 
 On a Merv server that runs Fleet and Sandboxes:
 
-- `fleet.list` and `fleet.get` read the Fleet allocations the project's workers run on.
-  `fleet.drain` stops admission, keeps the current assignment's results, then releases the
-  machine; `fleet.halt` requests immediate deletion and may interrupt work.
-- `sandboxes.sandbox_list`, `sandboxes.sandbox_get` and `sandboxes.providers_list` read rented
-  machines and the providers available. `sandbox.release` deletes one machine and everything on
-  it, so retain what you need first.
+- `fleet` with action `list` or `get` reads the Fleet allocations the project's workers run on.
+  Action `drain` stops admission, keeps the current assignment's results, then releases the
+  machine; `halt` requests immediate deletion and may interrupt work.
+- `sandboxes.sandbox` with action `list`, `get` or `providers` reads rented machines and the
+  providers available. Action `delete` deletes one machine and everything on it, so retain what
+  you need first.
 
 ## Money and limits
 

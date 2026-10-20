@@ -7,7 +7,8 @@ import test from 'node:test';
 import { Context } from 'cordis';
 import { createService, MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { ToolRegistry } from '@merv/api/registry';
+import { describeTool, ToolRegistry } from '@merv/api/registry';
+import { piTool } from '@merv/pi/relay-schema';
 import host from '@merv/sandboxes/host';
 import { migrate, openDatabase } from '@sandboxes/db';
 import { releaseId } from '@sandboxes/runtimes';
@@ -76,6 +77,27 @@ test('Fleet recovers a lost create under its stable profile id and create key th
     else process.env.MERV_TEST_FLEET_VAULT_KEY = previousKey;
   });
   await fiber.await();
+  // Seven Sandboxes tools: readOnly where every action reads, SSH certificates out of conversations.
+  assert.deepEqual(
+    (await tools.list()).flatMap((tool) =>
+      'readOnly' in tool && tool.name.startsWith('sandboxes.')
+        ? [[tool.name.slice(10), tool.readOnly, tool.conversation ?? null]]
+        : [],
+    ),
+    [
+      ['access', false, 'never'],
+      ['job', false, null],
+      ['sandbox', false, null],
+      ['snapshot', false, null],
+      ['spend', true, null],
+      ['storage', false, null],
+      ['workflow', false, null],
+    ],
+  );
+  // Each reaches an agent conversation as the relay accepts it.
+  for (const tool of await tools.list())
+    if (tool.name.startsWith('sandboxes.') && 'handler' in tool && tool.conversation !== 'never')
+      assert.ok(piTool(describeTool(tool), tool.conversation), tool.name);
   const link = async (namespace: string, projectId: string) => {
     const ns = await ctx.sbxAccounts.ensureNativeNamespace(namespace);
     await ctx.sbxDb.transaction(async (tx) => {
@@ -141,7 +163,7 @@ test('Fleet recovers a lost create under its stable profile id and create key th
   assert.equal((await ctx.sbxRegistry.list('rental')).length, 1);
   assert.equal((await ctx.sbxRegistry.list('work')).length, 0);
   await assert.rejects(
-    tools.call('sandbox.release', renter, { id: machine.id }),
+    tools.call('sandboxes.sandbox', renter, { action: 'delete', sandbox_id: machine.id }),
     (error) => error instanceof MervError && error.code === 'sandbox_protected',
   );
   const views = new MachineViews({

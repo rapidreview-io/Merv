@@ -502,6 +502,7 @@ test('the integration projection backfills startup and reconciles an interval pa
   const ctx = new Context();
   ctx.provide('state', f.state);
   ctx.provide('scope', f.scope);
+  ctx.provide('tools', { rename: () => () => {} } as unknown as Context['tools']);
   ctx.provide('artifacts', f.artifacts);
   ctx.provide('workflows', {} as Context['workflows']);
   ctx.provide('domainEvents', {

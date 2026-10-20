@@ -365,6 +365,7 @@ test('Sandboxes integration issues connections and follows committed session and
     released: MervWorkScope[] = [];
   ctx.provide('state', state);
   ctx.provide('scope', scope);
+  ctx.provide('tools', { rename: () => () => {} } as unknown as Context['tools']);
   ctx.provide('workflows', workflows);
   ctx.provide('domainEvents', events);
   ctx.provide('blobs', blobs);

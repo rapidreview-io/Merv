@@ -56,6 +56,7 @@ import {
   FleetWorkflowAdapter,
   type FleetWorkflowConfig,
 } from '../packages/fleet/src/workflow.js';
+import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import {
   codexModelRelay,
   modelBudgetStatus,
@@ -1962,7 +1963,7 @@ test(
 );
 
 test(
-  'fleet.workflow_retry_status reads through the registry in a State snapshot, as composed',
+  'the fleet tool reads workflow retry status through the registry, as composed',
   { timeout: 20_000 },
   async (t) => {
     const h = await hosted(t, 1);
@@ -1972,7 +1973,7 @@ test(
     h.advance(Date.parse(work.updatedAt) - h.now() + 1);
     const modelEnv = `MERV_RETRY_STATUS_KEY_${randomUUID().replaceAll('-', '')}`;
     process.env[modelEnv] = 'test-model-key';
-    // As production composes it: a read-only tool runs in a State snapshot, writes refused.
+    // As production composes it: a tool that also writes runs outside a State snapshot.
     let snapshots = 0;
     const tools = new ToolRegistry(h.scope, undefined, (fn) => (snapshots++, h.state.snapshot(fn)));
     const ctx = new Context();
@@ -1986,15 +1987,27 @@ test(
       baseUrl: 'https://merv.example.test',
       pollIntervalMs: 60_000,
     });
-    await fiber;
+    const toolsFiber = ctx.plugin(fleetToolsPlugin);
+    await Promise.all([fiber, toolsFiber]);
     try {
       // The plugin's first reconcile rented a host for the work: its Fleet rows and session are read.
-      const status = await tools.call('fleet.workflow_retry_status', caller, {
+      const status = await tools.call('fleet', caller, {
+        action: 'workflow_retry_status',
         instanceId: work.id,
         expectedRevision: work.revision,
       });
-      assert.deepEqual([(status as { state: string }).state, snapshots], ['active', 1]);
+      assert.deepEqual([(status as { state: string }).state, snapshots], ['active', 0]);
+      await fiber.dispose();
+      await assert.rejects(
+        tools.call('fleet', caller, {
+          action: 'workflow_retry_status',
+          instanceId: work.id,
+          expectedRevision: work.revision,
+        }),
+        { code: 'fleet_workflow_unavailable' },
+      );
     } finally {
+      await toolsFiber.dispose();
       await fiber.dispose();
       tools.close();
       delete process.env[modelEnv];

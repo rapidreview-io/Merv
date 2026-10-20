@@ -1,64 +1,87 @@
 import type { Context } from 'cordis';
-import type { Caller } from '@merv/contracts';
+import { check, type Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type {} from './types.js';
+import type { FleetRetryInput } from './types.js';
 import { present } from './running.js';
 import { z } from 'zod';
 
-/** Allocation requests are a server-owner capability, never an agent tool. The tools answer with
+/** What each action takes; `?` marks an optional argument. */
+const takes = {
+  list: [],
+  get: ['id'],
+  drain: ['id'],
+  halt: ['id'],
+  project_limit: ['machines?'],
+  workflow_retry_status: ['instanceId', 'expectedRevision'],
+  workflow_retry: ['instanceId', 'expectedRevision', 'reason', 'requestId'],
+} as const;
+type Action = keyof typeof takes;
+const input = z
+  .object({
+    action: z.enum(Object.keys(takes) as [Action, ...Action[]]).default('list'),
+    id: z.string().min(1).max(200).optional(),
+    machines: z.number().int().min(1).max(64).optional(),
+    instanceId: z.string().min(1).max(200).optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
+    reason: z.string().trim().min(8).max(500).optional(),
+    requestId: z.string().min(1).max(200).optional(),
+  })
+  .strict()
+  .superRefine(({ action, ...args }, context) => {
+    const names: readonly string[] = takes[action];
+    const given = Object.keys(args);
+    if (
+      given.some((name) => !names.includes(name) && !names.includes(`${name}?`)) ||
+      names.some((name) => !name.endsWith('?') && !given.includes(name))
+    )
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `fleet action=${action} takes ${names.join(', ') || 'nothing more'}`,
+      });
+  });
+type Input = z.output<typeof input>;
+
+/** Allocation requests are a server-owner capability, never an agent tool. The tool answers with
  *  the redacted view the Fleet page shows. */
 export const fleetToolsPlugin = {
   name: 'merv-fleet-tools',
   inject: ['fleet', 'tools'],
   apply(ctx: Context) {
-    const target = z.object({ id: z.string().min(1).max(200) }).strict();
-    const definitions = [
-      {
-        name: 'fleet.list',
+    const { fleet } = ctx;
+    const retries = () => {
+      check(fleet.retries, 'fleet_workflow_unavailable', 'Fleet runs no workflow work here', 503);
+      return fleet.retries;
+    };
+    const run: { [A in Action]: (caller: Caller, input: Input) => Promise<unknown> } = {
+      list: async (caller) => (await fleet.list(caller, 50)).map(present),
+      get: async (caller, { id }) => present(await fleet.inspect(caller, id!)),
+      drain: async (caller, { id }) => present(await fleet.drain(caller, id!)),
+      halt: async (caller, { id }) => present(await fleet.cancel(caller, id!)),
+      project_limit: async (caller, { machines }) =>
+        machines === undefined
+          ? await fleet.projectLimit(caller)
+          : await fleet.setProjectLimit(caller, machines),
+      workflow_retry_status: async (caller, { action, ...target }) =>
+        (await retries().retryStatus(caller, [target as FleetRetryInput]))[0],
+      workflow_retry: async (caller, { action, ...retry }) =>
+        await retries().retry(caller, retry as FleetRetryInput),
+    };
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'fleet',
         description:
-          'List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.',
-        inputSchema: z.object({}).strict(),
-        readOnly: true,
-        handler: async (caller: Caller) => (await ctx.fleet.list(caller, 50)).map(present),
-      },
-      {
-        name: 'fleet.get',
-        description:
-          'Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.',
-        inputSchema: target,
-        readOnly: true,
-        handler: async (caller: Caller, input: { id: string }) =>
-          present(await ctx.fleet.inspect(caller, input.id)),
-      },
-      {
-        name: 'fleet.drain',
-        description:
-          'Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.',
-        inputSchema: target,
-        handler: async (caller: Caller, input: { id: string }) =>
-          present(await ctx.fleet.drain(caller, input.id)),
-      },
-      {
-        name: 'fleet.halt',
-        description:
-          'Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.',
-        inputSchema: target,
-        handler: async (caller: Caller, input: { id: string }) =>
-          present(await ctx.fleet.cancel(caller, input.id)),
-      },
-      {
-        name: 'fleet.project_limit',
-        conversation: 'never' as const,
-        description:
-          'How many Fleet machines this project may run at once. A project administrator or their agent can change it; machines already running finish their work.',
-        inputSchema: z.object({ machines: z.number().int().min(1).max(64).optional() }).strict(),
-        handler: async (caller: Caller, input: { machines?: number }) =>
-          input.machines === undefined
-            ? await ctx.fleet.projectLimit(caller)
-            : await ctx.fleet.setProjectLimit(caller, input.machines),
-      },
-    ];
-    for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
+          'The project’s Fleet allocations: the machines its workers run on.\nlist: open allocations and the 50 latest ended ones, with machine lifecycle status.\nget: one allocation by id; a requested shutdown is distinct from confirmed machine deletion.\ndrain: stop admission on id, keep the current assignment’s results, then release its machine (its source or a project administrator).\nhalt: fence id and request immediate machine deletion; in-flight work may be interrupted (its source or a project administrator).\nproject_limit: how many machines the project may run at once; machines sets it (a project administrator, signed in).\nworkflow_retry_status: why Fleet stopped renting for one workflow revision (instanceId, expectedRevision) after unclaimed machines.\nworkflow_retry: open one more two-attempt window for that revision (project administrator; reason, stable requestId).',
+        inputSchema: input,
+        handler: (caller: Caller, parsed: Input) => run[parsed.action](caller, parsed),
+      }),
+    );
+    // The seven tools the 2026-10-20 consolidation merged answer where they went, for one release.
+    ctx.effect(() =>
+      ctx.tools.rename((name) => {
+        const action = /^fleet\.(\w+)$/.exec(name)?.[1];
+        return !!action && Object.hasOwn(takes, action) && `fleet with action=${action}`;
+      }),
+    );
   },
 };
 export default fleetToolsPlugin;

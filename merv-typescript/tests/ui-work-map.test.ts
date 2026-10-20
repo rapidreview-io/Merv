@@ -1277,7 +1277,7 @@ test('a control the owner did not send is not drawn, and one it sent is its own 
   drawn();
   answers(board(), { 'sandbox:sbx_h100': sandboxPanel(Date.now(), false) });
   const sent: unknown[] = [];
-  serve('/tools/sandbox.extend', (_, input) => {
+  serve('/tools/sandboxes.sandbox', (_, input) => {
     sent.push(input);
     return { body: { result: { id: 'sbx_h100' } } };
   });
@@ -1287,7 +1287,7 @@ test('a control the owner did not send is not drawn, and one it sent is its own 
   const extend = button('Extend lease')!;
   assert.ok(!extend.classList.contains('btn--primary'), 'only a start wears the accent');
   await press(extend);
-  assert.deepEqual(sent, [{ id: 'sbx_h100', seconds: 3600 }]);
+  assert.deepEqual(sent, [{ action: 'renew', sandbox_id: 'sbx_h100', lease_seconds: 7200 }]);
   // The table is the ruled list, so it stacks by the sidebar's own width.
   assert.ok($('#running-panel [role="table"][aria-label="Jobs"]'));
   assert.equal($('#running-panel table'), null);
@@ -1298,7 +1298,7 @@ test('an extension whose answer was lost is never offered as a retry: a second o
   drawn();
   answers(board(), { 'sandbox:sbx_h100': sandboxPanel(Date.now(), false) });
   const sent: unknown[] = [];
-  serve('/tools/sandbox.extend', (_, input) => {
+  serve('/tools/sandboxes.sandbox', (_, input) => {
     sent.push(input);
     return { status: 502, body: { error: { code: 'upstream', message: 'Bad gateway' } } };
   });

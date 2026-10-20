@@ -235,10 +235,10 @@ interface MachineLimit {
 /** How many Fleet machines the project runs at once; its administrators change it. */
 function Machines() {
   const { actor } = useSession();
-  const limit = useTool<MachineLimit>('fleet.project_limit');
+  const limit = useTool<MachineLimit>('fleet', { action: 'project_limit' });
   const [draft, setDraft] = useState<string>();
   const save = useCommand<{ machines: number }>({
-    tool: 'fleet.project_limit',
+    tool: 'fleet',
     idempotent: true,
     validate: (value) => Number.isSafeInteger(value?.machines),
     onSuccess: () => {
@@ -263,7 +263,7 @@ function Machines() {
                 className="cluster"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void save.submit({ machines });
+                  void save.submit({ action: 'project_limit', machines });
                 }}
               >
                 <input

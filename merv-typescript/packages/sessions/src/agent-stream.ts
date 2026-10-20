@@ -363,7 +363,7 @@ const shortPath = (value: string) =>
 
 /**
  * One tool call as a person reads it: a verb and the tool (`Ran shell`, `Read file`, or a Merv
- * tool as `sandboxes · workflow_get`) and what it was about, at most SUMMARY_CHARS and without
+ * tool as `sandboxes · workflow`) and what it was about, at most SUMMARY_CHARS and without
  * ids. A shell is its command's first line that does something, unless its harness described it.
  */
 export function toolLine(

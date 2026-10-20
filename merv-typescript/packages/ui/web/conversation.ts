@@ -19,7 +19,7 @@ import type { AgentBlock } from './agent-stream';
 export interface Step {
   key: string;
   kind: 'thinking' | 'tool' | 'error';
-  /** `Ran shell`, `Read file`, `sandboxes · workflow_get`, `Thought`. */
+  /** `Ran shell`, `Read file`, `sandboxes · workflow`, `Thought`. */
   label: string;
   /** What it was about, or for an error what went wrong; short and without ids. */
   summary: string;

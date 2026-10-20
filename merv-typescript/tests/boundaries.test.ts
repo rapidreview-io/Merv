@@ -161,6 +161,7 @@ const capabilities: Record<string, readonly string[]> = {
   sandboxEvidence: [
     'state',
     'scope',
+    'tools',
     'workflows',
     'domainEvents',
     'sessions',

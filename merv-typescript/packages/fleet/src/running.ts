@@ -30,7 +30,8 @@ export const fleetActions: {
   id: string;
   label: string;
   verb: 'release' | 'halt';
-  tool: string;
+  tool: 'fleet';
+  args: { action: 'drain' | 'halt' };
   intents: FleetIntent[];
   guard?: { title: string; consequence: string };
 }[] = [
@@ -38,14 +39,16 @@ export const fleetActions: {
     id: 'drain',
     label: 'Finish and release',
     verb: 'release',
-    tool: 'fleet.drain',
+    tool: 'fleet',
+    args: { action: 'drain' },
     intents: ['run'],
   },
   {
     id: 'halt',
     label: 'Stop now',
     verb: 'halt',
-    tool: 'fleet.halt',
+    tool: 'fleet',
+    args: { action: 'halt' },
     intents: ['run', 'drain'],
     guard: {
       title: 'Stop this agent?',
@@ -199,11 +202,11 @@ export function fleetPanel(
       ? []
       : fleetActions
           .filter(({ intents }) => intents.includes(a.intent))
-          .map(({ label, verb, tool, guard }) => ({
+          .map(({ label, verb, tool, args, guard }) => ({
             label,
             verb,
             tool,
-            input: { id: a.id },
+            input: { ...args, id: a.id },
             allowed,
             ...(guard && { guard }),
           }));

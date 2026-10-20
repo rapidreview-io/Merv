@@ -136,6 +136,7 @@ const usdLimits = ownLimits('fleet_usd_limits', 'usd');
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
+  retries?: Fleet['retries'];
   private readonly config: z.infer<typeof fleetConfig>;
   private readonly profiles;
   private readonly ready = new Map<string, Map<string, FleetMachine | null> | null | undefined>();

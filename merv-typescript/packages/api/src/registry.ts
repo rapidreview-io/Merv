@@ -105,6 +105,7 @@ export class ToolRegistry implements Tools {
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
   private readonly callerRules = new Map<CallerKind, CallerRules>();
+  private readonly renames = new Set<(name: string) => string | false | undefined>();
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
@@ -330,6 +331,11 @@ export class ToolRegistry implements Tools {
     };
   }
 
+  rename(resolve: (name: string) => string | false | undefined): () => void {
+    this.renames.add(resolve);
+    return () => void this.renames.delete(resolve);
+  }
+
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void {
     if (this.callerRules.has(kind))
       throw new MervError('caller_rules_conflict', `Rules for ${kind} callers are registered`, 409);
@@ -509,7 +515,11 @@ export class ToolRegistry implements Tools {
     // Scope refuses a conversation that also carries another authority, at its read decision.
     const rules = this.rulesFor(caller);
     const entry = this.entries.get(name);
-    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
+    if (!entry) {
+      const to = [...this.renames].map((resolve) => resolve(name)).find(Boolean);
+      const said = to ? `renamed: use ${to}` : `Unknown tool: ${ellipsis(name, 200)}`;
+      throw new MervError('unknown_tool', said, 404);
+    }
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !this.offered(entry, false))

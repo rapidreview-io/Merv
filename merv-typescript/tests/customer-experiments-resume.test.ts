@@ -99,7 +99,7 @@ test('a stalled external run gets a healer once Pi has stopped investigating', a
   assert.deepEqual(due.record.resumed, ['q_1']);
   assert.deepEqual(
     due.bound.map((p) => [p.id, p.version]),
-    [['customer-experiments-healer', 2]],
+    [['customer-experiments-healer', 3]],
   );
 
   const spent = harness({ askedMinutesAgo: 30 });
@@ -127,9 +127,9 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   const healers = profiles.filter((p) => p.id === 'customer-experiments-healer');
   assert.deepEqual(
     healers.map((p) => p.version),
-    [1, 2],
+    [1, 2, 3],
   );
-  const [first, current] = healers;
+  const [first, second, current] = healers;
   // Version 1 stays as its conversations were bound to it.
   assert.match(first!.instructions, /rent on Modal first, then Lambda/);
   assert.doesNotMatch(first!.instructions, /leave the question open/);
@@ -138,8 +138,12 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   assert.doesNotMatch(current!.instructions, /Modal first/);
   // The healer's tools show no offers, so it points the worker at the worker's own offer tool.
   assert.match(
-    current!.instructions,
+    second!.instructions,
     /choose its next machine from sandboxes\.sandbox_options by price and by maximum lifetime/,
+  );
+  assert.match(
+    current!.instructions,
+    /choose its next machine from sandboxes\.sandbox action=options by price and by maximum lifetime/,
   );
   assert.doesNotMatch(current!.instructions, /judged by each offer/);
   // An operator may answer on Needs you, so the healer is not told nobody ever looks.
@@ -148,5 +152,25 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   assert.match(current!.instructions, /do not answer: leave the question open/);
   assert.match(current!.instructions, /Needs you/);
   assert.match(current!.instructions, /\[\[write: …\]\] placeholder is the worker's to write/);
-  assert.deepEqual(current!.tools, first!.tools);
+  // Version 2 keeps the tools its conversations were bound to; version 3 names the 2026-10-20 ones.
+  assert.deepEqual(second!.tools, first!.tools);
+  assert.deepEqual(
+    current!.tools.filter((tool) => tool.startsWith('sandbox')),
+    ['sandboxes.sandbox', 'sandboxes.spend'],
+  );
+  assert.doesNotMatch(
+    current!.instructions,
+    /sandbox_|providers_list|spend_status|sandbox\.release/,
+  );
+  // It looks and releases with sandboxes.sandbox, and never rents.
+  const authorize = (input: Record<string, unknown>) =>
+    current!.authorizeTool!({
+      binding: { id: 'customer-experiments-healer', version: 3 },
+      caller: { projectId: 'p', actorId: 'a' },
+      name: 'sandboxes.sandbox',
+      input,
+    } as never);
+  await authorize({});
+  await authorize({ action: 'delete', sandbox_id: 'sbx_1' });
+  await assert.rejects(authorize({ action: 'create' }), { code: 'forbidden' });
 });

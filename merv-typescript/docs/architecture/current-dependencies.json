@@ -10,7 +10,7 @@
   "apiEntries": 46,
   "serverPlugins": 82,
   "machinePlugins": 1,
-  "directDependencyCount": 265,
+  "directDependencyCount": 266,
   "optionalDependencyCount": 19,
   "directConsumers": {
     "api": 12,
@@ -46,7 +46,7 @@
     "sessions": 10,
     "state": 26,
     "tasks": 4,
-    "tools": 28,
+    "tools": 29,
     "ui": 17,
     "web": 1,
     "workflows": 12,
@@ -930,6 +930,7 @@
       "requires": [
         "state",
         "scope",
+        "tools",
         "workflows",
         "domainEvents",
         "sessions",

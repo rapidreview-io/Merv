@@ -77,9 +77,10 @@ function fixture(computeBudgetUsd: number | null = 250) {
       },
     },
     tools: {
-      call: async (_name: string, caller: unknown, input: unknown) => {
+      call: async (name: string, caller: unknown, input: unknown) => {
+        assert.equal(name, 'sandboxes.sandbox');
         assert.equal(caller, source);
-        assert.deepEqual(input, { all_options: true, provider: 'lambda' });
+        assert.deepEqual(input, { action: 'options', all_options: true, provider: 'lambda' });
         calls.push('catalog');
         return { offers: [] };
       },

@@ -111,15 +111,15 @@ type RetryGrant = {
 /** What can be done about a revision in each retry state. */
 const retryNext = {
   exhausted_unclaimed:
-    'A project administrator can use fleet.workflow_retry with this exact revision, a reason and a stable requestId. The two failed rentals remain in Fleet history.',
+    'A project administrator can retry this exact revision with fleet action=workflow_retry, a reason and a stable requestId. The two failed rentals remain in Fleet history.',
   exhausted_cooldown:
-    'Two unclaimed rentals exhausted this revision. Wait for the cooldown, then a project administrator can use fleet.workflow_retry.',
+    'Two unclaimed rentals exhausted this revision. Wait for the cooldown, then a project administrator can retry it with fleet action=workflow_retry.',
   cooldown: 'Fleet will try again after the cooldown if capacity and budgets allow.',
   not_current_demand: 'This exact revision is not currently offered for managed dispatch.',
   active: 'An active machine already covers this target.',
   ready: 'Fleet may allocate when capacity, wallet and model budgets allow.',
 };
-/** A retry grant as fleet.workflow_retry answers it. */
+/** A retry grant as the fleet tool's workflow_retry answers it. */
 const granted = (g: RetryGrant) => ({
   id: g.id,
   instanceId: g.instance_id,
@@ -388,7 +388,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
             expectedRevision: status.expectedRevision,
             reason: `${status.unclaimedAttempts}/${status.attemptLimit} created Fleet machines ended before claiming work.`,
             next: status.next,
-            ...(status.retryAvailable ? { tool: 'fleet.workflow_retry' } : {}),
+            ...(status.retryAvailable ? { tool: 'fleet', action: 'workflow_retry' } : {}),
           })),
       },
       // Open allocations only: `list` with no recent ended ones.
@@ -966,8 +966,14 @@ export const fleetWorkflowPlugin = {
       );
       return personKey(caller.human, caller);
     };
-    for (const definition of [
-      {
+    ctx.effect(() => {
+      ctx.fleet.retries = adapter;
+      return () => {
+        if (ctx.fleet.retries === adapter) ctx.fleet.retries = undefined;
+      };
+    });
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'fleet.daily_tokens',
         conversation: 'never' as const,
         description:
@@ -982,26 +988,8 @@ export const fleetWorkflowPlugin = {
             await setDailyTokens(ctx.state, who, input.tokens, fallback);
           return await modelBudgetStatus(ctx.state, who, fallback);
         },
-      },
-      {
-        name: 'fleet.workflow_retry_status',
-        description:
-          'Read why managed Fleet stopped renting for one exact workflow revision after unclaimed machines. This does not change any allocation or dispatch state.',
-        readOnly: true,
-        inputSchema: retryInput.pick({ instanceId: true, expectedRevision: true }),
-        handler: async (caller: Caller, input: { instanceId: string; expectedRevision: number }) =>
-          (await adapter.retryStatus(caller, [input]))[0],
-      },
-      {
-        name: 'fleet.workflow_retry',
-        act: { title: 'Retry on Fleet' },
-        description:
-          'Project administrator only. After two created but unclaimed Fleet machines exhaust one exact workflow revision, record a reason and open one more bounded two-attempt window. Prior allocations and the grant remain auditable. A stable requestId makes uncertain retries idempotent; active or stale work is refused. Capacity, wallet and model budgets still govern renting.',
-        inputSchema: retryInput,
-        handler: async (caller: Caller, input: RetryInput) => await adapter.retry(caller, input),
-      },
-    ])
-      ctx.effect(() => ctx.tools.register(definition));
+      }),
+    );
   },
 };
 export default fleetWorkflowPlugin;

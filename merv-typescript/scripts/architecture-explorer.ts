@@ -38,8 +38,9 @@ function sourceTools(root: string, file: string) {
     value && (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value))
       ? value.text
       : '';
-  const add = (name: string, description: string, readOnly: boolean) => {
-    if (/^[a-z_][a-z0-9_]*\.[a-z0-9_.]+$/.test(name))
+  // An undotted name is a tool only beside its input schema (`fleet`).
+  const add = (name: string, description: string, readOnly: boolean, schema = false) => {
+    if (/^[a-z_][a-z0-9_]*\.[a-z0-9_.]+$/.test(name) || (schema && /^[a-z]+$/.test(name)))
       tools.set(name, { name, description, readOnly });
   };
   const visit = (node: ts.Node) => {
@@ -52,6 +53,7 @@ function sourceTools(root: string, file: string) {
         literal(prop('name')),
         literal(prop('description')),
         prop('readOnly')?.kind === ts.SyntaxKind.TrueKeyword,
+        !!prop('inputSchema'),
       );
     }
     if (

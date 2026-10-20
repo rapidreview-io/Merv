@@ -1284,28 +1284,8 @@
       "purpose": "Owns machine allocation, leases and resource lifecycle through Sandboxes. Allocation and worker session authority remain separate.",
       "exposedTools": [
         {
-          "name": "fleet.drain",
-          "description": "Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.",
-          "readOnly": false
-        },
-        {
-          "name": "fleet.get",
-          "description": "Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.",
-          "readOnly": true
-        },
-        {
-          "name": "fleet.halt",
-          "description": "Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.",
-          "readOnly": false
-        },
-        {
-          "name": "fleet.list",
-          "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
-          "readOnly": true
-        },
-        {
-          "name": "fleet.project_limit",
-          "description": "How many Fleet machines this project may run at once. A project administrator or their agent can change it; machines already running finish their work.",
+          "name": "fleet",
+          "description": "The project’s Fleet allocations: the machines its workers run on.\nlist: open allocations and the 50 latest ended ones, with machine lifecycle status.\nget: one allocation by id; a requested shutdown is distinct from confirmed machine deletion.\ndrain: stop admission on id, keep the current assignment’s results, then release its machine (its source or a project administrator).\nhalt: fence id and request immediate machine deletion; in-flight work may be interrupted (its source or a project administrator).\nproject_limit: how many machines the project may run at once; machines sets it (a project administrator, signed in).\nworkflow_retry_status: why Fleet stopped renting for one workflow revision (instanceId, expectedRevision) after unclaimed machines.\nworkflow_retry: open one more two-attempt window for that revision (project administrator; reason, stable requestId).",
           "readOnly": false
         }
       ]
@@ -1329,28 +1309,8 @@
       "purpose": "Connects Fleet to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
-          "name": "fleet.drain",
-          "description": "Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.",
-          "readOnly": false
-        },
-        {
-          "name": "fleet.get",
-          "description": "Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.",
-          "readOnly": true
-        },
-        {
-          "name": "fleet.halt",
-          "description": "Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.",
-          "readOnly": false
-        },
-        {
-          "name": "fleet.list",
-          "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
-          "readOnly": true
-        },
-        {
-          "name": "fleet.project_limit",
-          "description": "How many Fleet machines this project may run at once. A project administrator or their agent can change it; machines already running finish their work.",
+          "name": "fleet",
+          "description": "The project’s Fleet allocations: the machines its workers run on.\nlist: open allocations and the 50 latest ended ones, with machine lifecycle status.\nget: one allocation by id; a requested shutdown is distinct from confirmed machine deletion.\ndrain: stop admission on id, keep the current assignment’s results, then release its machine (its source or a project administrator).\nhalt: fence id and request immediate machine deletion; in-flight work may be interrupted (its source or a project administrator).\nproject_limit: how many machines the project may run at once; machines sets it (a project administrator, signed in).\nworkflow_retry_status: why Fleet stopped renting for one workflow revision (instanceId, expectedRevision) after unclaimed machines.\nworkflow_retry: open one more two-attempt window for that revision (project administrator; reason, stable requestId).",
           "readOnly": false
         }
       ]
@@ -2483,6 +2443,7 @@
       "requires": [
         "state",
         "scope",
+        "tools",
         "workflows",
         "domainEvents",
         "sessions",
@@ -4479,6 +4440,11 @@
     },
     {
       "from": "sandboxEvidence",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "sandboxEvidence",
       "to": "workflows",
       "optional": false
     },
@@ -4872,7 +4838,7 @@
     "plugins": 83,
     "providers": 38,
     "adapters": 45,
-    "dependencies": 265
+    "dependencies": 266
   },
   "network": [
     {

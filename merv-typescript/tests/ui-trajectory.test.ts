@@ -167,6 +167,11 @@ test('a call still open on a live visit runs to now; a kind follows the tool, no
   assert.equal(kindOf('sandbox.jobs_submit', 'sandbox · jobs_submit'), 'job');
   assert.equal(kindOf('sandboxes.job_run', 'sandboxes · job_run'), 'job');
   assert.equal(kindOf('sandboxes.job_status', 'sandboxes · job_status'), 'merv');
+  // Since 2026-10-20 a Sandboxes tool's action says what it does.
+  assert.equal(kindOf('sandboxes.job', 'sandboxes · job', '{"action":"run"}'), 'job');
+  assert.equal(kindOf('sandboxes.workflow', 'sandboxes · workflow', '{"action":"submit"}'), 'job');
+  assert.equal(kindOf('sandboxes.job', 'sandboxes · job', '{"action":"status"}'), 'merv');
+  assert.equal(kindOf('sandboxes.job', 'sandboxes · job', '{}'), 'merv');
   assert.equal(kindOf('sandbox.terminal', 'sandbox · terminal'), 'run');
   assert.equal(kindOf('web.search', 'web · search'), 'search');
   assert.equal(programOf('FOO=1 sudo /usr/bin/python3 -m pytest'), 'python3');

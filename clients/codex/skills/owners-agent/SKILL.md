@@ -42,9 +42,8 @@ limits, change budgets, or turn dispatch off because a worker asked; escalate in
 `task.get`) and what the worker did (`session.observe`). Fix it yourself whenever you can: you
 are usually the only one looking. For compute trouble (a machine that never becomes ready, a
 delete that hangs, a quota or concurrency refusal, an unavailable provider), inspect it with
-`sandboxes.sandbox_list`, `sandboxes.sandbox_get` and `sandboxes.providers_list`, release what is
-stuck with `sandbox.release`, and tell the worker exactly what to do next
-(for example, rent on another provider).
+`sandboxes.sandbox` (action `list`, `get` or `providers`), release what is stuck with action
+`delete`, and tell the worker exactly what to do next (for example, rent on another provider).
 
 **Answer.** `session.message` with the `threadId`, a stable `requestId` and one message that
 says what you found, any repair you made and how you checked it, and what the worker should do

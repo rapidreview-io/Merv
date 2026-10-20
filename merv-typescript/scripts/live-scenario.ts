@@ -1273,8 +1273,7 @@ async function main(options: Options) {
         `mcp_servers.merv.enabled_tools=${JSON.stringify(tools)}`,
         '-c',
         `mcp_servers.merv.tools={${tools.map((name) => `${quote(name)}={approval_mode="approve"}`).join(',')}}`,
-        // Merv exposes only sandbox.extend and sandbox.release, so compute is driven
-        // beside it. A network stage may reach the sandboxes service's own MCP; its
+        // Compute is driven beside Merv. A network stage may reach the sandboxes service's own MCP; its
         // grant travels as an environment variable name, never as an argument.
         ...(network && options.sandboxesUrl && options.sandboxesTokenEnv
           ? [

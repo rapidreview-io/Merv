@@ -289,7 +289,7 @@ export const runningAction = z
     /** Words from the verb table: 'Halt lease', 'Pause dispatch', 'Start dispatch', 'Extend lease', 'Release machine'. */
     label: words(40),
     verb: z.enum(['start', 'pause', 'halt', 'extend', 'release']),
-    tool: z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/),
+    tool: z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/),
     /** Sent as is. Never merged with a key: `session.halt` without `sessionId` halts every lease. */
     input: z.record(z.custom<Json>()).transform((input, context) => {
       try {

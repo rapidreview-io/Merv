@@ -81,7 +81,7 @@ test('every profile says how captures register and how inputs reach a machine', 
     assert.doesNotMatch(text, /ask the owner/);
     assert.match(
       text,
-      /stage node: upload workspace files with storage_upload and storage_complete/,
+      /stage node: upload workspace files with storage action=upload, then action=complete/,
     );
     assert.match(text, /metadata\.outputObjects/);
     assert.match(text, /Never paste file contents or signed URLs into job commands/);

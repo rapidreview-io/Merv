@@ -180,20 +180,27 @@ export function sandboxesRunning(ctx: Context): RunningContribution {
         });
       const actions: RunningAction[] = [];
       if (!absorbed && !checkMachine(m)) {
-        if (m.state === 'ready')
+        if (m.state === 'ready' && m.lease_expires_at)
           actions.push({
             label: 'Extend lease',
             verb: 'extend',
-            tool: 'sandbox.extend',
-            input: { id: m.id, seconds: 3600 },
+            tool: 'sandboxes.sandbox',
+            // Renew sets the lease from now: an hour more than is left.
+            input: {
+              action: 'renew',
+              sandbox_id: m.id,
+              lease_seconds:
+                Math.max(0, Math.round((Date.parse(m.lease_expires_at) - Date.now()) / 1000)) +
+                3600,
+            },
             allowed,
           });
         if (leased(m))
           actions.push({
             label: 'Release machine',
             verb: 'release',
-            tool: 'sandbox.release',
-            input: { id: m.id },
+            tool: 'sandboxes.sandbox',
+            input: { action: 'delete', sandbox_id: m.id },
             allowed,
             guard: {
               title: 'Release this machine?',

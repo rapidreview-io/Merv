@@ -91,7 +91,7 @@ export class SandboxComputeWaits implements ComputeWaiter {
           targets.push({ ...target, status: 'running', state: job.state });
           used.add(job.sandbox_id);
           // A machine its workflow provisioned lives to that workflow's deadline, which bounds the
-          // job's; one it adopted (job_run with outputs runs on the worker's) keeps its renter's lease.
+          // job's; one it adopted (job action=run with outputs runs on the worker's) keeps its renter's lease.
           if (!(await this.provisioned(run.namespace, job.request.workflow_id, job.sandbox_id)))
             leased.add(job.sandbox_id);
           const timeout = job.request.timeout_seconds;

@@ -24,14 +24,7 @@ const elsewhere = new Set([
   'connector.status',
   'record.look',
   'project.brief',
-  'fleet.list',
-  'fleet.get',
-  'fleet.drain',
-  'fleet.halt',
-  'sandboxes.sandbox_list',
-  'sandboxes.sandbox_get',
-  'sandboxes.providers_list',
-  'sandbox.release',
+  'sandboxes.sandbox',
 ]);
 
 test('both client bundles say what the manifest says, with the same skills and no server', () => {

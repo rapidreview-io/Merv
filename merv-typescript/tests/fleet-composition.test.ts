@@ -68,7 +68,7 @@ test('Fleet is optional and its row and controls install without research or Ses
   assert.equal(row.group, 'hidden');
   assert.deepEqual(await ui.read(caller, 'fleet'), []);
   await assert.rejects(ui.read(caller, 'fleet', { id: '../outside' }), { code: 'fleet_not_found' });
-  assert.deepEqual(await tools.call('fleet.list', caller, {}), []);
+  assert.deepEqual(await tools.call('fleet', caller, { action: 'list' }), []);
   assert.equal(
     (await tools.list()).some((tool) => tool.name === 'fleet.request'),
     false,

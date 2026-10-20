@@ -163,6 +163,8 @@ export interface Tools {
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
   /** The rules for one kind of caller, from the plugin that issues it (409 when registered). */
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void;
+  /** Where retired tool names went ('fleet with action=halt'): a call by one is refused with it. */
+  rename(resolve: (name: string) => string | false | undefined): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
   /** Adds a part to the guide every main agent is given (MCP instructions, Pi's prompt). */
