@@ -148,7 +148,7 @@ jobs:
 
       - name: Prepare offline board renderer when this shard exercises vision
         run: |
-          if node scripts/test-shard.mjs ${{ matrix.shard }} 4 | grep -Eq '^tests/board-(vision|reload)\.test\.ts$'; then
+          if node scripts/test-shard.mjs ${{ matrix.shard }} 4 | grep -Eq '^tests/(board-(vision|reload)|tool-compat)\.test\.ts$'; then
             npm run build:board-renderer
             npx playwright-core install --with-deps chromium-headless-shell
           fi
