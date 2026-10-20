@@ -11,7 +11,8 @@ import { ReportService, parseReport } from '@merv/reports';
 import { draftFromPlan } from '@merv/reports/prefill';
 import { ReportRenderer } from '../packages/reports/src/render.js';
 import { reportsToolsPlugin } from '@merv/reports/tools';
-import type { ToolDefinition } from '@merv/api/types';
+import type { NounDefinition, ToolDefinition } from '@merv/api/types';
+import { noun } from '../packages/api/src/noun.js';
 import type { Context } from 'cordis';
 import { openState } from './fixtures/state.js';
 
@@ -386,21 +387,22 @@ test('report tools present chart and page images to MCP clients', async () => {
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (t: ToolDefinition) => tools.set(t.name, t),
+      noun: (name: string, definition: NounDefinition) => tools.set(name, noun(name, definition)),
       contributeInstructions() {},
       contributeContext() {},
     },
   } as unknown as Context);
   assert.deepEqual([...tools.keys()].sort(), [
     'report.approve_visual',
-    'report.check',
     'report.clear',
     'report.open',
+    'report.read',
     'report.render',
-    'report.review_visual',
     'report.write',
   ]);
-  const visual = tools.get('report.review_visual')!;
-  const shown = visual.present!(await visual.handler({} as Caller, {}));
+  const visual = tools.get('report.read')!;
+  const reviewing = { action: 'review_visual', review_visual: {} };
+  const shown = visual.present!(await visual.handler({} as Caller, reviewing), reviewing);
   assert.deepEqual(
     shown.content.map((c) => c.type),
     ['text', 'image', 'image'],

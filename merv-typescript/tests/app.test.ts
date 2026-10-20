@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 50);
+    assert.equal(catalog.length, 46);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -83,7 +83,9 @@ test('assembled Cordis application preserves current MCP task closure across two
       'actor.issue_token',
       'actor.rotate_token',
       'actor.revoke_token',
-      ...['write', 'clear', 'render', 'review_visual', 'approve_visual'].map((v) => `report.${v}`),
+      ...['open', 'write', 'clear', 'render', 'review_visual', 'approve_visual'].map(
+        (v) => `report.${v}`,
+      ),
       ...['context', 'checkpoint', 'submit_delivery'].map((v) => `task.${v}`),
       'session.question.resolve',
       ...['create', 'list', 'get', 'lens', 'submit_lens', 'submit', 'end'].map(
@@ -94,7 +96,13 @@ test('assembled Cordis application preserves current MCP task closure across two
         !catalog.some((tool) => tool.name === name),
         `${name} must not be offered to an agent`,
       );
-    for (const name of ['report.open', 'report.check', 'task.write', 'task.read', 'project.brief'])
+    for (const name of [
+      'report.read',
+      'reflection.read',
+      'task.write',
+      'task.read',
+      'project.brief',
+    ])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         name,
@@ -374,7 +382,7 @@ test('a tool is titled in the words of the plugin that owns it', async () => {
   try {
     const tools = new Map((await app.ctx.tools.list()).map((tool) => [tool.name, tool]));
     for (const [name, title] of [
-      ['research.advance', 'Start next step'],
+      ['research.write:advance', 'Start next step'],
       ['review.write:start', 'Claim review'],
       ['review.write:submit', 'Submit verdict'],
       ['review.write:release', 'Release review'],

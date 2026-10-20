@@ -1315,6 +1315,205 @@
         "status": 404,
         "error": "not_found"
       }
+    },
+    "research.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": "empty"
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": "empty"
+        }
+      }
+    },
+    "research.get": {
+      "input": {
+        "researchId": "research_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "research_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "research_not_found"
+      }
+    },
+    "research.lineage": {
+      "input": {
+        "researchId": "research_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "research_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "research_not_found"
+      }
+    },
+    "research.create": {
+      "input": {
+        "name": "Capture",
+        "dependsOn": ["$experiment"],
+        "requestId": "research-create"
+      },
+      "owner": {
+        "ok": [
+          "automation",
+          "createdAt",
+          "digest",
+          "id",
+          "integrations",
+          "name",
+          "origin",
+          "ownerId",
+          "previousCycleId",
+          "problem",
+          "progress",
+          "projectId",
+          "reflectionId",
+          "researchDependencies",
+          "successorId",
+          "workflow",
+          "writable"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "research.replan": {
+      "input": {
+        "researchId": "research_missing",
+        "expectedRevision": 0,
+        "dependsOn": [],
+        "requestId": "research-replan"
+      },
+      "owner": {
+        "status": 404,
+        "error": "research_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "research_not_found"
+      }
+    },
+    "research.advance": {
+      "input": {
+        "researchId": "research_missing",
+        "expectedRevision": 0,
+        "requestId": "research-advance"
+      },
+      "owner": {
+        "status": 404,
+        "error": "research_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "research_not_found"
+      }
+    },
+    "research.end": {
+      "input": {
+        "researchId": "research_missing",
+        "expectedRevision": 0,
+        "outcome": "abandoned",
+        "reason": "Capture",
+        "requestId": "research-end"
+      },
+      "owner": {
+        "status": 404,
+        "error": "research_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "research_not_found"
+      }
+    },
+    "reflection.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": "empty"
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": "empty"
+        }
+      }
+    },
+    "reflection.get": {
+      "input": {
+        "reflectionId": "reflection_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "reflection_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "reflection_not_found"
+      }
+    },
+    "reflection.lens": {
+      "input": {
+        "lensId": "lens_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "reflection_lens_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "reflection_lens_not_found"
+      }
+    },
+    "reflection.create": {
+      "input": {
+        "requestId": "reflection-create"
+      },
+      "owner": {
+        "ok": [
+          "attempt",
+          "changeSpec",
+          "createdAt",
+          "id",
+          "lenses",
+          "ownerId",
+          "plan",
+          "projectId",
+          "report",
+          "review",
+          "title",
+          "workflow"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "reflection.end": {
+      "input": {
+        "reflectionId": "reflection_missing",
+        "expectedRevision": 0,
+        "reason": "Capture",
+        "requestId": "reflection-end"
+      },
+      "owner": {
+        "status": 404,
+        "error": "reflection_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
     }
   }
 }

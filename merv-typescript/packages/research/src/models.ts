@@ -179,13 +179,13 @@ export type ResearchAnswer = {
   moves: ResearchMove[];
 };
 /**
- * One move of an answer: a call of `tool` (research.advance where unnamed, and otherwise only
+ * One move of an answer: a call of `tool` (research.write advance where unnamed, and otherwise only
  * where the gate offers it) sending `input`, or the way to the page of the row whose view is
  * `row`. A move that answers the failed dependencies of a `failed` workflow stands under them.
  */
 export type ResearchMove = {
   label: string;
-  tool?: 'research.end';
+  tool?: 'research.write:end';
   input?: { [field: string]: string | boolean };
   row?: string;
   failed?: string;

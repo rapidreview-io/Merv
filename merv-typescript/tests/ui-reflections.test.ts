@@ -215,7 +215,7 @@ test('an address naming a lens, as a lens lease opens, lands on its wave at that
           body: { error: { code: 'reflection_not_found', message: 'Reflection not found' } },
         },
   );
-  serve('/tools/reflection.lens', (_, sent) => ({
+  serve('/tools/reflection.read:lens', (_, sent) => ({
     body: { result: lens('theory', Number(String(sent.lensId).slice(-1)) - 1) },
   }));
   await mount(element);

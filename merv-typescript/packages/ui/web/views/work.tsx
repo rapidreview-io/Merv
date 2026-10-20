@@ -16,6 +16,7 @@ import { Dependency, StageMark, ended } from '../process';
 import { Icon } from '../icons';
 import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { ResearchCommand } from '../components';
+import { calling } from '../navigation';
 import { useActorNames } from './people';
 import { CreateReflection } from './research-programs';
 import type { Task } from '@merv/tasks/models';
@@ -222,7 +223,7 @@ export function CreateResearch({
   // What a cycle may wait on is the work this page lists, chosen by name.
   const work = useWorkPicks();
   const command = useCommand<ResearchRecord>({
-    tool: 'research.create',
+    tool: 'research.write:create',
     validate: (value) =>
       !!value && typeof value.id === 'string' && value.workflow?.workflow === 'research',
     onSuccess: () => {
@@ -584,6 +585,8 @@ function WaveList({ shell }: { shell: ShellData }) {
 
 /** How often a cycle move the gate refuses is checked again while nothing on the page moves. */
 const REFUSED_RECHECK_MS = 30_000;
+/** The move a cycle's gate offers its owner, as a person is shown it. */
+const ADVANCE = 'research.write:advance';
 
 /**
  * A cycle's one move, here and on its own page, as the cycle's own gate has it. A move the
@@ -617,11 +620,7 @@ export function CycleMove({
     { instanceId: cycle.id },
     {
       every: (decision) =>
-        decision?.actions.some(
-          (action) => action.tool === 'research.advance' && action.status === 'blocked',
-        )
-          ? REFUSED_RECHECK_MS
-          : undefined,
+        calling(decision?.actions, ADVANCE)?.status === 'blocked' ? REFUSED_RECHECK_MS : undefined,
     },
   );
   const read = checked.data;
@@ -640,11 +639,11 @@ export function CycleMove({
   }, [moved, reload]);
   // A gate read at another revision is not this cycle's, and leaves the plain move.
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
-  const advance = gate?.actions.find((action) => action.tool === 'research.advance');
+  const advance = calling(gate?.actions, ADVANCE);
   const refused = (code: string) => !!advance?.blockers.some((item) => item.code === code);
   const row = (kind: string) => shell.rows.find((item) => item.view.kind === kind);
-  const offered = (tool: string) =>
-    !!gate?.actions.some((item) => item.tool === tool && item.status !== 'blocked');
+  const offered = (address: string) =>
+    (calling(gate?.actions, address)?.status ?? 'blocked') !== 'blocked';
   const automatic = cycle.automation;
   // An answer applies where the gate says so, and only if the page can make each of its moves.
   // An ended cycle has no gate: only what it still asks, as Research names it, has moves.
@@ -660,7 +659,7 @@ export function CycleMove({
     label: string,
     choice: Record<string, unknown> = {},
     disabled = false,
-    tool = 'research.advance',
+    tool = ADVANCE,
   ) => (
     <ResearchCommand
       key={label}
@@ -717,7 +716,7 @@ export function CycleMove({
             reason: 'The owner stopped automatic research from the Work page.',
           },
           false,
-          'research.end',
+          'research.write:end',
         )}
       </div>
     );

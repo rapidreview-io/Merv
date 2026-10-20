@@ -135,6 +135,18 @@ export class ReportService implements Reports {
       );
     return found;
   }
+  /** The revision after `before` with these changes, by this caller, appended. */
+  private async revise(
+    caller: Caller,
+    before: ReportRevision,
+    change: Partial<ReportRevision>,
+    tx: Transaction,
+  ): Promise<ReportRevision> {
+    const revision = before.revision + 1;
+    const after = { ...before, ...change, revision, updatedBy: caller.actorId, updatedAt: now() };
+    await this.append(caller, before, after, tx);
+    return after;
+  }
   private async append(
     caller: Caller,
     before: ReportRevision | null,
@@ -306,16 +318,7 @@ export class ReportService implements Reports {
         `Data files total over ${MAX_FILES_BYTES} bytes`,
         422,
       );
-      const after: ReportRevision = {
-        ...before,
-        revision: before.revision + 1,
-        source,
-        files,
-        updatedBy: caller.actorId,
-        updatedAt: now(),
-      };
-      await this.append(caller, before, after, tx);
-      return this.view(after);
+      return this.view(await this.revise(caller, before, { source, files }, tx));
     });
   }
 
@@ -352,17 +355,8 @@ export class ReportService implements Reports {
     return await this.command(caller, 'clear', input, async (tx) => {
       const before = await this.required(caller, ref(input), tx);
       this.expect(before, input.expectedRevision);
-      const after: ReportRevision = {
-        ...before,
-        revision: before.revision + 1,
-        source: before.base,
-        files: {},
-        approvals: {},
-        updatedBy: caller.actorId,
-        updatedAt: now(),
-      };
-      await this.append(caller, before, after, tx);
-      return this.view(after);
+      const change = { source: before.base, files: {}, approvals: {} };
+      return this.view(await this.revise(caller, before, change, tx));
     });
   }
 
@@ -583,15 +577,8 @@ export class ReportService implements Reports {
     return await this.command(caller, 'approve_visual', input, async (tx) => {
       const before = await this.required(caller, ref(input), tx);
       this.expect(before, input.expectedRevision);
-      const after: ReportRevision = {
-        ...before,
-        revision: before.revision + 1,
-        approvals: { ...before.approvals, [input.chartId]: hash },
-        updatedBy: caller.actorId,
-        updatedAt: now(),
-      };
-      await this.append(caller, before, after, tx);
-      return this.view(after);
+      const approvals = { ...before.approvals, [input.chartId]: hash };
+      return this.view(await this.revise(caller, before, { approvals }, tx));
     });
   }
 
@@ -699,14 +686,7 @@ export class ReportService implements Reports {
           record.revision,
           JSON.stringify({ ...record, subject: rev.subject, source: rev.source }),
         );
-        const after: ReportRevision = {
-          ...before,
-          revision: before.revision + 1,
-          final: record,
-          updatedBy: caller.actorId,
-          updatedAt: now(),
-        };
-        await this.append(caller, before, after, tx);
+        await this.revise(caller, before, { final: record }, tx);
         return record;
       },
     );

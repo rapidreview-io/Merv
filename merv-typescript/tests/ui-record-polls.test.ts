@@ -279,7 +279,8 @@ test('an open cycle page checks its gate as it opens and again only when the cyc
         actions: [
           {
             action: 'advance',
-            tool: 'research.advance',
+            tool: 'research.write',
+            arguments: { action: 'advance', advance: {} },
             status: 'ready',
             blockers: [],
             requiredInput: [],

@@ -26,7 +26,7 @@ import { ReviewSummary } from './reviews';
 export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
   const [title, setTitle] = useState('');
   const command = useCommand<Reflection>({
-    tool: 'reflection.create',
+    tool: 'reflection.write:create',
     validate: (value) =>
       !!value && typeof value.id === 'string' && value.workflow?.workflow === 'reflection',
     onSuccess: onCreated,
@@ -69,7 +69,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   // This row holds lenses too (a lens lease opens here): an id that is no wave is asked as a
   // lens, which opens on its wave's tab.
   const held = useTool<ReflectionLens>(
-    data.error?.code === 'reflection_not_found' ? 'reflection.lens' : null,
+    data.error?.code === 'reflection_not_found' ? 'reflection.read:lens' : null,
     { lensId: id },
   );
   const nameOf = useActorNames();

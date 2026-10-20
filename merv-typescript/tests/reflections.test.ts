@@ -1575,7 +1575,7 @@ test('a leased lens reads research added after assignment through existing tools
   };
   const experiment = await currentExperiment(f.app.ctx, f.owner, experimentInput);
   const tools = (await f.app.ctx.tools.list()).map((tool) => tool.name);
-  assert.equal(tools.filter((name) => name === 'reflection.create').length, 1);
+  assert.equal(tools.filter((name) => name === 'reflection.write').length, 1);
   const wave = (await f.app.ctx.tools.call('reflection.create', f.owner, {
     requestId: 'live-wave',
   })) as Reflection;
@@ -1678,7 +1678,7 @@ test('a leased lens reads research added after assignment through existing tools
   assert.equal(f.app.status().find((plugin) => plugin.id === 'reflections')!.state, 'active');
   assert.equal(f.app.status().find((plugin) => plugin.id === 'research')!.state, 'active');
   assert.equal(f.app.ctx.reflections, provider);
-  assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'reflection.create'));
+  assert.ok((await f.app.ctx.tools.list()).some((tool) => tool.name === 'reflection.write'));
   assert.ok(await call('artifact.read', { artifactId: evidence.id }));
   const ownReport = (await call('artifact.create', {
     title: 'Independent report while research access is unavailable',
@@ -1698,7 +1698,7 @@ test('a leased lens reads research added after assignment through existing tools
   assert.equal(f.app.ctx.reflections, provider);
   assert.equal((await f.app.ctx.sessions.get(f.owner, execution.id)).status, 'active');
   assert.equal(
-    (await f.app.ctx.tools.list()).filter((tool) => tool.name === 'reflection.create').length,
+    (await f.app.ctx.tools.list()).filter((tool) => tool.name === 'reflection.write').length,
     1,
   );
   assert.match(

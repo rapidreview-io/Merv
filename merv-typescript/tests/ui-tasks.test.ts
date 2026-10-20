@@ -439,7 +439,7 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
     body: { result: [{ ...listed('wf_exp', 'abandoned'), name: 'An abandoned experiment' }] },
   });
   let sent: Record<string, unknown> | undefined;
-  serve('/tools/research.create', (_call, body) => {
+  serve('/tools/research.write:create', (_call, body) => {
     sent = body;
     return { body: { result: { id: 'wf_cycle', workflow: { workflow: 'research' } } } };
   });
@@ -584,9 +584,13 @@ const cycleGate = (state: string, advance: Record<string, unknown>) => ({
       actions: [
         {
           action: `advance_${state}`,
-          tool: 'research.advance',
+          // As guidance names the noun to a person, its arguments under the action.
+          tool: 'research.write',
           instruction: 'Advance the cycle.',
-          arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
+          arguments: {
+            action: 'advance',
+            advance: { researchId: 'wf_cycle', expectedRevision: 3 },
+          },
           requiredInput: [],
           blockers: [],
           ...advance,
@@ -622,7 +626,7 @@ const researchShape = {
 };
 const page = (state: string, rows: unknown[] = [cyclesRow]) => {
   sent.length = 0;
-  serve('/tools/research.advance', (_call, body) => {
+  serve('/tools/research.write:advance', (_call, body) => {
     sent.push(body);
     return { body: { result: { ...cycle(state), revision: 4 } } };
   });
@@ -801,7 +805,7 @@ test('an automatic run offers its stop, and only the answers Research names for 
 test('an ended cycle that still asks its owner offers the stop Research names for it', async (t) => {
   t.after(unmount);
   const ended: Record<string, unknown>[] = [];
-  serve('/tools/research.end', (_call, body) => {
+  serve('/tools/research.write:end', (_call, body) => {
     ended.push(body);
     return { body: { result: cycle('complete') } };
   });
@@ -881,9 +885,9 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
   const gate = reflecting.body.result;
   const end = {
     action: 'end',
-    tool: 'research.end',
+    tool: 'research.write',
     instruction: 'End this research cycle when it cannot reach an answer.',
-    arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
+    arguments: { action: 'end', end: { researchId: 'wf_cycle', expectedRevision: 3 } },
     requiredInput: ['outcome', 'reason'],
     status: 'needs_input',
     blockers: [{ code: 'input_required', status: 400, message: 'Supply outcome and reason.' }],
@@ -910,7 +914,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
     body: { result: { rows: [{ ...waves, view: { kind: 'reflections' } }] } },
   });
   const ended: Record<string, unknown>[] = [];
-  serve('/tools/research.end', (_call, body) => {
+  serve('/tools/research.write:end', (_call, body) => {
     ended.push(body);
     return { body: { result: { ...cycle('reflecting'), id: 'wf_cycle' } } };
   });
@@ -959,7 +963,7 @@ test('a new cycle started beside an ended one follows it', async (t) => {
   serve('/tools/task.read:list', { body: { result: [] } });
   serve('/tools/experiment.read:list', { body: { result: [] } });
   let sent: Record<string, unknown> | undefined;
-  serve('/tools/research.create', (_call, body) => {
+  serve('/tools/research.write:create', (_call, body) => {
     sent = body;
     return { body: { result: { id: 'wf_cycle', workflow: { workflow: 'research' } } } };
   });

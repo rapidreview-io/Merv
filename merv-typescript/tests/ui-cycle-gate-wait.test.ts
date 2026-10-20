@@ -38,7 +38,8 @@ test('a refused cycle move is checked again while it waits, though nothing on th
         actions: [
           {
             action: 'advance',
-            tool: 'research.advance',
+            tool: 'research.write',
+            arguments: { action: 'advance', advance: {} },
             status: ready ? 'ready' : 'blocked',
             blockers: ready
               ? []

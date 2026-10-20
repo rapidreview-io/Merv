@@ -77,6 +77,10 @@ const retired = {
   ],
   task: ['task.list', 'task.get', 'task.create', 'task.mark_failed'],
   review: ['review.list', 'review.get', 'review.start', 'review.submit', 'review.release'],
+  research: ['list', 'get', 'lineage', 'create', 'replan', 'advance', 'end'].map(
+    (action) => `research.${action}`,
+  ),
+  reflection: ['list', 'get', 'lens', 'create', 'end'].map((action) => `reflection.${action}`),
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -95,6 +99,11 @@ const nouns = [
   'task.write',
   'review.read',
   'review.write',
+  'research.read',
+  'research.write',
+  'reflection.read',
+  'reflection.write',
+  'report.read',
 ];
 
 /** A result's key shape, as the contract was captured. */
@@ -230,11 +239,16 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.deepEqual([inside.status, inside.body.error.code], [404, 'not_found']);
 
   // What an agent is listed: the base listing with the retired names traded for the nouns.
-  const gone = new Set([...all, ...removed]);
+  // The report reads are retired too (their captured calls need a renderer); report.open is
+  // a worker's now, which no agent is listed.
+  const gone = new Set([...all, ...removed, 'report.check', 'report.review_visual']);
   const traded = (base: string[]) =>
     [...base.filter((name) => !gone.has(name)), ...nouns].sort((a, b) => a.localeCompare(b));
   const listed = (await client.listTools()).tools.map(({ name }) => name);
-  assert.deepEqual(listed, traded(captured.listings.mcp));
+  assert.deepEqual(
+    listed,
+    traded(captured.listings.mcp).filter((name) => name !== 'report.open'),
+  );
   assert.deepEqual(
     (await app.ctx.tools.describe(owner)).map(({ name }) => name),
     traded(captured.listings.page),

@@ -24,7 +24,7 @@ const answers = [
     moves: [
       {
         label: 'Stop here',
-        tool: 'research.end',
+        tool: 'research.write:end',
         input: { outcome: 'abandoned', reason: 'The owner decided to stop here.' },
       },
     ],
@@ -52,7 +52,7 @@ const answers = [
     moves: [
       {
         label: 'End cycle',
-        tool: 'research.end',
+        tool: 'research.write:end',
         failed: 'reflection',
         input: { outcome: 'abandoned', reason: 'The wave this cycle reflected on was abandoned.' },
       },
