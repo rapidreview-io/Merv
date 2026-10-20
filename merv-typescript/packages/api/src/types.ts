@@ -133,9 +133,15 @@ export type RegisteredTool = Pick<
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
   tier: ToolTier;
-  /** A noun tool's declared output per action, as JSON Schema (NounAction.output). */
-  outputs?: Record<string, unknown>;
+  /** A noun tool's actions, as a script's declaration reads them; absent for every other tool. */
+  actions?: Record<string, NounDeclaration>;
 };
+/** One noun action as declared to a script: whether its object may be left out, and its declared
+ *  output as JSON Schema (NounAction.output). */
+export interface NounDeclaration {
+  optional: boolean;
+  output?: unknown;
+}
 /** A retired name: the tool it became and the action it is. args: every argument the old tool
  *  took, by its new name, and no other; absent, it took its action's own (a noun action's object,
  *  flat), never `action`. A noun action's `was` names are these too. */
@@ -250,6 +256,9 @@ export interface Tools {
   /** How rules keyed on a tool's name know this call (see ToolIdentity); `name` may be an
    *  address `tool:action`. Undefined for an unknown name. */
   identity(name: string, input: unknown): ToolIdentity | undefined;
+  /** Guidance as its caller calls it: each noun action it names by its address `tool:action` is
+   *  said as the retired name a leased session's policy grants, and as the noun to everyone else. */
+  guidance<T>(caller: Caller, value: T): T;
   /** `name` may be an address `tool:action` with the action's own flat arguments. */
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(

@@ -1,7 +1,13 @@
-import { MervError } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
 import { z, type ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { NounActions, NounDefinition, ToolDefinition } from './types.js';
+import type {
+  NounActions,
+  NounDeclaration,
+  NounDefinition,
+  ToolDefinition,
+  Tools,
+} from './types.js';
 
 /** The object an action's input produces, unwrapped from refinements, defaults and optionality
  *  only to describe it: calls are validated with the input as given. */
@@ -125,12 +131,51 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   };
 }
 
-/** Each action's declared output as JSON Schema, for a script's declaration. */
-export const nounOutputs = (actions: NounActions): Record<string, unknown> =>
+/** Each action as a script's declaration reads it: whether its object may be left out, and its
+ *  declared output as JSON Schema. */
+export const nounActions = (actions: NounActions): Record<string, NounDeclaration> =>
   Object.fromEntries(
-    Object.entries(actions).flatMap(([name, action]) =>
-      action.output
-        ? [[name, zodToJsonSchema(action.output, { $refStrategy: 'none', target: 'jsonSchema7' })]]
-        : [],
-    ),
+    Object.entries(actions).map(([name, action]) => [
+      name,
+      {
+        optional: fields(action.input).optional,
+        ...(action.output && {
+          output: zodToJsonSchema(action.output, { $refStrategy: 'none', target: 'jsonSchema7' }),
+        }),
+      },
+    ]),
   );
+
+/** A rule's address `tool:action` wherever guidance names one, in text or as a tool. */
+const ADDRESS = /\b[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*:[a-z][a-z0-9_]*\b/g;
+
+/**
+ * Guidance as its caller calls it (Tools.guidance). A rule names a noun action by its address: a
+ * leased session is told the retired name its frozen policy grants, with flat arguments, exactly
+ * as before the nouns; everyone else the noun tool, with the action's arguments under its own name.
+ */
+export function presented<T>(tools: Pick<Tools, 'identity'>, caller: Caller, value: T): T {
+  const known = (address: string) => {
+    const identity = tools.identity(address, {});
+    return identity?.action ? identity : undefined;
+  };
+  const said = (address: string) => {
+    const identity = known(address);
+    if (!identity) return address;
+    return caller.session ? identity.as : `${identity.tool} ${identity.action}`;
+  };
+  const walk = (node: unknown): unknown => {
+    if (typeof node === 'string') return node.replace(ADDRESS, said);
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const { tool, arguments: args } = node as { tool?: unknown; arguments?: unknown };
+    const object = Object.fromEntries(Object.entries(node).map(([key, item]) => [key, walk(item)]));
+    const identity = typeof tool === 'string' ? known(tool) : undefined;
+    if (!identity) return object;
+    object.tool = caller.session ? identity.as : identity.tool;
+    if (!caller.session && args && typeof args === 'object')
+      object.arguments = { action: identity.action, [identity.action!]: args };
+    return object;
+  };
+  return walk(value) as T;
+}

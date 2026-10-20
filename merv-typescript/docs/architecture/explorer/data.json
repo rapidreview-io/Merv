@@ -3018,7 +3018,9 @@
       "requires": [
         "scope"
       ],
-      "optional": [],
+      "optional": [
+        "state"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -4566,6 +4568,11 @@
       "optional": false
     },
     {
+      "from": "tools",
+      "to": "state",
+      "optional": true
+    },
+    {
       "from": "ui",
       "to": "api",
       "optional": false
@@ -4620,7 +4627,7 @@
     "plugins": 83,
     "providers": 38,
     "adapters": 45,
-    "dependencies": 265
+    "dependencies": 266
   },
   "network": [
     {

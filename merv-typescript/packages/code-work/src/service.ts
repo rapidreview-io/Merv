@@ -527,17 +527,24 @@ export class CodeService implements Code {
       mirror: await this.mirrorStore.describe(caller.projectId),
     };
   }
-  /** A project from before Code initialized on creation gets its repository here, as on new work. */
   importRepository = async (caller: Caller, input: unknown) => {
-    await this.state.transaction((tx) => this.ensureRepository(caller, tx));
-    await this.store.maintain(false);
+    await this.administered(caller);
     return this.store.importRepository(caller, input);
   };
+  /** A project from before Code initialized on creation gets its repository on an import, as on
+   *  new work, once the caller is known to be one who may import: nobody else's call initializes
+   *  or maintains anything. */
+  private async administered(caller: Caller) {
+    await this.state.transaction(async (tx) => {
+      await this.store.administrator(caller, tx);
+      await this.ensureRepository(caller, tx);
+    });
+    await this.store.maintain(false);
+  }
   async prepareRepository(caller: Caller, value: CodeRepositoryPrepareInput) {
     caller = structuredClone(caller);
     const input = parseCodeInput(repositoryPrepareSchema, value);
-    await this.state.transaction((tx) => this.ensureRepository(caller, tx));
-    await this.store.maintain(false);
+    await this.administered(caller);
     return prepareRepository(this, caller, input, (operation) =>
       reconcileRepository(
         this.state,

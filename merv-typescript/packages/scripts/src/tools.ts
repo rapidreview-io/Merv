@@ -28,7 +28,7 @@ function scriptable(
 }
 
 /** What this caller is offered, each with whether a script may call it as registered now, and a
- *  noun tool's declared outputs per action. */
+ *  noun tool's actions. */
 async function offered(tools: Tools, caller: Caller) {
   return (await tools.describe(caller, true)).flatMap((description) => {
     const tool = tools.tool(description.name);
@@ -38,7 +38,7 @@ async function offered(tools: Tools, caller: Caller) {
         description,
         native: !tool.remote,
         scriptable: scriptable(tool, description),
-        outputs: tool.outputs,
+        actions: tool.actions,
       },
     ];
   });
@@ -115,10 +115,10 @@ async function find(
   { query, names, limit = 8 }: z.infer<typeof toolsInput>,
 ) {
   const all = await offered(tools, caller);
-  const shown = ({ description, native, scriptable, outputs }: (typeof all)[number]) => ({
+  const shown = ({ description, native, scriptable, actions }: (typeof all)[number]) => ({
     name: description.name,
     scriptable,
-    declaration: declaration(description, native, outputs),
+    declaration: declaration(description, native, actions),
   });
   if (names)
     return { tools: all.filter(({ description }) => names.includes(description.name)).map(shown) };

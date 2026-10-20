@@ -44,13 +44,14 @@ export function typeOf(schema: unknown, root = false): string {
 }
 
 /** `tools.a.b(input: …): Promise<…>` under its description, cut at 300 characters. A mounted
- *  (not native) tool's projectId is its own argument, so it stays. A noun tool (its input an
- *  `action` enum beside one object per action) has one overload per action, each typed by that
- *  action's declared output where it has one. */
+ *  (not native) tool's projectId is its own argument, so it stays. A noun tool (registered with
+ *  `actions`; any other tool's `action` is one more argument) has one overload per action, its
+ *  object required unless every field is optional, typed by its declared output where it has
+ *  one. */
 export function declaration(
   tool: { name: string; description?: string; inputSchema: unknown; outputSchema?: unknown },
   native = true,
-  outputs: Record<string, unknown> = {},
+  actions?: Record<string, { optional: boolean; output?: unknown }>,
 ): string {
   const path = tool.name
     .split('.')
@@ -60,13 +61,10 @@ export function declaration(
   const comment = description.length > 300 ? `${description.slice(0, 299)}…` : description;
   const schema = isSchema(tool.inputSchema) ? tool.inputSchema : {};
   const properties = isSchema(schema.properties) ? schema.properties : {};
-  const actions = isSchema(properties.action) ? properties.action.enum : undefined;
-  const lines = Array.isArray(actions)
-    ? actions.map((action) => {
-        const name = String(action);
-        const args = typeOf(properties[name]);
-        const output = outputs[name] ? typeOf(outputs[name]) : 'unknown';
-        return `tools${path}(input: { action: ${JSON.stringify(name)}; ${key(name)}?: ${args} }): Promise<${output}>`;
+  const lines = actions
+    ? Object.entries(actions).map(([name, { optional, output }]) => {
+        const args = `${key(name)}${optional ? '?' : ''}: ${typeOf(properties[name])}`;
+        return `tools${path}(input: { action: ${JSON.stringify(name)}; ${args} }): Promise<${output ? typeOf(output) : 'unknown'}>`;
       })
     : [
         `tools${path}(input: ${typeOf(tool.inputSchema, native)}): Promise<${tool.outputSchema ? typeOf(tool.outputSchema) : 'unknown'}>`,

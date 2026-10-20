@@ -214,6 +214,9 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
   sessions: ['tools', 'secrets'],
   tasks: ['sandboxEvidence'],
+  // Outside agents' calls are logged while a state store is loaded, which waits for their last
+  // flush before it closes.
+  tools: ['state'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */

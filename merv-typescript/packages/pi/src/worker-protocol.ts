@@ -215,7 +215,8 @@ export class PiWorkerProtocol {
         .filter(({ name }) => {
           const tool = registry.tool(name);
           if (!tool) return false;
-          if (tool.conversationProfile) return tool.conversationProfile === profile?.id;
+          // A profile's own tool is its profile's alone, and only where that version names it.
+          if (tool.conversationProfile && tool.conversationProfile !== profile?.id) return false;
           return grants ? grants.has(name) : tool.tier !== 'worker';
         })
         .flatMap((description) => {

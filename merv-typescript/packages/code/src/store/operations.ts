@@ -76,6 +76,8 @@ export class CodeStore {
     this.exporter = new CodeExporter(this.core);
   }
 
+  /** A project administrator or their agent, never a leased worker. */
+  administrator: StoreCore['administrator'] = (...args) => this.core.administrator(...args);
   importRepository: CodeReceiver['importRepository'] = (...args) =>
     this.receiver.importRepository(...args);
   contains: CodeReceiver['contains'] = (...args) => this.receiver.contains(...args);

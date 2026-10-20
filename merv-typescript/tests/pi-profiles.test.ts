@@ -42,6 +42,14 @@ test('trusted intake binds the request and exact Astra/medium model, offers only
       return { title: 'Bounded experiment' };
     },
   });
+  // A later version's tool of the same profile is not this version's: its pinned list is.
+  f.tools.register({
+    name: 'customer_experiments.propose',
+    conversationProfile: profile.id,
+    description: 'Propose a plan',
+    inputSchema: z.object({}).strict(),
+    handler: () => ({}),
+  });
   f.pi.registerProfile({
     ...profile,
     authorizeTool: async ({ binding, caller, name, input }) => {

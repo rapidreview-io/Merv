@@ -241,15 +241,28 @@ test('only the administrator who began an import continues it, and a worker neve
     projectName: 'Unbound',
     actorName: 'Owner',
   });
-  const early = await f.code.importRepository(
-    {
-      projectId: elsewhere.project.id,
-      actorId: elsewhere.actor.id,
-      credentialId: elsewhere.credential.id,
-    },
-    input,
+  // Only to one who may import: a producer's call is refused before anything is initialized.
+  const owner = {
+    projectId: elsewhere.project.id,
+    actorId: elsewhere.actor.id,
+    credentialId: elsewhere.credential.id,
+  };
+  const writer = await f.scope.credentials.issueActor(owner, { name: 'w', role: 'producer' });
+  await assert.rejects(
+    f.code.importRepository(
+      { ...owner, actorId: writer.actor.id, credentialId: writer.credential.id },
+      input,
+    ),
+    { status: 403 },
   );
+  const initialized = () =>
+    f.state.read((sql) =>
+      sql.get('SELECT project_id FROM code_projects WHERE project_id=?', owner.projectId),
+    );
+  assert.equal(await initialized(), undefined);
+  const early = await f.code.importRepository(owner, input);
   assert.equal(early.status, 'prepared');
+  assert.ok(await initialized());
 
   // A transfer nobody continues is given up by the next sweep, and its bytes go with it.
   await f.code.v2!.putPart(f.admin, begun.id, 0, bundle.content.subarray(0, 10));

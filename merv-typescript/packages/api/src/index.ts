@@ -20,29 +20,26 @@ export const toolsPlugin = {
   name: 'merv-tools',
   Config: z.object({}).strict().default({}),
   inject: ['scope'],
-  async apply(ctx: Context) {
-    await ctx.effect(async function* () {
-      // Outside agents' calls are logged where a state store is present (agent_tool_calls).
-      const state = ctx.get('state');
-      let log: AgentCallLog | undefined;
-      if (state) {
-        await state.migrate('agent_tool_calls', callLogMigrations);
-        const calls = (log = new AgentCallLog(state));
-        const flush = () => calls.flush().catch(() => {});
-        const timer = setInterval(flush, 500);
-        timer.unref();
-        yield async () => {
-          clearInterval(timer);
-          await flush();
-        };
-      }
+  apply(ctx: Context) {
+    ctx.effect(function* () {
       // Read-only tools run in a snapshot scope when a state store is present, except those
       // that call a service outside Merv (ToolDefinition.openWorld).
-      const tools = new ToolRegistry(
-        ctx.scope,
-        ctx.scope.toolPolicy,
-        snapshotIn(ctx),
-        log && ((call) => log.push(call)),
+      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, snapshotIn(ctx));
+      // Outside agents' calls are logged where a state store is present (agent_tool_calls), by a
+      // fiber that depends on it: state closes only after its last flush.
+      ctx.inject(['state'], (ctx) =>
+        ctx.effect(async function* () {
+          await ctx.state.migrate('agent_tool_calls', callLogMigrations);
+          const log = new AgentCallLog(ctx.state);
+          const timer = setInterval(() => log.flush().catch(() => {}), 500);
+          timer.unref();
+          yield async () => {
+            clearInterval(timer);
+            await log.close().catch(() => {});
+          };
+          tools.log = (call) => log.push(call);
+          yield () => (tools.log = undefined);
+        }),
       );
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.

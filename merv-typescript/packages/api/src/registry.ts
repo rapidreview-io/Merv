@@ -12,8 +12,12 @@ import {
 } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { noun, nounOutputs } from './noun.js';
-import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
+import { noun, nounActions, presented } from './noun.js';
+import {
+  CallToolResultSchema,
+  ToolSchema,
+  type CallToolResult,
+} from '@modelcontextprotocol/sdk/types.js';
 import type {
   AgentToolCall,
   AnyToolDefinition,
@@ -212,8 +216,9 @@ export class ToolRegistry implements Tools {
     private readonly access?: Pick<ToolPolicy, 'granted' | 'require'>,
     /** Runs a read-only tool's handler in a snapshot scope: no writer lock, writes refused. */
     private readonly readScope?: <T>(fn: () => Promise<T>) => Promise<T>,
-    /** Keeps one row per outside agent's call (agent_tool_calls); it must not throw. */
-    private readonly log?: (call: AgentToolCall) => void,
+    /** Keeps one row per outside agent's call (agent_tool_calls), while a state store is there to
+     *  keep it; it must not throw. */
+    public log?: (call: AgentToolCall) => void,
   ) {}
 
   private open(): void {
@@ -256,7 +261,7 @@ export class ToolRegistry implements Tools {
         readOnly,
         worker,
         tier,
-        ...(actions && { outputs: nounOutputs(actions) }),
+        ...(actions && { actions: nounActions(actions) }),
         ...(definition.for && { for: definition.for }),
         ...(conversationProfile && { conversationProfile }),
         ...(reads && { reads }),
@@ -569,7 +574,7 @@ export class ToolRegistry implements Tools {
         readOnly,
         reads: undefined,
         tier: tier === 'core' ? 'deferred' : tier,
-        outputs: undefined,
+        actions: undefined,
         worker: nested ? undefined : target.tool.worker,
       },
       parse,
@@ -747,12 +752,8 @@ export class ToolRegistry implements Tools {
       .map((entry) => {
         // A retired name's text is written as its leased workers know it; everyone else, who is
         // listed the noun tools instead, reads each such name as the noun action it now runs.
-        const description =
-          renamed && !entry.remote
-            ? (JSON.parse(
-                JSON.stringify(entry.description).replace(renamed.pattern, renamed.to),
-              ) as ToolDescription)
-            : structuredClone(entry.description);
+        const description = structuredClone(entry.description);
+        if (renamed && !entry.remote) renamed(description);
         // A session's project is fixed by its lease, so a native tool is listed to it without the
         // projectId people choose one with, which every tool would otherwise repeat.
         if (caller?.session && !entry.remote)
@@ -764,8 +765,9 @@ export class ToolRegistry implements Tools {
       });
   }
 
-  /** Every retired name with an executable path, as text names it, and what it now reads as:
-   *  `code.status` is `code.read status`. */
+  /** Rewrites, in place, each description text (never a name, key or schema value) naming a
+   *  retired name with an executable path as what it now reads as: `code.status` is
+   *  `code.read status`. */
   private renaming() {
     const to = new Map(
       [...this.retired].flatMap(([name, { tool, action, gone }]) =>
@@ -776,10 +778,16 @@ export class ToolRegistry implements Tools {
     const names = [...to.keys()]
       .sort((a, b) => b.length - a.length)
       .map((name) => name.replaceAll('.', '\\.'));
-    return {
-      pattern: new RegExp(`(?<![\\w.])(?:${names.join('|')})(?!\\w|\\.\\w)`, 'g'),
-      to: (name: string) => to.get(name)!,
+    const pattern = new RegExp(`(?<![\\w.])(?:${names.join('|')})(?!\\w|\\.\\w)`, 'g');
+    const rewrite = (node: unknown): void => {
+      if (!node || typeof node !== 'object') return;
+      const object = node as Record<string, unknown>;
+      for (const [key, value] of Object.entries(object))
+        if (key === 'description' && typeof value === 'string')
+          object[key] = value.replace(pattern, (name) => to.get(name)!);
+        else rewrite(value);
     };
+    return rewrite;
   }
 
   async list(names?: readonly string[]): Promise<ListedTool[]> {
@@ -808,6 +816,10 @@ export class ToolRegistry implements Tools {
     const entry = this.entries.get(tool);
     if (!(entry?.definition as ToolDefinition | undefined)?.actions) return { input };
     return { entry, input: { action, [action]: input } };
+  }
+
+  guidance<T>(caller: Caller, value: T): T {
+    return presented(this, caller, value);
   }
 
   identity(name: string, input: unknown): ToolIdentity | undefined {
@@ -859,10 +871,14 @@ export class ToolRegistry implements Tools {
       const value = await this.run(name, caller, input, agent, admit, (seen) => {
         identity = seen;
       });
-      if (logged) this.record(caller, name, identity, started, client);
+      // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
+      const failed = (value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp)
+        ?.isError;
+      if (logged) this.record(caller, name, identity, started, client, failed ? 'tool_error' : '');
       return value;
     } catch (error) {
-      if (logged) this.record(caller, name, identity, started, client, error);
+      const code = error instanceof MervError ? error.code : 'internal_error';
+      if (logged) this.record(caller, name, identity, started, client, code);
       throw error;
     }
   }
@@ -872,21 +888,19 @@ export class ToolRegistry implements Tools {
     name: string,
     identity: ToolIdentity | undefined,
     started: number,
-    client?: string,
-    error?: unknown,
+    client: string | undefined,
+    errorCode: string,
   ): void {
     try {
-      this.log!({
+      this.log?.({
         projectId: caller.projectId,
         actorId: caller.actorId,
-        ...(client && { client: client.slice(0, 200) }),
+        ...(client && { client }),
         // A retired name as called, so that its use after the release stays countable.
-        tool: identity && identity.as !== name ? identity.tool : name.slice(0, 200),
+        tool: identity && identity.as !== name ? identity.tool : name,
         ...(identity?.action && { action: identity.action }),
-        outcome: error === undefined ? 'succeeded' : 'failed',
-        ...(error !== undefined && {
-          errorCode: error instanceof MervError ? error.code : 'internal_error',
-        }),
+        outcome: errorCode ? 'failed' : 'succeeded',
+        ...(errorCode && { errorCode }),
         startedAt: new Date(started).toISOString(),
         durationMs: Date.now() - started,
       });

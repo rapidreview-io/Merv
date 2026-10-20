@@ -5,11 +5,12 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Context } from 'cordis';
+import { Context } from 'cordis';
 import { z } from 'zod';
-import type { Caller, Data, SessionToolPolicy } from '@merv/contracts';
-import { noun, nounOutputs } from '../packages/api/src/noun.js';
-import { AgentCallLog } from '../packages/api/src/call-log.js';
+import { MervError, type Caller, type Data, type SessionToolPolicy } from '@merv/contracts';
+import { noun, nounActions } from '../packages/api/src/noun.js';
+import { AgentCallLog, callLogMigrations } from '../packages/api/src/call-log.js';
+import { toolsPlugin } from '../packages/api/src/index.js';
 import { describeTool, ToolRegistry } from '../packages/api/src/registry.js';
 import type { AgentToolCall, NounDefinition, ToolDefinition } from '../packages/api/src/types.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
@@ -19,6 +20,9 @@ import { PiProfiles } from '../packages/pi/src/profiles.js';
 import { profileGrants, requireGranted } from '../packages/pi/src/profile-tools.js';
 import { declaration } from '../packages/scripts/src/declare.js';
 import { code, fixture } from './fixtures/pi.js';
+import { fixtureAccess } from './fixtures/access.js';
+import { deferred } from './fixtures/deferred.js';
+import { openState } from './fixtures/state.js';
 
 const owner: Caller = { projectId: 'project_1', actorId: 'owner' };
 const reader: Caller = { projectId: 'project_1', actorId: 'reader' };
@@ -625,6 +629,161 @@ test('a call log that cannot write keeps its rows for the next flush and says so
   assert.equal(written.filter(([sql]) => String(sql).startsWith('INSERT')).length, 1);
 });
 
+/** Runs `fn` with stderr kept, returning what it said. */
+async function quiet(fn: () => Promise<unknown>): Promise<string> {
+  const said: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((line: string) => said.push(line)) as never;
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = write;
+  }
+  return said.join('');
+}
+const call = (overrides: Partial<AgentToolCall> = {}): AgentToolCall => ({
+  ...owner,
+  tool: 'code.read',
+  outcome: 'succeeded',
+  startedAt: new Date().toISOString(),
+  durationMs: 1,
+  ...overrides,
+});
+
+test('a call log writes the names an agent sent as PostgreSQL can hold them', async () => {
+  const state = await openState();
+  await state.migrate('agent_tool_calls', callLogMigrations);
+  const log = new AgentCallLog(state);
+  log.push(call({ tool: 'code.re\0ad', client: `a\0${'b'.repeat(500)}` }));
+  log.push(call());
+  await log.flush();
+  const rows = await state.read((sql) =>
+    sql.all<{ tool: string; client: string | null }>(
+      'SELECT tool, client FROM agent_tool_calls ORDER BY client NULLS LAST',
+    ),
+  );
+  assert.deepEqual(
+    rows.map(({ tool, client }) => [tool, client?.length ?? null]),
+    [
+      ['code.read', 200],
+      ['code.read', null],
+    ],
+  );
+});
+
+test('a row PostgreSQL refuses for good is dropped and counted; the rest of its batch is written', async () => {
+  const written: unknown[][] = [];
+  let transactions = 0;
+  const state = {
+    transaction: async (fn: (tx: { run: (...args: unknown[]) => void }) => Promise<void>) => {
+      transactions++;
+      const rows: unknown[][] = [];
+      await fn({
+        run: (...args: unknown[]) => {
+          if (args.includes('poison'))
+            throw new MervError('state_constraint', 'Database constraint rejected the operation');
+          rows.push(args);
+        },
+      });
+      written.push(...rows);
+    },
+  };
+  const log = new AgentCallLog(state as never);
+  log.push(call({ actorId: 'a' }));
+  log.push(call({ actorId: 'poison' }));
+  log.push(call({ actorId: 'b' }));
+  assert.match(await quiet(() => log.flush()), /flush_failed/);
+  const actors = () =>
+    written.filter(([sql]) => String(sql).startsWith('INSERT')).map((args) => args[2]);
+  assert.deepEqual(actors(), ['a', 'b']);
+  // The next flush writes nothing again and says what was dropped.
+  const before = transactions;
+  assert.match(await quiet(() => log.flush()), /"event":"agent_tool_calls\.dropped","rows":1/);
+  assert.deepEqual(actors(), ['a', 'b']);
+  assert.ok(transactions - before <= 1);
+});
+
+test('a call log flushes one at a time, and what is being written counts against its bound', async () => {
+  const gate = deferred<void>();
+  let transactions = 0;
+  let inserted = 0;
+  const state = {
+    transaction: async (fn: (tx: { run: (sql: string) => void }) => Promise<void>) => {
+      transactions++;
+      if (transactions === 1) await gate.promise;
+      await fn({ run: (sql: string) => void (sql.startsWith('INSERT') && inserted++) });
+    },
+  };
+  const log = new AgentCallLog(state as never);
+  for (let i = 0; i < 6000; i++) log.push(call());
+  const flushes = [log.flush(), log.flush(), log.flush()];
+  for (let i = 0; i < 6000; i++) log.push(call());
+  gate.resolve();
+  await Promise.all(flushes);
+  assert.equal(transactions, 1, 'a flush asked for while one runs is that one');
+  await quiet(() => log.flush());
+  assert.equal(inserted, 10_000);
+});
+
+test('a mounted tool that answers isError is logged as failed', async () => {
+  const calls: AgentToolCall[] = [];
+  const tools = new ToolRegistry(scope as never, fixtureAccess, undefined, (row) =>
+    calls.push(row),
+  );
+  await tools.createCatalog('mount').replace([
+    {
+      kind: 'mcp',
+      name: 'echo',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async () => ({ content: [{ type: 'text', text: 'no' }], isError: true }),
+    },
+  ]);
+  const [mounted] = await tools.describe(owner, true);
+  await tools.invoke(mounted!.name, owner, {}, true);
+  assert.deepEqual(
+    calls.map(({ outcome, errorCode }) => [outcome, errorCode]),
+    [['failed', 'tool_error']],
+  );
+});
+
+test('the call log depends on state: its last rows are written before state closes', async () => {
+  const ctx = new Context();
+  const events: string[] = [];
+  const state = {
+    migrate: async () => {},
+    transaction: async (fn: (tx: { run: (sql: string) => void }) => Promise<void>) =>
+      await fn({ run: (sql) => void (sql.startsWith('INSERT') && events.push('insert')) }),
+    snapshot: async <T>(fn: () => Promise<T>) => await fn(),
+  };
+  await ctx.plugin({
+    name: 'test-scope',
+    apply: (ctx: Context) => ctx.effect(() => ctx.provide('scope', scope as never)),
+  });
+  const provider = await ctx.plugin({
+    name: 'test-state',
+    apply: (ctx: Context) =>
+      ctx.effect(function* () {
+        yield () => void events.push('closed');
+        yield ctx.provide('state', state as never);
+      }),
+  });
+  await ctx.plugin(toolsPlugin);
+  const tools = ctx.get('tools') as unknown as ToolRegistry;
+  while (!tools.log) await new Promise((resolve) => setImmediate(resolve));
+  tools.register({
+    name: 'probe.ping',
+    description: 'Ping.',
+    tier: 'core',
+    readOnly: true,
+    inputSchema: z.object({}).strict(),
+    handler: () => 'pong',
+  });
+  await tools.invoke('probe.ping', owner, {}, true);
+  await provider.dispose();
+  assert.deepEqual(events, ['insert', 'closed']);
+  await ctx.fiber.dispose();
+});
+
 test('openWorld is per action: a call that stays inside Merv reads on a snapshot', async () => {
   let snapshots = 0;
   const tools = new ToolRegistry(scope as never, undefined, async (fn) => {
@@ -664,7 +823,7 @@ test('a script is declared one overload per action, typed by its declared output
     effect: (fn: () => unknown) => fn(),
   } as unknown as Context);
   const read = definitions.find(({ name }) => name === 'code.read')!;
-  const lines = declaration(describeTool(read), true, nounOutputs(read.actions!)).split('\n');
+  const lines = declaration(describeTool(read), true, nounActions(read.actions!)).split('\n');
   assert.match(lines[0]!, /^\/\*\* Read the project's code/);
   assert.equal(
     lines[1],
@@ -673,6 +832,43 @@ test('a script is declared one overload per action, typed by its declared output
   assert.equal(lines.length, 6);
   assert.match(
     lines[5]!,
-    /^tools\.code\.read\(input: \{ action: "operation"; operation\?: \{ commandId: string \} \}\): Promise<\{ status: string; error: string \| null; command: /,
+    /^tools\.code\.read\(input: \{ action: "operation"; operation: \{ commandId: string \} \}\): Promise<\{ status: string; error: string \| null; command: /,
   );
+  // Only a noun is declared per action: any other tool's action is one more of its arguments.
+  const fleet = {
+    name: 'fleet',
+    inputSchema: {
+      type: 'object',
+      properties: { action: { type: 'string', enum: ['list', 'get'] }, id: { type: 'string' } },
+      required: ['id'],
+    },
+  };
+  assert.equal(
+    declaration(fleet),
+    'tools.fleet(input: { action?: "list" | "get"; id: string }): Promise<unknown>',
+  );
+});
+
+test('a profile naming a retired name is listed that name, its texts read as the noun action', async () => {
+  const { tools } = registry();
+  const listed = await tools.describe(conversation, false, { names: ['code.status'] });
+  const status = listed.find(({ name }) => name === 'code.status');
+  assert.ok(status, 'the retired name keeps its own name');
+  assert.match(status.description!, /code\.write base_retry/);
+  assert.ok(!listed.some(({ name }) => / /.test(name)), 'no name is rewritten');
+});
+
+test('recovery guidance names each action by its address and says it as its caller calls it', async () => {
+  const tools = new ToolRegistry(scope as never);
+  const said = { next: 'An administrator uses code.write:base_resume and a reason.' };
+  const codeWork = new Proxy({}, { get: () => async () => said });
+  codeToolsPlugin.apply({ codeWork, tools, effect: (fn: () => unknown) => fn() } as never);
+  tools.registerSessionPolicy(sessionPolicy(['code.status']).policy);
+  assert.deepEqual(await tools.call('code.read', owner, { action: 'status' }), {
+    next: 'An administrator uses code.write base_resume and a reason.',
+  });
+  // A leased worker is told the retired name its frozen policy grants.
+  assert.deepEqual(await tools.call('code.status', worker, {}), {
+    next: 'An administrator uses code.base.resume and a reason.',
+  });
 });
