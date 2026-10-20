@@ -2,6 +2,10 @@
 
 Use the same Supabase account at https://experiments.rapidreview.io/ui/. Project memberships are preserved. Old research is in **Research → Research history**; unfinished work was excluded at the user's request. Create new work through the current tools.
 
+## Connecting an agent by email code
+
+Where agent sign-in is on (`MERV_AGENT_LOGIN=true`, see [PROJECT_INVITATIONS.md](../docs/PROJECT_INVITATIONS.md#agent-sign-in)), tell Claude Code, Codex or Cursor: _Connect to Merv using https://experiments.rapidreview.io/connect_. The agent installs Merv's connector, the person gives it the email they use for Merv and then the 8-digit code Merv emails, and the client restarts once. The agent never sees the key, which lasts 90 days and is listed (and revocable) on the Keys page. The 0.3.0 client plugins carry skills only; the connector is the one Merv server. The key-based connection below stays for machines, CI and VMs, and wherever agent sign-in is off.
+
 ## Existing Codex / Claude Code users
 
 Disable the old Merv plugin (the legacy bundle is version 0.1.5), including its skills. Its OAuth setup and tool instructions target the Python backend. Uninstall it only if the client cannot disable it. Do not keep both old and new Merv connections enabled. Other plugins, including Nisa, do not need to be removed.

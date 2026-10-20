@@ -248,76 +248,35 @@ test('an actor creation reply after switching projects never reveals its credent
   assert.equal(document.querySelector('[aria-label="Fleet source credential secret"]'), null);
 });
 
-const snippet = () => document.querySelector('.connect pre')!.textContent!;
-const choose = async (client: string) => {
-  const button = [
-    ...document.querySelectorAll<HTMLButtonElement>('[aria-label="Client"] button'),
-  ].find((b) => b.textContent === client)!;
-  await act(async () => button.click());
-};
-const mcpUrl = 'https://merv.example/mcp';
-const headers = { Authorization: 'Bearer <key>' };
-
-test('connecting an agent: the server’s MCP URL and one snippet per client', async (t) => {
+test('connecting an agent is one line to tell it, with no key in sight', async (t) => {
   t.after(async () => await unmount());
-  serve('/auth/config', { body: { enabled: false, mcpUrl } });
+  serve('/auth/config', { body: { enabled: false, mcpUrl: 'https://merv.example/mcp' } });
   await open([]);
+  await settle(10);
   const connect = document.querySelector('[aria-label="Connect your agent"]')!;
   assert.equal(connect.querySelector('h2')!.textContent, 'Connect your agent');
-  assert.ok(connect.textContent!.includes(mcpUrl));
-  assert.equal(connect.querySelector('p'), null, 'no paragraph of explanation');
   assert.equal(
-    snippet(),
-    `claude mcp add --transport http merv ${mcpUrl} --header "Authorization: Bearer <key>"`,
+    connect.textContent,
+    'Connect your agentTell it: Connect to Merv using https://merv.example/connect',
   );
-  await choose('Codex');
-  assert.equal(connect.querySelector('.code-lang')!.textContent, '~/.codex/config.toml');
-  assert.equal(
-    snippet(),
-    `[mcp_servers.merv]\nurl = "${mcpUrl}"\nhttp_headers = { "Authorization" = "Bearer <key>" }`,
-  );
-  await choose('Cursor');
-  assert.deepEqual(JSON.parse(snippet()), { mcpServers: { merv: { url: mcpUrl, headers } } });
-  await choose('Other');
-  assert.deepEqual(JSON.parse(snippet()), { url: mcpUrl, headers });
+  assert.equal(connect.querySelector('pre'), null, 'no snippet carries a key');
+  assert.ok(!text().includes('Make a key for'));
 });
 
-test('a key made for a client fills its snippet once, for the person only', async (t) => {
+test('an agent sign-in is a row that says what signed in, and can be revoked but not replaced', async (t) => {
   t.after(async () => await unmount());
-  serve('/auth/config', { body: { enabled: false, mcpUrl } });
-  await open([]);
-  serve('/account/keys', (_call, sent) => {
-    if (!sent.projectId) return { body: { keys: [{ ...key, label: 'Codex' }] } };
-    assert.deepEqual(sent, { projectId: project.id, grantScope: 'project', label: 'Codex' });
-    return { body: { key: { ...key, label: 'Codex' }, token: 'mk_codex_once' } };
-  });
-  await choose('Codex');
-  await click('Make a key for Codex');
-  await settle(10);
-  assert.ok(snippet().includes('"Bearer mk_codex_once"'));
-  assert.equal(document.querySelector('[aria-label="New machine key secret"]'), null);
-  assert.ok(!snapshotPage(window).html.includes('mk_codex_once'), 'a look carries the key');
-  assert.equal(document.querySelector('.rows strong')!.textContent, 'Codex');
-  await choose('Cursor');
-  assert.ok(!snippet().includes('mk_codex_once'), 'another client is not handed it');
-  await choose('Codex');
-  await click('Hide and forget key');
-  assert.ok(snippet().includes('"Bearer <key>"'));
-});
-
-test('Test says who the agent is connected as, or why not, in one line', async (t) => {
-  t.after(async () => await unmount());
-  await open([]);
-  serve('/tools/actor.whoami', (call) =>
-    call === 1
-      ? { body: { result: { id: 'actor_1', name: 'Ada', role: 'producer', active: true } } }
-      : { status: 403, body: { error: { code: 'forbidden', message: 'Project access denied' } } },
-  );
-  await click('Test');
-  await settle(0);
-  const line = () => document.querySelector('.connect [role="status"]')!.textContent;
-  assert.equal(line(), 'Connected as Ada · producer');
-  await click('Test');
-  await settle(0);
-  assert.equal(line(), 'Project access denied');
+  await open([
+    {
+      ...key,
+      grantScope: 'account',
+      label: 'Codex on ada-mbp',
+      expiresAt: '2027-01-18T12:00:00.000Z',
+      via: 'email_code',
+    },
+  ]);
+  const row = document.querySelector('.rows > .row')!;
+  assert.equal(row.querySelector('strong')!.textContent, 'Agent sign-in · Codex on ada-mbp');
+  assert.ok(row.textContent!.includes('Used by every agent on that machine'));
+  const buttons = [...row.querySelectorAll('button')].map((button) => button.textContent);
+  assert.deepEqual(buttons, ['Revoke key and descendants']);
 });

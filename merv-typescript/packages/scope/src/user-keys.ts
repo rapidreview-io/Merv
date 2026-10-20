@@ -174,14 +174,19 @@ export class UserKeys {
     return await forRead(this.state, async (tx) => {
       const human = await this.members.human(principal, tx);
       return (
-        await tx.all<KeyRow>(
-          'SELECT * FROM user_keys WHERE issuer=? AND subject=? AND (CAST(? AS TEXT) IS NULL OR project_id=?) ORDER BY created_at,id',
+        await tx.all<KeyRow & { login: string | null }>(
+          `SELECT k.*,l.id AS login FROM user_keys k LEFT JOIN agent_logins l ON l.key_id=k.id
+           WHERE k.issuer=? AND k.subject=? AND (CAST(? AS TEXT) IS NULL OR k.project_id=?)
+           ORDER BY k.created_at,k.id`,
           human.user.issuer,
           human.user.subject,
           projectId ?? null,
           projectId ?? null,
         )
-      ).map(hydrate);
+      ).map(({ login, ...row }) => ({
+        ...hydrate(row),
+        ...(login ? { via: 'email_code' as const } : {}),
+      }));
     });
   }
 

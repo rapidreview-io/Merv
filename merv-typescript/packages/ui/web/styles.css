@@ -4418,15 +4418,12 @@ a.states-clause {
 .key-tools {
   margin-top: var(--space-2);
 }
-/* Connecting an agent is a form's width; its URL, client and moves keep their own. */
+/* Connecting an agent is a form's width; its line keeps its own. */
 .connect {
   max-width: 720px;
 }
-.connect > :is(.cluster, .segments) {
+.connect > .cluster {
   align-self: flex-start;
-}
-.connect [role='status'] {
-  color: var(--muted);
 }
 @media (max-width: 880px) {
   .settings {

@@ -384,6 +384,7 @@ test('one key per connector install, ten per person, labelled, recorded, and fix
   const key = (await keys()).find((value) => value.id === replaced.key.id)!;
   assert.equal(key.label, 'Claude Code on ada-mbp');
   assert.equal(key.grantScope, 'account');
+  assert.equal(key.via, 'email_code', 'the Keys page tells agent sign-ins apart');
   const events = await f.state.read((sql) =>
     sql.all<{ data_json: string }>(
       "SELECT data_json FROM events WHERE type='actor.key_created' AND subject_id=?",

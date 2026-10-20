@@ -1,11 +1,10 @@
 {
   "name": "merv",
-  "version": "0.3.0",
-  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines, over Merv's MCP server.",
+  "version": "0.4.0",
+  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines. Skills on top of Merv's connector, which /connect installs.",
   "author": { "name": "RapidReview" },
   "keywords": ["research", "ml", "mcp", "experiments"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Merv",
     "shortDescription": "Research projects: experiments, reviews, files and machines",

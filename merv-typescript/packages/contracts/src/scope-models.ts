@@ -37,6 +37,8 @@ export interface UserKey {
   expiresAt: string | null;
   revokedAt: string | null;
   previousId: string | null;
+  /** Set on the key an agent sign-in by emailed code issued to a connector (Keys page listing). */
+  via?: 'email_code';
 }
 export interface IssuedUserKey {
   key: UserKey;
