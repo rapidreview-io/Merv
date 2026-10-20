@@ -765,10 +765,21 @@ test('agent sign-in is opt-in, needs the service key and a mail key, and asks fo
       from: 'Merv <login@rapidreview.io>',
       publicOrigin: 'https://merv.example',
       serverName: 'merv',
-      // Caddy reaches the published port from the Docker bridge gateway.
-      trustedProxies: ['127.0.0.1/32', '::1/128', '172.16.0.0/12'],
+      trustedProxies: ['127.0.0.1/32', '::1/128'],
     },
   });
+  // Production names its bridge gateway, the one address host Caddy reaches the container from.
+  const production = '127.0.0.1/32,::1/128,172.18.0.1/32';
+  assert.equal(
+    run({
+      MERV_AGENT_LOGIN: 'true',
+      ...keys,
+      MERV_CONNECTOR_NAME: 'merv',
+      MERV_TRUSTED_PROXIES: production,
+    }).status,
+    0,
+  );
+  assert.deepEqual(plugin('scope-api').config.agentLogin.trustedProxies, production.split(','));
   assert.equal(plugin('identity').config.directoryKeyEnv, 'SUPABASE_SERVICE_KEY');
   assert.equal(plugin('identity').config.directoryAdmin, true);
   assert.equal(

@@ -193,7 +193,7 @@ export interface AgentLoginLimits {
 /** One request for an emailed sign-in code from a person's own agent connector. */
 export interface AgentLoginRequest {
   email: string;
-  /** The client's address, when known; only its digest is stored. */
+  /** The client's address (an IPv6 one as its /64), when known; only its digest is stored. */
   ip: string | null;
   client: { name: string; host: string; installId: string };
   /** sha256 (base64url) of the verifier only this connector holds. */
@@ -209,9 +209,7 @@ export interface AgentLoginStarted {
 export interface AgentLoginCodeMail {
   to: string;
   loginId: string;
-  /** Null for someone who has signed in to Merv but is in no project yet: no key can be issued,
-   *  so the email says to create or join one first. */
-  code: string | null;
+  code: string;
   phrase: string;
   label: string;
 }

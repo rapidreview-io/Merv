@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { BlockList, isIP } from 'node:net';
+import { BlockList, isIP, isIPv6 } from 'node:net';
 import { z } from 'zod';
 import type { AgentLoginCodeMail, AgentLoginNotice } from '@merv/contracts';
 import { escapeHtml } from '@merv/contracts/text';
+import { tooMany } from './agent-logins.js';
 import { emailHtml, mailSchema, type Mail } from './mail.js';
 
 const count = (fallback: number) => z.number().int().positive().max(1_000_000).default(fallback);
@@ -18,7 +19,7 @@ const cidr = z.string().refine((value) => {
     /^\d{1,3}$/.test(bits) &&
     Number(bits) <= (family === 4 ? 32 : 128)
   );
-}, 'Expected an address range such as 172.16.0.0/12');
+}, 'Expected an address range such as 172.18.0.1/32');
 /** Agent sign-in by an emailed code (`/connect`), in the scope-api adapter's configuration. */
 export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .extend({
@@ -42,8 +43,8 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
       .string()
       .regex(/^[a-z][a-z0-9-]{0,31}$/)
       .default('merv'),
-    /** Proxies whose X-Forwarded-For is believed: the host's Caddy reaches a published Docker
-     *  port from the bridge gateway, so a deployment names its bridge range here. */
+    /** Proxies whose X-Forwarded-For is believed. The host's Caddy reaches a published Docker
+     *  port from the bridge gateway, so a deployment names that gateway's own address (a /32). */
     trustedProxies: z.array(cidr).max(32).default(['127.0.0.1/32', '::1/128']),
     keyDays: count(90),
     retentionDays: count(30),
@@ -57,6 +58,7 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
         triesPerLogin: count(5),
         keysPerPerson: count(10),
         verifyPerIpMinute: count(30),
+        verifyPerMinute: count(300),
         queueConcurrency: count(4),
         queueWaiting: count(100),
       })
@@ -98,7 +100,6 @@ const day = (iso: string) => iso.slice(0, 10);
 
 /** The code email: the code, the request words, and what signs in. */
 export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
-  if (mail.code === null) return projectFirstMail(mail, origin);
   const code = `${mail.code.slice(0, 4)}-${mail.code.slice(4)}`;
   const keys = `${origin}/ui/settings/keys`;
   const warning = `The request words only help you match this email to the sign-in you started. Give this code only to an agent you started yourself, and only if it showed you "${mail.phrase}". Whoever has this code and that sign-in request can act as you in Merv. Merv never asks for this code by email, chat or phone. Didn't start this? Ignore this email: nothing happens without the code.`;
@@ -114,24 +115,6 @@ export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
 <p style="margin:0 0 24px;font-size:14px;line-height:1.5">Expires in 10 minutes.</p>
 <p style="margin:0 0 12px;font-size:12px;line-height:1.7">${escapeHtml(warning)}</p>
 <p style="margin:0;font-size:12px;line-height:1.7">Signed-in agents are listed, and can be revoked, at <a href="${escapeHtml(keys)}" style="color:#111111">${escapeHtml(keys)}</a></p>`),
-  };
-}
-
-/** In place of a code, for someone in no project: an agent key works in projects, so join one. */
-function projectFirstMail(mail: AgentLoginCodeMail, origin: string): Mail {
-  const lines = [
-    `An agent asked to sign in to Merv as you (request "${mail.phrase}", ${mail.label}).`,
-    'You are not in a Merv project yet, so there is no code: an agent key works in your projects.',
-    `Create a project, or accept an invitation to one, at ${origin}/ui/ and then ask your agent to sign in again.`,
-    "Didn't start this? Ignore this email: nothing happens.",
-  ];
-  return {
-    to: mail.to,
-    subject: 'Your Merv agent sign-in needs a project first',
-    idempotencyKey: `agent-login/${mail.loginId}`,
-    text: lines.join('\n\n'),
-    html: emailHtml(`<h1 style="margin:0 0 20px;font-size:26px;line-height:1.2;font-weight:600">Join a Merv project first</h1>
-${lines.map((line) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.6">${escapeHtml(line)}</p>`).join('\n')}`),
   };
 }
 
@@ -213,5 +196,59 @@ export class Deliveries {
   /** Waits for every job, those still waiting included. */
   async drain(): Promise<void> {
     while (this.running.size) await Promise.allSettled([...this.running]);
+  }
+}
+
+/** Where an address counts: itself for IPv4, its /64 for IPv6, since one subscriber holds a whole
+ *  /64 and could otherwise rotate through it. */
+export function addressBucket(ip: string | null): string {
+  if (!ip || !isIPv6(ip)) return ip ?? '';
+  const groups = (part: string | undefined) =>
+    part ? part.split(':').flatMap((group) => (group.includes('.') ? ['0', '0'] : [group])) : [];
+  const [head, tail] = ip.split('%')[0]!.split('::');
+  const front = groups(head);
+  const back = groups(tail);
+  const all =
+    tail === undefined
+      ? front
+      : [...front, ...Array(8 - front.length - back.length).fill('0'), ...back];
+  return `${all
+    .slice(0, 4)
+    .map((group) => parseInt(group, 16).toString(16))
+    .join(':')}::/64`;
+}
+
+/**
+ * Admission in fixed one-minute windows, per address bucket and in all, in constant time: a window
+ * holds at most `overall` entries (only an admission adds one), and a new window drops the old
+ * table whole. In process: a restart forgets it, and the per-login tries stay the durable bound.
+ */
+export class Admission {
+  private start = -Infinity;
+  private total = 0;
+  private counts = new Map<string, number>();
+  constructor(
+    private readonly perBucket: number,
+    private readonly overall: number,
+    private readonly clock: () => number = Date.now,
+  ) {}
+  /** The number of buckets this window holds. */
+  get size(): number {
+    return this.counts.size;
+  }
+  /** Counts one request from `bucket`, or throws 429 past either limit. */
+  admit(bucket: string): void {
+    const now = this.clock();
+    if (now - this.start >= 60_000) {
+      this.start = now;
+      this.total = 0;
+      this.counts = new Map();
+    }
+    const used = this.counts.get(bucket) ?? 0;
+    const wait = Math.ceil((this.start + 60_000 - now) / 1000);
+    if (used >= this.perBucket) throw tooMany('login_rate_limited', wait);
+    if (this.total >= this.overall) throw tooMany('login_capacity', wait);
+    this.counts.set(bucket, used + 1);
+    this.total++;
   }
 }

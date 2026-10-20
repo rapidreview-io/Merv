@@ -117,7 +117,7 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
   const before = readdirSync(moved, { recursive: true }).sort();
   const refused = await install(prod.url);
   assert.notEqual(refused.code, 0);
-  assert.match(refused.stderr, /Refusing: .* is a symlink\. Nothing was installed\./);
+  assert.match(refused.stderr, /Refusing .*\/\.merv\/connect: it is a symlink\./);
   assert.deepEqual(readdirSync(moved, { recursive: true }).sort(), before);
   rmSync(connect);
   renameSync(moved, connect);

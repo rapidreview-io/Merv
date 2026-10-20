@@ -57,6 +57,7 @@ export async function connectServer(
   const users = new Map<string, DirectoryUser | Error>();
   const mails: Mail[] = [];
   const connect = connectRoutes(scope, {
+    clock,
     config: {
       apiKeyEnv: 'UNUSED_IN_TESTS',
       from: 'Merv <login@example.com>',

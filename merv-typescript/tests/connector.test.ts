@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -195,6 +197,10 @@ test('the command line signs in by emailed code and never prints the key', async
   const f = await server(t);
   const c = await connector(t, f);
   const { started, done } = await signIn(f, c);
+  assert.match(
+    started.stdout,
+    /^Code sent if ada@lab\.org is a Merv account in a project\. Request: [a-z]+ [a-z]+\. .* then run: merv-connect login --code <code>\.\n$/,
+  );
   const phrase = /Request: ([a-z]+ [a-z]+)\./.exec(started.stdout)![1]!;
   const mail = f.mails.find((sent) => sent.subject.includes('sign-in code'))!;
   assert.ok(mail.text.includes(`Request: ${phrase}`) && mail.text.includes('Signs in: Codex on'));
@@ -284,7 +290,7 @@ test('connector.login signs in from the agent, and Merv tools then work without 
   const started = await agent.call('connector.login', { email: 'ada@lab.org' });
   assert.match(
     started.content[0].text,
-    /^Code sent if this is a Merv account \(someone in no Merv project yet is emailed how to join one instead\)\. Request: [a-z]+ [a-z]+\./,
+    /^Code sent if ada@lab\.org is a Merv account in a project\. Request: [a-z]+ [a-z]+\. .* then call connector\.login with \{code\} when they give it\.$/,
   );
   const done = await agent.call('connector.login', { code: await f.codeFor('ada@lab.org') });
   assert.match(done.content[0].text, /^Signed in as Ada@Lab\.org \(Claude Code on /);
@@ -480,6 +486,135 @@ test('logout racing a completion ends signed out with the key revoked, or signed
   const started = Date.now();
   assert.equal((await c.cli('logout')).code, 0);
   assert.ok(Date.now() - started < 10_000);
+});
+
+test('logout drops a waiting sign-in, so a code requested before it can no longer sign in', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  assert.equal((await c.cli('login', 'ada@lab.org')).code, 0);
+  assert.equal(c.has('pending.json'), true);
+  const out = await c.cli('logout');
+  assert.equal(out.stdout, 'Not signed in to Merv on this machine.\n');
+  assert.equal(c.has('pending.json'), false);
+  const late = await c.cli('login', '--code', (await f.codeFor('ada@lab.org'))!);
+  assert.equal(late.code, 1);
+  assert.match(late.stderr, /No sign-in is waiting/);
+  assert.equal(c.has('credentials.json'), false);
+  assert.deepEqual(await liveKeys(f), []);
+});
+
+test('every line out is redacted, property names too, on the command line and over MCP', async (t) => {
+  const f = await server(t);
+  const token = `mk_${'T'.repeat(43)}`;
+  const planted = `mk_${'S'.repeat(43)}`;
+  const stub = await listen(t, (req, res, body) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (req.url === '/account')
+      return void res.end(
+        JSON.stringify({
+          key: { label: 'Codex on h', expiresAt: '2027-01-01T00:00:00.000Z' },
+          projects: [{ id: 'p', name: `Leak ${token} ${planted}`, role: 'operator' }],
+        }),
+      );
+    const { id } = JSON.parse(body);
+    const result = {
+      content: [{ type: 'text', text: `text ${token}` }],
+      structuredContent: { [planted]: planted, nested: { [`named ${token}`]: [token] } },
+    };
+    res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+  });
+  const c = await connector(t, f, stub.url);
+  writeFileSync(
+    join(c.dir, 'credentials.json'),
+    JSON.stringify({
+      version: 1,
+      origin: stub.url,
+      email: 'ada@lab.org',
+      keyId: 'key_stub',
+      token,
+      label: 'Codex on h',
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }),
+    { mode: 0o600 },
+  );
+  const leaked = (text: string) => text.includes('T'.repeat(20)) || text.includes('S'.repeat(20));
+  const status = await c.cli('status');
+  assert.equal(status.code, 0, status.stderr);
+  assert.match(status.stdout, /Projects: Leak \[redacted\] \[redacted\] \(operator\)/);
+  const agent = c.stdio();
+  await agent.request('initialize', { clientInfo: { name: 'codex' } });
+  const result = await agent.call('project.list');
+  assert.deepEqual(result.structuredContent, {
+    '[redacted]': '[redacted]',
+    nested: { 'named [redacted]': ['[redacted]'] },
+  });
+  assert.equal(
+    (await agent.call('connector.status')).structuredContent.projects[0].name,
+    'Leak [redacted] [redacted]',
+  );
+  for (const text of [status.stdout, status.stderr, ...agent.lines]) assert.ok(!leaked(text), text);
+});
+
+test('a directory or credential others can change or read is refused before any key is read', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  await signIn(f, c);
+  const refusedFor = async (path: string, mode: number, restore: number) => {
+    chmodSync(path, mode);
+    const status = await c.cli('status');
+    chmodSync(path, restore);
+    assert.equal(status.code, 1, path);
+    assert.ok(status.stderr.includes(`Refusing ${path}: it is open to other users`), status.stderr);
+    assert.equal(status.stdout, '');
+  };
+  await refusedFor(c.home, 0o777, 0o700);
+  await refusedFor(join(c.home, '.merv'), 0o770, 0o700);
+  await refusedFor(join(c.home, '.merv', 'connect'), 0o702, 0o700);
+  await refusedFor(c.dir, 0o720, 0o700);
+  await refusedFor(join(c.dir, 'credentials.json'), 0o644, 0o600);
+  await refusedFor(join(c.dir, 'credentials.json'), 0o620, 0o600);
+  // A ~/.merv others may only list is left as its person made it; ours are made private again.
+  chmodSync(join(c.home, '.merv'), 0o755);
+  chmodSync(c.dir, 0o755);
+  assert.equal((await c.cli('status')).code, 0);
+  assert.equal(statSync(join(c.home, '.merv')).mode & 0o777, 0o755);
+  assert.equal(statSync(c.dir).mode & 0o777, 0o700);
+});
+
+test('install makes ~/.merv private, and copies in only the connector whose digest it was given', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  // As install.sh runs it: from a download outside ~/.merv, in a HOME with no ~/.merv yet.
+  const download = mkdtempSync(join(tmpdir(), 'merv-download-'));
+  t.after(() => rmSync(download, { recursive: true, force: true }));
+  const file = join(download, 'merv-connect.mjs');
+  copyFileSync(c.file, file);
+  rmSync(join(c.home, '.merv'), { recursive: true });
+  const env = { HOME: c.home, PATH: '/usr/bin:/bin' };
+  const install = (sha: string) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>((resolve) =>
+      execFile(
+        process.execPath,
+        [file, 'install', sha, '/usr/local/bin/node'],
+        { env },
+        (error, stdout, stderr) => resolve({ code: error ? 1 : 0, stdout, stderr }),
+      ),
+    );
+  const wrong = await install('0'.repeat(64));
+  assert.equal(wrong.code, 1);
+  assert.match(wrong.stderr, /Download check failed\. Nothing was installed\./);
+  assert.equal(existsSync(c.file), false);
+  const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
+  const done = await install(sha);
+  assert.equal(done.code, 0, done.stderr);
+  const merv = join(c.home, '.merv');
+  for (const dir of [merv, join(merv, 'connect'), c.dir, join(c.dir, 'bin')])
+    assert.equal(statSync(dir).mode & 0o777, 0o700, dir);
+  assert.equal(readFileSync(c.file, 'utf8'), readFileSync(file, 'utf8'));
+  assert.equal(statSync(c.file).mode & 0o777, 0o600);
+  const shim = readFileSync(join(c.dir, 'bin', 'merv-connect'), 'utf8');
+  assert.ok(shim.startsWith("#!/bin/sh\nN='/usr/local/bin/node'\n"), shim);
+  assert.equal(statSync(join(c.dir, 'bin', 'merv-connect')).mode & 0o777, 0o700);
 });
 
 test('a symlinked credential file or connector directory is refused', async (t) => {

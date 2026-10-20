@@ -69,6 +69,16 @@ const verifierDigest = (verifier: string) =>
 const codeDigest = (id: string, code: string) => digest(`${id}:${code}`);
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
 const iso = (ms: number) => new Date(ms).toISOString();
+/** 429 past a sign-in limit: `login_capacity` for Merv's own caps, else `login_rate_limited`. */
+export const tooMany = (code: 'login_capacity' | 'login_rate_limited', seconds: number) =>
+  new MervError(
+    code,
+    code === 'login_capacity'
+      ? 'Merv is sending too many sign-in codes right now; try again later'
+      : 'Too many sign-in requests; try again later',
+    429,
+    { retryAfterSeconds: seconds },
+  );
 const invalid = () =>
   new MervError(
     'invalid_code',
@@ -127,7 +137,7 @@ export class AgentLogins implements ScopeAgentLogins {
     );
     const count = (name: string) => Number(counts?.[name] ?? 0);
     const untilTomorrow = Math.ceil((today + DAY - now) / 1000);
-    const refusals: [boolean, string, number][] = [
+    const refusals: [boolean, 'login_capacity' | 'login_rate_limited', number][] = [
       [count('minute') >= limits.globalPerMinute, 'login_capacity', 60],
       [count('day') >= limits.globalPerDay, 'login_capacity', untilTomorrow],
       [count('email_recent') >= limits.emailPer15Minutes, 'login_rate_limited', 15 * 60],
@@ -135,15 +145,7 @@ export class AgentLogins implements ScopeAgentLogins {
       [count('ip_hour') >= limits.ipPerHour, 'login_rate_limited', 60 * 60],
     ];
     const refused = refusals.find(([over]) => over);
-    if (refused)
-      throw new MervError(
-        refused[1],
-        refused[1] === 'login_capacity'
-          ? 'Merv is sending too many sign-in codes right now; try again later'
-          : 'Too many sign-in requests; try again later',
-        429,
-        { retryAfterSeconds: refused[2] },
-      );
+    if (refused) throw tooMany(refused[1], refused[2]);
   }
 
   async start(request: AgentLoginRequest, limits: AgentLoginLimits): Promise<AgentLoginStarted> {
@@ -196,19 +198,18 @@ export class AgentLogins implements ScopeAgentLogins {
     try {
       const found = await directory.find(email);
       if (!found) return;
-      // Only someone who has signed in to Merv. A key needs a project to anchor it, so one who
-      // belongs to none is mailed how to get one instead of a code.
+      // Only someone who has signed in to Merv and is in a project: a key needs one to anchor it.
       stage = 'membership';
-      const member = await this.state.read(async (sql) =>
-        (await sql.get(
-          'SELECT 1 FROM shared_users WHERE issuer=? AND subject=?',
-          found.issuer,
-          found.subject,
-        ))
-          ? (await this.members.memberProjects(sql, found.issuer, found.subject, null)).length > 0
-          : undefined,
+      const member = await this.state.read(
+        async (sql) =>
+          !!(await sql.get(
+            'SELECT 1 FROM shared_users WHERE issuer=? AND subject=?',
+            found.issuer,
+            found.subject,
+          )) &&
+          (await this.members.memberProjects(sql, found.issuer, found.subject, null)).length > 0,
       );
-      if (member === undefined) return;
+      if (!member) return;
       stage = 'directory';
       const user = await directory.user(found.subject);
       if (!eligible(user, emailDigest(email))) return;
@@ -217,8 +218,8 @@ export class AgentLogins implements ScopeAgentLogins {
         tx.get<LoginRow>(
           `UPDATE agent_logins SET issuer=?,subject=? WHERE id=? AND status='pending'
              AND issuer IS NULL AND sent_at IS NULL AND expires_at>? RETURNING *`,
-          member ? found.issuer : null,
-          member ? found.subject : null,
+          found.issuer,
+          found.subject,
           login.loginId,
           iso(this.clock()),
         ),
@@ -228,7 +229,7 @@ export class AgentLogins implements ScopeAgentLogins {
       await send({
         to: user.email,
         loginId: row.id,
-        code: member ? login.code : null,
+        code: login.code,
         phrase: row.phrase,
         label: `${row.client} on ${row.host}`,
       });
@@ -263,6 +264,8 @@ export class AgentLogins implements ScopeAgentLogins {
     directory: AgentLoginDirectory,
     notify: (notice: AgentLoginNotice) => Promise<void>,
   ): Promise<AgentLoginIssued> {
+    // An id this store could not have made costs no read.
+    if (!/^login_[A-Za-z0-9_-]{22}$/.test(loginId)) throw invalid();
     const read = (sql: Sql) => sql.get<LoginRow>('SELECT * FROM agent_logins WHERE id=?', loginId);
     // Only the connector that started a login gets past here, so other traffic never writes.
     const row = await this.state.read(read);

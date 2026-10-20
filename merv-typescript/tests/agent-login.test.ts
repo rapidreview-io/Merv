@@ -1,7 +1,7 @@
 import { createService, MervError } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ProjectScope } from '@merv/scope';
 import type {
   AgentLoginCodeMail,
@@ -14,7 +14,13 @@ import type {
 import { openState } from './fixtures/state.js';
 import { connectServer } from './fixtures/agent-login.js';
 import { clientIp, scopeApiPlugin } from '@merv/scope/api';
-import { agentLoginSchema, proxyList, startInput } from '@merv/scope/connect';
+import {
+  addressBucket,
+  Admission,
+  agentLoginSchema,
+  proxyList,
+  startInput,
+} from '@merv/scope/connect';
 import { Context } from 'cordis';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -187,16 +193,9 @@ test('only an eligible account is mailed its code, and every start answers alike
   });
   f.accounts.set('loner@lab.org', loner.user.subject);
   f.directoryUsers.set(loner.user.subject, { ...record, email: 'loner@lab.org' });
-  // They are told to create or join a project, with no code, and nothing they hold signs in.
+  // They are mailed nothing, and nothing they hold signs in.
   const lonely = await f.start('loner@lab.org');
-  assert.equal(f.codes.length, 2);
-  assert.deepEqual(f.codes[1], {
-    to: 'loner@lab.org',
-    loginId: lonely.login.loginId,
-    code: null,
-    phrase: lonely.login.phrase,
-    label: 'Claude Code on ada-mbp',
-  });
+  assert.equal(f.codes.length, 1);
   await assert.rejects(f.verify(lonely.login, lonely.verifier), invalidCode);
   const rows = await f.state.read((sql) =>
     sql.all<{ issuer: string | null; sent_at: string | null }>(
@@ -204,7 +203,7 @@ test('only an eligible account is mailed its code, and every start answers alike
     ),
   );
   assert.equal(rows.length, 11);
-  assert.equal(rows.filter((row) => row.sent_at !== null).length, 2);
+  assert.equal(rows.filter((row) => row.sent_at !== null).length, 1);
   assert.equal(rows.at(-1)!.issuer, null);
   const stored = JSON.stringify(
     await f.state.read((sql) => sql.all('SELECT * FROM agent_logins')),
@@ -456,9 +455,7 @@ test('/connect serves the agent page, an installer that pins the connector, and 
   assert.ok(connector.includes(f.url) && !connector.includes('__MERV'));
   const installer = await (await fetch(`${f.url}/connect/install.sh`)).text();
   assert.ok(installer.includes(`SHA='${createHash('sha256').update(connector).digest('hex')}'`));
-  assert.ok(
-    installer.includes(`HOSTDIR='${hostDir}'`) && installer.trimEnd().endsWith('main "$@"'),
-  );
+  assert.ok(installer.includes(`ORIGIN='${f.url}'`) && installer.trimEnd().endsWith('main "$@"'));
   assert.equal((await fetch(`${f.url}/connect/other`)).status, 404);
 });
 
@@ -531,18 +528,13 @@ test('a start answers the same for every address; the code arrives only for an e
   );
   assert.equal(listed.status, 200);
   assert.equal(JSON.parse(listed.body.result.content[0].text).projects[0].role, 'operator');
-  // Signed in to Merv once but in no project: an email says how to join one, and carries no code.
+  // Signed in to Merv once but in no project: the same answer, and no email at all.
   await f.person('44444444-4444-4444-8444-444444444444', 'cy@lab.org');
+  const sent = f.mails.length;
   const cy = await post(`${f.url}/connect/login`, startBody('Cy@Lab.org', 'c'.repeat(43)));
   assert.equal(cy.status, 202);
   await f.drain();
-  const told = f.mails.at(-1)!;
-  assert.equal(told.to, 'cy@lab.org');
-  assert.equal(told.subject, 'Your Merv agent sign-in needs a project first');
-  assert.ok(
-    told.text.includes(`request "${cy.body.phrase}"`) && told.text.includes(`${f.url}/ui/`),
-  );
-  assert.doesNotMatch(told.text, /\d{4}-\d{4}/);
+  assert.equal(f.mails.length, sent);
 });
 
 test('an email is looked up in lower case, and a client label is plain words', async () => {
@@ -575,11 +567,13 @@ test('X-Forwarded-For is believed only from the proxy ranges a deployment names'
       socket: { remoteAddress },
       headers: { 'x-forwarded-for': '10.9.9.9, 198.51.100.7' },
     }) as never;
-  // Host Caddy reaches a published Docker port from the bridge gateway, not from loopback.
-  const bridge = proxyList(['127.0.0.1/32', '::1/128', '172.16.0.0/12']);
+  // Host Caddy reaches a published Docker port from the bridge gateway, which production names
+  // alone: another container on the bridge cannot forge its address.
+  const bridge = proxyList(['127.0.0.1/32', '::1/128', '172.18.0.1/32']);
   assert.equal(clientIp(request('172.18.0.1'), bridge), '198.51.100.7');
   assert.equal(clientIp(request('::ffff:172.18.0.1'), bridge), '198.51.100.7');
   assert.equal(clientIp(request('127.0.0.1'), bridge), '198.51.100.7');
+  assert.equal(clientIp(request('172.18.0.5'), bridge), '172.18.0.5');
   assert.equal(clientIp(request('203.0.113.9'), bridge), '203.0.113.9');
   // Loopback only, unless configured.
   assert.equal(clientIp(request('172.18.0.1')), '172.18.0.1');
@@ -644,6 +638,122 @@ test('limits answer 429 with Retry-After, and an address is trusted only from th
   assert.equal(tooMany.status, 429);
   assert.equal(tooMany.retryAfter, '60');
   await f.drain();
+});
+
+/** A random address in an IPv6 /64. */
+const in64 = (prefix: string) =>
+  `${prefix}:${Array.from({ length: 4 }, () => randomBytes(2).toString('hex')).join(':')}`;
+const randomPrefix = () =>
+  Array.from({ length: 4 }, () => randomBytes(2).toString('hex')).join(':');
+
+test('an IPv6 client counts by its /64, an IPv4 one by its address', () => {
+  for (const [ip, bucket] of [
+    ['2001:db8:1:2:aaaa::1', '2001:db8:1:2::/64'],
+    ['2001:DB8:1:2::', '2001:db8:1:2::/64'],
+    ['2001:db8::1:2:3:4:5', '2001:db8:0:1::/64'],
+    ['2001:0db8:0001:0002:ffff:ffff:ffff:ffff', '2001:db8:1:2::/64'],
+    ['fe80::1%en0', 'fe80:0:0:0::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['198.51.100.7', '198.51.100.7'],
+  ])
+    assert.equal(addressBucket(ip), bucket, ip);
+  // A mapped IPv4 address is that address, from the socket or from a trusted proxy.
+  const request = (remoteAddress: string, forwarded?: string) =>
+    ({
+      socket: { remoteAddress },
+      headers: forwarded ? { 'x-forwarded-for': forwarded } : {},
+    }) as never;
+  assert.equal(clientIp(request('::ffff:203.0.113.9')), '203.0.113.9');
+  assert.equal(clientIp(request('127.0.0.1', '::FFFF:198.51.100.7')), '198.51.100.7');
+});
+
+test('verify admission is constant work a request: a table no larger than its admissions', () => {
+  let now = 0;
+  const gate = new Admission(5, 50, () => now);
+  const tally = (ips: string[]) => {
+    const seen: Record<string, number> = {};
+    for (const ip of ips) {
+      let outcome = 'admitted';
+      try {
+        gate.admit(addressBucket(ip));
+      } catch (error) {
+        outcome = (error as MervError).code;
+      }
+      seen[outcome] = (seen[outcome] ?? 0) + 1;
+    }
+    return seen;
+  };
+  // Rotating through one /64 is one caller.
+  const one = Array.from({ length: 20_000 }, () => in64('2001:db8:aa:bb'));
+  assert.deepEqual(tally(one), { admitted: 5, login_rate_limited: 19_995 });
+  assert.equal(gate.size, 1);
+  // A /64 for every request meets the cap on all callers, and the table stops growing there.
+  const many = Array.from({ length: 20_000 }, () => in64(randomPrefix()));
+  assert.deepEqual(tally(many), { admitted: 45, login_capacity: 19_955 });
+  assert.equal(gate.size, 46);
+  // The next window starts empty.
+  now += 60_000;
+  assert.deepEqual(tally(['198.51.100.7']), { admitted: 1 });
+  assert.equal(gate.size, 1);
+});
+
+test('rotating IPv6 addresses and random login ids cost one bounded lookup each, at most', async (t) => {
+  const f = await connectServer({ limits: { verifyPerIpMinute: 3, verifyPerMinute: 40 } });
+  t.after(() => f.close());
+  // Every store read the verify route makes.
+  let lookups = 0;
+  const read = f.state.read.bind(f.state);
+  f.state.read = (...args) => {
+    lookups++;
+    return read(...args);
+  };
+  const from = (ip: string) => ({ 'x-forwarded-for': ip });
+  const started = await post(
+    `${f.url}/connect/login`,
+    startBody('ada@lab.org', 'a'.repeat(43)),
+    from('198.51.100.9'),
+  );
+  const code = (await f.codeFor('ada@lab.org'))!;
+  lookups = 0;
+  const guess = (ip: string) =>
+    post(
+      `${f.url}/connect/login/login_${randomBytes(16).toString('base64url')}/verify`,
+      { code: '00000000', verifier: 'b'.repeat(43) },
+      from(ip),
+    );
+  const statuses = async (ips: string[]) => {
+    const seen: Record<string, number> = {};
+    for (const ip of ips) {
+      const answer = await guess(ip);
+      const key = answer.body.error.code;
+      seen[key] = (seen[key] ?? 0) + 1;
+    }
+    return seen;
+  };
+  const one = Array.from({ length: 150 }, () => in64('2001:db8:aa:bb'));
+  assert.deepEqual(await statuses(one), { invalid_code: 3, login_rate_limited: 147 });
+  assert.equal(lookups, 3);
+  // The person's own verify, from their own address, still passes.
+  const signedIn = await post(
+    `${f.url}/connect/login/${started.body.loginId}/verify`,
+    { code, verifier: 'a'.repeat(43) },
+    from('198.51.100.9'),
+  );
+  assert.equal(signedIn.status, 200);
+  lookups = 0;
+  // A fresh /64 each time meets the cap on all callers: no more lookups than admissions.
+  const many = Array.from({ length: 100 }, () => in64(randomPrefix()));
+  assert.deepEqual(await statuses(many), { invalid_code: 36, login_capacity: 64 });
+  assert.equal(lookups, 36);
+  // A malformed id is refused as a wrong code is, without a lookup.
+  f.setTime(Date.now() + 61_000);
+  const malformed = await post(
+    `${f.url}/connect/login/login_x/verify`,
+    { code: '00000000', verifier: 'a'.repeat(43) },
+    from('198.51.100.10'),
+  );
+  assert.equal(malformed.body.error.code, 'invalid_code');
+  assert.equal(lookups, 36);
 });
 
 test('a full delivery queue refuses new starts with login_capacity', async (t) => {

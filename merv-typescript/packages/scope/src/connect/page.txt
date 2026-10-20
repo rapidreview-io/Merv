@@ -17,9 +17,9 @@ outside this workspace: in Codex, request escalation for every one of them.
 
      ~/.merv/connect/__MERV_HOSTDIR__/bin/merv-connect login <their email> --client "<Claude Code|Codex|Cursor>"
 
-   Tell them the request words it prints. Merv emails them an 8-digit code with the same words, or,
-   if they are in no Merv project yet, an email saying to create or join one first. If nothing
-   arrives within 2 minutes, check the address and run the command again.
+   Tell them the request words it prints. Merv emails them an 8-digit code with the same words if
+   that address has a Merv account in a project. If nothing arrives within 2 minutes, check the
+   address and run the command again.
 
 3. Ask the person for the code. Then run:
 

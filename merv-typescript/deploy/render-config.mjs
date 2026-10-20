@@ -120,8 +120,9 @@ const agentLogin = optIn('MERV_AGENT_LOGIN');
 const connectorName = agentLogin ? required('MERV_CONNECTOR_NAME') : undefined;
 if (agentLogin && !/^[a-z][a-z0-9-]{0,31}$/.test(connectorName))
   throw new Error('Invalid MERV_CONNECTOR_NAME');
-// Caddy on the host reaches the published port from the Docker bridge gateway.
-const trustedProxies = (process.env.MERV_TRUSTED_PROXIES ?? '127.0.0.1/32,::1/128,172.16.0.0/12')
+// Loopback only unless named: production adds the Docker bridge gateway its host Caddy reaches the
+// published port from (172.18.0.1/32), never a whole range another container could send from.
+const trustedProxies = (process.env.MERV_TRUSTED_PROXIES ?? '127.0.0.1/32,::1/128')
   .split(',')
   .map((range) => range.trim());
 if (projectInvitations || agentLogin) {

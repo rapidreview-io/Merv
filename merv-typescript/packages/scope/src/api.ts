@@ -18,7 +18,10 @@ import {
   ResendInvitationSender,
   type InvitationSender,
 } from './invitation-email.js';
+import { tooMany } from './agent-logins.js';
 import {
+  addressBucket,
+  Admission,
   agentLoginSchema,
   codeMail,
   connectAssets,
@@ -262,18 +265,20 @@ export function scopeRoutes(
 }
 
 const LOOPBACK = proxyList(['127.0.0.1/32', '::1/128']);
+const unmapped = (address: string) =>
+  /^::ffff:/i.test(address) && isIPv4(address.slice(7)) ? address.slice(7) : address;
 /** The client's address: the rightmost X-Forwarded-For entry, but only from a trusted proxy. */
 export function clientIp(req: IncomingMessage, proxies: BlockList = LOOPBACK): string | null {
-  const remote = req.socket.remoteAddress ?? null;
-  const address =
-    remote?.startsWith('::ffff:') && isIPv4(remote.slice(7)) ? remote.slice(7) : remote;
-  const trusted = !!address && proxies.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
+  const remote = req.socket.remoteAddress;
+  if (!remote) return null;
+  const address = unmapped(remote);
+  const trusted = proxies.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
   const forwarded = req.headers['x-forwarded-for'];
   const last = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
     .split(',')
     .map((entry) => entry.trim())
     .at(-1);
-  return trusted && last && isIP(last) ? last : remote;
+  return trusted && last && isIP(last) ? unmapped(last) : address;
 }
 
 function reply(res: ServerResponse, status: number, type: string, body: string): void {
@@ -284,16 +289,6 @@ function reply(res: ServerResponse, status: number, type: string, body: string):
   });
   res.end(body);
 }
-
-const tooMany = (code: string, seconds: number) =>
-  new MervError(
-    code,
-    code === 'login_capacity'
-      ? 'Merv is sending too many sign-in codes right now; try again later'
-      : 'Too many sign-in requests; try again later',
-    429,
-    { retryAfterSeconds: seconds },
-  );
 
 /**
  * `/connect`, public: the page an agent reads, the installer, the connector, and the two sign-in
@@ -306,10 +301,12 @@ export function connectRoutes(
     config: input,
     directory,
     mailer,
+    clock = Date.now,
   }: {
     config: AgentLoginConfig;
     directory: AgentLoginDirectory;
     mailer: { send(mail: Mail): Promise<void> };
+    clock?: () => number;
   },
 ): { handler: MountHandler; drain(): Promise<void> } {
   const config = agentLoginSchema.parse(input);
@@ -318,8 +315,7 @@ export function connectRoutes(
   const { origin, page, installer, connector } = connectAssets(config);
   const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting);
   const proxies = proxyList(config.trustedProxies);
-  // In process: a restart forgets it. The verifier and per-login tries are the durable bound.
-  const verifies = new Map<string, number[]>();
+  const verifies = new Admission(limits.verifyPerIpMinute, limits.verifyPerMinute, clock);
   const handler: MountHandler = async (req, res, r) => {
     const path = r.url.pathname;
     if (req.method === 'GET' && path === '/connect')
@@ -331,7 +327,9 @@ export function connectRoutes(
     const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
     if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
       throw unknownEndpoint();
-    const ip = clientIp(req, proxies);
+    // An IPv6 client counts by its /64, here and in the stored per-address start limit.
+    const address = clientIp(req, proxies);
+    const ip = address && addressBucket(address);
     try {
       if (!verifyRoute) {
         if (deliveries.full) throw tooMany('login_capacity', 60);
@@ -350,12 +348,8 @@ export function connectRoutes(
           JSON.stringify({ loginId, phrase, expiresAt, retryAfterSeconds: 60 }),
         );
       }
-      const now = Date.now();
-      for (const [address, stamps] of verifies)
-        if (!stamps.some((stamp) => now - stamp < 60_000)) verifies.delete(address);
-      const recent = (verifies.get(ip ?? '') ?? []).filter((stamp) => now - stamp < 60_000);
-      if (recent.length >= limits.verifyPerIpMinute) throw tooMany('login_rate_limited', 60);
-      verifies.set(ip ?? '', [...recent, now]);
+      // Before the body is read or the store is asked: an unknown id costs this and one lookup.
+      verifies.admit(ip ?? '');
       const { code, verifier } = await r.json(verifyInput, 4096);
       const digits = code.replace(/[\s-]/g, '');
       const issued = await scope.agentLogins.verify(
