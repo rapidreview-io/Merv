@@ -146,10 +146,16 @@ test('assembled Cordis application preserves current MCP task closure across two
     const read = await call(producer, 'task.get', { taskId: task.id });
     assert.deepEqual(guidance, read.guidance);
     assert.ok(guidance.nextAction);
-    // An owner is told the noun, its arguments under the action's own name.
-    assert.equal(guidance.nextAction.tool, 'workflow.write');
-    assert.equal(guidance.nextAction.arguments.action, 'begin');
+    // The old name keeps its flat guidance; the noun read tells the noun, its arguments under
+    // the action's own name.
+    assert.equal(guidance.nextAction.tool, 'workflow.begin');
     assert.equal(guidance.nextAction.status, 'ready');
+    const noun = await call(producer, 'workflow.read', {
+      action: 'status',
+      status: { instanceId: task.id },
+    });
+    assert.equal(noun.nextAction.tool, 'workflow.write');
+    assert.equal(noun.nextAction.arguments.action, 'begin');
     const httpGuidance = await fetch(`${app.ctx.api.url}/tools/workflow.status_and_next`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${p.token}`, 'Content-Type': 'application/json' },
