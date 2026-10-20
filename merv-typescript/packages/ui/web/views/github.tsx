@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { githubRequest as request, useScopeVersion } from '../api';
 import { useCurrent } from '../mutations';
+import { SessionContext } from '../session';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
 import { LoadState } from '../components';
 import { Icon } from '../icons';
@@ -9,9 +10,7 @@ import { GitHubPreparation } from './github-prepare';
 
 const idOf = (repo: GitHubRepository) => `${repo.installationId}:${repo.id}`;
 
-/** `connects`: the page is the signed-in person's, the only one who mints the owner's GitHub
- *  credential; their key's page manages the connection but never connects it. */
-export function GitHubConnection({ connects = false }: { connects?: boolean }) {
+export function GitHubConnection() {
   const epoch = useScopeVersion();
   const [status, setStatus] = useState<GitHubStatus>();
   const [repositories, setRepositories] = useState<GitHubRepository[]>();
@@ -21,6 +20,8 @@ export function GitHubConnection({ connects = false }: { connects?: boolean }) {
   const finishing = useRef<{ epoch: number; result: Promise<GitHubStatus> }>();
   const callback = new URLSearchParams(window.location.search).get('github') === 'complete';
   const current = useCurrent();
+  // Connecting mints the person's own GitHub credential: their key's page manages, never connects.
+  const connects = useContext(SessionContext)?.account.kind === 'user';
   /** The connection read again, where the page still stands; a failure is the caller's. */
   const refresh = async () => {
     const value = await request<GitHubStatus>();

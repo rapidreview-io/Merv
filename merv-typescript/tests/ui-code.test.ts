@@ -2600,13 +2600,17 @@ test('the same move drawn inside the canvas offers no control back to the canvas
 
   test('connecting GitHub is offered to the signed-in person, never to their key', async (t) => {
     t.after(unmount);
-    for (const connects of [true, false]) {
+    const { SessionContext } = await import('../packages/ui/web/session.js');
+    for (const kind of ['user', 'key']) {
       serve('/code/github', { body: { ...status, status: 'needs_reconnect' } });
-      await mount(createElement(GitHubConnection, { connects }));
+      const session = { account: { kind } } as never;
+      await mount(
+        createElement(SessionContext.Provider, { value: session }, createElement(GitHubConnection)),
+      );
       const offered = [...document.querySelectorAll('button')].some(
         (b) => b.textContent === 'Reconnect GitHub',
       );
-      assert.equal(offered, connects, text());
+      assert.equal(offered, kind === 'user', text());
       await unmount();
     }
   });
