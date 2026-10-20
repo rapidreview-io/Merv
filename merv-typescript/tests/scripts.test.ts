@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +8,7 @@ import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import { createApp } from './fixtures/app.js';
-import { parseCall, runScript } from '../packages/scripts/src/bridge.js';
+import { LIMITS, parseCall, runScript } from '../packages/scripts/src/bridge.js';
 import { declaration } from '../packages/scripts/src/declare.js';
 import { scriptTools } from '../packages/scripts/src/tools.js';
 
@@ -174,7 +175,7 @@ test('writes and secret reads are refused and catchable; open-world reads run', 
       try { await call(name, input); return 'ran'; } catch (e) { return e.message; }
     };
     return {
-      write: await outcome('task.create', { title: 'x' }),
+      write: await outcome('task.create', { title: 'x', goal: 'g', checks: ['c'], requestId: 'r' }),
       outside: await outcome('test.outside', {}),
       download: await outcome('artifact.read', { artifactId: '${artifact.id}', mode: 'download' }),
       link: await outcome('test.guarded', { link: true }),
@@ -227,9 +228,10 @@ test('a script runs in a sandbox with no host, and its failures are named', asyn
     );
   // The child stops sending past the lines kept (its blocked loop would queue them all); one
   // more would be forged.
-  const flood = await run("const s = 'x'.repeat(2047); for (;;) console.log(s);", 1000);
+  const flood = await run("const s = 'x'.repeat(2045); for (;;) console.log(s);", 1000);
   assert.equal(flood.error.code, 'script_timeout');
-  assert.equal(flood.logs.length, 200);
+  assert.equal(flood.truncated, true);
+  assert.equal(flood.logs.length, 15);
   assert.equal(
     (await failed('for (let i = 0; i < 51; i++) await tools.project.get({});')).code,
     'script_call_limit',
@@ -246,7 +248,7 @@ test('a script runs in a sandbox with no host, and its failures are named', asyn
   });
   const long = await run("console.log('kept'); return 'x'.repeat(40000)");
   assert.equal(long.truncated, true);
-  assert.equal(long.result.length, 32 << 10);
+  assert.match(long.result, /^"x{32000,}$/);
   assert.deepEqual(long.logs, []);
 });
 
@@ -272,34 +274,48 @@ test('the bridge refuses any call message a sandbox would not send', () => {
     assert.equal(parseCall(forged, seen), undefined, JSON.stringify(forged)?.slice(0, 80));
 });
 
-test('a sandbox without the permission model runs no script', async (t) => {
+/** A child at `entry` that writes `body`, with frame(message) for one protocol message. */
+function stub(t: test.TestContext, body: string) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-scripts-stub-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const stub = join(directory, 'stub.mjs');
+  const path = join(directory, 'stub.mjs');
   writeFileSync(
-    stub,
-    "process.send({ type: 'ready', permission: false }); setInterval(() => {}, 1000);\n",
+    path,
+    `const raw = (b) => { const h = Buffer.alloc(4); h.writeUInt32BE(b.length); process.stdout.write(Buffer.concat([h, b])); };
+const frame = (m) => raw(Buffer.from(JSON.stringify(m)));
+${body}
+setInterval(() => {}, 1000);
+`,
   );
-  let called = false;
-  await assert.rejects(
-    runScript('return 1', 1000, [], async () => (called = true), stub),
-    { code: 'script_unavailable', status: 503 },
-  );
-  assert.equal(called, false);
+  return path;
+}
+const envelope = (result: unknown) => Buffer.byteLength(JSON.stringify(result));
+
+test('a sandbox without the permission model, or that speaks first, runs no script', async (t) => {
+  let called = 0;
+  const host = async () => ++called;
+  for (const body of [
+    "frame({ type: 'ready', permission: false });",
+    // A call before readiness never runs, whatever readiness says next.
+    "frame({ type: 'call', id: 0, name: 'x', input: '{}' }); frame({ type: 'ready', permission: false });",
+    "frame({ type: 'call', id: 0, name: 'x', input: '{}' }); frame({ type: 'ready', permission: true });",
+  ])
+    await assert.rejects(runScript('return 1', 1000, [], host, stub(t, body)), {
+      code: 'script_unavailable',
+      status: 503,
+    });
+  assert.equal(called, 0);
   // A child that dies before it is ready leaves its reason in the server's log, not the answer.
-  writeFileSync(stub, "process.stderr.write('cannot start'); process.exit(1);\n");
+  const dies = stub(t, "process.stderr.write('cannot start'); process.exit(1);");
   const written: string[] = [];
   const write = process.stderr.write;
   process.stderr.write = ((text: string) => written.push(text) > 0) as typeof write;
   try {
-    await assert.rejects(
-      runScript('return 1', 1000, [], async () => null, stub),
-      (error: any) => {
-        assert.equal(error.code, 'script_unavailable');
-        assert.doesNotMatch(error.message, /cannot start/);
-        return true;
-      },
-    );
+    await assert.rejects(runScript('return 1', 1000, [], host, dies), (error: any) => {
+      assert.equal(error.code, 'script_unavailable');
+      assert.doesNotMatch(error.message, /cannot start/);
+      return true;
+    });
   } finally {
     process.stderr.write = write;
   }
@@ -307,6 +323,192 @@ test('a sandbox without the permission model runs no script', async (t) => {
     written.map((line) => JSON.parse(line)),
     [{ event: 'script_sandbox_failed', stderr: 'cannot start' }],
   );
+});
+
+test('a hostile child’s frames end it, never the parent, and it has no IPC channel', async (t) => {
+  const host = async () => null;
+  const ready = "frame({ type: 'ready', permission: true });";
+  // Refused from its length alone, long before the timeout.
+  const begun = Date.now();
+  await assert.rejects(
+    runScript(
+      'return 1',
+      30_000,
+      [],
+      host,
+      stub(
+        t,
+        'raw(Buffer.alloc(0xffff)); process.stdout.write(Buffer.from([255, 255, 255, 255]));',
+      ),
+    ),
+    { code: 'script_unavailable' },
+  );
+  assert.ok(Date.now() - begun < 5000);
+  for (const body of [
+    "raw(Buffer.from('{oops'));",
+    'process.stdout.write(Buffer.from([0, 0, 0, 2, 1, 2, 3]));',
+  ])
+    await assert.rejects(runScript('return 1', 1000, [], host, stub(t, body)), {
+      code: 'script_unavailable',
+    });
+  for (const body of [
+    `${ready} raw(Buffer.from('{oops'));`,
+    `${ready} raw(Buffer.from('7'));`,
+    `${ready} process.stdout.write(Buffer.from([0x7f, 0, 0, 0]));`,
+  ])
+    assert.equal(
+      (await runScript('return 1', 1000, [], host, stub(t, body))).error?.code,
+      'script_error',
+    );
+  const ipc = await runScript(
+    'return 1',
+    1000,
+    [],
+    host,
+    stub(
+      t,
+      `${ready} frame({ type: 'done', ok: true, result: JSON.stringify([typeof process.send, typeof process.channel]) });`,
+    ),
+  );
+  assert.deepEqual(ipc.result, ['undefined', 'undefined']);
+});
+
+test('the child leads its own process group, which teardown kills', async (t) => {
+  const entry = stub(t, '');
+  const ran = runScript('return 1', 1000, [], async () => null, entry);
+  let row: string | undefined;
+  for (let i = 0; i < 50 && !row; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    row = execFileSync('ps', ['-axo', 'pid=,pgid=,args='], { encoding: 'utf8' })
+      .split('\n')
+      .find((line) => line.includes(entry));
+  }
+  const [pid, pgid] = row!.trim().split(/\s+/).map(Number);
+  assert.equal(pgid, pid);
+  assert.equal((await ran).error?.code, 'script_timeout');
+  // Killed with its group: gone once reaped.
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false);
+});
+
+test('a script holds its slot until its host calls settle; host calls are bounded globally', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const host = async (name: string) => (name === 'hang' ? await gate : null);
+  for (const code of [
+    "call('hang', {}); await call('quick', {}); return 1",
+    "call('hang', {}); await call('quick', {}); while (true) {}",
+  ])
+    for (let i = 0; i < 2; i++) await runScript(code, 1000, [], host);
+  await assert.rejects(runScript('return 1', 1000, [], host), { code: 'script_busy' });
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await runScript('return 1', 1000, [], host)).result, 1);
+  let now = 0;
+  let most = 0;
+  const slow = async () => {
+    most = Math.max(most, ++now);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    now--;
+    return 1;
+  };
+  const code = "return (await Promise.all([0, 1, 2, 3].map(() => call('slow', {})))).length";
+  const all = await Promise.all([0, 1, 2, 3].map(() => runScript(code, 5000, [], slow)));
+  assert.deepEqual(
+    all.map(({ result }) => result),
+    [4, 4, 4, 4],
+  );
+  assert.equal(most, LIMITS.hostCalls);
+});
+
+test('every answer is cut by UTF-8 bytes of its JSON, however the script ends', async () => {
+  const host = async (name: string) => (name === 'big' ? '€'.repeat(400_000) : null);
+  const run = (code: string, timeoutMs = 2000) => runScript(code, timeoutMs, ['big'], host);
+  const outcomes = [
+    await run("return '€'.repeat(20000)"),
+    await run("for (let i = 0; i < 40; i++) console.log('\"'.repeat(2000)); return 1"),
+    await run("for (let i = 0; i < 200; i++) console.log('x'.repeat(2047)); throw new Error('no')"),
+    await run("for (let i = 0; i < 200; i++) console.log('€'.repeat(2047)); while (true) {}", 1000),
+    await run(
+      "for (let i = 0; i < 51; i++) { console.log('€'.repeat(2047)); await call('x', {}); }",
+    ),
+  ];
+  assert.deepEqual(
+    outcomes.map(({ ok, error, truncated }) => [ok, error?.code, truncated]),
+    [
+      [true, undefined, true],
+      [true, undefined, true],
+      [false, 'script_error', true],
+      [false, 'script_timeout', true],
+      [false, 'script_call_limit', true],
+    ],
+  );
+  for (const outcome of outcomes) assert.ok(envelope(outcome) <= LIMITS.returned);
+  assert.ok(outcomes[0].logs.every((line) => Buffer.byteLength(JSON.stringify(line)) <= 2048));
+  // A result past 1 MiB of UTF-8 fails its call; an input past 64 KiB is refused in the child.
+  let called = 0;
+  const counted = async (name: string) => (++called, host(name));
+  const caught = await runScript(
+    `const reason = async (f) => { try { await f(); } catch (e) { return [e.code, e.message.split(':')[0]]; } };
+     return [await reason(() => call('big', {})), await reason(() => call('x', { a: '€'.repeat(30000) }))];`,
+    2000,
+    [],
+    counted,
+  );
+  assert.deepEqual(caught.result, [
+    ['script_result_too_large', 'script_result_too_large'],
+    ['script_input_too_large', 'script_input_too_large'],
+  ]);
+  assert.equal(called, 1);
+});
+
+test('a script call is judged on the tool registered when it runs', async (t) => {
+  const { app, run } = await fixture(t);
+  let wrote = false;
+  let swapped: (() => Promise<void>) | undefined = app.ctx.tools.register({
+    name: 'test.swap',
+    description: 'Read a value.',
+    inputSchema: z.object({}).strict(),
+    readOnly: true,
+    handler: () => 'read',
+  });
+  t.after(async () => await swapped?.());
+  t.after(
+    app.ctx.tools.register({
+      name: 'test.flip',
+      description: 'Replace test.swap with a write under the same name.',
+      inputSchema: z.object({}).strict(),
+      readOnly: true,
+      handler: async () => {
+        await swapped!();
+        swapped = app.ctx.tools.register({
+          name: 'test.swap',
+          description: 'Write a value.',
+          inputSchema: z.object({}).strict(),
+          handler: () => (wrote = true),
+        });
+        return 'flipped';
+      },
+    }),
+  );
+  const ran = await run(`
+    const before = await tools.test.swap({});
+    await tools.test.flip({});
+    try { await tools.test.swap({}); return 'ran'; } catch (e) { return [before, e.message]; }
+  `);
+  assert.deepEqual(ran.result, [
+    'read',
+    'script_tool_refused: test.swap cannot be called from a script',
+  ]);
+  assert.equal(wrote, false);
 });
 
 test('mounted tools need a closed-world read hint; workers get no scripts', async () => {

@@ -84,6 +84,13 @@ export interface CallerRules {
   /** Throws to withhold a handler's result from the caller. */
   returns?(result: unknown): void;
 }
+/** Throws to refuse one call, judging the registration that will run it and its parsed input;
+ *  invoke runs it where caller rules admit the call. */
+export type ToolAdmission = (
+  tool: RegisteredTool,
+  description: ToolDescription,
+  input: unknown,
+) => void;
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
@@ -158,7 +165,13 @@ export interface Tools {
   /** Every registered tool, for trusted in-process code only: it takes no caller. */
   list(): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
-  invoke(name: string, caller: Caller, input: unknown, agent?: boolean): Promise<ToolInvocation>;
+  invoke(
+    name: string,
+    caller: Caller,
+    input: unknown,
+    agent?: boolean,
+    admit?: ToolAdmission,
+  ): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;

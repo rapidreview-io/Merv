@@ -17,16 +17,35 @@ const QuickJS = await core.newQuickJSWASMModuleFromVariant(
   core.newVariant(variant, { wasmMemory }),
 );
 
-const send = (message) => process.send(message);
+// Length-prefixed JSON frames: out on stdout, in on stdin (the parent's, trusted). No IPC channel.
+const send = (message, then) => {
+  const body = Buffer.from(JSON.stringify(message));
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(body.length);
+  process.stdout.write(Buffer.concat([header, body]), then);
+};
 let ended = false;
-// Exit only once the message is written: exiting right after send can drop it.
+// Exit only once the message is written: exiting right after the write can drop it.
 const finish = (message) => {
   if (ended) return;
   ended = true;
-  process.send(message, () => process.exit(0));
+  send(message, () => process.exit(0));
 };
+let receive = (message) => start(message);
+let buffer = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  while (buffer.length >= 4 && buffer.length >= 4 + buffer.readUInt32BE(0)) {
+    const size = buffer.readUInt32BE(0);
+    const message = JSON.parse(buffer.subarray(4, 4 + size).toString());
+    buffer = buffer.subarray(4 + size);
+    receive(message);
+  }
+});
+// The parent is gone: nobody will answer.
+process.stdin.on('end', () => process.exit(0));
 
-process.once('message', ({ code, names, timeoutMs, stack, calls, logLines }) => {
+function start({ code, names, timeoutMs, stack, calls, logLines, input: inputBytes, returned }) {
   const runtime = QuickJS.newRuntime();
   runtime.setMemoryLimit(memory);
   runtime.setMaxStackSize(stack);
@@ -50,10 +69,18 @@ process.once('message', ({ code, names, timeoutMs, stack, calls, logLines }) => 
     const result = runtime.executePendingJobs();
     if (result.error) finish({ type: 'done', ok: false, error: failure(result.error) });
   };
+  // A refused call's error: the message 'code: message', and its code.
+  const refusal = (code, message) => {
+    const error = vm.newError(message);
+    const handle = vm.newString(code);
+    vm.setProp(error, 'code', handle);
+    handle.dispose();
+    return error;
+  };
 
   const pending = new Map();
   let next = 0;
-  process.on('message', (message) => {
+  receive = (message) => {
     const deferred = pending.get(message.id);
     if (!deferred) return;
     pending.delete(message.id);
@@ -62,23 +89,28 @@ process.once('message', ({ code, names, timeoutMs, stack, calls, logLines }) => 
       deferred.resolve(value);
       value.dispose();
     } else {
-      const error = vm.newError(message.error);
-      const code = vm.newString(message.code);
-      vm.setProp(error, 'code', code);
+      const error = refusal(message.code, message.error);
       deferred.reject(error);
-      code.dispose();
       error.dispose();
     }
     jobs();
-  });
+  };
   // The parent ends the script on the call past the limit and keeps only the first log lines.
   // Nothing is sent beyond those: while QuickJS runs a loop, every send queues in this process.
   const host = vm.newFunction('__call', (name, input) => {
+    input = vm.getString(input);
+    // Refused here, so the script can catch it; the parent would end the script for it.
+    if (Buffer.byteLength(input) > inputBytes)
+      return {
+        error: refusal(
+          'script_input_too_large',
+          `script_input_too_large: A call's input is at most ${inputBytes} bytes of JSON`,
+        ),
+      };
     const id = next++;
     const deferred = vm.newPromise();
     pending.set(id, deferred);
-    if (id <= calls)
-      send({ type: 'call', id, name: vm.getString(name), input: vm.getString(input) });
+    if (id <= calls) send({ type: 'call', id, name: vm.getString(name), input });
     return deferred.handle;
   });
   vm.setProp(vm.global, '__call', host);
@@ -128,9 +160,14 @@ process.once('message', ({ code, names, timeoutMs, stack, calls, logLines }) => 
     if (settled.error) return finish({ type: 'done', ok: false, error: failure(settled.error) });
     const value = vm.typeof(settled.value) === 'string' ? vm.getString(settled.value) : undefined;
     settled.value.dispose();
-    finish({ type: 'done', ok: true, result: value });
+    // The parent keeps at most `returned` bytes; past that, the start of the JSON text.
+    finish(
+      value?.length > returned
+        ? { type: 'done', ok: true, result: value.slice(0, returned), truncated: true }
+        : { type: 'done', ok: true, result: value },
+    );
   });
-});
+}
 
 // The parent runs no script unless the permission model holds this process.
 send({ type: 'ready', permission: process.permission?.has('fs.read', '/') === false });

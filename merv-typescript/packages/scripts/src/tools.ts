@@ -1,35 +1,61 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check, MervError, type Caller } from '@merv/contracts';
-import type { ListedTool, ToolDefinition, Tools } from '@merv/api/types';
+import type {
+  ListedTool,
+  RegisteredTool,
+  ToolAdmission,
+  ToolDefinition,
+  ToolDescription,
+  Tools,
+} from '@merv/api/types';
 import type { ScriptHost } from './bridge.js';
 import type { Scripts } from './index.js';
 import { declaration } from './declare.js';
 
+type Judged = Pick<RegisteredTool, 'name' | 'remote' | 'readOnly' | 'conversation'>;
 /** Whether a script may call this tool at all: any read its caller could make one call at a
  *  time, open-world reads included (they keep their own budgets). A guard that depends on the
  *  input is decided per call. A mounted tool's hints are its server's word. */
-function scriptable(tool: ListedTool): boolean {
+function scriptable(
+  tool: Judged,
+  { annotations: hints = {} }: Pick<ToolDescription, 'annotations'>,
+) {
   if (tool.name.startsWith('script.')) return false;
-  if ('kind' in tool) {
-    const hints = tool.annotations ?? {};
-    return hints.readOnlyHint === true && hints.destructiveHint !== true;
-  }
+  if (tool.remote) return hints.readOnlyHint === true && hints.destructiveHint !== true;
   return (
-    tool.readOnly === true &&
-    (tool.conversation === undefined || typeof tool.conversation === 'function')
+    tool.readOnly && (tool.conversation === undefined || typeof tool.conversation === 'function')
   );
 }
 
-/** What this caller is offered, each with its trusted registration. */
+/** What this caller is offered, each with whether a script may call it as registered now. */
 async function offered(tools: Tools, caller: Caller) {
   const [described, registered] = await Promise.all([tools.describe(caller, true), tools.list()]);
   const definitions = new Map(registered.map((tool) => [tool.name, tool]));
   return described.flatMap((description) => {
-    const tool = definitions.get(description.name);
-    return tool ? [{ description, tool, scriptable: scriptable(tool) }] : [];
+    const tool: ListedTool | undefined = definitions.get(description.name);
+    if (!tool) return [];
+    const judged: Judged =
+      'kind' in tool
+        ? { name: tool.name, remote: true, readOnly: false }
+        : { ...tool, remote: false, readOnly: tool.readOnly === true };
+    return [
+      { description, native: !('kind' in tool), scriptable: scriptable(judged, description) },
+    ];
   });
 }
+
+/** Decided by the registry on the registration that runs the call and the input it parsed. */
+const admit: ToolAdmission = (tool, description, input) => {
+  if (!scriptable(tool, description))
+    throw new MervError('script_tool_refused', `${tool.name} cannot be called from a script`, 403);
+  if (typeof tool.conversation === 'function' && tool.conversation(input))
+    throw new MervError(
+      'script_tool_refused',
+      `${tool.name} cannot be called so from a script`,
+      403,
+    );
+};
 
 /** A tool's answer as a script sees it: a mounted tool's structured content, else its text as
  *  JSON, else its text. */
@@ -54,29 +80,17 @@ function answer({ format, value }: { format: string; value: unknown }): unknown 
 }
 
 /** Each call is the caller's own: invoke applies every rule one call from this agent meets. */
-function host(tools: Tools, caller: Caller, allowed: Map<string, ListedTool>): ScriptHost {
+function host(tools: Tools, caller: Caller): ScriptHost {
   return async (name, input) => {
-    const tool = allowed.get(name);
-    if (!tool)
-      throw new MervError('script_tool_refused', `${name} cannot be called from a script`, 403);
     // A native tool's project is its caller's, as over /mcp; a mounted tool's arguments are its own.
-    if (!('kind' in tool)) {
+    // The registry reserves names starting with _ for mounted tools.
+    if (!name.startsWith('_')) {
       const { projectId, ...rest } = input;
       if (projectId !== undefined && projectId !== caller.projectId)
         throw new MervError('invalid_input', 'A script works in its own project only');
       input = rest;
     }
-    // Decided on exactly the input invoke receives; an input the guard cannot read is refused.
-    if (!('kind' in tool) && typeof tool.conversation === 'function') {
-      const parsed = await tool.inputSchema.safeParseAsync(input);
-      if (!parsed.success || tool.conversation(parsed.data))
-        throw new MervError(
-          'script_tool_refused',
-          `${name} cannot be called so from a script`,
-          403,
-        );
-    }
-    return answer(await tools.invoke(name, caller, input, true));
+    return answer(await tools.invoke(name, caller, input, true, admit));
   };
 }
 
@@ -108,10 +122,10 @@ async function find(
   { query, names, limit = 8 }: z.infer<typeof toolsInput>,
 ) {
   const all = await offered(tools, caller);
-  const shown = ({ description, tool, scriptable }: (typeof all)[number]) => ({
+  const shown = ({ description, native, scriptable }: (typeof all)[number]) => ({
     name: description.name,
     scriptable,
-    declaration: declaration(description, !('kind' in tool)),
+    declaration: declaration(description, native),
   });
   if (names)
     return { tools: all.filter(({ description }) => names.includes(description.name)).map(shown) };
@@ -182,12 +196,11 @@ export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
     worker: 'never',
     handler: async (caller, { code, timeoutMs = 10_000 }: z.infer<typeof runInput>) => {
       person(caller);
-      const allowed = new Map(
-        (await offered(tools, caller)).flatMap(({ tool, scriptable }) =>
-          scriptable ? [[tool.name, tool] as const] : [],
-        ),
+      // The names only shape `tools`; each call is judged when it runs.
+      const names = (await offered(tools, caller)).flatMap(({ description, scriptable }) =>
+        scriptable ? [description.name] : [],
       );
-      return await scripts.run(code, timeoutMs, [...allowed.keys()], host(tools, caller, allowed));
+      return await scripts.run(code, timeoutMs, names, host(tools, caller));
     },
   };
   return [list, run];

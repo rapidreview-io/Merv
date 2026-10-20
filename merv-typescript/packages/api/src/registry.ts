@@ -12,6 +12,7 @@ import type {
   PictureDrawer,
   RegisteredTool,
   RemoteToolDefinition,
+  ToolAdmission,
   ToolCatalog,
   ToolDescription,
   ToolInvocation,
@@ -495,6 +496,7 @@ export class ToolRegistry implements Tools {
     caller: Caller,
     input: unknown,
     agent = false,
+    admit?: ToolAdmission,
   ): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
@@ -524,6 +526,7 @@ export class ToolRegistry implements Tools {
         if (session) this.fence(session);
         const parsed = await entry.parse(prepared ? prepared.input : input);
         rules?.admits?.(entry.tool, parsed);
+        admit?.(entry.tool, entry.description, parsed);
         if (session && prepared)
           await this.fenced(
             session,
