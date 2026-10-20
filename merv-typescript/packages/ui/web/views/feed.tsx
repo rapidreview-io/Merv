@@ -158,9 +158,9 @@ export function FeedView({ shell }: ViewProps) {
     [listed.data],
   );
   const nameOf = namesOf(home.data?.actors);
-  const events = useTool<Event[]>('feed.activity', {}, { every: 6000 });
+  const events = useTool<Event[]>('feed.read:activity', {}, { every: 6000 });
   // Both tools answer their newest page without a cursor, which is this column.
-  const posts = useTool<Post[]>('feed.list', { limit: POSTS }, { every: 6000 });
+  const posts = useTool<Post[]>('feed.read:list', { limit: POSTS }, { every: 6000 });
   const named = (event: Event) => {
     const { subject } = SAID[event.type]!(event);
     return subject === undefined || names.has(subject);

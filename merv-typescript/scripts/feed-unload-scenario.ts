@@ -60,7 +60,7 @@ export async function runFeedUnloadScenario(
     const r = await connect(url, reviewer.token);
     clients.push(r);
     const beforeTools = (await p.listTools()).tools.map((tool) => tool.name);
-    assert.equal(beforeTools.length, 59);
+    assert.equal(beforeTools.length, 57);
     assert.ok(beforeTools.includes('system.status'));
     const post = await call(p, 'feed.post', {
       body: 'Starting a task before feed removal.',
@@ -101,7 +101,7 @@ export async function runFeedUnloadScenario(
 
     // Pause one actual feed.post after admission but before its real handler.
     // This makes the otherwise synchronous operation overlap disposal reliably.
-    const definition = (await app.ctx.tools.list()).find(
+    const definition = (await app.ctx.tools.list(['feed.post'])).find(
       (tool) => tool.name === 'feed.post',
     ) as ToolDefinition;
     const originalHandler = definition.handler;

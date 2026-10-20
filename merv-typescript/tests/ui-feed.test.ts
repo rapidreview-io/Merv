@@ -51,7 +51,7 @@ function fixtures() {
       ],
     },
   });
-  serve('/tools/feed.list', {
+  serve('/tools/feed.read:list', {
     body: {
       result: [
         {
@@ -64,7 +64,7 @@ function fixtures() {
       ],
     },
   });
-  serve('/tools/feed.activity', {
+  serve('/tools/feed.read:activity', {
     body: {
       result: [
         {
