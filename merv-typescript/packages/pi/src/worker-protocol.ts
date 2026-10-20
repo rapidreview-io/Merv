@@ -581,7 +581,9 @@ export class PiWorkerProtocol {
       'tool',
       value.name === 'machine.switch'
         ? 'Moving to a bigger machine'
-        : definition && !('kind' in definition) && definition.readOnly
+        : definition &&
+            !('kind' in definition) &&
+            (definition.readOnly || definition.reads?.(value.input) === true)
           ? 'Reading'
           : 'Making a change',
     );
