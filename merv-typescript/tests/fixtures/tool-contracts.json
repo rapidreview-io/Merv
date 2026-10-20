@@ -273,22 +273,10 @@
     "code.files": {
       "input": {},
       "owner": {
-        "ok": [
-          "commit",
-          "entries",
-          "kind",
-          "path",
-          "ref"
-        ]
+        "ok": ["commit", "entries", "kind", "path", "ref"]
       },
       "reader": {
-        "ok": [
-          "commit",
-          "entries",
-          "kind",
-          "path",
-          "ref"
-        ]
+        "ok": ["commit", "entries", "kind", "path", "ref"]
       }
     },
     "code.log": {
@@ -296,18 +284,10 @@
         "limit": 5
       },
       "owner": {
-        "ok": [
-          "commit",
-          "commits",
-          "ref"
-        ]
+        "ok": ["commit", "commits", "ref"]
       },
       "reader": {
-        "ok": [
-          "commit",
-          "commits",
-          "ref"
-        ]
+        "ok": ["commit", "commits", "ref"]
       }
     },
     "code.status": {
@@ -555,12 +535,7 @@
         "requestId": "configure"
       },
       "owner": {
-        "ok": [
-          "check",
-          "denyGlobs",
-          "format",
-          "secretExemptGlobs"
-        ]
+        "ok": ["check", "denyGlobs", "format", "secretExemptGlobs"]
       },
       "reader": {
         "status": 403,
@@ -849,14 +824,10 @@
     "board.read": {
       "input": {},
       "owner": {
-        "ok": [
-          "boards"
-        ]
+        "ok": ["boards"]
       },
       "reader": {
-        "ok": [
-          "boards"
-        ]
+        "ok": ["boards"]
       }
     },
     "board.read#get": {
@@ -864,20 +835,10 @@
         "board": "$board"
       },
       "owner": {
-        "ok": [
-          "arrows",
-          "board",
-          "frames",
-          "shapes"
-        ]
+        "ok": ["arrows", "board", "frames", "shapes"]
       },
       "reader": {
-        "ok": [
-          "arrows",
-          "board",
-          "frames",
-          "shapes"
-        ]
+        "ok": ["arrows", "board", "frames", "shapes"]
       }
     },
     "board.look": {
@@ -885,22 +846,10 @@
         "board": "$board"
       },
       "owner": {
-        "ok": [
-          "height",
-          "image",
-          "path",
-          "viewport",
-          "width"
-        ]
+        "ok": ["height", "image", "path", "viewport", "width"]
       },
       "reader": {
-        "ok": [
-          "height",
-          "image",
-          "path",
-          "viewport",
-          "width"
-        ]
+        "ok": ["height", "image", "path", "viewport", "width"]
       }
     },
     "board.draw": {
@@ -914,11 +863,7 @@
         ]
       },
       "owner": {
-        "ok": [
-          "board",
-          "changed",
-          "created"
-        ]
+        "ok": ["board", "changed", "created"]
       },
       "reader": {
         "status": 403,
@@ -929,9 +874,7 @@
       "input": {
         "title": "Capture",
         "goal": "Capture the contracts.",
-        "checks": [
-          "It is captured."
-        ],
+        "checks": ["It is captured."],
         "requestId": "task-create"
       },
       "owner": {
@@ -1299,6 +1242,78 @@
       "reader": {
         "status": 403,
         "error": "forbidden"
+      }
+    },
+    "review.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": "empty"
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": "empty"
+        }
+      }
+    },
+    "review.get": {
+      "input": {
+        "reviewId": "review_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "not_found"
+      }
+    },
+    "review.start": {
+      "input": {
+        "reviewId": "review_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "review.submit": {
+      "input": {
+        "reviewId": "review_missing",
+        "claimId": "claim_missing",
+        "verdict": "pass",
+        "notes": "Capture",
+        "expectedRevision": 0,
+        "requestId": "review-submit"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "review.release": {
+      "input": {
+        "reviewId": "review_missing",
+        "reason": "Capture",
+        "requestId": "review-release"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "not_found"
       }
     }
   }

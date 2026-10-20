@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import type { UiRowDescription, UiStateWords } from '@merv/ui/rows';
 import { useTool } from './api';
 import type { PluginState, ShellData } from './shell-types';
+import type { WorkflowActionStatus as Step } from '@merv/workflows/models';
 
 /**
  * The rail, as the owner laid it out: Home (the shell's own row) with Work, Pi and Board, then
@@ -63,7 +64,7 @@ export const Records = createContext(true);
 /**
  * What a state says beyond its word, read from the deployed programs and the rows that list
  * them, never from a list of names: a state a program works in is work under way, a review gate
- * is a state left through review.submit, and the rest is in the words of the row that owns it.
+ * is a state left through review.write (submit), and the rest is in the words of the row that owns it.
  */
 export interface StateWords {
   working: ReadonlySet<string>;
@@ -76,7 +77,7 @@ export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>>
   const words = WORDS.get(shell) ?? {
     working: new Set(shapes.flatMap((s) => s.states.filter((at) => !s.terminal.includes(at)))),
     gates: new Set(
-      shapes.flatMap((s) => s.edges.filter((e) => e.tool === 'review.submit').map((e) => e.from)),
+      shapes.flatMap((s) => s.edges.filter((e) => e.tool === 'review.write').map((e) => e.from)),
     ),
     said: new Map((shell.rows ?? []).flatMap((row) => Object.entries(row.states ?? {}))),
   };
@@ -164,5 +165,13 @@ export function dormantOwner(
     (plugin) =>
       plugin.state !== 'active' &&
       (plugin.id === `${place}-ui` || plugin.name.endsWith(`/${place}/ui`)),
+  );
+}
+
+/** The guidance step calling `tool:action`, with that action's own arguments, flat. */
+export function calling(steps: readonly Step[] | undefined, address: string): Step | undefined {
+  const step = steps?.find((a) => `${a.tool}:${a.arguments.action}` === address);
+  return (
+    step && { ...step, arguments: step.arguments[address.split(':')[1]!] as Step['arguments'] }
   );
 }

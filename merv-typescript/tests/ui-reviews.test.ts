@@ -48,9 +48,12 @@ const desk = (workflow: string, state: string) => ({
   actions: [
     {
       action: 'submit_review',
-      tool: 'review.submit',
+      tool: 'review.write',
       status: 'needs_input',
-      arguments: { reviewId: 'review_1', claimId: 'claim_1', expectedRevision: 7 },
+      arguments: {
+        action: 'submit',
+        submit: { reviewId: 'review_1', claimId: 'claim_1', expectedRevision: 7 },
+      },
       blockers: [],
       instruction: '',
     },
@@ -112,9 +115,11 @@ const reject = async () => {
 const rejected = async (workflow: string, state: string, returns?: unknown[]) => {
   const submitted: { body?: Record<string, unknown> } = {};
   // The owning domain names its return routes on the review it serves.
-  serve('/tools/review.get', { body: { result: { ...claimed, ...(returns && { returns }) } } });
+  serve('/tools/review.read:get', {
+    body: { result: { ...claimed, ...(returns && { returns }) } },
+  });
   serve('/tools/workflow.status_and_next', { body: { result: desk(workflow, state) } });
-  serve('/tools/review.submit', (_, body) => {
+  serve('/tools/review.write:submit', (_, body) => {
     submitted.body = body;
     return { body: { result: { id: 'review_1' } } };
   });
@@ -166,7 +171,7 @@ test('a task review offers no return route, because its domain takes none', asyn
 test('the desk offers the verdicts the owning domain leaves this reader, and names none itself', async (t) => {
   t.after(async () => await unmount());
   const verdicts = async (review: Record<string, unknown>, workflow = 'task') => {
-    serve('/tools/review.get', { body: { result: review } });
+    serve('/tools/review.read:get', { body: { result: review } });
     serve('/tools/workflow.status_and_next', {
       body: { result: desk(workflow, workflow === 'task' ? 'in_review' : 'experiment_review') },
     });
@@ -192,15 +197,16 @@ test('a Git task review nobody interactive can pass offers no claim, and says wh
   t.after(async () => await unmount());
   const refusal =
     'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task';
-  const blocked = (action: string, tool: string, code: string, message: string) => ({
+  // Guidance names the noun to a person, with the action's arguments under its name.
+  const blocked = (action: string, address: string, code: string, message: string) => ({
     action,
-    tool,
+    tool: address.split(':')[0],
     status: 'blocked',
-    arguments: {},
+    arguments: { action: address.split(':')[1], [address.split(':')[1]!]: {} },
     blockers: [{ code, message }],
     instruction: '',
   });
-  serve('/tools/review.get', {
+  serve('/tools/review.read:get', {
     body: { result: { ...claimed, status: 'requested', reviewerId: null, claimId: null } },
   });
   serve('/tools/workflow.status_and_next', {
@@ -210,11 +216,11 @@ test('a Git task review nobody interactive can pass offers no claim, and says wh
         actions: [
           blocked(
             'submit_review',
-            'review.submit',
+            'review.write:submit',
             'review_closed',
             'Review must be claimed first',
           ),
-          blocked('start_review', 'review.start', 'leased_review_required', refusal),
+          blocked('start_review', 'review.write:start', 'leased_review_required', refusal),
         ],
       },
     },
@@ -231,7 +237,7 @@ test('an owner the default leaves out decides the review as owner, with one cont
   const refusal = 'A producer, contributor or directing authority cannot review their own work';
   const claims: unknown[] = [];
   const requested = { ...claimed, status: 'requested', reviewerId: null, claimId: null };
-  serve('/tools/review.get', {
+  serve('/tools/review.read:get', {
     body: {
       result: {
         ...requested,
@@ -247,9 +253,9 @@ test('an owner the default leaves out decides the review as owner, with one cont
         actions: [
           {
             action: 'start_review',
-            tool: 'review.start',
+            tool: 'review.write',
             status: 'blocked',
-            arguments: {},
+            arguments: { action: 'start', start: {} },
             blockers: [{ code: 'review_independence', message: refusal }],
             instruction: '',
           },
@@ -257,7 +263,7 @@ test('an owner the default leaves out decides the review as owner, with one cont
       },
     },
   });
-  serve('/tools/review.start', (_, body) => {
+  serve('/tools/review.write:start', (_, body) => {
     claims.push(body);
     return { body: { result: { ...claimed, override: true } } };
   });
@@ -281,9 +287,9 @@ test('an owner the default leaves out decides the review as owner, with one cont
         actions: [
           {
             action: 'start_review',
-            tool: 'review.start',
+            tool: 'review.write',
             status: 'blocked',
-            arguments: {},
+            arguments: { action: 'start', start: {} },
             blockers: [{ code: 'review_unavailable', message: taken }],
             instruction: '',
           },
@@ -300,7 +306,7 @@ test('an owner the default leaves out decides the review as owner, with one cont
 test('a decided review leads with what it found short and its sentence; the checks follow', async (t) => {
   t.after(async () => await unmount());
   const findings = ['met', 'not_met', 'not_verified', 'waived'];
-  serve('/tools/review.get', {
+  serve('/tools/review.read:get', {
     body: {
       result: {
         ...claimed,
@@ -347,7 +353,7 @@ test('a decided review leads with what it found short and its sentence; the chec
 
 test('a verdict the owner gave as owner says so where it says who gave it', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/review.get', {
+  serve('/tools/review.read:get', {
     body: {
       result: {
         ...claimed,
@@ -365,7 +371,7 @@ test('a verdict the owner gave as owner says so where it says who gave it', asyn
 
 test('a review is named by what it judges, a reflection too, and the name leads back to it', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/review.get', { body: { result: claimed } });
+  serve('/tools/review.read:get', { body: { result: claimed } });
   serve('/tools/workflow.status_and_next', { body: { result: desk('reflection', 'in_review') } });
   const reflections = { id: 'reflections', path: '/reflections', view: { kind: 'reflections' } };
   const element = page();
@@ -400,7 +406,7 @@ test('a review is named by what it judges, a reflection too, and the name leads 
 
 test('a check the review requires is met to pass, never waived, as review.submit decides', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/review.get', { body: { result: { ...claimed, requiredCriteria: [1] } } });
+  serve('/tools/review.read:get', { body: { result: { ...claimed, requiredCriteria: [1] } } });
   serve('/tools/workflow.status_and_next', {
     body: { result: desk('experiment', 'design_review') },
   });
@@ -432,7 +438,7 @@ test('a check the review requires is met to pass, never waived, as review.submit
 test('a draft belongs to its review: opening the next review starts it blank', async (t) => {
   t.after(async () => await unmount());
   const { useNavigate } = await import('react-router-dom');
-  serve('/tools/review.get', (_, sent) => ({
+  serve('/tools/review.read:get', (_, sent) => ({
     body: { result: { ...claimed, id: sent.reviewId } },
   }));
   serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
@@ -486,7 +492,7 @@ test('the desk takes and refuses a synopsis exactly as review.submit does', asyn
     '- The delivery meets all checks and the cache fix holds up well under load.',
   ];
   for (const synopsis of synopses) {
-    serve('/tools/review.get', { body: { result: claimed } });
+    serve('/tools/review.read:get', { body: { result: claimed } });
     serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
     await mount(page());
     await settle(10);
@@ -541,14 +547,14 @@ test('a claim the reader may hand back is released on the desk, with a reason', 
   const sent: Record<string, unknown>[] = [];
   // Reviews says who may: without its word, the desk offers nothing.
   serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
-  serve('/tools/review.get', { body: { result: claimed } });
+  serve('/tools/review.read:get', { body: { result: claimed } });
   await mount(page());
   await settle(10);
   assert.ok(!text().includes('Release review'));
   await unmount();
   serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
-  serve('/tools/review.get', { body: { result: { ...claimed, releasable: true } } });
-  serve('/tools/review.release', (_, body) => {
+  serve('/tools/review.read:get', { body: { result: { ...claimed, releasable: true } } });
+  serve('/tools/review.write:release', (_, body) => {
     sent.push(body as Record<string, unknown>);
     return { body: { result: { ...claimed, status: 'requested', reviewerId: null } } };
   });

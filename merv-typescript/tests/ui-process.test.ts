@@ -26,7 +26,7 @@ const mount = async (element: Parameters<typeof render>[0]) => {
             states: ['planned', 'design_review', 'running', 'complete'],
             terminal: ['complete'],
             edges: [
-              { from: 'design_review', action: 'approve', to: 'running', tool: 'review.submit' },
+              { from: 'design_review', action: 'approve', to: 'running', tool: 'review.write' },
             ],
           },
         ],

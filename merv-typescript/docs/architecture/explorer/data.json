@@ -1921,33 +1921,7 @@
       "owner": "reviews",
       "label": "Reviews · tools adapter",
       "purpose": "Connects Reviews to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "review.get",
-          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted, and the owning domain’s verdict guidance. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.",
-          "readOnly": true
-        },
-        {
-          "name": "review.list",
-          "description": "List the current project’s immutable review requests with their claim/verdict status and claimable: whether the review permission, producer and contributor exclusions let you claim one. review.start may still refuse what the owning domain reserves, such as a review a leased worker’s own lease does not serve. Pass subjectId to list only the reviews of that record.",
-          "readOnly": true
-        },
-        {
-          "name": "review.release",
-          "description": "Hand back a claimed review so that another eligible reviewer, or a leased review worker, may claim it. Only the reviewer who claimed it or a project admin may, never a leased worker, whose claim is released with its lease. Pass the reviewId, a reason and a stable requestId; a retry with the same requestId answers the same. Nothing about the work under review changes.",
-          "readOnly": false
-        },
-        {
-          "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.",
-          "readOnly": false
-        },
-        {
-          "name": "review.submit",
-          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work, and which returnTo routes and extra fields it accepts: follow the guidance review.start and review.get return. Optional returnTo selects an explicit return route when that domain requires or permits it. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. Supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Any other field is passed to the owning domain, which validates it; a domain that does not accept it refuses the verdict.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-review-ui",
@@ -1991,33 +1965,7 @@
       "owner": "reviews",
       "label": "Reviews",
       "purpose": "Pins evidence, enforces independent review, retains findings and verdicts, and invokes the owning domain's transition in the same transaction.",
-      "exposedTools": [
-        {
-          "name": "review.get",
-          "description": "Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted, and the owning domain’s verdict guidance. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.",
-          "readOnly": true
-        },
-        {
-          "name": "review.list",
-          "description": "List the current project’s immutable review requests with their claim/verdict status and claimable: whether the review permission, producer and contributor exclusions let you claim one. review.start may still refuse what the owning domain reserves, such as a review a leased worker’s own lease does not serve. Pass subjectId to list only the reviews of that record.",
-          "readOnly": true
-        },
-        {
-          "name": "review.release",
-          "description": "Hand back a claimed review so that another eligible reviewer, or a leased review worker, may claim it. Only the reviewer who claimed it or a project admin may, never a leased worker, whose claim is released with its lease. Pass the reviewId, a reason and a stable requestId; a retry with the same requestId answers the same. Nothing about the work under review changes.",
-          "readOnly": false
-        },
-        {
-          "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.",
-          "readOnly": false
-        },
-        {
-          "name": "review.submit",
-          "description": "Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work, and which returnTo routes and extra fields it accepts: follow the guidance review.start and review.get return. Optional returnTo selects an explicit return route when that domain requires or permits it. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. Supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Any other field is passed to the owning domain, which validates it; a domain that does not accept it refuses the verdict.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-runner",

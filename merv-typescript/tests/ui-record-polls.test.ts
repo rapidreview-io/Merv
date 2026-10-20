@@ -141,7 +141,7 @@ test('an ended experiment’s page still refreshes, slowly: its accepted code ca
       },
     },
   });
-  serve('/tools/review.list', { body: { result: [] } });
+  serve('/tools/review.read:list', { body: { result: [] } });
   await open('/experiments/wf_1', ExperimentsView);
   await settle(20);
   assert.ok(document.body.textContent!.includes('grokking'));
@@ -162,7 +162,7 @@ test('an experiment sent back to planning shows its new attempt’s figures, not
       },
     },
   });
-  serve('/tools/review.list', { body: { result: [] } });
+  serve('/tools/review.read:list', { body: { result: [] } });
   await open('/experiments/wf_1', ExperimentsView);
   assert.ok(document.body.textContent!.includes('Does weight decay matter?'));
   // This attempt submitted nothing yet: the figure the earlier attempt submitted is not its own.
@@ -184,7 +184,7 @@ test('a running experiment reads its exhibit again only when its evidence change
       },
     },
   }));
-  serve('/tools/review.list', { body: { result: [] } });
+  serve('/tools/review.read:list', { body: { result: [] } });
   serve('/tools/experiment.read:exhibit', {
     body: {
       result: {

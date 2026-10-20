@@ -91,7 +91,7 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   }>(row, id, 60_000);
   const state = record.data?.experiment.workflow.state;
   const live = record.data?.process.terminal ? undefined : 8000;
-  const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
+  const reviews = useTool<Review[]>('review.read:list', { subjectId: id }, { every: live });
   // The exhibit is worked out from the attempt's results, parsing each: it is read again only
   // when the evidence the record lists has changed, not on every poll of the record.
   const exhibit = useTool<ExperimentExhibit>(

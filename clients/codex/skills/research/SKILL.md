@@ -52,10 +52,10 @@ States: planned, design_review, running, experiment_review, then completed.
    Then `experiment.write` (transition) with `submit_design`: it seals what is attached and queues an
    independent design review. Each `experiment.write` call names its action and puts that
    action's arguments under its name: `{"action":"attach","attach":{…}}`.
-3. **Design review.** Someone other than the producer reviews. `review.list` says what you may
-   claim, `review.start` claims one and returns its `claimId` and verdict guidance, `review.get`
-   reads the pinned criteria, and `review.submit` gives one finding per criterion. A rejection
-   returns the experiment to planned as a new attempt.
+3. **Design review.** Someone other than the producer reviews. `review.read` (list) says what
+   you may claim, `review.write` (start) claims one and returns its `claimId` and verdict
+   guidance, `review.read` (get) reads the pinned criteria, and `review.write` (submit) gives one
+   finding per criterion. A rejection returns the experiment to planned as a new attempt.
 4. **Run (running).** Merv dispatches the run to a leased worker. `submit_results` comes only
    from the worker session that ran the attempt, and while a worker holds the lease only it may
    attach evidence. To give it information or an authorization, message it (see the operations

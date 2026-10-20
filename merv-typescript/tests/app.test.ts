@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 53);
+    assert.equal(catalog.length, 50);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -375,8 +375,9 @@ test('a tool is titled in the words of the plugin that owns it', async () => {
     const tools = new Map((await app.ctx.tools.list()).map((tool) => [tool.name, tool]));
     for (const [name, title] of [
       ['research.advance', 'Start next step'],
-      ['review.start', 'Claim review'],
-      ['review.submit', 'Submit verdict'],
+      ['review.write:start', 'Claim review'],
+      ['review.write:submit', 'Submit verdict'],
+      ['review.write:release', 'Release review'],
       ['task.write:mark_failed', 'Mark task failed'],
     ]) {
       // A noun action carries its own title, which its retired name is listed with.

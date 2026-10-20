@@ -253,11 +253,11 @@ test('one derivation serves an experiment instance and a reflection instance', a
       pinned.edges.map(({ tool: _, ...edge }) => edge),
     );
     // The catalog names the tool each edge is taken through, live or not: a review gate is a
-    // state left through review.submit.
+    // state left through review.write (submit).
     assert.deepEqual(
       [
         ...new Set(
-          pinned.edges.filter((edge) => edge.tool === 'review.submit').map((edge) => edge.from),
+          pinned.edges.filter((edge) => edge.tool === 'review.write').map((edge) => edge.from),
         ),
       ].sort(),
       workflow === 'experiment' ? ['design_review', 'experiment_review'] : ['in_review'],

@@ -19,7 +19,7 @@ import {
 } from '../components';
 import { Icon } from '../icons';
 import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown';
-import { homeOf, pathOf, useRows } from '../navigation';
+import { calling, homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
 import { useActorNames } from './people';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/workflows/models';
@@ -256,7 +256,7 @@ export function ReviewDetail() {
 
 /** The record read straight down: what was asked, what was found, what was decided. */
 function ReviewRecord({ id }: { id: string }) {
-  const review = useTool<Review>('review.get', { reviewId: id }, { every: 8000 });
+  const review = useTool<Review>('review.read:get', { reviewId: id }, { every: 8000 });
   const nameOf = useActorNames();
   const artifacts = useArtifacts();
   const [values, setValues] = useState<Record<number, Draft>>({});
@@ -276,7 +276,7 @@ function ReviewRecord({ id }: { id: string }) {
   // The kind label over the title already says Review; only the gate its owner says it reads
   // adds to that.
   const gate = r.gate;
-  const submit = guidance.data?.actions.find((action) => action.tool === 'review.submit');
+  const submit = calling(guidance.data?.actions, 'review.write:submit');
   // What the delivery under review claimed of its checks, where its owner keeps such claims.
   const claims = r.claims;
   // A file a criterion already opens in place is not listed a second time under them.
@@ -428,6 +428,18 @@ export function Primary({
   );
 }
 
+/** Claims a review where it stands, then refreshes what lists it. */
+export const useClaim = (reviewId: string | undefined, onClaimed: () => void) =>
+  useCommand<Review>({
+    tool: 'review.write:start',
+    idempotent: true,
+    validate: (value) => !!value && value.id === reviewId && value.status === 'started',
+    onSuccess: () => {
+      onClaimed();
+      refreshTools('ui.home', 'review.read:list', 'task.read:list', 'experiment.read:list');
+    },
+  });
+
 /**
  * What a reader may do is the server's answer, never the browser's: the subject's
  * workflow.status_and_next names review.start and review.submit with the readiness
@@ -444,20 +456,14 @@ function Controls({
   values: Record<number, Draft>;
   onDone(): void;
 }) {
-  const claim = useCommand<Review>({
-    tool: 'review.start',
-    idempotent: true,
-    validate: (value) => !!value && value.id === review.id && value.status === 'started',
-    onSuccess: () => {
-      onDone();
-      guidance.reload();
-      refreshTools('ui.home', 'review.list', 'task.read:list', 'experiment.read:list');
-    },
+  const claim = useClaim(review.id, () => {
+    onDone();
+    guidance.reload();
   });
   if (readOnly()) return null;
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
-  const start = guidance.data.actions.find((action) => action.tool === 'review.start');
-  const submit = guidance.data.actions.find((action) => action.tool === 'review.submit');
+  const start = calling(guidance.data.actions, 'review.write:start');
+  const submit = calling(guidance.data.actions, 'review.write:submit');
   // A claimed review answers `needs_input`: the verdict this desk exists to supply.
   if (submit && submit.status !== 'blocked')
     return (
@@ -508,12 +514,12 @@ function Release({ review, onDone }: { review: Review; onDone(): void }) {
   const [reason, setReason] = useState('');
   const done = useRef(false);
   const release = useCommand<Review>({
-    tool: 'review.release',
+    tool: 'review.write:release',
     validate: (value) => !!value && value.id === review.id,
     onSuccess: () => {
       done.current = true;
       onDone();
-      refreshTools('ui.home', 'ui.running', 'review.list', 'workflow.status_and_next');
+      refreshTools('ui.home', 'ui.running', 'review.read:list', 'workflow.status_and_next');
     },
   });
   return (
@@ -627,11 +633,11 @@ function Desk({
   const [verdict, setVerdict] = useState<Verdict>();
   const [returnTo, setReturnTo] = useState(routes.length === 1 ? routes[0].value : '');
   const command = useCommand<{ id: string }>({
-    tool: 'review.submit',
+    tool: 'review.write:submit',
     validate: (value) => !!value && typeof value.id === 'string',
     onSuccess: () => {
       onDone();
-      refreshTools('ui.home', 'review.list', 'task.read:list', 'experiment.read:list');
+      refreshTools('ui.home', 'review.read:list', 'task.read:list', 'experiment.read:list');
     },
   });
   const drafts = review.criteria.map((_, index) => values[index + 1] ?? BLANK);

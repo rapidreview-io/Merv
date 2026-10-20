@@ -76,6 +76,7 @@ const retired = {
     'artifact.upload_complete',
   ],
   task: ['task.list', 'task.get', 'task.create', 'task.mark_failed'],
+  review: ['review.list', 'review.get', 'review.start', 'review.submit', 'review.release'],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -92,6 +93,8 @@ const nouns = [
   'artifact.write',
   'task.read',
   'task.write',
+  'review.read',
+  'review.write',
 ];
 
 /** A result's key shape, as the contract was captured. */
@@ -211,6 +214,20 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     (await tool('task.mark_failed', boot.token, fail)).body.result,
     failed.body.result,
   );
+
+  // A domain's own verdict field travels inside submit; beside it, the noun refuses it.
+  const verdict = input('review.submit');
+  const beside = await tool('review.write', boot.token, {
+    action: 'submit',
+    submit: verdict,
+    paperChanges: { documents: [] },
+  });
+  assert.deepEqual([beside.status, beside.body.error.code], [400, 'invalid_input']);
+  const inside = await tool('review.write', boot.token, {
+    action: 'submit',
+    submit: { ...verdict, paperChanges: { documents: [] } },
+  });
+  assert.deepEqual([inside.status, inside.body.error.code], [404, 'not_found']);
 
   // What an agent is listed: the base listing with the retired names traded for the nouns.
   const gone = new Set([...all, ...removed]);

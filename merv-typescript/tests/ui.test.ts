@@ -568,7 +568,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     ...new Set(
       said.workflows
         .filter((shape) => shape.name === name)
-        .flatMap((shape) => shape.edges.filter((edge) => edge.tool === 'review.submit'))
+        .flatMap((shape) => shape.edges.filter((edge) => edge.tool === 'review.write'))
         .map((edge) => edge.from),
     ),
   ];

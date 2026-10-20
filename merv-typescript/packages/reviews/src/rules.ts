@@ -172,11 +172,8 @@ export function reviewStanding(review: {
   if (review.status === 'superseded') return { word: 'superseded' };
   if (!review.verdict) return null;
   const findings = review.findings ?? [];
-  return {
-    word: review.verdict as Verdict,
-    exceptions: reviewExceptions(findings),
-    of: findings.length,
-  };
+  const exceptions = reviewExceptions(findings);
+  return { word: review.verdict as Verdict, exceptions, of: findings.length };
 }
 
 /** The refusal of a lease source that may not direct a reviewer: `check(directsIndependently(…), ...)`. */

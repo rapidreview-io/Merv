@@ -147,7 +147,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     assert.equal(app.ctx.get('workflows'), undefined);
 
     const toolsDuring = (await client.listTools()).tools.map((tool) => tool.name);
-    assert.ok(toolsDuring.includes('review.submit'), 'Generic review routing stays available');
+    assert.ok(toolsDuring.includes('review.write'), 'Generic review routing stays available');
     assert.deepEqual(
       toolsDuring.filter((name) => taskNames.includes(name)),
       [],

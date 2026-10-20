@@ -367,13 +367,13 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     const claimed = await f.call(reviewer, 'review.start', { reviewId: review.id });
     // Claimed, the review's step is its verdict: its claim is no longer offered as ready.
     const next = await f.call(reviewer, 'workflow.status_and_next', { instanceId: e.id });
-    const start = next.actions.find((action: any) => action.tool === 'review.start');
+    const start = next.actions.find((action: any) => action.arguments.action === 'start');
     assert.deepEqual(
       [start.status, start.blockers.map((blocker: any) => blocker.code)],
       ['blocked', ['review_claimed']],
     );
     assert.match(start.blockers[0].message, new RegExp(claimed.claimId));
-    const submit = next.actions.find((action: any) => action.tool === 'review.submit');
+    const submit = next.actions.find((action: any) => action.arguments.action === 'submit');
     assert.equal(submit.status, 'needs_input');
     const input = {
       reviewId: review.id,

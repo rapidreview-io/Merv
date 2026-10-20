@@ -385,7 +385,7 @@ test('a needs-you card reads kind, name, sentence, who and when, and carries its
 
 test('a review that is ready is claimed where it stands, and the page opens its desk', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/review.start', { body: { result: { id: 'review_1', status: 'started' } } });
+  serve('/tools/review.write:start', { body: { result: { id: 'review_1', status: 'started' } } });
   await mount(
     standing([
       line({
@@ -402,7 +402,7 @@ test('a review that is ready is claimed where it stands, and the page opens its 
   assert.equal(document.querySelector('.ov-meta')!.textContent, 'Adajust now');
   assert.equal(document.querySelector('details'), null, 'nothing was said, so nothing is folded');
   await click('Claim review');
-  assert.ok(requests.includes('POST /tools/review.start'));
+  assert.ok(requests.includes('POST /tools/review.write:start'));
   assert.equal(text(), 'The verdict desk');
 });
 

@@ -73,7 +73,7 @@ function TaskDetail({ row, shell }: ViewProps) {
   // in one answer; once the task has ended, none of them changes again.
   const ended = !!record.data?.process.terminal;
   const reviews = useTool<Review[]>(
-    t?.reviewId ? 'review.list' : null,
+    t?.reviewId ? 'review.read:list' : null,
     { subjectId: id },
     { every: ended ? undefined : 8000 },
   );

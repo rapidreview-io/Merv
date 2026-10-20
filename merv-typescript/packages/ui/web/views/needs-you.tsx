@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { WorkflowDecision, WorkflowDependency } from '@merv/workflows/models';
 import { refreshTools, type Loaded } from '../api';
-import { useCommand } from '../mutations';
 import { useSession } from '../session';
 import {
   Ago,
@@ -19,6 +18,7 @@ import { Icon } from '../icons';
 import { personMove } from '@merv/code-work/blockers';
 import { pathOf } from '../navigation';
 import { namesOf } from './people';
+import { useClaim } from './reviews';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
 
@@ -243,6 +243,7 @@ export function needsYou(
       // A review names its subject through the lists the other blocks already read.
       const subject = subjects.get(review.subjectId);
       // Claiming is offered here only where the subject's own gate says this caller may.
+      // Home reads the gates as the service answers them, under the rule's own tool name.
       const start = gate
         .get(review.subjectId)
         ?.actions.find((action) => action.tool === 'review.start');
@@ -283,15 +284,7 @@ export function needsYou(
  */
 function Move({ line }: { line: Line }) {
   const navigate = useNavigate();
-  const claim = useCommand<{ id: string; status: string }>({
-    tool: 'review.start',
-    idempotent: true,
-    validate: (value) => !!value && value.id === line.claim && value.status === 'started',
-    onSuccess: () => {
-      refreshTools('ui.home', 'review.list');
-      navigate(line.to);
-    },
-  });
+  const claim = useClaim(line.claim, () => navigate(line.to));
   if (!line.claim)
     return line.desk ? (
       <div className="ov-move">

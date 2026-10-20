@@ -601,8 +601,8 @@ test('the owner’s agent decides as owner, from their key’s conversation or t
     (
       (await f.pi.tool(keyed.token, {
         ...keyed.input,
-        name: 'review.get',
-        input: { reviewId: review.id },
+        name: 'review.read',
+        input: { action: 'get', get: { reviewId: review.id } },
       })) as ReviewRequest
     ).overridable,
     true,
@@ -613,8 +613,8 @@ test('the owner’s agent decides as owner, from their key’s conversation or t
     (
       (await f.pi.tool(token, {
         ...input,
-        name: 'review.get',
-        input: { reviewId: review.id },
+        name: 'review.read',
+        input: { action: 'get', get: { reviewId: review.id } },
       })) as ReviewRequest
     ).overridable,
     true,
@@ -622,8 +622,8 @@ test('the owner’s agent decides as owner, from their key’s conversation or t
   // The agent's own call decides as owner, as the person's would.
   const started = (await f.pi.tool(token, {
     ...input,
-    name: 'review.start',
-    input: { reviewId: review.id, override: true },
+    name: 'review.write',
+    input: { action: 'start', start: { reviewId: review.id, override: true } },
   })) as ReviewRequest;
   assert.deepEqual(
     [started.status, started.reviewerId, started.override],
