@@ -253,9 +253,11 @@ export const githubRequest = <T>(action = '', body?: unknown) =>
     ...(body === undefined ? {} : { method: 'POST', body }),
   });
 
-/** One tool call over the same-origin JSON endpoint agents use. */
+/** One tool call over the same-origin JSON endpoint agents use. `name` may be an address
+ *  `tool:action`, which takes that action's own arguments. */
 export async function call<T>(name: string, input: Record<string, unknown> = {}): Promise<T> {
-  const body = await accountRequest<{ result: T }>(`/tools/${encodeURIComponent(name)}`, {
+  const path = encodeURIComponent(name).replace('%3A', ':');
+  const body = await accountRequest<{ result: T }>(`/tools/${path}`, {
     method: 'POST',
     body: input,
     scoped: true,

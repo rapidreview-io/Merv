@@ -2,7 +2,6 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check, MervError, type Caller } from '@merv/contracts';
 import type {
-  ListedTool,
   RegisteredTool,
   ToolAdmission,
   ToolDefinition,
@@ -13,34 +12,36 @@ import type { ScriptHost } from './bridge.js';
 import type { Scripts } from './index.js';
 import { declaration } from './declare.js';
 
-type Judged = Pick<RegisteredTool, 'name' | 'remote' | 'readOnly' | 'conversation' | 'reads'>;
-/** Whether a script may call this tool at all, or with this input: any read its caller could
- *  make one call at a time, open-world reads included (they keep their own budgets), but none
- *  kept from every agent conversation. A mounted tool's hints are its server's word. */
+/** Whether a script may call this tool at all, or with this input: any read of tier core or
+ *  deferred its caller could make one call at a time, open-world reads included (they keep their
+ *  own budgets), a noun read included, but never a retired name. A mounted tool's hints are its
+ *  server's word. */
 function scriptable(
-  tool: Judged,
+  tool: RegisteredTool,
   { annotations: hints = {} }: Pick<ToolDescription, 'annotations'>,
   input?: unknown,
 ) {
   if (tool.name.startsWith('script.')) return false;
   if (tool.remote) return hints.readOnlyHint === true && hints.destructiveHint !== true;
   const reads = tool.reads && (input === undefined || tool.reads(input));
-  return (tool.readOnly || !!reads) && tool.conversation !== 'never';
+  return (
+    (tool.readOnly || !!reads) && !tool.alias && (tool.tier === 'core' || tool.tier === 'deferred')
+  );
 }
 
-/** What this caller is offered, each with whether a script may call it as registered now. */
+/** What this caller is offered, each with whether a script may call it as registered now, and a
+ *  noun tool's declared outputs per action. */
 async function offered(tools: Tools, caller: Caller) {
-  const [described, registered] = await Promise.all([tools.describe(caller, true), tools.list()]);
-  const definitions = new Map(registered.map((tool) => [tool.name, tool]));
-  return described.flatMap((description) => {
-    const tool: ListedTool | undefined = definitions.get(description.name);
+  return (await tools.describe(caller, true)).flatMap((description) => {
+    const tool = tools.tool(description.name);
     if (!tool) return [];
-    const judged: Judged =
-      'kind' in tool
-        ? { name: tool.name, remote: true, readOnly: false }
-        : { ...tool, remote: false, readOnly: tool.readOnly === true };
     return [
-      { description, native: !('kind' in tool), scriptable: scriptable(judged, description) },
+      {
+        description,
+        native: !tool.remote,
+        scriptable: scriptable(tool, description),
+        outputs: tool.outputs,
+      },
     ];
   });
 }
@@ -116,10 +117,10 @@ async function find(
   { query, names, limit = 8 }: z.infer<typeof toolsInput>,
 ) {
   const all = await offered(tools, caller);
-  const shown = ({ description, native, scriptable }: (typeof all)[number]) => ({
+  const shown = ({ description, native, scriptable, outputs }: (typeof all)[number]) => ({
     name: description.name,
     scriptable,
-    declaration: declaration(description, native),
+    declaration: declaration(description, native, outputs),
   });
   if (names)
     return { tools: all.filter(({ description }) => names.includes(description.name)).map(shown) };

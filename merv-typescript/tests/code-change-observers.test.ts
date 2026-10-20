@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './fixtures/app.js';
+import { moveMain } from './fixtures/code-binding.js';
 import type { ApplicationConfig } from '../src/config.js';
 
 async function fixture(t: TestContext) {
@@ -68,17 +69,14 @@ async function fixture(t: TestContext) {
     },
   );
   const workflow = await observed.start(caller, { workflow: 'observed', requestId: 'work' });
-  const bind = (head: string, expected?: string, stored = false) =>
-    ctx.code.units.bindLocal(
-      caller,
-      {
-        repositoryId: 'repository',
-        mainOid: head.repeat(40),
-        ...(expected ? { expectedMainOid: expected.repeat(40) } : {}),
-        requestId: `bind-${head}`,
-      },
+  // Main named, then the change Code's units are told of, as code.local.bind once did.
+  const bind = async (head: string, _expected?: string, stored = false) => {
+    await moveMain(ctx.state, caller.projectId, head.repeat(40), {
+      repositoryId: 'repository',
       stored,
-    );
+      changed: (tx) => ctx.code.writers.changed(tx, caller.projectId),
+    });
+  };
   await bind('a', undefined, true);
   await app.setEnabled('code-work', true);
   await ctx.state.transaction((tx) => ctx.codeWork.declareUnit(caller, workflow.id, tx));

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Context } from 'cordis';
 import type { Caller, CodeCommandRecord } from '@merv/contracts';
+import { noun } from '../packages/api/src/noun.js';
+import type { NounDefinition, ToolDefinition } from '../packages/api/src/types.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
 
 const oid = (c: string) => c.repeat(40);
@@ -33,7 +35,7 @@ const record = (error: string | null): CodeCommandRecord => ({
   error,
 });
 
-/** The code.* tools as a worker calls them, over a Code Work that answers `answer`. */
+/** The code tools as a worker calls them, over a Code Work that answers `answer`. */
 function tools(answer: CodeCommandRecord) {
   const handlers = new Map<string, (caller: Caller, input: unknown) => Promise<unknown>>();
   const codeWork = {
@@ -41,17 +43,21 @@ function tools(answer: CodeCommandRecord) {
     merge: async () => answer,
     operation: async () => answer,
   };
+  const register = (definition: ToolDefinition) =>
+    handlers.set(definition.name, definition.handler as never);
   codeToolsPlugin.apply({
     codeWork,
     tools: {
-      register: (definition: {
-        name: string;
-        handler: (c: Caller, i: unknown) => Promise<unknown>;
-      }) => handlers.set(definition.name, definition.handler),
+      register,
+      noun: (name: string, definition: NounDefinition) => register(noun(name, definition)),
     },
     effect: (fn: () => unknown) => fn(),
   } as unknown as Context);
-  return (name: string) => handlers.get(name)!({} as Caller, {}) as Promise<Record<string, any>>;
+  // code.operation is code.read's operation action, which its retired name still runs.
+  return (name: string) =>
+    (name === 'code.operation'
+      ? handlers.get('code.read')!({} as Caller, { action: 'operation', operation: {} })
+      : handlers.get(name)!({} as Caller, {})) as Promise<Record<string, any>>;
 }
 
 test('a worker reads its command without the head and stats its checkout had when it attached', async () => {

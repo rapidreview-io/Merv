@@ -13,12 +13,13 @@ const holdsToken = (value: unknown, depth = 0): boolean =>
 
 /**
  * What a conversation may do with tools, since everything it reads reaches the model provider: it
- * is offered no mounted tool and none marked `never`; everything else it runs as its person, under
- * their own role (founder, 2026-10-20: an agent is never asked for approval); and a result that
+ * is offered no mounted tool and none of Merv's pages' own (tier ui); everything else it runs as
+ * its person, under their own role (founder, 2026-10-20: an agent is never asked for approval),
+ * though a turn is offered a tier worker tool only where its profile names it; and a result that
  * carries a credential never reaches it.
  */
 export const conversationRules: CallerRules = {
-  offers: (tool) => !tool.remote && tool.conversation !== 'never',
+  offers: (tool) => !tool.remote && tool.tier !== 'ui',
   forbidden: new MervError('tool_forbidden', 'This tool is not offered to conversations', 403),
   returns(result) {
     if (holdsToken(result))

@@ -439,49 +439,6 @@ test('the lock of a ref its killed child left behind is taken away when the tran
   assert.deepEqual((await f.code.status(f.admin)).operations, []);
 });
 
-test('naming a main records whether the repository holds it, so nothing has to ask Git later', async (t) => {
-  const source = gitSource(t);
-  const one = source.commit({ 'a.txt': 'one\n' });
-  const two = source.commit({ 'a.txt': 'two\n' });
-  const f = await codeStoreFixture(t);
-  // Main moves only for a signed-in administrator, so this project belongs to one.
-  const principal = await f.scope.members.acceptVerifiedIdentity({
-    issuer: 'https://identity.example/auth/v1',
-    subject: 'owner',
-    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-  });
-  const project = await f.scope.members.createProject(principal, { name: 'Human', requestId: 'p' });
-  const human = await f.scope.caller(principal, project.id);
-  const bind = async (mainOid: string, expectedMainOid?: string) =>
-    await f.code.bindLocal(human, {
-      repositoryId: 'operator-repository',
-      mainOid,
-      ...(expectedMainOid ? { expectedMainOid } : {}),
-      requestId: `bind-${mainOid.slice(0, 8)}`,
-    });
-  assert.equal((await bind(two)).main.stored, false);
-  const bundle = source.bundle(one);
-  const begun = await f.code.importRepository(human, {
-    source: 'bundle',
-    tip: one,
-    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-    requestId: 'import',
-  });
-  await f.code.v2!.putPart(human, begun.id, 0, bundle.content);
-  await f.code.v2!.call(human, `uploads/${begun.id}/complete`, {});
-  // Hosted, but main is a commit the import did not bring.
-  let status = await f.code.status(human);
-  assert.equal(status.project!.main.stored, false);
-  // Naming a held commit says so at once; naming one that is not held says that too.
-  assert.equal((await bind(one, two)).main.stored, true);
-  assert.equal((await bind('c'.repeat(40), one)).main.stored, false);
-  status = await f.code.status(human);
-  assert.deepEqual(
-    [status.project!.main.oid, status.project!.main.stored],
-    ['c'.repeat(40), false],
-  );
-});
-
 test('a full volume or an exhausted quota refuses bytes and leaves the operation open', async (t) => {
   const source = gitSource(t);
   const bundle = source.bundle(source.commit({ 'a.txt': 'a\n' }));

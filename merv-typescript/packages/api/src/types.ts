@@ -5,6 +5,49 @@ import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@mer
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
 
+/**
+ * Who lists a tool, one field that MCP and Pi both read. core and deferred are every agent's (an
+ * MCP client loads core up front: `_meta["anthropic/alwaysLoad"]`, Claude Code's alone); worker is
+ * a bound execution's (a Pi conversation whose profile names it; a leased session as its frozen
+ * policy grants); ui is Merv's own pages'. A leased session's listing does not read the tier: its
+ * policy, `worker` and `for` decide it, as before tiers.
+ */
+export type ToolTier = 'core' | 'deferred' | 'worker' | 'ui';
+
+/** One action of a noun tool: its own argument object, handler and contract. */
+export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
+  /** Any schema that produces an object, a refined one included: it is unwrapped only to
+   *  describe it, and calls are validated with it as given. */
+  input: S;
+  /** The action's whole contract, on its argument object. */
+  description: string;
+  handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
+  /** Fields scripts rely on (ids, states, revisions, lists, cursors), as a passthrough object:
+   *  it types a script's result, and is never a runtime validator. */
+  output?: ZodTypeAny;
+  /** The action calls a service outside Merv (see ToolDefinition.openWorld). */
+  openWorld?: boolean;
+  /** The retired names that ran this action. Each stays callable by name as a hidden alias with
+   *  this action's flat input and the old result shape (legacyResult). */
+  was?: string[];
+  /** The old result shape, where the action's result differs from the retired tool's. */
+  legacyResult?(result: unknown): unknown;
+  /** As ToolDefinition.present, for this action's result and parsed arguments. */
+  present?(result: unknown, input: z.infer<S>): CallToolResult;
+}
+export type NounActions = Record<string, NounAction>;
+/** A noun tool: `action` and the argument object named after it (Tools.noun). */
+export interface NounDefinition {
+  tier?: ToolTier;
+  readOnly?: boolean;
+  /** One clause per action, at most 600 characters with the calling rule the helper adds. */
+  description: string;
+  actions: NounActions;
+  for?: 'people' | 'conversations';
+  /** Retired names with no executable path, by the action that remains. */
+  removed?: Record<string, string>;
+}
+
 /** A tool whose handler receives the input its schema parsed. */
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
@@ -19,23 +62,21 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** The tool calls a service outside Merv (the MCP openWorldHint). A read like this runs outside
    *  the snapshot other reads hold, so a slow remote call keeps no reader connection; it is
    *  admitted as any read and decided again before its result leaves. It must not write; a
-   *  database read opens its own. */
+   *  database read opens its own. A noun tool's is per action. */
   openWorld?: boolean;
   /** For a tool whose other actions write: whether this parsed input only reads. Its reads are
    *  offered to a reader's agent (its writes refused by their own checks) and run from scripts. */
   reads?(input: z.infer<S>): boolean;
-  /** 'never': offered to no person's agent conversation (only a leased worker or Merv's pages run
-   *  it); what it reads would reach the model provider. Omitted: the agent runs it as its person,
-   *  as any agent of theirs does (founder, 2026-10-20: an agent is never asked for approval). */
-  conversation?: 'never';
-  /** 'never': a read no leased worker is listed. It is a person's, whose handler refuses every
-   *  worker, or a page's own (ui.home), whose records a worker reads with their own tools; a Pi
-   *  profile's tool (conversationProfile) is never listed either. Called by name it still answers
-   *  as it would. */
+  /** Default 'deferred'. A Pi profile's own tool (conversationProfile) is tier worker. */
+  tier?: ToolTier;
+  /** 'people': never listed to a leased session (its every call refuses a session).
+   *  'conversations': listed to Pi conversations only, never to an MCP client. */
+  for?: 'people' | 'conversations';
+  /** 'never': no leased worker is listed it. It is a person's, whose handler refuses every
+   *  worker, a page's own (ui.home), whose records a worker reads with their own tools, or a noun
+   *  tool, whose retired names workers keep until their published versions drain. Called by name
+   *  it still answers as it would. */
   worker?: 'never';
-  /** 'never': never listed to a person's own agent connected over MCP, which cannot use it (a page's,
-   *  Pi's own, or a leased worker's); Pi and leased workers are unaffected. */
-  agent?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
   /** What the tool does, in the product's words ('Submit verdict'): its MCP title. */
@@ -43,7 +84,33 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
   /** What an MCP client (an agent) is shown in place of the JSON result, such as a rendered
    *  image beside a text summary. Other callers receive the JSON result. */
-  present?(result: unknown): CallToolResult;
+  present?(result: unknown, input?: z.infer<S>): CallToolResult;
+  /** A noun tool's actions (built by `noun`): the registry also registers their retired names. */
+  actions?: NounActions;
+  /** Retired names with no executable path, each answering tool_renamed with what remains: the
+   *  action of this tool that took its place. */
+  removed?: Record<string, string>;
+}
+/** How one call is known to rules keyed on a tool's name, whatever form it took: an alias as the
+ *  noun action it runs, a noun call as its own action, with that action's arguments flat. `as` is
+ *  the name such rules know it by: the action's first retired name, else the tool's. */
+export interface ToolIdentity {
+  tool: string;
+  action?: string;
+  as: string;
+  args: Data;
+}
+/** One call by an outside agent (neither a leased session nor a Pi conversation), as logged. */
+export interface AgentToolCall {
+  projectId: string;
+  actorId: string;
+  client?: string;
+  tool: string;
+  action?: string;
+  outcome: 'succeeded' | 'failed';
+  errorCode?: string;
+  startedAt: string;
+  durationMs: number;
 }
 /** Public tool metadata, including the native project-selection envelope. */
 export type ToolDescription = Tool;
@@ -55,12 +122,22 @@ export interface RemoteToolDefinition extends ToolDescription {
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 /** A native definition, or a remote tool's description without its handler (Tools.list()). */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
-/** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`
- *  and never `readOnly`, whatever its server says. */
-export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'worker' | 'agent'> & {
+/** A tool as caller rules see it: as registered. A mounted (`remote`) tool is tier deferred and
+ *  never `readOnly`, whatever its server says. */
+export type RegisteredTool = Pick<
+  ToolDefinition,
+  'name' | 'worker' | 'for' | 'conversationProfile'
+> & {
   remote: boolean;
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
+  tier: ToolTier;
+  /** A noun tool, which takes an action and that action's argument object. */
+  noun: boolean;
+  /** A retired name, run as this noun action (`tool:action`). */
+  alias?: string;
+  /** A noun tool's declared output per action, as JSON Schema (NounAction.output). */
+  outputs?: Record<string, unknown>;
 };
 /** A retired name: the tool it became and the action it is. args: every argument the old tool
  *  took, by its new name, and no other; absent, it took its action's own, which that tool keeps
@@ -156,9 +233,11 @@ export interface Api {
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
+  /** Builds and registers one noun tool, with its actions' retired names as hidden aliases. */
+  noun(name: string, definition: NounDefinition): () => Promise<void>;
   /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
-   *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: those that read) plus the mounted
-   *  tools its Access grants. That curates; it is no authority boundary (see POST /tools).
+   *  MCP, offered every native tool of tier core or deferred (a reader: those that read) plus the
+   *  mounted tools its Access grants. That curates; it is no authority boundary (see POST /tools).
    *  projectless: no caller and no mounted tool, which only a project's grant lists. names: retired
    *  names to list too, as the tools they became, such as those a Pi profile names. */
   describe(
@@ -169,6 +248,12 @@ export interface Tools {
   /** Every registered tool, for trusted in-process code only: it takes no caller. names: retired
    *  names to list too, as the tools they became, such as those a Pi profile names. */
   list(names?: readonly string[]): Promise<ListedTool[]>;
+  /** As registered, for caller rules and listings; undefined for an unknown name. */
+  tool(name: string): RegisteredTool | undefined;
+  /** How rules keyed on a tool's name know this call (see ToolIdentity); `name` may be an
+   *  address `tool:action`. Undefined for an unknown name. */
+  identity(name: string, input: unknown): ToolIdentity | undefined;
+  /** `name` may be an address `tool:action` with the action's own flat arguments. */
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(
     name: string,
@@ -176,6 +261,8 @@ export interface Tools {
     input: unknown,
     agent?: boolean,
     admit?: ToolAdmission,
+    /** The MCP client making an outside agent's call, for its log. */
+    client?: string,
   ): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */

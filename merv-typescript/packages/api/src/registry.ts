@@ -12,12 +12,15 @@ import {
 } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { noun, nounOutputs } from './noun.js';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
 import type {
+  AgentToolCall,
   AnyToolDefinition,
   CallerKind,
   CallerRules,
   ListedTool,
+  NounDefinition,
   Picture,
   PictureDrawer,
   RegisteredTool,
@@ -27,7 +30,9 @@ import type {
   ToolCatalog,
   ToolDescription,
   ToolDefinition,
+  ToolIdentity,
   ToolInvocation,
+  ToolTier,
   Tools,
 } from './types.js';
 import type { ValidateFunction } from 'ajv';
@@ -58,7 +63,8 @@ function inputBranches(
   }
 }
 
-/** Canonical public metadata; project selection is a transport envelope, not handler input. */
+/** Canonical public metadata; project selection is a transport envelope, not handler input. A core
+ *  tool carries `_meta["anthropic/alwaysLoad"]`, which Claude Code reads (other clients ignore it). */
 export function describeTool(tool: AnyToolDefinition): ToolDescription {
   if (isRemoteTool(tool)) {
     const { handler: _handler, kind: _kind, ...description } = tool;
@@ -121,7 +127,8 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
         },
       },
     },
-    // A write carries MCP's default destructiveHint, which a client's own prompt reads.
+    // A write carries MCP's default destructiveHint, which a client's own prompt reads. A noun
+    // tool's requestId lives inside each action's object, so it claims no idempotence.
     annotations: {
       ...(tool.act && { title: tool.act.title }),
       readOnlyHint: tool.readOnly ?? false,
@@ -131,8 +138,19 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
         }),
       openWorldHint: tool.openWorld ?? false,
     },
+    ...(tool.tier === 'core' && { _meta: { 'anthropic/alwaysLoad': true } }),
   };
 }
+
+/** A retired name's noun action: `tool:action`. */
+const address = (tool: string, action: string) => `${tool}:${action}`;
+/** The vendored Sandboxes host still marks its page-only tools `conversation: 'never'`. */
+const legacyTier = (definition: ToolDefinition): ToolTier =>
+  definition.conversationProfile
+    ? 'worker'
+    : (definition as { conversation?: unknown }).conversation === 'never'
+      ? 'ui'
+      : 'deferred';
 
 interface Entry {
   name: string;
@@ -141,13 +159,15 @@ interface Entry {
   /** Legacy aliases project the original Zod metadata, before action conditions were added. */
   aliasInput?: ToolDefinition['inputSchema'];
   parse(input: unknown): unknown;
-  complete(value: unknown): ToolInvocation;
+  complete(value: unknown, input: unknown): ToolInvocation;
+  /** Whether this parsed call reaches outside Merv: a noun tool decides per action. */
+  openWorld(input: unknown): boolean;
   running: Set<Promise<ToolInvocation>>;
   remote?: { mountId: string; toolName: string };
   /** What caller rules see, fixed at registration. */
   tool: RegisteredTool;
-  /** A retired name, run as the tool it became, which keeps that tool's snapshots. */
-  alias?: true;
+  /** A retired name: the noun action it runs. */
+  alias?: { tool: string; action: string };
 }
 /** A remote tool's catalog identity, and how its catalog compiles a schema. */
 type Remote = NonNullable<Entry['remote']> & { compile(schema: unknown): ValidateFunction };
@@ -168,6 +188,11 @@ export const isMountedToolName = (name: string): boolean => name.startsWith(name
 /** Registrations own admission and draining; remote catalogs swap as one validated generation. */
 export class ToolRegistry implements Tools {
   private readonly entries = new Map<string, Entry>();
+  /** Retired names with no executable path, by the noun action that remains. */
+  private readonly removed = new Map<string, { tool: string; action: string }>();
+  /** For one release every caller runs a retired name; then only a leased session does, until the
+   *  published versions that grant those names drain, and every other caller is told the noun. */
+  aliasesOpen = true;
   private readonly running = new Set<Promise<ToolInvocation>>();
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
@@ -182,6 +207,8 @@ export class ToolRegistry implements Tools {
     private readonly access?: Pick<ToolPolicy, 'granted' | 'require'>,
     /** Runs a read-only tool's handler in a snapshot scope: no writer lock, writes refused. */
     private readonly readScope?: <T>(fn: () => Promise<T>) => Promise<T>,
+    /** Keeps one row per outside agent's call (agent_tool_calls); it must not throw. */
+    private readonly log?: (call: AgentToolCall) => void,
   ) {}
 
   private open(): void {
@@ -199,29 +226,72 @@ export class ToolRegistry implements Tools {
       return this.prepareRemote(definition, remote);
     }
     // Schema changes require a new registration, keeping validation paired with its catalog.
-    // Conversation policy and whether it only reads (which a session may call, as may a platform
-    // reader) are likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversation, conversationProfile, reads } = definition;
+    // Tier and whether it only reads (which a session may call, as may a platform reader) are
+    // likewise the registration's: mutating the definition changes none of them.
+    const { inputSchema, conversationProfile, actions, reads } = definition;
     const readOnly = definition.readOnly === true;
     // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
     const worker = conversationProfile ? 'never' : definition.worker;
-    // A Pi profile's own tool is never a person's agent's either.
-    const agent = conversationProfile ? 'never' : definition.agent;
+    const tier = conversationProfile ? 'worker' : (definition.tier ?? legacyTier(definition));
+    // Whether a call reaches outside Merv is the registration's too: a noun tool's, per action.
+    const openWorld = definition.openWorld === true;
+    const outside = new Set(
+      Object.entries(actions ?? {}).flatMap(([name, action]) => (action.openWorld ? [name] : [])),
+    );
     return {
       name: definition.name,
       definition,
-      description: describeTool({ ...definition, inputSchema, readOnly }),
+      description: describeTool({ ...definition, inputSchema, readOnly, tier }),
       ...(definition.inputJsonSchema !== undefined && {
         aliasInput: inputSchema,
       }),
-      tool: { name: definition.name, remote: false, conversation, readOnly, worker, agent, reads },
+      tool: {
+        name: definition.name,
+        remote: false,
+        readOnly,
+        worker,
+        tier,
+        noun: !!actions,
+        ...(actions && { outputs: nounOutputs(actions) }),
+        ...(definition.for && { for: definition.for }),
+        ...(conversationProfile && { conversationProfile }),
+        ...(reads && { reads }),
+      },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
-      complete: (value) =>
+      complete: (value, input) =>
         definition.present
-          ? { format: 'json', value, mcp: definition.present(value) }
+          ? { format: 'json', value, mcp: definition.present(value, input) }
           : { format: 'json', value },
+      openWorld: (input) =>
+        actions ? outside.has((input as { action: string }).action) : openWorld,
       running: new Set(),
+    };
+  }
+
+  /** A retired name run as one noun action: that action's flat input, handler, old result shape
+   *  and the noun's readOnly. It is listed to no agent; a leased session is listed it as the old
+   *  tool was, and every name-keyed rule (authorization, policy grants, request ids) sees the
+   *  name as called. */
+  private prepareAlias(name: string, noun: ToolDefinition, actionName: string): Entry {
+    const action = noun.actions![actionName]!;
+    const entry = this.prepare({
+      name,
+      description: action.description,
+      inputSchema: action.input,
+      readOnly: noun.readOnly,
+      ...(action.openWorld && { openWorld: true }),
+      tier: noun.tier,
+      handler: async (caller, input) => {
+        const result = await action.handler(caller, input);
+        return action.legacyResult ? action.legacyResult(result) : result;
+      },
+      ...(action.present && { present: action.present }),
+    });
+    return {
+      ...entry,
+      tool: { ...entry.tool, alias: address(noun.name, actionName) },
+      alias: { tool: noun.name, action: actionName },
     };
   }
 
@@ -249,7 +319,8 @@ export class ToolRegistry implements Tools {
       definition,
       description,
       remote,
-      tool: { name: definition.name, remote: true, readOnly: false },
+      tool: { name: definition.name, remote: true, readOnly: false, tier: 'deferred', noun: false },
+      openWorld: () => description.annotations?.openWorldHint === true,
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -308,13 +379,33 @@ export class ToolRegistry implements Tools {
       throw new MervError('invalid_tool', 'Tool name is required');
     if (isMountedToolName(definition.name))
       throw new MervError('reserved_namespace', 'Mounted tool namespaces are owned by catalogs');
-    if (this.entries.has(definition.name))
-      throw new MervError('duplicate_tool', `Tool already registered: ${definition.name}`, 409);
     const entry = this.prepare(definition);
-    this.entries.set(entry.name, entry);
+    const aliases = Object.entries(definition.actions ?? {}).flatMap(([action, { was = [] }]) =>
+      was.map((name) => this.prepareAlias(name, definition, action)),
+    );
+    const removed = Object.entries(definition.removed ?? {});
+    for (const name of [definition.name, ...aliases.map((alias) => alias.name)])
+      if (this.entries.has(name) || this.removed.has(name))
+        throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
+    for (const [name, action] of removed) {
+      if (this.entries.has(name) || this.removed.has(name))
+        throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
+      if (!definition.actions?.[action])
+        throw new MervError('invalid_tool', `${name} names no action of ${definition.name}`);
+    }
+    const owned = [entry, ...aliases];
+    for (const item of owned) this.entries.set(item.name, item);
+    const gone = removed.map(([name, action]) => {
+      const target = { tool: definition.name, action };
+      this.removed.set(name, target);
+      return [name, target] as const;
+    });
     return async () => {
-      if (this.entries.get(entry.name) === entry) this.entries.delete(entry.name);
-      await this.drain([entry]);
+      for (const item of owned)
+        if (this.entries.get(item.name) === item) this.entries.delete(item.name);
+      for (const [name, target] of gone)
+        if (this.removed.get(name) === target) this.removed.delete(name);
+      await this.drain(owned);
     };
   }
 
@@ -450,7 +541,7 @@ export class ToolRegistry implements Tools {
       return {
         ...target,
         name,
-        alias: true,
+        alias: { tool: alias.tool, action },
         definition: { ...(target.definition as ToolDefinition), name, readOnly, reads: undefined },
         description: {
           ...target.description,
@@ -462,8 +553,16 @@ export class ToolRegistry implements Tools {
           },
           annotations: { ...annotations, readOnlyHint: readOnly },
         },
-        tool: { ...target.tool, name, readOnly, reads: undefined },
+        tool: {
+          ...target.tool,
+          name,
+          readOnly,
+          reads: undefined,
+          alias: address(alias.tool, action),
+        },
         parse: (input) => target.parse(renamed(input)),
+        // Never on a snapshot: the tool it became may also write.
+        openWorld: () => true,
       };
     }
   }
@@ -565,18 +664,22 @@ export class ToolRegistry implements Tools {
   }
 
   /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
-   *  would hold a reader connection for as long as that service takes to answer. */
-  private snapshotted({ remote, alias, description }: Entry): boolean {
-    const hints = description.annotations;
-    return !remote && !alias && hints?.readOnlyHint === true && hints.openWorldHint !== true;
+   *  would hold a reader connection for as long as that service takes to answer. A noun tool
+   *  decides by the parsed call's action; a retired name as the tool it became. */
+  private snapshotted(entry: Entry, input: unknown): boolean {
+    return entry.tool.readOnly && !entry.openWorld(input);
   }
-  /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
+  /** What MCP offers a person's agent (see Tools.describe): tiers core and deferred, never a
+   *  retired name. It curates; it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
     const { tool } = entry;
     const reads = tool.readOnly || !!tool.reads;
     return (
       !!entry.remote ||
-      (tool.conversation !== 'never' && tool.agent !== 'never' && (!reader || reads))
+      (!tool.alias &&
+        (tool.tier === 'core' || tool.tier === 'deferred') &&
+        tool.for !== 'conversations' &&
+        (!reader || reads))
     );
   }
 
@@ -595,8 +698,12 @@ export class ToolRegistry implements Tools {
     const retired = [...new Set(names)].flatMap((name) =>
       this.entries.has(name) ? [] : (this.entry(name) ?? []),
     );
+    // A retired name is listed to a leased session, as the old tool was, and to whoever names it.
     const offered = [...this.entries.values(), ...retired].filter(
-      (entry) => (!agent || this.offered(entry, reader)) && (!rules || rules.offers!(entry.tool)),
+      (entry) =>
+        (!entry.alias || !!session || !!names?.includes(entry.name)) &&
+        (!agent || this.offered(entry, reader)) &&
+        (!rules || rules.offers!(entry.tool)),
     );
     // One grant decision covers every mounted tool still in the listing.
     const grant =
@@ -608,6 +715,7 @@ export class ToolRegistry implements Tools {
       if (
         (!session ||
           (entry.tool.worker !== 'never' &&
+            entry.tool.for !== 'people' &&
             (await this.fenced(
               session,
               // A tool some of whose actions read is listed as one that reads.
@@ -629,11 +737,19 @@ export class ToolRegistry implements Tools {
     agent = false,
     { projectless = false, names }: { projectless?: boolean; names?: readonly string[] } = {},
   ): Promise<ToolDescription[]> {
+    const renamed = caller?.session ? undefined : this.renaming();
     const entries = await this.visible(caller, agent && !caller?.session, names);
     return entries
       .filter((entry) => !projectless || !entry.remote)
       .map((entry) => {
-        const description = structuredClone(entry.description);
+        // A retired name's text is written as its leased workers know it; everyone else, who is
+        // listed the noun tools instead, reads each such name as the noun action it now runs.
+        const description =
+          renamed && !entry.remote
+            ? (JSON.parse(
+                JSON.stringify(entry.description).replace(renamed.pattern, renamed.to),
+              ) as ToolDescription)
+            : structuredClone(entry.description);
         // A session's project is fixed by its lease, so a native tool is listed to it without the
         // projectId people choose one with, which every tool would otherwise repeat.
         if (caller?.session && !entry.remote)
@@ -645,6 +761,24 @@ export class ToolRegistry implements Tools {
       });
   }
 
+  /** Every retired name with an executable path, as text names it, and what it now reads as:
+   *  `code.status` is `code.read status`. */
+  private renaming() {
+    const to = new Map(
+      [...this.entries.values()].flatMap((entry) =>
+        entry.alias ? [[entry.name, `${entry.alias.tool} ${entry.alias.action}`] as const] : [],
+      ),
+    );
+    if (!to.size) return undefined;
+    const names = [...to.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((name) => name.replaceAll('.', '\\.'));
+    return {
+      pattern: new RegExp(`(?<![\\w.])(?:${names.join('|')})(?!\\w|\\.\\w)`, 'g'),
+      to: (name: string) => to.get(name)!,
+    };
+  }
+
   async list(names?: readonly string[]): Promise<ListedTool[]> {
     return (await this.visible(undefined, false, names)).map(({ definition, description }) =>
       isRemoteTool(definition)
@@ -653,27 +787,147 @@ export class ToolRegistry implements Tools {
     );
   }
 
-  /** agent: as for describe; such a caller cannot run what it is not offered. */
+  noun(name: string, definition: NounDefinition): () => Promise<void> {
+    return this.register(noun(name, definition));
+  }
+
+  tool(name: string): RegisteredTool | undefined {
+    const entry = this.entry(name);
+    return entry && { ...entry.tool };
+  }
+
+  /** The entry an address or name runs, with the input it takes there: an address `tool:action`
+   *  wraps its flat arguments into the noun's form. */
+  private resolve(name: string, input: unknown): { entry?: Entry; input: unknown } {
+    const colon = name.indexOf(':');
+    if (colon < 0) return { entry: this.entry(name), input };
+    const [tool, action] = [name.slice(0, colon), name.slice(colon + 1)];
+    const entry = this.entries.get(tool);
+    if (!entry?.tool.noun) return { input };
+    return { entry, input: { action, [action]: input } };
+  }
+
+  identity(name: string, input: unknown): ToolIdentity | undefined {
+    const resolved = this.resolve(name, input);
+    return resolved.entry && this.identify(resolved.entry, resolved.input);
+  }
+
+  private identify(entry: Entry, input: unknown): ToolIdentity {
+    const args = (value: unknown): Data =>
+      value && typeof value === 'object' && !Array.isArray(value) ? (value as Data) : {};
+    if (entry.alias) return { ...entry.alias, as: entry.name, args: args(input) };
+    const actions = !isRemoteTool(entry.definition) ? entry.definition.actions : undefined;
+    const action = (input as { action?: unknown } | undefined)?.action;
+    if (!actions || typeof action !== 'string' || !Object.hasOwn(actions, action))
+      return { tool: entry.name, as: entry.name, args: args(input) };
+    return {
+      tool: entry.name,
+      action,
+      as: actions[action]!.was?.[0] ?? entry.name,
+      args: args((input as Record<string, unknown>)[action]),
+    };
+  }
+
+  /** What a retired name's caller is told once it no longer runs, with its input in noun form. */
+  private renamed(name: string, target: { tool: string; action: string }, input?: unknown) {
+    const call =
+      input === undefined ? undefined : { action: target.action, [target.action]: input };
+    return new MervError(
+      'tool_renamed',
+      call
+        ? `${name} is now ${target.tool} with action ${target.action}: ${ellipsis(JSON.stringify(call), 300)}`
+        : `${name} was removed; what remains is ${target.tool} with action ${target.action}`,
+      404,
+      { tool: target.tool, action: target.action, ...(call && { arguments: call }) },
+    );
+  }
+
+  /** agent: as for describe; such a caller cannot run what it is not offered, but a retired name
+   *  runs for everyone for one release. `name` may be an address `tool:action`. */
   async invoke(
     name: string,
     caller: Caller,
     input: unknown,
     agent = false,
     admit?: ToolAdmission,
+    client?: string,
   ): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
+    // An outside agent's call is logged with its outcome, however it ends.
+    const logged = agent && !caller.session && !caller.conversation && this.log;
+    const started = Date.now();
+    let identity: ToolIdentity | undefined;
+    try {
+      const value = await this.run(name, caller, input, agent, admit, (seen) => {
+        identity = seen;
+      });
+      if (logged) this.record(caller, name, identity, started, client);
+      return value;
+    } catch (error) {
+      if (logged) this.record(caller, name, identity, started, client, error);
+      throw error;
+    }
+  }
+
+  private record(
+    caller: Caller,
+    name: string,
+    identity: ToolIdentity | undefined,
+    started: number,
+    client?: string,
+    error?: unknown,
+  ): void {
+    try {
+      this.log!({
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        ...(client && { client: client.slice(0, 200) }),
+        // A retired name as called, so that its use after the release stays countable.
+        tool: identity && identity.as !== name ? identity.tool : name.slice(0, 200),
+        ...(identity?.action && { action: identity.action }),
+        outcome: error === undefined ? 'succeeded' : 'failed',
+        ...(error !== undefined && {
+          errorCode: error instanceof MervError ? error.code : 'internal_error',
+        }),
+        startedAt: new Date(started).toISOString(),
+        durationMs: Date.now() - started,
+      });
+    } catch {
+      // The log never decides a call.
+    }
+  }
+
+  private async run(
+    name: string,
+    caller: Caller,
+    input: unknown,
+    agent: boolean,
+    admit: ToolAdmission | undefined,
+    seen: (identity: ToolIdentity) => void,
+  ): Promise<ToolInvocation> {
     // Scope refuses a conversation that also carries another authority, at its read decision.
     const rules = this.rulesFor(caller);
-    const entry = this.entry(name);
-    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
+    const resolved = this.resolve(name, input);
+    const entry = resolved.entry;
+    input = resolved.input;
+    if (!entry) {
+      const gone = this.removed.get(name);
+      if (gone) throw this.renamed(name, gone);
+      throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
+    }
+    name = entry.name;
+    if (entry.alias && !this.aliasesOpen && !caller.session)
+      throw this.renamed(name, entry.alias, input);
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
-    if (agent && !caller.session && !this.offered(entry, false))
+    if (agent && !caller.session && !entry.alias && !this.offered(entry, false))
       throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
     if (entry.remote && !this.access)
       throw new MervError('tool_forbidden', 'Remote tools require an explicit access policy', 403);
     input = plain(input);
+    const identity = this.identify(entry, input);
+    seen(identity);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       const session = caller.session ? this.sessionPolicy() : undefined;
@@ -687,7 +941,10 @@ export class ToolRegistry implements Tools {
           (await Promise.resolve(input)
             .then(entry.parse)
             .then(reads, () => false)));
-      const prepared = await session?.provider.prepare(caller, name, input as Data, read);
+      const prepared = await session?.provider.prepare(caller, name, input as Data, read, {
+        as: identity.as,
+        args: identity.args,
+      });
       // Preparation may allocate a reservation. Its original provider releases it in finally,
       // even when a replacement now owns the slot.
       try {
@@ -712,6 +969,7 @@ export class ToolRegistry implements Tools {
         // snapshot so that it decides on the rows the read sees. A read outside a snapshot
         // (open-world, or of a tool that also writes) is decided again after its handler: a
         // revocation while it waited withholds what it brought back (a signed link, an answer).
+        const snapshot = this.snapshotted(entry, parsed);
         const dispatch = async (activeCaller: Caller) => {
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
@@ -719,12 +977,11 @@ export class ToolRegistry implements Tools {
             if (!prepared && !entry.remote) await this.scope.require(activeCaller, 'read');
             return await entry.definition.handler(activeCaller, parsed);
           };
-          const result =
-            this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
+          const result = this.readScope && snapshot ? await this.readScope(run) : await run();
           rules?.returns?.(result);
-          if ((entry.tool.readOnly || entry.tool.reads?.(parsed)) && !this.snapshotted(entry))
+          if ((entry.tool.readOnly || entry.tool.reads?.(parsed)) && !snapshot)
             await this.scope.require(activeCaller, 'read');
-          completed = entry.complete(result);
+          completed = entry.complete(result, parsed);
           return result;
         };
         const result =
@@ -736,7 +993,7 @@ export class ToolRegistry implements Tools {
                 return dispatch(activeCaller);
               })
             : await dispatch(caller);
-        return completed ?? entry.complete(result);
+        return completed ?? entry.complete(result, parsed);
       } finally {
         if (session && prepared) await session.provider.cancel(prepared);
       }
@@ -763,6 +1020,7 @@ export class ToolRegistry implements Tools {
   async close(): Promise<void> {
     this.stopping = true;
     this.entries.clear();
+    this.removed.clear();
     for (const catalog of this.catalogs.values()) catalog.active = false;
     this.catalogs.clear();
     await Promise.allSettled([...this.running]);

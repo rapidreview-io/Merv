@@ -752,15 +752,12 @@ export class LeasedSessions implements Sessions {
    */
   private async stillHeld(
     caller: Caller,
-    invocation: { registrationId?: string; public: { tool: string } },
+    invocation: { registrationId?: string; rule: { as: string } },
     tx: Transaction,
   ): Promise<void> {
     // ownSession refuses an inquiry visit's write: only a work visit holds a lease.
     const session = working(await this.ownSession(caller, tx, 'write'));
-    if (
-      invocation.public.tool !== 'session.messages' &&
-      invocation.public.tool !== 'session.message.ack'
-    )
+    if (invocation.rule.as !== 'session.messages' && invocation.rule.as !== 'session.message.ack')
       await this.messaging.requireMessagesAcknowledged(session.id, tx);
     await this.source(session, tx);
     const held = await this.ownMove(session, tx, () =>
@@ -839,7 +836,7 @@ export class LeasedSessions implements Sessions {
       invocationId !== undefined &&
       invocationId === this.invocations.toolHandler.getStore()
     ) {
-      const tool = invocation?.public.tool;
+      const tool = invocation?.rule.as;
       if (tool !== 'session.messages' && tool !== 'session.message.ack') {
         await this.messaging.requireMessagesAcknowledged(session.id, tx);
       }

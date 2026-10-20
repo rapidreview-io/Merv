@@ -74,6 +74,9 @@ function admitCall(
 }
 interface InvocationState {
   public: SessionToolInvocation;
+  /** The name Sessions' own rules know the call by, whatever its form (a retired name, or a noun
+   *  tool's action), with its arguments flat; grants and observations keep the name as called. */
+  rule: { as: string; args: Data };
   sessionId: string;
   /** The registration its work visit's lease is checked against; an inquiry visit binds none. */
   registrationId?: string;
@@ -106,7 +109,7 @@ export interface InvocationHost {
   /** The cheap re-check of a call's validated lease, right before an effect it has. */
   held(
     caller: Caller,
-    invocation: { registrationId?: string; public: { tool: string } },
+    invocation: { registrationId?: string; rule: { as: string } },
     tx: Transaction,
   ): Promise<void>;
   /** The call's one lease check; a refusal is the session's closure, recorded and returned. */
@@ -227,6 +230,7 @@ export class SessionInvocations implements SessionToolPolicy {
     tool: string,
     input: Data,
     read?: boolean,
+    identity?: { as: string; args: Data },
   ): Promise<SessionToolInvocation> {
     ordinary(caller);
     caller = structuredClone(caller);
@@ -252,6 +256,7 @@ export class SessionInvocations implements SessionToolPolicy {
     });
     const state: InvocationState = {
       public: invocation,
+      rule: clone(identity ?? { as: tool, args: input }),
       sessionId: prepared.session.id,
       registrationId: prepared.registrationId,
       running: false,
@@ -348,15 +353,16 @@ export class SessionInvocations implements SessionToolPolicy {
         state.input,
       );
       await this.validate(invocation.caller, invocation.tool, state.input);
-      if (invocation.tool !== 'session.messages' && invocation.tool !== 'session.message.ack')
+      if (state.rule.as !== 'session.messages' && state.rule.as !== 'session.message.ack')
         await this.host.reading(async (tx) => await this.host.acknowledged(state.sessionId, tx));
       // A session has one assignment, the frozen one it was offered; another record's
-      // assignment is an admission of somebody else, so the question is refused by name.
+      // assignment is an admission of somebody else, so the question is refused by name, in
+      // either form the call takes.
       const own =
-        invocation.tool === 'workflow.assignment'
+        state.rule.as === 'workflow.assignment'
           ? await this.host.reading(async (tx) => await this.host.session(invocation.caller, tx))
           : undefined;
-      const asked = (state.input as { instanceId?: string }).instanceId;
+      const asked = (state.rule.args as { instanceId?: string }).instanceId;
       check(
         !own || asked === undefined || asked === own.instanceId,
         'execution_arguments_forbidden',

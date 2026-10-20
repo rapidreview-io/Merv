@@ -320,7 +320,7 @@ function BaseBody({
               return (
                 <Verb
                   key={action}
-                  tool={`code.base.${action}`}
+                  tool={`code.write:base_${action}`}
                   input={{ key: base.key }}
                   label={label}
                   title={title}
@@ -463,7 +463,7 @@ export function CodeCard({
               writer generation ends with its session. */}
           {administers && !!unit.quarantine && (
             <Verb
-              tool="code.unit.fence"
+              tool="code.write:unit_fence"
               input={{ unitId: unit.unitId }}
               label="Fence the writer"
               title="End this writer generation?"
@@ -598,7 +598,7 @@ function MirrorRef({
   const diverged = blocked.code === 'code_mirror_diverged';
   return (
     <Verb
-      tool="code.mirror.retry"
+      tool="code.write:mirror_retry"
       input={{
         operationId: blocked.operationId,
         ...(diverged && remote.trim() ? { acknowledgeRemote: remote.trim() } : {}),

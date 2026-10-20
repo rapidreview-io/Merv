@@ -133,7 +133,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.messages',
-        conversation: 'never' as const,
+        tier: 'worker' as const,
         description:
           "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; call it without sessionId. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
@@ -170,7 +170,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.question.resolve',
-        agent: 'never' as const,
+        for: 'conversations' as const,
         description:
           'Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.',
         inputSchema: z
@@ -191,7 +191,7 @@ export const sessionsToolsPlugin = {
         name: 'session.ask_owner',
         description:
           'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.',
-        conversation: 'never',
+        tier: 'worker' as const,
         inputSchema: z.object({ question: z.string().min(1).max(4000) }).strict(),
         handler: async (caller: Caller, input: { question: string }) => ({
           question: await sessions.messaging.ask(caller, input),
@@ -205,7 +205,7 @@ export const sessionsToolsPlugin = {
         name: 'session.await_compute',
         description:
           'Assigned worker only: end this visit to wait for Sandboxes jobs or workflows of this work that run for more than about 15 minutes, instead of sleeping or polling. Your session closes at once, uncounted, and they keep running. The work comes back to you in this conversation once all have ended or one fails (a workflow once its captures register), when someone messages your thread, or by the result’s until: after minutes, or 15 minutes before a machine they run on reaches its lease end, so you can renew it or move on. Commit first, and release machines that run none of them. Stop after calling it.',
-        conversation: 'never',
+        tier: 'worker' as const,
         inputSchema: z
           .object({
             jobIds: z
@@ -267,7 +267,7 @@ export const sessionsToolsPlugin = {
         name: 'session.message.ack',
         description:
           'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement and its reply are durable and written once: the same requestId and reply return it again, and anything else for an acknowledged message is request_conflict, so this is no channel for later notes. It records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
-        conversation: 'never',
+        tier: 'worker' as const,
         inputSchema: z
           .object({
             messageId: z.string().min(1).max(200),

@@ -1,4 +1,5 @@
 import { waitForManagedCode } from '../tests/fixtures/managed-code.js';
+import { moveMain } from '../tests/fixtures/code-binding.js';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -212,12 +213,7 @@ export async function seedGit(
   });
   await code.v2.putPart(human, begun.id, 0, imported.content);
   await code.v2.call(human, `uploads/${begun.id}/complete`, {});
-  await code.bindLocal(human, {
-    repositoryId: managed.project!.repositoryId,
-    mainOid: main,
-    expectedMainOid: managed.project!.main.oid,
-    requestId: id('bind'),
-  });
+  await moveMain(ctx.state, operator.projectId, main);
 
   // GitHub, faked at both its seams: its HTTP API in this process, and the repository it
   // publishes to as a bare repository this machine can push to.

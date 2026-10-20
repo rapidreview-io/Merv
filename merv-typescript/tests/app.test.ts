@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 86);
+    assert.equal(catalog.length, 66);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -364,7 +364,6 @@ test('a tool is titled in the words of the plugin that owns it', async () => {
       ['review.start', 'Claim review'],
       ['review.submit', 'Submit verdict'],
       ['task.mark_failed', 'Mark task failed'],
-      ['code.local.bind', 'Bind repository'],
     ])
       assert.equal((tools.get(name) as ToolDefinition).act?.title, title, name);
     // A tool whose owner names no act is said in its own words.
@@ -401,7 +400,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
   try {
     const offered = (await app.ctx.tools.list()).filter(
       (tool): tool is ToolDefinition =>
-        !isRemoteTool(tool) && tool.conversation !== 'never' && piOffers(tool.name),
+        !isRemoteTool(tool) && tool.tier !== 'ui' && piOffers(tool.name),
     );
     // A tool the relay would refuse is dropped from every turn: none may be.
     assert.deepEqual(

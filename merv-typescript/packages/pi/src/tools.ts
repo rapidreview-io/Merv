@@ -76,6 +76,8 @@ export const piToolsPlugin = {
         inputSchema: lookInput,
         readOnly: true,
         worker: 'never' as const,
+        // Pi's conversations' own: no MCP client is listed it.
+        for: 'conversations' as const,
         // Waits on the person's page, Cloudflare and the model, then writes its charge: no snapshot.
         openWorld: true,
         handler: (caller: Caller, input: unknown) => ctx.pi.look(caller, input),
@@ -96,6 +98,8 @@ export const piToolsPlugin = {
         inputSchema: showInput,
         readOnly: true,
         worker: 'never' as const,
+        // Pi's conversations' own: no MCP client is listed it.
+        for: 'conversations' as const,
         // Waits on the person's page, holding no read snapshot meanwhile.
         openWorld: true,
         handler: (caller: Caller, input: unknown) => ctx.pi.show(caller, input),
@@ -143,9 +147,11 @@ export const piToolsPlugin = {
         handler: (caller: Caller) => ctx.pi.stopMachine(caller),
       },
     ];
-    // Pi's own and its page's: a person's agent over MCP can use none of them.
+    // Pi's page's own (pi.*): no agent is listed them.
     for (const definition of definitions)
-      ctx.effect(() => ctx.tools.register({ ...definition, agent: 'never' }));
+      ctx.effect(() =>
+        ctx.tools.register({ ...definition, tier: definition.for ? 'deferred' : 'ui' }),
+      );
   },
 };
 export default piToolsPlugin;

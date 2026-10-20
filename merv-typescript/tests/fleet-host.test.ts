@@ -90,7 +90,8 @@ test('Fleet recovers a lost create under its stable profile id and create key th
               tool.name.slice(10),
               tool.readOnly,
               tool.reads?.({ action: 'list' }),
-              tool.conversation,
+              // The vendored host's own mark, which the registry reads as tier ui.
+              (tool as { conversation?: string }).conversation,
             ],
           ]
         : [],
@@ -107,7 +108,11 @@ test('Fleet recovers a lost create under its stable profile id and create key th
   );
   // Each reaches an agent conversation as the relay accepts it.
   for (const tool of await tools.list())
-    if (tool.name.startsWith('sandboxes.') && 'handler' in tool && tool.conversation !== 'never')
+    if (
+      tool.name.startsWith('sandboxes.') &&
+      'handler' in tool &&
+      tools.tool(tool.name)?.tier !== 'ui'
+    )
       assert.ok(piTool(describeTool(tool)), tool.name);
   const link = async (namespace: string, projectId: string) => {
     const ns = await ctx.sbxAccounts.ensureNativeNamespace(namespace);

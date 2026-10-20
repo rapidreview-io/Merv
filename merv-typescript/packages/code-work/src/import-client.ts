@@ -87,7 +87,7 @@ export async function importRepository(input: {
         );
       return JSON.parse(text) as T;
     };
-    const status = await tool<CodeProjectStatus>('code.status', {});
+    const status = await tool<CodeProjectStatus>('code.read', { action: 'status' });
     check(status.store, 'code_store_unavailable', 'That server keeps no Code repositories', 503);
     check(
       !status.store.tips.includes(tip),
@@ -145,12 +145,15 @@ export async function importRepository(input: {
       for (let offset = 0; offset < bytes; offset += 1024 * 1024)
         hash.update(chunk(offset, 1024 * 1024));
       const sha256 = hash.digest('hex');
-      let operation = await tool<CodeStoreOperation>('code.repository.import', {
-        source: 'bundle',
-        tip,
-        bundle: { sha256, bytes },
-        // The same bytes resume the same operation; another cut of the history is another.
-        requestId: `code-import:${sha256.slice(0, 40)}`,
+      let operation = await tool<CodeStoreOperation>('code.write', {
+        action: 'repository_import',
+        repository_import: {
+          source: 'bundle',
+          tip,
+          bundle: { sha256, bytes },
+          // The same bytes resume the same operation; another cut of the history is another.
+          requestId: `code-import:${sha256.slice(0, 40)}`,
+        },
       });
       const call = async (path: string, init: RequestInit) => {
         const response = await fetch(new URL(`/code/v2/uploads/${operation.id}${path}`, url), {

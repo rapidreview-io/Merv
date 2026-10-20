@@ -174,7 +174,7 @@ test('a file opened again never stands, even for a moment, over the text of the 
   });
   nothingMade();
   // Files too long to send in an answer: each is read whole from the raw route.
-  serve('/tools/code.files', (_, sent) => ({
+  serve('/tools/code.read:files', (_, sent) => ({
     body: {
       result: {
         kind: 'file',
@@ -708,7 +708,7 @@ test('one Code snapshot refreshes integrations and the selected graph, retaining
           },
         };
   });
-  serve('/tools/code.publication.sync', () => {
+  serve('/tools/code.write:publication_sync', () => {
     publications = [published({ proposalId: 'p2', title: 'Wave two', headOid: 'g2' }), published()];
     return { body: { result: publications } };
   });
@@ -1452,7 +1452,7 @@ test('an operator verb names its consequence and keeps the reason; a session is 
   t.after(unmount);
   servedProject();
   let sent: Record<string, unknown> = {};
-  serve('/tools/code.base.quarantine', (_call, body) => {
+  serve('/tools/code.write:base_quarantine', (_call, body) => {
     sent = body;
     return { body: { result: { key: 'b2', quarantined: true } } };
   });
@@ -1478,7 +1478,7 @@ test('an operator verb names its consequence and keeps the reason; a session is 
     assert.ok(!named(label), `${label} stands aside while another guard is open`);
   // The reason the tool keeps is asked for here, and nothing is sent without it.
   await click('Quarantine base');
-  assert.equal(requests.filter((line) => line.includes('code.base.quarantine')).length, 0);
+  assert.equal(requests.filter((line) => line.includes('code.write:base_quarantine')).length, 0);
   assert.ok(document.querySelector('.error-message'), text().slice(0, 400));
   await write('Reason', 'The retained result is poisoned.');
   // The refusal is read from the field, so it goes the moment the field has an answer.
@@ -1494,7 +1494,7 @@ test('a quarantined base offers one verb, its release, and keeps the verificatio
   t.after(unmount);
   servedProject();
   let sent: Record<string, unknown> = {};
-  serve('/tools/code.base.release', (_call, body) => {
+  serve('/tools/code.write:base_release', (_call, body) => {
     sent = body;
     return { body: { result: { key: 'b1', quarantined: false } } };
   });
@@ -1541,7 +1541,7 @@ test('fencing a writer is offered to a project administrator and to nobody else'
   await unmount();
   servedProject();
   let sent: Record<string, unknown> = {};
-  serve('/tools/code.unit.fence', (_call, body) => {
+  serve('/tools/code.write:unit_fence', (_call, body) => {
     sent = body;
     return { body: { result: { unitId: 'u8', state: 'closed' } } };
   });
@@ -1693,14 +1693,14 @@ test('the Operations fold holds the machinery, and a blocked ref its one verb', 
   );
   await click('Retry mirror');
   assert.equal(
-    requests.filter((line) => line.includes('code.mirror.retry')).length,
+    requests.filter((line) => line.includes('code.write:mirror_retry')).length,
     0,
     'nothing is sent to be refused',
   );
   assert.ok(document.querySelector('.error-message'), text().slice(0, 400));
   await write('The commit you kept', 'deadbeefdeadbeef');
   await click('Retry mirror');
-  assert.equal(requests.filter((line) => line.includes('code.mirror.retry')).length, 1);
+  assert.equal(requests.filter((line) => line.includes('code.write:mirror_retry')).length, 1);
 });
 
 test('publishing that is off says why, and a fold with no machinery does not open', async (t) => {
@@ -1747,7 +1747,7 @@ test('the release canary is recorded by a project administrator where publicatio
   t.after(unmount);
   const controls = { blockers: ['code_publication_canary_required'] };
   const sent: Record<string, unknown>[] = [];
-  serve('/tools/code.publication.control', (_call, body) => {
+  serve('/tools/code.write:publication_control', (_call, body) => {
     sent.push(body);
     return { body: { result: { canary: { staleMerged: false } } } };
   });
@@ -1758,7 +1758,7 @@ test('the release canary is recorded by a project administrator where publicatio
   await unmount();
 
   servedProject({ publication: { records: [], controls } });
-  serve('/tools/code.publication.control', (_call, body) => {
+  serve('/tools/code.write:publication_control', (_call, body) => {
     sent.push(body);
     return { body: { result: { canary: { staleMerged: false } } } };
   });
@@ -1815,7 +1815,7 @@ test('a canary whose answer never came is retried as it was sent, and no other r
     publication: { records: [], controls: { disabled: true, canary: passed, blockers: [] } },
   });
   const sent: Record<string, unknown>[] = [];
-  serve('/tools/code.publication.control', (_call, body) => {
+  serve('/tools/code.write:publication_control', (_call, body) => {
     sent.push(body);
     return sent.length === 1
       ? { network: true }
@@ -1889,7 +1889,7 @@ test('an uncertain reviewed merge retries its original request and pins', async 
     body: { result: { publication: proposal, details: publicationDetails(pull) } },
   });
   const sent: Record<string, unknown>[] = [];
-  serve('/tools/code.publication.merge', (_call, body) => {
+  serve('/tools/code.write:publication_merge', (_call, body) => {
     sent.push(body);
     return sent.length === 1
       ? { network: true }
@@ -1985,7 +1985,7 @@ test('a changed merge base or reviewed head starts a new request intent', async 
     body: { result: { publication: proposal, details: publicationDetails(pull) } },
   }));
   const sent: Record<string, unknown>[] = [];
-  serve('/tools/code.publication.merge', (_call, body) => {
+  serve('/tools/code.write:publication_merge', (_call, body) => {
     sent.push(body);
     return sent.length < 3
       ? { network: true }
@@ -2381,7 +2381,7 @@ test('a unit waiting on its publication says so, and shows where that publicatio
   // The publication carries the blocker Code publishes, so its instruction is folded as on
   // Needs you.
   const fold = document.querySelector('details.ov-said')?.textContent ?? '';
-  assert.ok(fold.includes('code.publication.merge'), fold);
+  assert.ok(fold.includes('code.write publication_merge'), fold);
 });
 
 test('the merge is offered to a project administrator alone, and said to everyone', async (t) => {
@@ -2715,12 +2715,14 @@ test('the same move drawn inside the canvas offers no control back to the canvas
 
   test('uncertain preparation retries the selected commit and request even after its branch moves', async (t) => {
     t.after(unmount);
-    serve('/tools/code.status', { body: { result: { project: null, store: { hosted: false } } } });
+    serve('/tools/code.read:status', {
+      body: { result: { project: null, store: { hosted: false } } },
+    });
     serve('/code/github/branches', {
       body: { branches: [{ name: status.baseBranch, sha: 'a'.repeat(40) }] },
     });
     const sent: Record<string, unknown>[] = [];
-    serve('/tools/code.repository.prepare', (_count, body) => {
+    serve('/tools/code.write:repository_prepare', (_count, body) => {
       sent.push(body);
       return sent.length === 1
         ? { network: true }
@@ -2754,12 +2756,12 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     const local = 'a'.repeat(40),
       remote = 'b'.repeat(40),
       moved = 'c'.repeat(40);
-    serve('/tools/code.status', { body: { result: { project: { main: { oid: local } } } } });
+    serve('/tools/code.read:status', { body: { result: { project: { main: { oid: local } } } } });
     serve('/code/github/branches', {
       body: { branches: [{ name: status.baseBranch, sha: remote }] },
     });
     const sent: Record<string, unknown>[] = [];
-    serve('/tools/code.repository.prepare', (_count, body) => {
+    serve('/tools/code.write:repository_prepare', (_count, body) => {
       sent.push(body);
       return sent.length === 2
         ? {

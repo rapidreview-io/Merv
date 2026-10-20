@@ -37,11 +37,11 @@ test("a person's agent over MCP is offered what a Pi conversation is, while Merv
     description: "The page's own read",
     readOnly: true,
     inputSchema: input,
-    conversation: 'never',
+    tier: 'ui',
     handler,
   });
   // Pi's own and its profiles' tools, which no outside agent can use.
-  tools.register({ name: 'x.pi', description: 'Pi', inputSchema: input, handler, agent: 'never' });
+  tools.register({ name: 'x.pi', description: 'Pi', inputSchema: input, handler, tier: 'ui' });
   tools.register({
     name: 'x.intake',
     description: 'A profile',
@@ -86,5 +86,5 @@ test("a tool's description carries MCP's hints for a client's own permission pro
       openWorldHint: false,
     },
   );
-  assert.deepEqual(hints({ conversation: 'never' }), { readOnlyHint: false, openWorldHint: false });
+  assert.deepEqual(hints({ tier: 'ui' }), { readOnlyHint: false, openWorldHint: false });
 });

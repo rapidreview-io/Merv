@@ -1320,7 +1320,7 @@ export class CodeBaseService {
    * A check that could not run. A configured command with no adapter, an unreadable command
    * and a tree too large to ship are not conflicts — there is nothing for a worker to
    * resolve — and none of them is mended by trying again, so the base stays unsealed at
-   * blocked_infra, where code.status already lists it and code.base.retry is already the
+   * blocked_infra, where code.read status already lists it and code.write base_retry is already the
    * remedy. Everything else is transient and walks the same retry ladder every other
    * infrastructure fault does.
    */

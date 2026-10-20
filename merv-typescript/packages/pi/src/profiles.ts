@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { check, digest, toolNamePattern } from '@merv/contracts';
 import { createInput, id } from './schema.js';
-
 import type { PiProfile, PiProfileBinding, PiStoredProfile } from './profile-types.js';
 export type * from './profile-types.js';
+
+/** A tool name, or an address `tool:action`. */
+const address = new RegExp(`${toolNamePattern.source.slice(0, -1)}(:[a-z][a-z0-9_]*)?$`);
 export const profiledCreateInput = createInput
   .extend({
     profile: z.object({ id, version: z.number().int().positive(), requestId: id }).strict(),
@@ -21,7 +23,8 @@ const profileDefinition = z
       })
       .strict(),
     instructions: z.string().trim().min(1).max(32_000),
-    tools: z.array(z.string().regex(toolNamePattern)).max(64),
+    // A tool name (all its actions) or an address `tool:action` (that action only).
+    tools: z.array(z.string().regex(address)).max(64),
     // Absent for a role without one, so earlier definitions keep their hash.
     shell: z.literal(true).optional(),
   })

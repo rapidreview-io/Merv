@@ -39,7 +39,7 @@ function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
   const [reason, setReason] = useState<string>();
   const [sent, setSent] = useState('');
   const command = useCommand<unknown>({
-    tool: 'code.publication.control',
+    tool: 'code.write:publication_control',
     validate: (value) => !!value && typeof value === 'object',
     onSuccess: () => {
       setReason(undefined);
@@ -111,7 +111,7 @@ function MergeGuard({
 }) {
   const [confirm, setConfirm] = useState(false);
   const command = useCommand<CodePublication>({
-    tool: 'code.publication.merge',
+    tool: 'code.write:publication_merge',
     validate: (value) =>
       value?.proposalId === publication.proposalId && !!(value.pull?.merged || value.stale),
     onSuccess: () => {
@@ -376,7 +376,7 @@ export function GitHubPublications({
             disabled={busy}
             onClick={() =>
               void act(async () => {
-                await call('code.publication.sync');
+                await call('code.write:publication_sync');
                 onDone();
               })
             }

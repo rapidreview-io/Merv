@@ -696,7 +696,7 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
     const description = describeTool(definition);
     assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
     // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(definition.conversation, undefined);
+    assert.equal(definition.tier, undefined);
     assert.ok(piTool(description), definition.name);
     assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
     assert.match(definition.description, /untrusted source material/);
@@ -864,7 +864,7 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
   );
   const catalog = (await mcp.listTools()).tools;
   // A reader's agent is offered the default composition's 38 reads, and these five.
-  assert.equal(catalog.length, 46);
+  assert.equal(catalog.length, 42);
   for (const name of definitionsOf(new NisaService()))
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

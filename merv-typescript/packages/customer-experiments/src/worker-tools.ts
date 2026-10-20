@@ -29,7 +29,7 @@ export function registerWorkerTools(
   const disposers = [
     tools.register({
       name: 'customer_experiment.get',
-      conversation: 'never',
+      tier: 'worker',
       description:
         'Read the fixed customer contract, manifest, current execution and result review for this experiment.',
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
@@ -39,7 +39,7 @@ export function registerWorkerTools(
     }),
     tools.register({
       name: 'customer_experiment.submit_results',
-      conversation: 'never',
+      tier: 'worker',
       description:
         "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures; cite any other by id in the report. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.",
       inputSchema: submitResultsSchema,
@@ -48,7 +48,7 @@ export function registerWorkerTools(
     }),
     tools.register({
       name: 'customer_experiment.progress',
-      conversation: 'never',
+      tier: 'worker',
       description:
         "Tell the customer how the run is going; their status page shows each line. Post a short plain sentence at each milestone (machine ready, files checked, each model or condition started or finished, results being written). With a finished item, pass result {name, score, total} (e.g. one model's correct answers out of the cases); pass step {done, total} for how many planned items are finished. No paths, IDs, hashes or internal detail.",
       inputSchema: progressSchema,
@@ -56,7 +56,7 @@ export function registerWorkerTools(
     }),
     tools.register({
       name: 'customer_experiment.files',
-      conversation: 'never',
+      tier: 'worker',
       description:
         "List the customer's request files frozen into the accepted contract: key, size and ETag of each.",
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
@@ -67,7 +67,7 @@ export function registerWorkerTools(
     }),
     tools.register({
       name: 'customer_experiment.file_download',
-      conversation: 'never',
+      tier: 'worker',
       description:
         'A short-lived presigned GET URL for one request file listed by customer_experiment.files.',
       inputSchema: z.object({ id: z.string().min(1), key: z.string().min(1).max(4096) }).strict(),

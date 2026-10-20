@@ -1209,16 +1209,16 @@ test('the assembled application serves both reads inside one read-only snapshot,
   const declared = (await app.ctx.tools.list()).filter(({ name }) => name.startsWith('ui.running'));
   assert.deepEqual(
     declared.map((definition) => {
-      const { name, readOnly, conversation } = definition as {
+      const { name, readOnly, tier } = definition as {
         name: string;
         readOnly?: boolean;
-        conversation?: string;
+        tier?: string;
       };
-      return { name, readOnly, conversation };
+      return { name, readOnly, tier };
     }),
     [
-      { name: 'ui.running', readOnly: true, conversation: 'never' },
-      { name: 'ui.running_panel', readOnly: true, conversation: 'never' },
+      { name: 'ui.running', readOnly: true, tier: 'ui' },
+      { name: 'ui.running_panel', readOnly: true, tier: 'ui' },
     ],
   );
 

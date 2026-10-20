@@ -2,14 +2,12 @@ import { OperationJournal } from './request-journal.js';
 import {
   canonical,
   check,
-  codeLocalBindInputSchema,
   digest,
   inTransaction,
   newId,
   now,
   recorded,
   type Caller,
-  type CodeLocalBindInput,
   type CodeProjectBinding,
   type Scope,
   type Sql,
@@ -284,98 +282,6 @@ export class CodeUnitStore {
       409,
     );
   }
-  async bindLocal(
-    caller: Caller,
-    value: CodeLocalBindInput,
-    stored = false,
-    tx?: Transaction,
-  ): Promise<CodeProjectBinding> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    const input = parseCodeInput(codeLocalBindInputSchema, value);
-    return await inTransaction(this.state, tx, async (tx) => {
-      requireAdministrator(
-        await this.scope.require(caller, 'admin', tx),
-        'code_human_required',
-        'A project administrator or their agent binds the repository and names its main',
-      );
-      const principal = `actor:${caller.actorId}`;
-      const { requestId, ...payload } = input;
-      const inputHash = digest(payload);
-      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
-      const previous = await journal.previous();
-      if (previous) {
-        // Every bind journalled before the lineage existed stored a result without `previous`,
-        // and the contract now says the field is always there: the journal stays byte-identical
-        // and the answer is normalised on the way out.
-        const replayed = JSON.parse(previous.result_json) as CodeProjectBinding;
-        return { ...replayed, previous: replayed.previous ?? [] };
-      }
-      const operationId = newId('cop'),
-        at = now();
-      const main = canonical({
-        oid: input.mainOid,
-        admittedBy: caller.actorId,
-        admittedAt: at,
-        operationId,
-        ...(stored ? { stored: true } : {}),
-      });
-      const bound = await this.project(tx, caller.projectId);
-      if (!bound) {
-        check(
-          input.expectedMainOid === undefined,
-          'code_main_changed',
-          'This project has no main yet; bind it without expectedMainOid',
-          409,
-        );
-        await tx.run(
-          'INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES (?,?,?,?,?,?,?,?)',
-          caller.projectId,
-          'local',
-          input.repositoryId,
-          // Code keeps every project's history: a first bind declares it managed, as older
-          // servers read it.
-          canonical({ boundBy: caller.actorId, boundAt: at, operationId, managed: true }),
-          main,
-          '{}',
-          '[]',
-          at,
-        );
-      } else {
-        check(
-          bound.repositoryId === input.repositoryId,
-          'code_rebind_required',
-          'This project is bound to another repository; code.repository.rebind changes the binding after verifying that Code holds the project’s history',
-          409,
-        );
-        check(
-          input.expectedMainOid === bound.main.oid,
-          'code_main_changed',
-          'Main is not where expectedMainOid says; read code.status and decide again',
-          409,
-        );
-        if (input.mainOid !== bound.main.oid)
-          await tx.run(
-            'UPDATE code_projects SET main_json=?,updated_at=? WHERE project_id=?',
-            main,
-            at,
-            caller.projectId,
-          );
-      }
-      // Naming main is what every unit with no retained code beneath it was waiting for.
-      await this.writers.changed(tx, caller.projectId);
-      const result = (await this.project(tx, caller.projectId))!;
-      await journal.complete(operationId, 'local_bind', payload, result, at);
-      await recorded(this.state, tx, caller, 'code.local_bound', caller.projectId, {
-        operationId,
-        repositoryId: input.repositoryId,
-        mainOid: input.mainOid,
-        previousMainOid: bound?.main.oid ?? null,
-      });
-      return result;
-    });
-  }
-
   async hosted(caller: Caller, tx: Transaction): Promise<boolean> {
     this.assertOpen();
     this.state.assertTransaction(tx);

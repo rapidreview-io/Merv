@@ -30,7 +30,7 @@ export interface CodeRepositoryPreparation {
   headOid: string;
   operation: CodeStoreOperation;
 }
-/** The inputs of `code.unit.fence` and `code.mirror.retry`, which Code parses again itself. */
+/** The inputs of code.write `unit_fence` and `mirror_retry`, which Code parses again itself. */
 export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
 export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
 

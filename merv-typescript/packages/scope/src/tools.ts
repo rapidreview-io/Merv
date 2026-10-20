@@ -19,7 +19,7 @@ export const scopeToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
-      conversation?: 'never',
+      tier?: 'ui',
       worker?: 'never',
     ) =>
       ctx.effect(() =>
@@ -29,7 +29,7 @@ export const scopeToolsPlugin = {
           inputSchema,
           handler,
           readOnly,
-          conversation,
+          ...(tier && { tier }),
           worker,
         }),
       );
@@ -95,7 +95,7 @@ export const scopeToolsPlugin = {
         .strict(),
       async (c, i) => await ctx.scope.credentials.issueActor(c, i),
       false,
-      'never',
+      'ui',
     );
     register(
       'actor.credentials',
@@ -103,7 +103,7 @@ export const scopeToolsPlugin = {
       z.object({ actorId: z.string().min(1).optional() }).strict(),
       async (c, i) => await ctx.scope.credentials.actorCredentials(c, i.actorId),
       true,
-      'never',
+      'ui',
     );
     register(
       'actor.issue_token',
@@ -116,7 +116,7 @@ export const scopeToolsPlugin = {
         .strict(),
       async (c, i) => await ctx.scope.credentials.issueActorCredential(c, i),
       false,
-      'never',
+      'ui',
     );
     register(
       'actor.rotate_token',
@@ -129,7 +129,7 @@ export const scopeToolsPlugin = {
         .strict(),
       async (c, i) => await ctx.scope.credentials.rotateCredential(c, i),
       false,
-      'never',
+      'ui',
     );
     register(
       'actor.revoke_token',
@@ -140,7 +140,7 @@ export const scopeToolsPlugin = {
         return { revoked: true };
       },
       false,
-      'never',
+      'ui',
     );
     register(
       'actor.revoke',
@@ -151,7 +151,7 @@ export const scopeToolsPlugin = {
         return { revoked: true };
       },
       false,
-      'never',
+      'ui',
     );
   },
 };

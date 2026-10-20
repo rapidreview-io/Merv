@@ -954,7 +954,7 @@ test('web tools are open-world reads: described as such, run without a snapshot,
     const description = describeTool(definition);
     assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
     // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(definition.conversation, undefined);
+    assert.equal(definition.tier, undefined);
     assert.ok(piTool(description), definition.name);
     assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
     assert.match(definition.description, /Markdown link/);
@@ -1117,7 +1117,7 @@ test('the render composes web search into Main, where MCP clients list and call 
   );
   const catalog = (await mcp.listTools()).tools;
   // A reader's agent is offered the default composition's 38 reads, and these two.
-  assert.equal(catalog.length, 43);
+  assert.equal(catalog.length, 39);
   for (const name of ['web.search', 'web.extract'])
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

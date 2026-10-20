@@ -972,7 +972,7 @@ export const fleetWorkflowPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'fleet.daily_tokens',
-        conversation: 'never' as const,
+        tier: 'ui' as const,
         description:
           'Your own daily limit of model tokens for Fleet workers, at most the cap the platform sets you (`cap`), and what they used today (UTC). Only you, signed in, can lower it.',
         inputSchema: z

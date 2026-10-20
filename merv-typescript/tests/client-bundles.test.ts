@@ -53,7 +53,13 @@ test('every tool a skill names is registered', async (t) => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const registered = new Set((await app.ctx.tools.list()).map((tool) => tool.name));
+  // What an owner's agent is listed: a skill naming a retired name (listed to no agent) fails.
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Skills',
+    actorName: 'Owner',
+  });
+  const owner = { projectId: boot.project.id, actorId: boot.actor.id };
+  const registered = new Set((await app.ctx.tools.describe(owner, true)).map((tool) => tool.name));
   const named = Object.values(skillsOf('claude-code')).flatMap((text) =>
     [...text.matchAll(/`([a-z_]+(?:\.[a-z_]+)+)`/g)].map((match) => match[1]!),
   );

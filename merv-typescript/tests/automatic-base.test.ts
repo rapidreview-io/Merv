@@ -1,4 +1,5 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
+import { moveMain } from './fixtures/code-binding.js';
 import {
   createService,
   digest,
@@ -216,12 +217,12 @@ async function fixture(t: TestContext) {
     await state.transaction(async (tx) => await code.declareUnit(admin, work.id, tx));
     return work;
   };
-  const bind = async (mainOid: string, expectedMainOid?: string, hosted = true) => {
-    await code.bindLocal(admin, {
+  const bind = async (mainOid: string, _expectedMainOid?: string, hosted = true) => {
+    // Naming main is what every unit with no retained code beneath it was waiting for.
+    await moveMain(state, project.id, mainOid, {
       repositoryId: repository,
-      mainOid,
-      ...(expectedMainOid === undefined ? {} : { expectedMainOid }),
-      requestId: request(),
+      stored: false,
+      changed: (tx) => core.writers.changed(tx, project.id),
     });
     if (hosted) {
       await state.transaction(async (tx) => {

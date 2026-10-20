@@ -247,7 +247,7 @@ export class PublicationHost {
     check(
       operation!.status !== 'failed' || operation!.createdAt >= started,
       'code_publication_import_failed',
-      `Importing the merge commit failed ${PUBLICATION_IMPORT_ATTEMPTS} times; read code.status and import ${ref} with code-import`,
+      `Importing the merge commit failed ${PUBLICATION_IMPORT_ATTEMPTS} times; read code.read status and import ${ref} with code-import`,
       409,
     );
     check(

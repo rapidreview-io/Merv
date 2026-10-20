@@ -100,7 +100,7 @@ export const boardToolsPlugin = {
           "A board's shapes as Excalidraw draws them, or those changed after a revision (the page itself reads this).",
         inputSchema: sceneSchema,
         readOnly: true,
-        conversation: 'never',
+        tier: 'ui',
         handler: async (caller: Caller, input: z.infer<typeof sceneSchema>) =>
           await board.scene(caller, input.id, input.since),
       }),
@@ -111,7 +111,7 @@ export const boardToolsPlugin = {
         description:
           'Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.',
         inputSchema: saveSchema,
-        conversation: 'never',
+        tier: 'ui',
         handler: async (caller: Caller, input: z.infer<typeof saveSchema>) =>
           await board.save(caller, input.id, input.elements as never),
       }),
@@ -122,7 +122,7 @@ export const boardToolsPlugin = {
         description:
           'Rename a board, or archive it (archived boards leave the list and stay retained).',
         inputSchema: setSchema,
-        conversation: 'never',
+        tier: 'ui',
         handler: async (caller: Caller, { id: boardId, ...change }: z.infer<typeof setSchema>) =>
           await board.set(caller, boardId, change),
       }),

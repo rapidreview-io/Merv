@@ -11,11 +11,15 @@ export interface PiProfile {
   /** The role also has a terminal on its machine (PI_SHELL_TOOLS), in the conversation's folder. */
   shell?: boolean;
   context?(input: { binding: PiProfileBinding; caller: Caller }): Promise<string>;
-  /** Additional request-scope check, run for every allowed call before the tool is invoked. */
+  /** Additional request-scope check, run for every allowed call before the tool is invoked. A
+   *  retired name and its noun action arrive alike: `name` is the name rules know the call by,
+   *  `input` its arguments flat, and `tool`/`action` the noun action where there is one. */
   authorizeTool?(input: {
     binding: PiProfileBinding;
     caller: Caller;
     name: string;
+    tool?: string;
+    action?: string;
     input: Record<string, unknown>;
   }): Promise<void>;
 }

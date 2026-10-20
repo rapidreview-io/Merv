@@ -68,7 +68,7 @@ const next: Record<string, string> = {
   code_git_failed:
     'Read what Git said on this operation: the project’s repository on the Code volume could not take the step it names, and the operation replays once it can.',
   code_import_interrupted:
-    'Call code.repository.import again with the same requestId; reading GitHub needs the administrator who asked for it.',
+    'Call code.write repository_import again with the same requestId; reading GitHub needs the administrator who asked for it.',
   code_upload_incomplete: 'Send the parts from `received` on, then complete the operation again.',
   code_bundle_hash_mismatch: 'Send the whole bundle again from offset 0, then complete it again.',
 };
@@ -130,7 +130,7 @@ export class CodeReceiver {
         check(
           await this.core.project(tx, caller.projectId),
           'code_project_unbound',
-          'Bind this project with code.local.bind before importing its repository',
+          'This project has no Code repository yet: Merv creates one for every project, so wait for it and import again',
           409,
         );
         const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);

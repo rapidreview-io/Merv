@@ -145,7 +145,7 @@ export const uiPlugin = {
           'Read your actor identity and selected project, the sidebar rows currently registered by active plugins with live row status, and the plugin lifecycle table.',
         inputSchema: z.object({}).strict(),
         // The page's own read: a person's agent and a leased worker read the records directly.
-        conversation: 'never',
+        tier: 'ui' as const,
         readOnly: true,
         worker: 'never' as const,
         handler: async (caller: Caller) => ({
@@ -165,7 +165,7 @@ export const uiPlugin = {
         // milliseconds; parallel parts each queued on the writer lock cost seconds. Each part
         // reads behind its own savepoint, so one that fails, a timeout included, is null alone.
         // The page's own read: a person's agent and a leased worker read the records directly.
-        conversation: 'never',
+        tier: 'ui' as const,
         readOnly: true,
         worker: 'never' as const,
         handler: async (caller: Caller) =>
@@ -222,7 +222,7 @@ export const uiPlugin = {
           'Read what is in flight in this project in three lanes: the work, the agent sessions on it and the machines they use, with what needs a person and the edges between them.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
-        conversation: 'never' as const,
+        tier: 'ui' as const,
         worker: 'never' as const,
         handler: async (caller: Caller) => await runningBoard(running, caller),
       }),
@@ -234,7 +234,7 @@ export const uiPlugin = {
           "Read the Running sidebar of one key: its owner's head, the sections every owner adds about it, and the controls this caller may use.",
         inputSchema: z.object({ key: z.string().regex(runningKeyPattern) }).strict(),
         readOnly: true,
-        conversation: 'never' as const,
+        tier: 'ui' as const,
         worker: 'never' as const,
         handler: async (caller: Caller, input: { key: string }) =>
           await runningPanel(running, caller, input.key),

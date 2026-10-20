@@ -6,11 +6,11 @@ Board keeps a project's whiteboards: unlimited boards per project, for ideas. Pe
 
 Board requires State and Scope and nothing else. A card that links to a task, an experiment, a file or a paper keeps only that record's id (`merv:<id>`, or a web address); the page names and opens it through `project.references`, as a link in any text is, so Board reads nothing of other plugins and none of them knows boards exist. Its row declares `opens: 'board_'`, so a board's id opens on its page wherever it is named.
 
-| Entry               | Requires     | Adds                                                                                                                                                                     |
-| ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@merv/board`       | State, Scope | Boards, their shapes and revisions; `board.created`, `board.changed` and `board.set` events                                                                              |
-| `@merv/board/tools` | Board, Tools | `board.read`, `board.draw` and `board.look` for agents, a short guide paragraph; `board.scene`, `board.save` and `board.set` for the page only (`conversation: 'never'`) |
-| `@merv/board/ui`    | Board, UI    | The Board row under Research                                                                                                                                             |
+| Entry               | Requires     | Adds                                                                                                                                                          |
+| ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@merv/board`       | State, Scope | Boards, their shapes and revisions; `board.created`, `board.changed` and `board.set` events                                                                   |
+| `@merv/board/tools` | Board, Tools | `board.read`, `board.draw` and `board.look` for agents, a short guide paragraph; `board.scene`, `board.save` and `board.set` for the page only (`tier: 'ui'`) |
+| `@merv/board/ui`    | Board, UI    | The Board row under Research                                                                                                                                  |
 
 ## The agent's tools
 

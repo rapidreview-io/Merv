@@ -87,18 +87,18 @@ function registry(readScope?: <T>(fn: () => Promise<T>) => Promise<T>) {
 test('a conversation sees every conversable native tool and runs it as its person, never a mounted or never one', async () => {
   const fixture = registry();
   let ran = 0;
-  const probe = (name: string, conversation?: 'never', result: unknown = name) =>
+  const probe = (name: string, tier?: 'ui', result: unknown = name) =>
     fixture.tools.register({
       name,
       description: name,
       inputSchema: z.object({}).strict(),
-      conversation,
+      tier,
       handler: () => {
         ran++;
         return result;
       },
     });
-  probe('never', 'never');
+  probe('never', 'ui');
   probe('leaky', undefined, { nested: [{ token: 'bearer' }] });
   const catalog = fixture.tools.createCatalog('bridge');
   await catalog.replace([

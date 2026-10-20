@@ -385,7 +385,7 @@ async function attention(
         : {
             code: newest.deferral?.cause ?? 'preparation_deferred',
             why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
-            next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
+            next: 'Look at where this work’s history lives: with Code’s own repository that is code.read status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
           }),
     });
   }

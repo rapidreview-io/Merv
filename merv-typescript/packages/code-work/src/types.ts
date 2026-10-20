@@ -4,7 +4,6 @@ import type {
   CodeCommandRecord,
   CodeCommitCommand,
   CodeCommitInput,
-  CodeLocalBindInput,
   CodeProjectBinding,
   GitHubPullDetails,
   RunningMark,
@@ -145,9 +144,8 @@ export interface CodeUnits {
   basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null>;
   /** The commit a writer of this unit starts from now: its newest admitted, else its pin. */
   resumesFrom(caller: Caller, unitId: string, tx: Transaction): Promise<string | null>;
-  bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
-  /** A folder or file of the code as of main, a unit of work, or a commit (code.files). */
+  /** A folder or file of the code as of main, a unit of work, or a commit (code.read files). */
   files(
     caller: Caller,
     input: { ref?: string; path?: string },
@@ -204,11 +202,6 @@ export interface CodeRepositoryControls {
   importRepository(
     caller: Caller,
     input: import('@merv/code/store/protocol').CodeRepositoryImportInput,
-  ): Promise<import('@merv/code/store/protocol').CodeStoreOperation>;
-  /** Change the repository identity of a hosted project, after proving Code holds its history. */
-  rebindRepository(
-    caller: Caller,
-    input: import('@merv/code/store/protocol').CodeRepositoryRebindInput,
   ): Promise<import('@merv/code/store/protocol').CodeStoreOperation>;
   configureRepository(
     caller: Caller,

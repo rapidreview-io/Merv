@@ -1,0 +1,825 @@
+{
+  "base": "origin/main 5e4f210a5",
+  "listings": {
+    "mcp": [
+      "actor.list",
+      "actor.whoami",
+      "artifact.create",
+      "artifact.get",
+      "artifact.list",
+      "artifact.read",
+      "artifact.upload_begin",
+      "artifact.upload_complete",
+      "artifact.upload_resume",
+      "board.draw",
+      "board.look",
+      "board.read",
+      "code.base.cancel",
+      "code.base.quarantine",
+      "code.base.release",
+      "code.base.repair",
+      "code.base.resume",
+      "code.base.retry",
+      "code.base.suspend",
+      "code.files",
+      "code.local.bind",
+      "code.log",
+      "code.mirror.retry",
+      "code.operation",
+      "code.publication.control",
+      "code.publication.merge",
+      "code.publication.sync",
+      "code.repository.configure",
+      "code.repository.import",
+      "code.repository.prepare",
+      "code.repository.rebind",
+      "code.status",
+      "code.unit.fence",
+      "code.unit.get",
+      "experiment.attach",
+      "experiment.create",
+      "experiment.exhibit",
+      "experiment.get_state",
+      "experiment.list",
+      "experiment.transition",
+      "paper.cite",
+      "paper.patch",
+      "paper.read",
+      "project.brief",
+      "project.get",
+      "project.records",
+      "project.references",
+      "report.check",
+      "report.open",
+      "research.advance",
+      "research.create",
+      "research.end",
+      "research.get",
+      "research.lineage",
+      "research.list",
+      "research.replan",
+      "review.get",
+      "review.list",
+      "review.release",
+      "review.start",
+      "review.submit",
+      "script.run",
+      "script.tools",
+      "session.ask_thread",
+      "session.dispatch",
+      "session.find",
+      "session.halt",
+      "session.message",
+      "session.observe",
+      "session.release_hold",
+      "session.stuck",
+      "session.thread_messages",
+      "session.threads",
+      "system.status",
+      "task.create",
+      "task.get",
+      "task.list",
+      "task.mark_failed",
+      "ui.read",
+      "usage.read",
+      "usage.set_budget",
+      "workflow.assignment",
+      "workflow.begin",
+      "workflow.catalog",
+      "workflow.extend_limit",
+      "workflow.process",
+      "workflow.status_and_next"
+    ],
+    "worker": [
+      "actor.credentials",
+      "actor.whoami",
+      "artifact.create",
+      "artifact.get",
+      "artifact.list",
+      "artifact.read",
+      "artifact.storage_status",
+      "artifact.upload_begin",
+      "artifact.upload_complete",
+      "artifact.upload_resume",
+      "board.look",
+      "board.read",
+      "board.scene",
+      "code.files",
+      "code.log",
+      "code.operation",
+      "code.publication.read",
+      "code.status",
+      "code.unit.get",
+      "experiment.attach",
+      "experiment.exhibit",
+      "experiment.get_state",
+      "experiment.list",
+      "experiment.transition",
+      "paper.read",
+      "project.brief",
+      "project.get",
+      "project.records",
+      "project.references",
+      "reflection.get",
+      "reflection.lens",
+      "reflection.list",
+      "report.check",
+      "report.review_visual",
+      "research.get",
+      "research.lineage",
+      "research.list",
+      "review.get",
+      "review.list",
+      "session.ask_owner",
+      "session.message.ack",
+      "session.messages",
+      "system.status",
+      "task.get",
+      "task.list",
+      "usage.read",
+      "workflow.assignment",
+      "workflow.catalog",
+      "workflow.process",
+      "workflow.status_and_next"
+    ],
+    "page": [
+      "actor.create",
+      "actor.credentials",
+      "actor.issue_token",
+      "actor.list",
+      "actor.revoke",
+      "actor.revoke_token",
+      "actor.rotate_token",
+      "actor.whoami",
+      "artifact.create",
+      "artifact.get",
+      "artifact.list",
+      "artifact.read",
+      "artifact.storage_status",
+      "artifact.upload_begin",
+      "artifact.upload_complete",
+      "artifact.upload_resume",
+      "board.draw",
+      "board.look",
+      "board.read",
+      "board.save",
+      "board.scene",
+      "board.set",
+      "code.base.cancel",
+      "code.base.quarantine",
+      "code.base.release",
+      "code.base.repair",
+      "code.base.resume",
+      "code.base.retry",
+      "code.base.suspend",
+      "code.commit",
+      "code.files",
+      "code.local.bind",
+      "code.log",
+      "code.merge",
+      "code.mirror.retry",
+      "code.operation",
+      "code.publication.control",
+      "code.publication.merge",
+      "code.publication.read",
+      "code.publication.sync",
+      "code.repository.configure",
+      "code.repository.import",
+      "code.repository.prepare",
+      "code.repository.rebind",
+      "code.status",
+      "code.unit.fence",
+      "code.unit.get",
+      "experiment.attach",
+      "experiment.create",
+      "experiment.exhibit",
+      "experiment.get_state",
+      "experiment.list",
+      "experiment.transition",
+      "paper.cite",
+      "paper.patch",
+      "paper.read",
+      "project.brief",
+      "project.get",
+      "project.records",
+      "project.references",
+      "reflection.create",
+      "reflection.end",
+      "reflection.get",
+      "reflection.lens",
+      "reflection.list",
+      "reflection.submit",
+      "reflection.submit_lens",
+      "report.approve_visual",
+      "report.check",
+      "report.clear",
+      "report.open",
+      "report.render",
+      "report.review_visual",
+      "report.write",
+      "research.advance",
+      "research.create",
+      "research.end",
+      "research.get",
+      "research.lineage",
+      "research.list",
+      "research.replan",
+      "review.get",
+      "review.list",
+      "review.release",
+      "review.start",
+      "review.submit",
+      "script.run",
+      "script.tools",
+      "session.ask_owner",
+      "session.ask_thread",
+      "session.await_compute",
+      "session.dispatch",
+      "session.find",
+      "session.halt",
+      "session.message",
+      "session.message.ack",
+      "session.messages",
+      "session.observe",
+      "session.question.resolve",
+      "session.release_hold",
+      "session.stuck",
+      "session.thread_messages",
+      "session.threads",
+      "system.status",
+      "task.checkpoint",
+      "task.context",
+      "task.create",
+      "task.get",
+      "task.list",
+      "task.mark_failed",
+      "task.submit_delivery",
+      "ui.home",
+      "ui.read",
+      "ui.running",
+      "ui.running_panel",
+      "ui.shell",
+      "usage.read",
+      "usage.set_budget",
+      "workflow.assignment",
+      "workflow.begin",
+      "workflow.catalog",
+      "workflow.extend_limit",
+      "workflow.process",
+      "workflow.status_and_next"
+    ]
+  },
+  "contracts": {
+    "code.files": {
+      "input": {},
+      "owner": {
+        "ok": ["commit", "entries", "kind", "path", "ref"]
+      },
+      "reader": {
+        "ok": ["commit", "entries", "kind", "path", "ref"]
+      }
+    },
+    "code.log": {
+      "input": {
+        "limit": 5
+      },
+      "owner": {
+        "ok": ["commit", "commits", "ref"]
+      },
+      "reader": {
+        "ok": ["commit", "commits", "ref"]
+      }
+    },
+    "code.status": {
+      "input": {},
+      "owner": {
+        "ok": [
+          "bases",
+          "blockers",
+          "landing",
+          "mirror",
+          "operations",
+          "project",
+          "publication",
+          "store",
+          "units",
+          "warnings"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "bases",
+          "blockers",
+          "landing",
+          "mirror",
+          "operations",
+          "project",
+          "publication",
+          "store",
+          "units",
+          "warnings"
+        ]
+      }
+    },
+    "code.unit.get": {
+      "input": {
+        "unitId": "$experiment"
+      },
+      "owner": {
+        "ok": [
+          "acceptance",
+          "base",
+          "baseStatus",
+          "branch",
+          "canonicalHead",
+          "declaredAt",
+          "generation",
+          "mirroredAt",
+          "mirroredHead",
+          "publication",
+          "quarantine",
+          "standing",
+          "unitId",
+          "version",
+          "workflow",
+          "writerState"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "acceptance",
+          "base",
+          "baseStatus",
+          "branch",
+          "canonicalHead",
+          "declaredAt",
+          "generation",
+          "mirroredAt",
+          "mirroredHead",
+          "publication",
+          "quarantine",
+          "standing",
+          "unitId",
+          "version",
+          "workflow",
+          "writerState"
+        ]
+      }
+    },
+    "code.operation": {
+      "input": {
+        "commandId": "codecmd_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_command_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "code_command_not_found"
+      }
+    },
+    "code.base.retry": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-retry"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.suspend": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-suspend"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.resume": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-resume"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.cancel": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-cancel"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.quarantine": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-quarantine"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.release": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-release"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.base.repair": {
+      "input": {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Capture",
+        "requestId": "base-repair"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_base_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.unit.fence": {
+      "input": {
+        "unitId": "$experiment",
+        "requestId": "fence"
+      },
+      "owner": {
+        "status": 403,
+        "error": "code_human_required"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.mirror.retry": {
+      "input": {
+        "operationId": "cop_missing",
+        "requestId": "mirror"
+      },
+      "owner": {
+        "status": 404,
+        "error": "code_operation_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.repository.import": {
+      "input": {
+        "source": "github",
+        "ref": "refs/heads/main",
+        "requestId": "import"
+      },
+      "owner": {
+        "status": 503,
+        "error": "github_unconfigured"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.repository.configure": {
+      "input": {
+        "denyGlobs": [],
+        "secretExemptGlobs": [],
+        "check": null,
+        "requestId": "configure"
+      },
+      "owner": {
+        "ok": ["check", "denyGlobs", "format", "secretExemptGlobs"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.repository.prepare": {
+      "input": {
+        "expectedRevision": 0,
+        "baseBranch": "main",
+        "headOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "requestId": "prepare"
+      },
+      "owner": {
+        "status": 409,
+        "error": "github_conflict"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.publication.sync": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": "empty"
+        }
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.publication.merge": {
+      "input": {
+        "proposalId": "codeprop_missing",
+        "expectedHead": "cccccccccccccccccccccccccccccccccccccccc",
+        "expectedBase": "dddddddddddddddddddddddddddddddddddddddd",
+        "requestId": "merge"
+      },
+      "owner": {
+        "status": 403,
+        "error": "github_human_required"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.publication.control": {
+      "input": {
+        "action": "clear",
+        "reason": "Capture",
+        "requestId": "control"
+      },
+      "owner": {
+        "status": 403,
+        "error": "github_human_required"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.local.bind": {
+      "input": {
+        "repositoryId": "x",
+        "mainOid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "requestId": "bind"
+      },
+      "owner": {
+        "status": 403,
+        "error": "code_human_required"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "code.repository.rebind": {
+      "input": {
+        "repositoryId": "x",
+        "mainOid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "reason": "Capture",
+        "requestId": "rebind"
+      },
+      "owner": {
+        "status": 403,
+        "error": "code_human_required"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "experiment.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": [
+            "attempt",
+            "attempts",
+            "captureArtifactIds",
+            "conclusion",
+            "createdAt",
+            "createdBy",
+            "details",
+            "evidence",
+            "failed",
+            "id",
+            "intent",
+            "name",
+            "ownerId",
+            "projectId",
+            "reviewId",
+            "settled",
+            "submissions",
+            "workflow",
+            "workspace"
+          ]
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": [
+            "attempt",
+            "attempts",
+            "captureArtifactIds",
+            "conclusion",
+            "createdAt",
+            "createdBy",
+            "details",
+            "evidence",
+            "failed",
+            "id",
+            "intent",
+            "name",
+            "ownerId",
+            "projectId",
+            "reviewId",
+            "settled",
+            "submissions",
+            "workflow",
+            "workspace"
+          ]
+        }
+      }
+    },
+    "experiment.get_state": {
+      "input": {
+        "experimentId": "$experiment"
+      },
+      "owner": {
+        "ok": [
+          "attempt",
+          "attempts",
+          "captureArtifactIds",
+          "conclusion",
+          "createdAt",
+          "createdBy",
+          "details",
+          "evidence",
+          "failed",
+          "id",
+          "intent",
+          "name",
+          "ownerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "submissions",
+          "workflow",
+          "workspace"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "attempt",
+          "attempts",
+          "captureArtifactIds",
+          "conclusion",
+          "createdAt",
+          "createdBy",
+          "details",
+          "evidence",
+          "failed",
+          "id",
+          "intent",
+          "name",
+          "ownerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "submissions",
+          "workflow",
+          "workspace"
+        ]
+      }
+    },
+    "experiment.exhibit": {
+      "input": {
+        "experimentId": "$experiment"
+      },
+      "owner": {
+        "status": 409,
+        "error": "experiment_not_running"
+      },
+      "reader": {
+        "status": 409,
+        "error": "experiment_not_running"
+      }
+    },
+    "experiment.attach": {
+      "input": {
+        "experimentId": "$experiment",
+        "artifactId": "artifact_missing",
+        "role": "plan",
+        "path": "plan.md",
+        "attemptIndex": 1,
+        "expectedRevision": 0,
+        "requestId": "attach"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "experiment.transition": {
+      "input": {
+        "experimentId": "$experiment",
+        "transition": "abandon",
+        "expectedRevision": 999,
+        "requestId": "transition",
+        "evidence": {
+          "reason": "Capture"
+        }
+      },
+      "owner": {
+        "status": 409,
+        "error": "revision_conflict"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "experiment.create": {
+      "input": {
+        "name": "Capture",
+        "intent": "Capture the contracts.",
+        "requestId": "create"
+      },
+      "owner": {
+        "ok": [
+          "attempt",
+          "attempts",
+          "captureArtifactIds",
+          "conclusion",
+          "createdAt",
+          "createdBy",
+          "details",
+          "evidence",
+          "failed",
+          "id",
+          "intent",
+          "name",
+          "ownerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "submissions",
+          "workflow",
+          "workspace"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    }
+  }
+}

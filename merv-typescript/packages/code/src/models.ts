@@ -17,7 +17,7 @@ export type CodeBrowsed =
       withheld?: 'binary' | 'too_large';
     };
 
-/** One commit of a history, as `git log` says it, and the work it came from (code.log). */
+/** One commit of a history, as `git log` says it, and the work it came from (code.read log). */
 export interface CodeLogEntry {
   oid: string;
   parents: string[];

@@ -428,7 +428,7 @@ export class MainLanding {
     return row?.message ?? null;
   }
 
-  /** The `landing` section of code.status. */
+  /** The `landing` section of code.read status. */
   async status(projectId: string): Promise<CodeMainLanding> {
     const { standing, open, landed, path } = await this.state.read(async (sql) => {
       const open = await sql.get<LandingRow>(OPEN, projectId);

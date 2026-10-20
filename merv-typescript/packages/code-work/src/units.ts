@@ -166,7 +166,7 @@ export class CodeUnitService {
       message: `Resolution base ${base.key} is ${base.quarantined ? 'quarantined' : base.state}: ${base.operatorReason ?? 'operator control'}.`,
       next:
         base.state === 'suspended' && !base.quarantined
-          ? 'An administrator uses code.base.resume before this resolution can continue.'
+          ? 'An administrator uses code.write base_resume before this resolution can continue.'
           : 'The base is retained but unusable; an administrator creates corrective work and replans the waiters.',
       related: [],
     };
@@ -599,7 +599,7 @@ export class CodeUnitService {
           : 'Code’s repository does not hold the commit that is main',
         initializing
           ? 'Initialization retries automatically. Check Code operations for a storage error if it remains pending; no GitHub connection or manual import is required.'
-          : `${IMPORT}, or names an imported commit as main with code.local.bind.`,
+          : `${IMPORT}, or prepares the linked GitHub repository with code.write repository_prepare.`,
       );
     };
     const publishing = !!row?.publishes_at;
@@ -721,11 +721,11 @@ export class CodeUnitService {
                 held.quarantined || held.state === 'cancelled'
                   ? 'An operator must create corrective work and replan these waiters; this retained base cannot be used.'
                   : held.state === 'suspended'
-                    ? 'An administrator uses code.base.resume and a reason.'
+                    ? 'An administrator uses code.write base_resume and a reason.'
                     : held.state === 'blocked_infra'
-                      ? 'An administrator repairs the infrastructure, then uses code.base.retry.'
+                      ? 'An administrator repairs the infrastructure, then uses code.write base_retry.'
                       : held.attempts > 0
-                        ? 'The server retries this infrastructure failure automatically; after five failed executions an administrator uses code.base.retry.'
+                        ? 'The server retries this infrastructure failure automatically; after five failed executions an administrator uses code.write base_retry.'
                         : 'Enable project dispatch, restore Sessions, free service capacity, or raise/clear the budget with usage.set_budget. Admission retries automatically without consuming launch or review limits.',
               related,
             },
@@ -803,7 +803,7 @@ export class CodeUnitService {
               ? 'Nothing: the merge runs on the server, and this unit is offered when it is done.'
               : conflicted
                 ? 'The conflict is resolved by one reviewed task; this unit continues from its accepted commit.'
-                : 'An operator looks at the base with code.status.',
+                : 'An operator looks at the base with code.read status.',
             related,
           },
         ],
@@ -1060,7 +1060,7 @@ export class CodeUnitService {
       code: 'code_quarantined',
       status: 409,
       message: `This unit uses quarantined base ${key}. Its retained pin and acceptance cannot be reused.`,
-      next: 'An administrator creates corrective work and replans the waiters, or, for a quarantine verified to be a false alarm, uses code.base.release. Fencing a capture cannot clear base quarantine.',
+      next: 'An administrator creates corrective work and replans the waiters, or, for a quarantine verified to be a false alarm, uses code.write base_release. Fencing a capture cannot clear base quarantine.',
       related: [],
     };
   }
@@ -1292,7 +1292,7 @@ export class CodeUnitService {
           code: 'code_capture_quarantined',
           status: 409,
           message: 'The final capture was refused; the last admitted commit is retained',
-          next: 'Have a project administrator inspect code.status and run code.unit.fence to retain the last admitted commit.',
+          next: 'Have a project administrator inspect code.read status and run code.write unit_fence to retain the last admitted commit.',
           related: [],
         },
       ];

@@ -94,9 +94,9 @@ export const reflectionToolsPlugin = {
           await ctx.reflections.end(caller, input),
       },
     ];
-    // Retiring: a person's agent over MCP is listed none of them; leased lens workers still are.
+    // Retiring: a person's agent over MCP is listed none of them; Pi and leased lens workers are.
     for (const definition of definitions)
-      ctx.effect(() => ctx.tools.register({ ...definition, agent: 'never' }));
+      ctx.effect(() => ctx.tools.register({ ...definition, for: 'conversations' }));
   },
 };
 export default reflectionToolsPlugin;

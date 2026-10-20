@@ -14,8 +14,6 @@ import {
 } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeUnitStore } from '@merv/code/units';
-import { CodeStore } from '@merv/code/store/operations';
-import { gitSource, openRepositories } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
 
 /** Research records retain validated owner facts over the technical Code store. */
@@ -144,110 +142,4 @@ test('research records roll facts back with their owner', async (t) => {
     (await f.state.transaction((tx) => f.store.readStatus(f.caller, tx))).blockers,
     [],
   );
-});
-
-test('Code storage imports and rebinds while research retains unfinished bases and their commits', async (t) => {
-  const f = await fixture(t);
-  const source = gitSource(t);
-  const head = source.commit({ 'research.txt': 'retained baseline' });
-  const repositories = await openRepositories(join(f.root, 'repositories'));
-  const store = await createService(
-    new CodeStore(
-      f.state,
-      f.scope,
-      {
-        root: join(f.root, 'repositories'),
-        reservedFreeBytes: 1,
-        settleMs: 60_000,
-      },
-      {
-        changed: async () => {},
-        workspaces: async () => [],
-        fenced: async () => {},
-        advanced: async () => {},
-        quarantined: async () => {},
-      },
-      repositories,
-      {
-        read: async (_caller, use) =>
-          use({
-            url: source.repository,
-            protocol: 'file',
-            repository: { id: 1, fullName: 'owner/repository' },
-            env: {},
-          }),
-      },
-    ),
-  );
-  try {
-    await f.units.bindLocal(f.caller, {
-      repositoryId: 'original',
-      mainOid: head,
-      requestId: 'bind',
-    });
-    const imported = await store.importRepository(f.caller, {
-      source: 'github',
-      ref: 'refs/heads/main',
-      requestId: 'import',
-    });
-    assert.equal(imported.status, 'completed');
-    const rebind = () =>
-      store.rebindRepository(f.caller, {
-        repositoryId: 'renamed',
-        mainOid: head,
-        reason: 'Keep the retained history',
-        requestId: 'rebind',
-      });
-    const at = new Date().toISOString();
-    await f.state.transaction((tx) =>
-      tx.run(
-        'INSERT INTO code_bases(project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
-        f.caller.projectId,
-        'base',
-        '[]',
-        head,
-        head,
-        'git',
-        'queued',
-        at,
-        at,
-      ),
-    );
-    // Repository protection remains durable after the research record service closes.
-    f.store.close();
-    await assert.rejects(rebind(), { code: 'code_rebind_busy' });
-    await f.state.transaction((tx) =>
-      tx.run(
-        "UPDATE code_bases SET state='suspended',check_state='running' WHERE project_id=?",
-        f.caller.projectId,
-      ),
-    );
-    await assert.rejects(rebind(), { code: 'code_rebind_busy' });
-    await f.state.transaction((tx) =>
-      tx.run(
-        "UPDATE code_bases SET state='resolved',check_state='none',result_json=? WHERE project_id=?",
-        JSON.stringify({ commit: head }),
-        f.caller.projectId,
-      ),
-    );
-    assert.equal((await rebind()).status, 'completed');
-    await f.reopen();
-    assert.equal(
-      (await f.state.transaction((tx) => f.store.readStatus(f.caller, tx))).project?.repositoryId,
-      'renamed',
-    );
-    const tables = await f.state.read((sql) =>
-      sql.all<{ name: string }>(
-        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'",
-      ),
-    );
-    assert.ok(tables.some(({ name }) => name === 'code_units'));
-    assert.equal(
-      tables.some(({ name }) => /^(wf_|reviews$|sessions$|research_)/.test(name)),
-      false,
-    );
-  } finally {
-    await store.close();
-    await repositories.close(0);
-  }
 });

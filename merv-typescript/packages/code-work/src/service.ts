@@ -376,15 +376,6 @@ export class CodeService implements Code {
     await store.maintain();
     return status;
   }
-  async bindLocal(caller: Caller, input: Parameters<CodeUtility['units']['bindLocal']>[1]) {
-    // Whether Code's repository holds the named commit is asked of Git before the transaction.
-    const named = (input as { mainOid?: unknown } | null)?.mainOid;
-    const stored =
-      typeof named === 'string' &&
-      /^[0-9a-f]{40,64}$/.test(named) &&
-      (await this.store.contains(caller.projectId, named));
-    return await this.utility.units.bindLocal(caller, input, stored);
-  }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
   runningHolds: Code['runningHolds'] = (caller) => this.board.holds(caller);
   runningChecks: Code['runningChecks'] = (caller) => this.board.checks(caller);
@@ -469,7 +460,7 @@ export class CodeService implements Code {
   async history(caller: Caller, input: { ref?: string; path?: string; limit?: number }) {
     const { ref, commit } = await this.commitOf(caller, input);
     const entries = await this.utility.log(caller.projectId, commit, input);
-    // The newest 200 units, as code.status lists them, with their heads and bases (not their
+    // The newest 200 units, as code.read status lists them, with their heads and bases (not their
     // derived status) read in one snapshot, which the Git below never holds. Oldest acceptance
     // first, so a commit is the work of the unit that first carried it.
     const units = await this.state.read(async (sql) =>
@@ -555,8 +546,6 @@ export class CodeService implements Code {
       ),
     );
   }
-  rebindRepository = async (caller: Caller, input: unknown) =>
-    this.store.rebindRepository(caller, input);
   configureRepository = async (caller: Caller, input: unknown) =>
     configureWorkRepository(this.state, this.scope, this.store, caller, input);
   /**

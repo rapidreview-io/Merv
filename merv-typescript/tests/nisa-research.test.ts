@@ -56,7 +56,7 @@ test('research delegates directly, scopes requests, bounds reports, and keeps st
   const tool = nisaTools(nisa).find((t) => t.name === 'nisa.research')!;
   assert.equal(tool.readOnly, false);
   assert.equal(tool.openWorld, true);
-  assert.equal(tool.conversation, undefined);
+  assert.equal(tool.tier, undefined);
   await assert.rejects(
     nisa.research(caller, { action: 'start', brief: 'x', request_id: '1', scope: 'forged' } as any),
     { code: 'invalid_input' },

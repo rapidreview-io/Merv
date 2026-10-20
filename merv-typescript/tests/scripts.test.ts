@@ -57,7 +57,7 @@ test('script.tools searches, names and sums up only what this agent may use', as
       description: 'A page’s own read.',
       inputSchema: z.object({}).strict(),
       readOnly: true,
-      agent: 'never',
+      tier: 'ui',
       handler: () => 1,
     }),
   );
@@ -165,7 +165,7 @@ test('writes and reads kept from agents are refused and catchable; open-world re
       description: 'A page’s own read, which no agent conversation is offered.',
       inputSchema: z.object({}).strict(),
       readOnly: true,
-      conversation: 'never',
+      tier: 'ui',
       handler: () => 'value',
     }),
   );
@@ -574,6 +574,13 @@ test('mounted tools need a closed-world read hint; workers get no scripts', asyn
   const tools = {
     describe: async () => listed.map(({ kind: _kind, ...description }) => description),
     list: async () => listed,
+    tool: (name: string) => ({
+      name,
+      remote: true,
+      readOnly: false,
+      tier: 'deferred',
+      noun: false,
+    }),
     // A remote result may leave out content.
     invoke: async (_name: string, _caller: Caller, input: unknown) => {
       inputs.push(input);
@@ -603,4 +610,35 @@ test('mounted tools need a closed-world read hint; workers get no scripts', asyn
       code: 'session_forbidden',
       status: 403,
     });
+});
+
+test('a noun read, every action of which reads, is scriptable with one overload per action', async (t) => {
+  const { mcp, run } = await fixture(t);
+  const found = await mcp('script.tools', { names: ['code.read', 'code.write'] });
+  assert.deepEqual(
+    found.tools.map(({ name, scriptable }: { name: string; scriptable: boolean }) => [
+      name,
+      scriptable,
+    ]),
+    [
+      ['code.read', true],
+      ['code.write', false],
+    ],
+  );
+  assert.match(
+    found.tools[0].declaration,
+    /tools\.code\.read\(input: \{ action: "status"; status\?: \{\} \}\): Promise<\{ project: /,
+  );
+  const ran = await run(`
+    const status = await tools.code.read({ action: 'status' });
+    const viaAddress = await call('code.read:status', {});
+    let refused;
+    try { await call('code.write', { action: 'publication_sync' }); } catch (e) { refused = e.message; }
+    return [Array.isArray(status.bases), Array.isArray(viaAddress.units), refused];
+  `);
+  assert.deepEqual(ran.result, [
+    true,
+    true,
+    'script_tool_refused: code.write cannot be called from a script',
+  ]);
 });

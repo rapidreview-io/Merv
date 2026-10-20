@@ -92,7 +92,7 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
-      conversation?: 'never',
+      tier?: 'ui',
       openWorld = false,
     ) =>
       ctx.effect(() =>
@@ -102,7 +102,7 @@ export const artifactToolsPlugin = {
           inputSchema,
           handler,
           readOnly,
-          conversation,
+          ...(tier && { tier }),
           openWorld,
         }),
       );
@@ -186,7 +186,7 @@ export const artifactToolsPlugin = {
       z.object({}).strict(),
       async () => ({ available: ctx.artifacts.largeUploadAvailable }),
       true,
-      'never',
+      'ui',
     );
     register(
       'artifact.read',

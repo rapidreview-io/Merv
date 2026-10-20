@@ -100,7 +100,7 @@ export async function exerciseRuntime(start) {
     // Git the server can run, and the repository root must be writable where the volume is.
     checkpoint('code-repository');
     await waitForManagedCode(app.ctx.codeWork, owner);
-    const codeStatus = await call(operator, 'code.status');
+    const codeStatus = await call(operator, 'code.read', { action: 'status' });
     assert.ok(codeStatus.store, 'This image must keep Code repositories');
     assert.equal(codeStatus.store.hosted, true, 'A new project has managed Git without an import');
     assert.equal(codeStatus.store.source, 'managed');

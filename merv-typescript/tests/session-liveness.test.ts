@@ -1248,7 +1248,7 @@ test('a run of deferred preparations is shown as work nobody could take, with it
   );
   assert.equal(report.total, 1, 'nothing counts it, so only this report asks for someone');
   assert.match(report.items[0].why, /could not prepare its checkout/);
-  assert.match(report.items[0].next, /code\.status/);
+  assert.match(report.items[0].next, /code\.read status/);
 });
 
 test('both dispatch views require three consecutive recent deferred closes at the current revision', async (t) => {

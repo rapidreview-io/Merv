@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server as HttpServer,
 } from 'node:http';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { isUtf8 } from 'node:buffer';
@@ -236,6 +237,9 @@ export class ApiServer {
   private closing?: Promise<void>;
   private readonly requests = new Set<Promise<unknown>>();
   private readonly calls = new Set<Promise<unknown>>();
+  /** The name each MCP client gave in its initialize (clientInfo), by its credential and user
+   *  agent: this stateless endpoint sees each later request alone. */
+  private readonly clients = new Map<string, string>();
   private readonly upgrades = new Set<Duplex>();
   /** By prefix; null marks a withdrawn one, which answers 503. */
   private readonly mounts = new Map<string, Mounted | null>();
@@ -524,6 +528,7 @@ export class ApiServer {
     input: unknown,
     selectedProject: unknown,
     as?: 'agent' | 'platform',
+    client?: string,
   ): Promise<ToolInvocation> {
     if (input === null || typeof input !== 'object' || Array.isArray(input))
       throw new MervError('invalid_input', 'Tool arguments must be an object');
@@ -535,7 +540,14 @@ export class ApiServer {
       false,
       as === 'platform',
     );
-    const operation = this.tools.invoke(name, caller, remote ? input : native, as === 'agent');
+    const operation = this.tools.invoke(
+      name,
+      caller,
+      remote ? input : native,
+      as === 'agent',
+      undefined,
+      client,
+    );
     this.calls.add(operation);
     try {
       return await operation;
@@ -678,6 +690,18 @@ export class ApiServer {
       json(res, 400, incompatible);
       return;
     }
+    const agent = req.headers['user-agent'];
+    const connection = createHash('sha256')
+      .update(`${req.headers.authorization ?? ''}\0${agent ?? ''}`)
+      .digest('base64url');
+    const named = (body as { method?: unknown; params?: { clientInfo?: { name?: unknown } } })
+      ?.params?.clientInfo?.name;
+    if ((body as { method?: unknown })?.method === 'initialize' && typeof named === 'string') {
+      this.clients.delete(connection);
+      this.clients.set(connection, named.slice(0, 200));
+      // The oldest goes first: a bounded memory of who connected lately.
+      if (this.clients.size > 10_000) this.clients.delete(this.clients.keys().next().value!);
+    }
     const instance = new McpServer(
       { name: 'merv', version: '0.1.0' },
       {
@@ -689,6 +713,7 @@ export class ApiServer {
             : [
                 this.tools.instructions(),
                 'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.brief and workflow.status_and_next. Never ask for, print or read Merv keys or ~/.merv.',
+                'A tool with an action argument takes that action\'s arguments under the key of the same name, as {"action":"x","x":{…}}. These tools are written for ordinary function calling; strict-mode adapters (every property required) are not supported.',
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -727,7 +752,9 @@ export class ApiServer {
           const projects = await this.scope.projects(principal);
           return { content: [{ type: 'text' as const, text: JSON.stringify({ projects }) }] };
         }
-        const result = await this.call(principal, name, input, selected(_meta), 'agent');
+        // The client as its initialize named it, else as its user agent does.
+        const client = this.clients.get(connection) ?? agent;
+        const result = await this.call(principal, name, input, selected(_meta), 'agent', client);
         return result.format === 'mcp'
           ? (result.value as CallToolResult)
           : (result.mcp ?? {

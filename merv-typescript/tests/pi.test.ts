@@ -75,7 +75,8 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
 
 test("a turn is offered every native tool the person may use but Pi's own", async (t) => {
   const f = await fixture(t);
-  // Pi's own, and those Pi has its own forms of: its turn context, screen.look, its SDK's code mode.
+  // Pi's own (its page's, tier ui), and those Pi has its own forms of: its turn context,
+  // screen.look, its SDK's code mode.
   const own = ['pi.send', 'script.run', 'script.tools', 'project.brief', 'record.look'];
   for (const name of own)
     f.tools.register({
@@ -83,6 +84,7 @@ test("a turn is offered every native tool the person may use but Pi's own", asyn
       description: 'Read something',
       inputSchema: z.object({}).strict(),
       readOnly: true,
+      ...(name.startsWith('pi.') && { tier: 'ui' as const }),
       handler: () => null,
     });
   const offered = (await f.begun(f.operator)).work.tools.map(({ name }) => name);
@@ -490,7 +492,7 @@ function probes(f: PiFixture, t: TestContext) {
     permission: Permission,
     options: {
       readOnly?: boolean;
-      conversation?: 'never';
+      tier?: 'ui';
       result?: unknown;
     } = {},
   ) =>
@@ -499,7 +501,7 @@ function probes(f: PiFixture, t: TestContext) {
         name,
         description: `Probe ${name}`,
         readOnly: options.readOnly,
-        conversation: options.conversation,
+        tier: options.tier,
         inputSchema: z.object({}).strict(),
         handler: (caller: Caller) =>
           f.state.transaction(async (tx) => {
@@ -515,8 +517,8 @@ function probes(f: PiFixture, t: TestContext) {
   probe('probe.review', 'review');
   probe('probe.admin', 'admin');
   probe('probe.leaky', 'read', { readOnly: true, result: { issued: [{ token: 'secret' }] } });
-  probe('probe.never', 'read', { readOnly: true, conversation: 'never' });
-  probe('pi.probe', 'read', { readOnly: true });
+  probe('probe.never', 'read', { readOnly: true, tier: 'ui' });
+  probe('pi.probe', 'read', { readOnly: true, tier: 'ui' });
   return runs;
 }
 

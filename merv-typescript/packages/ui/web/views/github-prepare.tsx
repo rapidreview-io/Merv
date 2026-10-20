@@ -13,7 +13,7 @@ import type {
 
 /** One repeatable setup operation, with the user's branch and commit frozen before sending. */
 export function GitHubPreparation({ status }: { status: GitHubStatus }) {
-  const read = useTool<CodeProjectStatus>('code.status');
+  const read = useTool<CodeProjectStatus>('code.read:status');
   const [input, setInput] = useState<CodeRepositoryPrepareInput>();
   const [result, setResult] = useState<CodeRepositoryPreparation>();
   const [selecting, setSelecting] = useState(false);
@@ -25,7 +25,7 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
     taskId ?? '',
   )?.to;
   const command = useCommand<CodeRepositoryPreparation>({
-    tool: 'code.repository.prepare',
+    tool: 'code.write:repository_prepare',
     idempotent: true,
     validate: (value) =>
       ['ready', 'importing', 'review_required', 'failed'].includes(value?.state) &&
@@ -51,7 +51,7 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
     try {
       const [{ branches }, current] = await Promise.all([
         githubRequest<{ branches: GitHubBranch[] }>('/branches'),
-        call<CodeProjectStatus>('code.status'),
+        call<CodeProjectStatus>('code.read:status'),
       ]);
       if (!live()) return;
       const branch = branches.find((branch) => branch.name === status.baseBranch);

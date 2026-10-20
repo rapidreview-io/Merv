@@ -166,10 +166,10 @@ export function publicationBlockers(
           : 'waiting on publication: an operator merges the pull request',
       next:
         publication.destination === 'local'
-          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.publication.sync. No GitHub connection is required.'
+          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.write publication_sync. No GitHub connection is required.'
           : pull
-            ? `A project operator, or their agent, merges pull request #${pull.number} with code.publication.merge.`
-            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.publication.sync), and an operator merges it.',
+            ? `A project operator, or their agent, merges pull request #${pull.number} with code.write publication_merge.`
+            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.write publication_sync), and an operator merges it.',
     },
     stale: {
       code: PUBLICATION_CODE.stale,
@@ -179,12 +179,12 @@ export function publicationBlockers(
     setup_required: {
       code: PUBLICATION_CODE.setup_required,
       message: `publication setup is incomplete${named}`,
-      next: "An operator fixes what code.status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and an operator merges the reviewed pull request.",
+      next: "An operator fixes what code.read status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and an operator merges the reviewed pull request.",
     },
     disabled: {
       code: PUBLICATION_CODE.disabled,
       message: `publication was disabled after failed enforcement${named}`,
-      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
+      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.write publication_control.',
     },
     closed: {
       code: PUBLICATION_CODE.closed,
@@ -195,12 +195,12 @@ export function publicationBlockers(
       code: PUBLICATION_CODE.unsealed,
       message:
         'this unit was declared to publish to main, but its acceptance could not open a publication',
-      next: 'An administrator reads code.status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
+      next: 'An administrator reads code.read status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
     },
     incident: {
       code: PUBLICATION_CODE.incident,
       message: `a publication incident is retained for this unit${named}`,
-      next: 'An administrator investigates the observed merge commit in code.status.publication; a retry never clears it.',
+      next: 'An administrator investigates the observed merge commit in code.read status (publication); a retry never clears it.',
     },
   }[publication.state];
   return [{ key: 'publication', status: 409, related, ...said }];

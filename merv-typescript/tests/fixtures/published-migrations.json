@@ -1282,6 +1282,12 @@
       "version": 5,
       "hash": "c1d643f95098cdadfb99c248ad027ece716eb32a82c51c5704ab42ec30298a7a",
       "published": true
+    },
+    {
+      "component": "agent_tool_calls",
+      "version": 1,
+      "hash": "b542259855b67183d097742ab0be355a287eb9db79d337b8d1412c880fccf458",
+      "published": false
     }
   ]
 }

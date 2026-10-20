@@ -1,6 +1,7 @@
 import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
+import { AgentCallLog, callLogMigrations } from './call-log.js';
 import { ApiServer, type HttpOptions } from './http.js';
 import { ToolRegistry } from './registry.js';
 
@@ -19,11 +20,30 @@ export const toolsPlugin = {
   name: 'merv-tools',
   Config: z.object({}).strict().default({}),
   inject: ['scope'],
-  apply(ctx: Context) {
-    ctx.effect(function* () {
+  async apply(ctx: Context) {
+    await ctx.effect(async function* () {
+      // Outside agents' calls are logged where a state store is present (agent_tool_calls).
+      const state = ctx.get('state');
+      let log: AgentCallLog | undefined;
+      if (state) {
+        await state.migrate('agent_tool_calls', callLogMigrations);
+        const calls = (log = new AgentCallLog(state));
+        const flush = () => calls.flush().catch(() => {});
+        const timer = setInterval(flush, 500);
+        timer.unref();
+        yield async () => {
+          clearInterval(timer);
+          await flush();
+        };
+      }
       // Read-only tools run in a snapshot scope when a state store is present, except those
       // that call a service outside Merv (ToolDefinition.openWorld).
-      const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, snapshotIn(ctx));
+      const tools = new ToolRegistry(
+        ctx.scope,
+        ctx.scope.toolPolicy,
+        snapshotIn(ctx),
+        log && ((call) => log.push(call)),
+      );
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
       yield ctx.provide('tools', tools);

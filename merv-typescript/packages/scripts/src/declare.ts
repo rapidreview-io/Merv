@@ -44,10 +44,13 @@ export function typeOf(schema: unknown, root = false): string {
 }
 
 /** `tools.a.b(input: …): Promise<…>` under its description, cut at 300 characters. A mounted
- *  (not native) tool's projectId is its own argument, so it stays. */
+ *  (not native) tool's projectId is its own argument, so it stays. A noun tool (its input an
+ *  `action` enum beside one object per action) has one overload per action, each typed by that
+ *  action's declared output where it has one. */
 export function declaration(
   tool: { name: string; description?: string; inputSchema: unknown; outputSchema?: unknown },
   native = true,
+  outputs: Record<string, unknown> = {},
 ): string {
   const path = tool.name
     .split('.')
@@ -55,7 +58,19 @@ export function declaration(
     .join('');
   const description = (tool.description ?? '').replace(/\*\//g, '* /').replace(/\s+/g, ' ').trim();
   const comment = description.length > 300 ? `${description.slice(0, 299)}…` : description;
-  const output = tool.outputSchema ? typeOf(tool.outputSchema) : 'unknown';
-  const line = `tools${path}(input: ${typeOf(tool.inputSchema, native)}): Promise<${output}>`;
+  const schema = isSchema(tool.inputSchema) ? tool.inputSchema : {};
+  const properties = isSchema(schema.properties) ? schema.properties : {};
+  const actions = isSchema(properties.action) ? properties.action.enum : undefined;
+  const lines = Array.isArray(actions)
+    ? actions.map((action) => {
+        const name = String(action);
+        const args = typeOf(properties[name]);
+        const output = outputs[name] ? typeOf(outputs[name]) : 'unknown';
+        return `tools${path}(input: { action: ${JSON.stringify(name)}; ${key(name)}?: ${args} }): Promise<${output}>`;
+      })
+    : [
+        `tools${path}(input: ${typeOf(tool.inputSchema, native)}): Promise<${tool.outputSchema ? typeOf(tool.outputSchema) : 'unknown'}>`,
+      ];
+  const line = lines.join('\n');
   return comment ? `/** ${comment} */\n${line}` : line;
 }

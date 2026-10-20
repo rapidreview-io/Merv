@@ -14,8 +14,9 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-work/service';
 import { CodeCommandService } from '@merv/code-work/commands';
 import { workBranch } from '@merv/code/store/refs';
+import { OperationJournal } from '../packages/code/src/request-journal.js';
 import { openState } from './fixtures/state.js';
-import { codeConfig } from './fixtures/code-binding.js';
+import { codeConfig, moveMain } from './fixtures/code-binding.js';
 import { ReviewService } from '@merv/reviews';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -142,11 +143,21 @@ test('the unit tables arrive beside existing Code rows and hold their write-once
   );
   assert.equal(Number(commands?.n), 1);
 
-  await f.code.bindLocal(f.admin, {
+  await moveMain(f.state, f.project.id, oid('a'), {
     repositoryId: 'runner-repository',
-    mainOid: oid('a'),
-    requestId: f.request(),
+    stored: false,
   });
+  // A completed operation of the project's, as the journal keeps one.
+  await f.state.transaction(
+    async (tx) =>
+      await new OperationJournal(tx, f.project.id, 'actor:fixture', 'bind', 'hash').complete(
+        'cop_fixture',
+        'local_bind',
+        {},
+        {},
+        new Date().toISOString(),
+      ),
+  );
   const declared = await f.state.transaction(
     async (tx) => await f.code.declareUnit(f.admin, work.id, tx),
   );
@@ -268,107 +279,14 @@ const unhosted = {
   warnings: [],
 };
 
-test('only a project administrator or their agent binds the repository, and main moves by compare-and-set', async (t) => {
+test("a project's Code reads are its own", async (t) => {
   const f = await fixture(t);
   assert.deepEqual(await f.code.status(f.admin), {
     ...unhosted,
     units: [],
     blockers: [],
   });
-  const first = { repositoryId: 'runner-repository', mainOid: oid('a'), requestId: 'bind' };
-
-  const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
-  // The administrator's key is their agent's; an operator machine actor and a leased worker are
-  // neither.
-  const agent = await f.scope.caller({
-    kind: 'key',
-    key: await f.scope.userKeys.authenticate(issued.token),
-  });
-  const robot = await f.scope.credentials.issueActor(f.admin, { name: 'Robot', role: 'operator' });
-  const machine = {
-    projectId: f.project.id,
-    actorId: robot.actor.id,
-    credentialId: robot.credential.id,
-  };
-  await assert.rejects(f.code.bindLocal(machine, first), { code: 'code_human_required' });
-  await assert.rejects(f.code.bindLocal({ ...f.admin, session: { id: 'session' } }, first), {
-    status: 403,
-  });
-  const reader = await f.scope.members.acceptVerifiedIdentity(f.identity('reader'));
-  await f.scope.members.addMember(f.principal, f.project.id, { subject: 'reader', role: 'reader' });
-  await assert.rejects(
-    f.code.bindLocal(await f.scope.caller(reader, f.project.id), first),
-    (error: { status?: number }) => error.status === 403,
-  );
-  for (const invalid of [
-    { ...first, mainOid: 'main' },
-    { ...first, repositoryId: 'two words' },
-    { ...first, requestId: '' },
-    { ...first, extra: true },
-  ])
-    await assert.rejects(f.code.bindLocal(f.admin, invalid as typeof first), {
-      code: 'invalid_code_input',
-    });
-  await assert.rejects(f.code.bindLocal(f.admin, { ...first, expectedMainOid: oid('a') }), {
-    code: 'code_main_changed',
-  });
-
-  const bound = await f.code.bindLocal(f.admin, first);
-  assert.deepEqual(
-    [bound.mode, bound.repositoryId, bound.main.oid, bound.boundBy],
-    ['local', 'runner-repository', oid('a'), f.admin.actorId],
-  );
-  // A first bind declares the project managed: Code keeps every project's history.
-  const row = await f.state.read((sql) =>
-    sql.get<{ binding_json: string }>(
-      'SELECT binding_json FROM code_projects WHERE project_id=?',
-      f.project.id,
-    ),
-  );
-  assert.equal(JSON.parse(row!.binding_json).managed, true);
-  assert.deepEqual(await f.code.bindLocal(f.admin, first), bound, 'the same request replays');
-  await assert.rejects(f.code.bindLocal(f.admin, { ...first, mainOid: oid('b') }), {
-    code: 'request_conflict',
-  });
-
-  const move = { ...first, mainOid: oid('b'), requestId: 'move' };
-  await assert.rejects(f.code.bindLocal(f.admin, move), { code: 'code_main_changed' });
-  await assert.rejects(f.code.bindLocal(f.admin, { ...move, expectedMainOid: oid('c') }), {
-    code: 'code_main_changed',
-  });
-  await assert.rejects(
-    f.code.bindLocal(f.admin, {
-      ...move,
-      repositoryId: 'another-repository',
-      expectedMainOid: oid('a'),
-    }),
-    { code: 'code_rebind_required' },
-  );
-  const moved = await f.code.bindLocal(agent, { ...move, expectedMainOid: oid('a') });
-  assert.deepEqual(
-    [moved.main.oid, moved.boundAt, moved.repositoryId],
-    [oid('b'), bound.boundAt, bound.repositoryId],
-  );
-  // A stale mover that read the old main cannot take it back.
-  await assert.rejects(
-    f.code.bindLocal(f.admin, {
-      ...first,
-      expectedMainOid: oid('a'),
-      requestId: 'stale',
-    }),
-    { code: 'code_main_changed' },
-  );
-  assert.deepEqual((await f.code.status(f.admin)).project, moved);
-  assert.deepEqual(
-    (await f.state.events(f.project.id))
-      .filter((event) => event.type === 'code.local_bound')
-      .map((event) => [event.data.mainOid, event.data.previousMainOid]),
-    [
-      [oid('a'), null],
-      [oid('b'), oid('a')],
-    ],
-  );
-
+  await moveMain(f.state, f.project.id, oid('a'), { stored: false });
   // Reads are the project's own.
   const work = await f.build.start(f.admin, { workflow: 'build', requestId: 'start' });
   await f.state.transaction(async (tx) => await f.code.declareUnit(f.admin, work.id, tx));

@@ -187,7 +187,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     'session.ask_owner',
     'session.message.ack',
   ]);
-  // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
+  // The unit tools are the project's, never a worker's: an actor key reads them.
   // The default composition initializes managed Git before any work.
   const unbound = await waitForManagedCode(app.ctx.codeWork, source);
   assert.equal(unbound.store?.source, 'managed');
@@ -197,16 +197,21 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     (await http('/tools/code.unit.get', { unitId: instance.id })).body.error.code,
     'code_unit_not_found',
   );
-  assert.equal(
+  // Binding is gone (founder): its name says what remains, with no arguments to retry.
+  const bind = async () =>
     (
       await http('/tools/code.local.bind', {
         repositoryId: 'repository',
         mainOid: oid('a'),
         requestId: 'bind',
       })
-    ).body.error.code,
-    'code_human_required',
-  );
+    ).body.error;
+  assert.deepEqual(await bind(), {
+    code: 'tool_renamed',
+    message:
+      'code.local.bind was removed; what remains is code.write with action repository_prepare',
+    details: { tool: 'code.write', action: 'repository_prepare' },
+  });
   // A worker reads a command without the head and stats its workspace had when it attached.
   const view = ({ command, ...rest }: CodeCommandRecord) => {
     const { headOid: _head, stats: _stats, ...attached } = command.workspace;
@@ -247,6 +252,11 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     'unknown_tool',
   );
   assert.equal((await http('/tools/code.status', {})).body.error.code, 'unknown_tool');
+  assert.equal(
+    (await http('/tools/code.read', { action: 'status' })).body.error.code,
+    'unknown_tool',
+  );
+  assert.equal((await bind()).code, 'unknown_tool');
   const absent = await http('/code/commands/next', control);
   assert.equal(absent.status, 503);
   assert.equal(absent.body.error.code, 'unavailable');

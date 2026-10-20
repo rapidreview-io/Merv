@@ -23,6 +23,7 @@ import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js
 import { piTitle, titleRequest } from './relay.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
+import { profileGrants, requireGranted, restricted } from './profile-tools.js';
 import { turnNotes } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import type {
@@ -56,22 +57,10 @@ type Taken = {
 /** The routes a host's worker calls: /next, /begin, /tool, /progress, /complete and /fail. */
 /** The most tools one turn is offered: the model API's and the worker's limit. */
 export const MAX_TOOLS = 128;
-/** Every tool but Pi's own and those Pi has its own forms of: its turn context is its brief, it
- *  looks with screen.look, and its own SDK will give it code mode. */
+/** Every tool but those Pi has its own forms of: its turn context is its brief, it looks with
+ *  screen.look, and its own SDK will give it code mode. Pi's own are tier ui. */
 export const piOffers = (name: string) =>
-  !name.startsWith('pi.') &&
-  !name.startsWith('script.') &&
-  name !== 'project.brief' &&
-  name !== 'record.look';
-/** Tools other agents use through Merv that a conversation is not offered unless its profile
- *  names them. */
-const WORKER_ONLY = new Set([
-  'report.write',
-  'report.clear',
-  'report.render',
-  'report.review_visual',
-  'report.approve_visual',
-]);
+  !name.startsWith('script.') && name !== 'project.brief' && name !== 'record.look';
 
 export class PiWorkerProtocol {
   constructor(
@@ -216,27 +205,23 @@ export class PiWorkerProtocol {
       const caller = conversationCaller(conversation, command);
       const profile = conversation.profile && this.core.profiles.get(conversation.profile);
       // Every tool the person may use here, read-only for a reader, whose every other call a
-      // handler would refuse; a retired name its profile names runs as the tool it became.
-      const registered = await this.core.tools.list(profile?.tools);
-      const profileTools = new Map(
-        registered.map((tool) => [
-          tool.name,
-          'kind' in tool ? undefined : tool.conversationProfile,
-        ]),
-      );
-      // A reader is offered what reads, and any tool some of whose actions do (`reads`).
-      const reading = new Set(registered.flatMap((t) => ('kind' in t || !t.reads ? [] : [t.name])));
-      // Every native tool but Pi's own and those it has its own form of (piOffers), run as the
-      // person: Scope applies their live role.
-      const described = (await this.core.tools.describe(caller, false, { names: profile?.tools }))
+      // handler would refuse: tiers core and deferred, and a tier worker tool (a report's
+      // writing, a profile's own) or a retired name only where the profile names it. A
+      // profile's names resolve to the noun actions they now run, which its noun tool is cut to.
+      const grants = profile ? profileGrants(this.core.tools, profile.tools) : undefined;
+      const registry = this.core.tools;
+      const described = (await registry.describe(caller, false, { names: profile?.tools }))
         .filter(({ name }) => piOffers(name))
-        // Writing and rendering a report is its executing worker's job, not the chat's.
-        .filter(({ name }) => profile?.tools.includes(name) || !WORKER_ONLY.has(name))
-        .filter(({ name }) => !profileTools.get(name) || profileTools.get(name) === profile?.id)
-        .filter(({ name }) => !profile || profile.tools.includes(name))
+        .filter(({ name }) => {
+          const tool = registry.tool(name);
+          if (!tool) return false;
+          if (tool.conversationProfile) return tool.conversationProfile === profile?.id;
+          return grants ? grants.has(name) : tool.tier !== 'worker';
+        })
         .flatMap((description) => {
-          const tool = piTool(description);
-          const reads = tool?.readOnly || reading.has(description.name);
+          const tool = piTool(restricted(description, grants?.get(description.name)));
+          // A reader is offered what reads, and any tool some of whose actions do (`reads`).
+          const reads = tool?.readOnly || !!registry.tool(description.name)?.reads;
           return tool && (actor!.role !== 'reader' || reads) ? [tool] : [];
         });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
@@ -538,17 +523,16 @@ export class PiWorkerProtocol {
     );
     if (conversation.profile) {
       const profile = this.core.profiles.get(conversation.profile);
-      check(
-        profile.tools.includes(value.name),
-        'pi_tool_forbidden',
-        'This tool is outside the conversation role',
-        403,
-      );
+      // A retired name and its noun action are one call: the profile and its own check see
+      // both alike, by the name rules know it as, with its arguments flat.
+      const identity = this.core.tools.identity(value.name, value.input);
+      requireGranted(profileGrants(this.core.tools, profile.tools), value.name, identity);
       await profile.authorizeTool?.({
         binding: conversation.profile,
         caller: conversationCaller(conversation, command),
-        name: value.name,
-        input: value.input,
+        name: identity?.as ?? value.name,
+        ...(identity?.action && { tool: identity.tool, action: identity.action }),
+        input: identity?.args ?? value.input,
       });
     }
     const key = `${conversation.id}:${command.id}`;
@@ -570,9 +554,7 @@ export class PiWorkerProtocol {
         current.calledAt ??= this.core.time();
         await this.core.saveCommand(tx, current);
       });
-    const definition = (await this.core.tools.list([value.name])).find(
-      ({ name }) => name === value.name,
-    );
+    const registered = this.core.tools.tool(value.name);
     this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.core.report(
@@ -581,9 +563,9 @@ export class PiWorkerProtocol {
       'tool',
       value.name === 'machine.switch'
         ? 'Moving to a bigger machine'
-        : definition &&
-            !('kind' in definition) &&
-            (definition.readOnly || definition.reads?.(value.input) === true)
+        : registered &&
+            !registered.remote &&
+            (registered.readOnly || registered.reads?.(value.input) === true)
           ? 'Reading'
           : 'Making a change',
     );

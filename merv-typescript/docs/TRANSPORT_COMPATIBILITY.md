@@ -105,3 +105,9 @@ catalog-refresh test; controlled fixture tests must cover those paths. Public
 discovery also does not verify upstream grant selection, revocation, resource
 authorization, or every schema/result shape. Those remain separate integration
 checks in the execution plan.
+
+## Noun tools and their retired names
+
+A noun tool (`code.read`, `code.write`) takes `action` and that action's arguments under the key of the same name: `{"action":"status","status":{}}`. An action whose fields are all optional may leave its object out. The emitted JSON Schema is one object whose properties are the action enum and one whole object per action, each with its own `required` list; it cannot say that exactly one of them belongs to the call, so the server refuses a missing or foreign object and names the fields. The tools are written for ordinary (non-strict) function calling: Claude Code, Codex CLI over MCP, Cursor and Pi's own adapter. Strict-mode adapters, which demand every property be required, are not supported.
+
+A core tool carries `_meta["anthropic/alwaysLoad"]`, which only Claude Code reads. Each retired name stays executable for one release, with its old flat input and old result shape, and is listed to no agent; a leased session is listed the retired names its frozen policy names until the published versions that grant them drain. An address `tool:action` (`code.write:base_retry`) takes the action's flat arguments, which is how Merv's own pages and in-repo callers name an action.

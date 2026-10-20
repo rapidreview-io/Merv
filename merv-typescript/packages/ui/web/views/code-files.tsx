@@ -192,7 +192,7 @@ function Folder({ root, data }: { root: string; data: Extract<Browsed, { kind: '
 }
 
 function Readme({ refName, path }: { refName: string; path: string }) {
-  const read = useTool<Browsed>('code.files', { ref: refName, path });
+  const read = useTool<Browsed>('code.read:files', { ref: refName, path });
   const text = read.data?.kind === 'file' ? read.data.text : undefined;
   if (!text) return null;
   return (
@@ -339,7 +339,7 @@ export function CodeFiles({ row, shell, root }: ViewProps & { root: string }) {
   const navigate = useNavigate();
   const place = placeIn(pathname, root);
   const refs = useRefs(row, shell);
-  const read = useTool<Browsed>('code.files', { ref: place.ref, path: place.path });
+  const read = useTool<Browsed>('code.read:files', { ref: place.ref, path: place.path });
   const empty =
     read.error?.code === 'code_ref_empty' ||
     (read.data?.kind === 'folder' && !read.data.entries.length && !place.path);

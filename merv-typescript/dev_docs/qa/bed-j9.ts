@@ -15,7 +15,7 @@
  * leased worker session and a leased reviewer session call. Any network host other than
  * loopback or the faked GitHub is refused.
  *
- * Who is who: the owner is a signed-in human (supplies research.*, code.local.bind, the canary
+ * Who is who: the owner is a signed-in human (supplies research.*, main's commit, the canary
  * and the merge); K1 and K2 are two mk_ user keys of that same owner (K1 directs the original
  * producer, the lenses, the synthesis and the consolidation producer W); W-B is the mk_ key of a
  * second person, the independent reviewer.
@@ -42,6 +42,7 @@ import { CodeRepositories } from '@merv/code/store/repository';
 import { createApp } from '../../src/app.js';
 import { defaultConfigFile } from '../../src/config.js';
 import { config as githubConfig, githubFixture } from '../../tests/github-fixture.js';
+import { moveMain } from '../../tests/fixtures/code-binding.js';
 
 const started = Date.now();
 const databaseUrl =
@@ -326,10 +327,10 @@ async function stand(app: App, label: string, withGitHub: boolean) {
     'Start the replication',
   );
 
-  /** Bring a commit of the owner's repository into Code, as code.repository.import does. */
+  /** Bring a commit of the owner's repository into Code, as code.write repository_import does. */
   const importCommit = async (tip: string, not: string[]) => {
     const made = bundle(source, tip, not);
-    const begun = await call('code.repository.import', human, {
+    const begun = await call('code.write:repository_import', human, {
       source: 'bundle',
       tip,
       bundle: { sha256: made.sha256, bytes: made.bytes },
@@ -344,12 +345,8 @@ async function stand(app: App, label: string, withGitHub: boolean) {
       );
     return operation;
   };
-  await call('code.local.bind', human, {
-    repositoryId: `bed-${label}`,
-    mainOid: main0,
-    requestId: id('bind'),
-  });
   await importCommit(main0, []);
+  await moveMain(ctx.state, project.id, main0);
 
   const paths = new CodeRepositories({
     root: join(app.directory, 'code'),
@@ -368,7 +365,7 @@ async function stand(app: App, label: string, withGitHub: boolean) {
     githubFetch = remote.fetcher;
     remote.branches.set('main', main0);
     await remote.enable();
-    await call('code.publication.control', human, {
+    await call('code.write:publication_control', human, {
       action: 'record_canary',
       staleMerged: false,
       reason: 'QA bed: the release matrix passed with this App and its rules.',

@@ -433,11 +433,11 @@ test('conversation policy is the registration’s: mutating the definition chang
     description: 'Only Merv’s own pages run this',
     inputSchema: z.object({}).strict(),
     readOnly: true,
-    conversation: 'never',
+    tier: 'ui',
     handler: () => null,
   };
   registry.register(definition);
-  definition.conversation = undefined;
+  definition.tier = undefined;
   assert.deepEqual(await registry.describe(caller, true), []);
   await assert.rejects(registry.invoke('pages.only', caller, {}, true), { code: 'tool_forbidden' });
 });

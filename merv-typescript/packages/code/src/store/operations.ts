@@ -17,7 +17,6 @@ import {
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories, ObjectFormat } from './repository.js';
-import { CodeRebinder } from './rebind.js';
 import { CodeExporter } from './export.js';
 import { CodeReceiver } from './receive.js';
 import {
@@ -54,7 +53,6 @@ export class CodeStore {
   private readonly core: StoreCore;
   private readonly receiver: CodeReceiver;
   private readonly exporter: CodeExporter;
-  private readonly rebinder: CodeRebinder;
   private closing?: Promise<void>;
   private timer?: NodeJS.Timeout;
   private waker?: NodeJS.Timeout;
@@ -76,7 +74,6 @@ export class CodeStore {
     this.repositories = repositories;
     this.receiver = new CodeReceiver(this.core);
     this.exporter = new CodeExporter(this.core);
-    this.rebinder = new CodeRebinder(this.core);
   }
 
   importRepository: CodeReceiver['importRepository'] = (...args) =>
@@ -89,8 +86,6 @@ export class CodeStore {
   complete: CodeReceiver['complete'] = (...args) => this.receiver.complete(...args);
   export: CodeExporter['export'] = (...args) => this.exporter.export(...args);
   readExport: CodeExporter['readExport'] = (...args) => this.exporter.readExport(...args);
-  rebindRepository: CodeRebinder['rebindRepository'] = (...args) =>
-    this.rebinder.rebindRepository(...args);
 
   /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {

@@ -21,11 +21,15 @@ export interface SessionToolInvocation {
  */
 export interface SessionToolPolicy {
   allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean>;
+  /** `identity`: how rules keyed on a tool's name know the call whatever its form (a retired
+   *  name, or a noun tool's action): the name `as` such rules know it by, with its arguments
+   *  flat. Grants and observations keep the name as called. */
   prepare(
     caller: Caller,
     name: string,
     input: Data,
     read?: boolean,
+    identity?: { as: string; args: Data },
   ): Promise<SessionToolInvocation>;
   validate(caller: Caller, name: string, input: Data): Promise<void>;
   cancel(invocation: SessionToolInvocation): void | Promise<void>;

@@ -290,35 +290,6 @@ export class CodeRepositories {
     return format;
   }
 
-  /**
-   * Record that this directory now also serves `repositoryId`, and answer with every identity
-   * it serves, oldest first. It runs before the activation transaction: a crash between the two
-   * leaves the new identity accepted here while the row still names the old one, which breaks
-   * nothing and replays, whereas appending afterwards would leave every Git operation of the
-   * project failing validate() with code_repository_foreign.
-   *
-   * `lineage` is what the binding row itself holds, oldest first and ending in the repository
-   * the project is bound to now. The written list is built from it rather than from the file,
-   * so an identity left behind by a rebind that never reached its transaction is pruned by the
-   * next one that does; and the directory is refused unless it already serves the identity the
-   * row names, which is the one thing the format-1 marker proved.
-   */
-  async rebind(projectId: string, lineage: string[], repositoryId: string): Promise<string[]> {
-    const held = await this.marker(projectId);
-    check(
-      held.projectId === projectId && held.repositoryIds.includes(lineage.at(-1)!),
-      'code_repository_foreign',
-      'The repository directory belongs to another project or does not serve this binding',
-      500,
-    );
-    const repositoryIds = lineage.includes(repositoryId) ? lineage : [...lineage, repositoryId];
-    await this.mark(this.paths(projectId), { format: 2, projectId, repositoryIds });
-    // validate() answers from this memo for the life of the process, so the next Git operation
-    // of this project would otherwise never read the identity just written.
-    this.validated.delete(projectId);
-    return repositoryIds;
-  }
-
   /** Put an identity in the marker whole: written and synced beside it, then renamed over it. */
   private async mark(paths: ProjectPaths, identity: object): Promise<void> {
     const next = `${paths.marker}.next`;
