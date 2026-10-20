@@ -284,7 +284,7 @@ test('connector.login signs in from the agent, and Merv tools then work without 
   const started = await agent.call('connector.login', { email: 'ada@lab.org' });
   assert.match(
     started.content[0].text,
-    /^Code sent if this is a Merv account\. Request: [a-z]+ [a-z]+\./,
+    /^Code sent if this is a Merv account \(someone in no Merv project yet is emailed how to join one instead\)\. Request: [a-z]+ [a-z]+\./,
   );
   const done = await agent.call('connector.login', { code: await f.codeFor('ada@lab.org') });
   assert.match(done.content[0].text, /^Signed in as Ada@Lab\.org \(Claude Code on /);
@@ -513,3 +513,170 @@ function execFileStatus(file: string, args: string[], home: string) {
     ),
   );
 }
+
+/** Claude Code and Codex stand-ins on a PATH of their own: `mcp get` prints what a test left in
+ *  `<state>/<client>-had`; every call is logged. */
+function fakeClients(t: TestContext, c: Awaited<ReturnType<typeof connector>>) {
+  const state = mkdtempSync(join(tmpdir(), 'merv-clients-'));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const bin = join(state, 'bin');
+  mkdirSync(bin);
+  for (const client of ['claude', 'codex'])
+    writeFileSync(
+      join(bin, client),
+      `#!/bin/sh\necho "${client} $*" >> "${state}/log"\ncase "$1 $2" in\n  "mcp get") [ -f "${state}/${client}-had" ] && { cat "${state}/${client}-had"; exit 0; }; exit 1;;\nesac\nexit 0\n`,
+      { mode: 0o700 },
+    );
+  const env = { HOME: c.home, PATH: `${bin}:/usr/bin:/bin`, MERV_CONNECT_TIMEOUT_MS: '3000' };
+  return {
+    had: (client: string, text: string) => writeFileSync(join(state, `${client}-had`), text),
+    log: () => (existsSync(join(state, 'log')) ? readFileSync(join(state, 'log'), 'utf8') : ''),
+    run: (...args: string[]) =>
+      new Promise<{ code: number; out: string }>((resolve) =>
+        execFile(process.execPath, [c.file, ...args], { env }, (error, stdout, stderr) =>
+          resolve({ code: error ? 1 : 0, out: `${stdout}${stderr}` }),
+        ),
+      ),
+  };
+}
+
+test('install replaces an earlier key-based Merv without printing its settings, and keeps a copy', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const clients = fakeClients(t, c);
+  const key = `mk_${'K'.repeat(43)}`;
+  const oauth = 'eyJhbGciOiJIUzI1NiJ9.oauth-secret';
+  // What the old Keys page told people to run, as each client shows it back.
+  clients.had(
+    'claude',
+    `merv:\n  Scope: User config\n  Type: http\n  URL: https://merv.example/mcp\n  Headers:\n    Authorization: Bearer ${key}\n    X-Other: Bearer ${oauth}\n`,
+  );
+  clients.had(
+    'codex',
+    `merv\n  transport: streamable_http\n  url: https://merv.example/mcp\n  http_headers: Authorization=Bearer ${key}\n`,
+  );
+  const codexConfig = join(c.home, '.codex', 'config.toml');
+  mkdirSync(join(c.home, '.codex'));
+  const toml = `[mcp_servers.merv]\nurl = "https://merv.example/mcp"\nhttp_headers = { "Authorization" = "Bearer ${key}" }\n`;
+  writeFileSync(codexConfig, toml, { mode: 0o600 });
+  mkdirSync(join(c.home, '.cursor'));
+  writeFileSync(
+    join(c.home, '.cursor', 'mcp.json'),
+    JSON.stringify({
+      mcpServers: {
+        merv: { url: 'https://merv.example/mcp', headers: { Authorization: `Bearer ${key}` } },
+      },
+    }),
+  );
+  const shim = join(c.dir, 'bin', 'merv-connect');
+  const { code, out } = await clients.run('install');
+  assert.equal(code, 0, out);
+  assert.ok(!out.includes('K'.repeat(20)) && !out.includes('oauth-secret'), out);
+  for (const client of ['Claude Code', 'Codex', 'Cursor'])
+    assert.match(out, new RegExp(`${client}: replacing an earlier "merv".*Keys page`));
+  const saved = /previous config saved as (\S+config\.toml\.bak-\d+)\)/.exec(out)![1]!;
+  assert.equal(readFileSync(saved, 'utf8'), toml);
+  assert.equal(statSync(saved).mode & 0o777, 0o600);
+  const log = clients.log();
+  assert.ok(
+    log.includes(`claude mcp add-json merv {"type":"stdio","command":"${shim}","args":[]} -s user`),
+  );
+  assert.ok(log.includes(`codex mcp add merv -- ${shim}`));
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(c.home, '.cursor', 'mcp.json'), 'utf8')).mcpServers.merv,
+    {
+      type: 'stdio',
+      command: shim,
+      args: [],
+    },
+  );
+});
+
+test("install and uninstall leave another Merv server's registration alone", async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const clients = fakeClients(t, c);
+  const theirs = '/home/ada/.merv/connect/experiments.rapidreview.io/bin/merv-connect';
+  clients.had('claude', `merv:\n  Type: stdio\n  Command: ${theirs}\n  Args:\n`);
+  clients.had('codex', `merv\n  transport: stdio\n  command: ${theirs}\n`);
+  mkdirSync(join(c.home, '.cursor'));
+  const cursorConfig = JSON.stringify({ mcpServers: { merv: { type: 'stdio', command: theirs } } });
+  writeFileSync(join(c.home, '.cursor', 'mcp.json'), cursorConfig);
+  for (const command of ['install', 'uninstall']) {
+    const { out } = await clients.run(command);
+    if (command === 'install')
+      for (const client of ['Claude Code', 'Codex', 'Cursor'])
+        assert.ok(
+          out.includes(
+            `${client}: "merv" runs the connector for another Merv server (experiments.rapidreview.io), so it was left alone.`,
+          ),
+          out,
+        );
+    assert.doesNotMatch(clients.log(), /mcp (remove|add)/, command);
+    assert.equal(readFileSync(join(c.home, '.cursor', 'mcp.json'), 'utf8'), cursorConfig);
+  }
+  // Its own registration is the one uninstall removes.
+  const shim = join(c.dir, 'bin', 'merv-connect');
+  clients.had('claude', `merv:\n  Type: stdio\n  Command: ${shim}\n`);
+  await clients.run('uninstall');
+  assert.match(clients.log(), /claude mcp remove merv -s user/);
+  assert.doesNotMatch(clients.log(), /codex mcp remove/);
+});
+
+/** Runs `withLock` exactly as the connector has it in `workers` processes at once; each enters
+ *  `rounds` times and logs entering and leaving. */
+async function lockRace(
+  t: TestContext,
+  workers: number,
+  rounds: number,
+  before?: (dir: string) => void,
+) {
+  const source = readFileSync(
+    new URL('../packages/scope/src/connect/merv-connect.mjs', import.meta.url),
+    'utf8',
+  );
+  const lock = source.slice(
+    source.indexOf('/** Creates `path` holding'),
+    source.indexOf("// ---- Merv's HTTP API"),
+  );
+  const dir = mkdtempSync(join(tmpdir(), 'merv-lock-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const script = join(dir, 'worker.mjs');
+  writeFileSync(
+    script,
+    `import * as fs from 'node:fs';\nimport { randomBytes, randomUUID } from 'node:crypto';\nimport { join } from 'node:path';\nconst DIR = process.argv[2];\nconst ensureDir = () => {};\nclass Refusal extends Error {}\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n${lock}\nfor (let i = 0; i < ${rounds}; i++)\n  await withLock(async () => {\n    fs.appendFileSync(join(DIR, 'log'), '+' + process.pid + '\\n');\n    await sleep(20);\n    fs.appendFileSync(join(DIR, 'log'), '-' + process.pid + '\\n');\n  });\n`,
+  );
+  before?.(dir);
+  await Promise.all(
+    Array.from(
+      { length: workers },
+      () => new Promise((resolve) => execFile(process.execPath, [script, dir], resolve)),
+    ),
+  );
+  return readFileSync(join(dir, 'log'), 'utf8').trim().split('\n');
+}
+const exclusive = (log: string[]) =>
+  log.every((line, at) =>
+    at % 2 === 0 ? line.startsWith('+') : line === `-${log[at - 1]!.slice(1)}`,
+  );
+
+test('the sign-in lock admits one holder at a time, also while a dead holder is taken over', async (t) => {
+  for (let trial = 0; trial < 4; trial++) {
+    const fresh = await lockRace(t, 4, 4);
+    assert.equal(fresh.length, 32);
+    assert.ok(exclusive(fresh), fresh.join(' '));
+    const stale = await lockRace(t, 4, 4, (dir) =>
+      writeFileSync(join(dir, 'lock'), JSON.stringify({ pid: 2 ** 22 - 7, at: Date.now() })),
+    );
+    assert.equal(stale.length, 32);
+    assert.ok(exclusive(stale), stale.join(' '));
+  }
+  // A lock whose holder has not written it yet (here: empty) is held, not taken over.
+  const started = Date.now();
+  const waited = await lockRace(t, 1, 1, (dir) => {
+    writeFileSync(join(dir, 'lock'), '');
+    setTimeout(() => rmSync(join(dir, 'lock')), 400);
+  });
+  assert.equal(waited.length, 2);
+  assert.ok(Date.now() - started >= 400);
+});

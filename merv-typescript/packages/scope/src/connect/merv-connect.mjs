@@ -106,39 +106,75 @@ function installId() {
   return id;
 }
 
-/** One holder at a time per origin; a dead holder's lock, or one older than 120 s, is taken over. */
+/** Creates `path` holding `text` in one step, or fails with EEXIST: no reader sees it empty. */
+function createWhole(path, text) {
+  const temp = `${path}.${randomBytes(6).toString('hex')}`;
+  fs.writeFileSync(temp, text, { flag: 'wx', mode: 0o600 });
+  try {
+    fs.linkSync(temp, path);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+/** A lock's holder, or `{ stale: true }` once it is dead, older than 120 s, or unreadable and old. */
+function lockState(path) {
+  let text;
+  let stat;
+  try {
+    stat = fs.lstatSync(path);
+    text = fs.readFileSync(path, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  let held;
+  try {
+    held = JSON.parse(text);
+  } catch {
+    held = undefined;
+  }
+  let alive = true;
+  try {
+    if (held?.pid) process.kill(held.pid, 0);
+  } catch (probe) {
+    alive = probe.code !== 'ESRCH';
+  }
+  const at = typeof held?.at === 'number' ? held.at : stat.mtimeMs;
+  return { text, stale: !alive || Date.now() - at > 120_000 };
+}
+
+/** One holder at a time per origin. A stale lock is removed only under a second, short-lived lock,
+ *  and only if it is still the very lock judged stale, so two waiters never both take over. */
 async function withLock(fn, path = join(DIR, 'lock')) {
   ensureDir();
   const token = randomUUID();
+  const breaker = `${path}.break`;
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {
-      const fd = fs.openSync(path, 'wx', 0o600);
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
-      fs.closeSync(fd);
+      createWhole(path, JSON.stringify({ pid: process.pid, at: Date.now(), token }));
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      let held;
-      try {
-        held = JSON.parse(fs.readFileSync(path, 'utf8'));
-      } catch {
-        held = undefined;
-      }
-      let alive = true;
-      try {
-        if (held?.pid) process.kill(held.pid, 0);
-      } catch (probe) {
-        alive = probe.code !== 'ESRCH';
-      }
-      if (!held || !alive || Date.now() - held.at > 120_000) {
-        fs.rmSync(path, { force: true });
-        continue;
-      }
-      if (Date.now() > deadline)
-        throw new Refusal('Another Merv sign-in is in progress; try again.');
-      await sleep(100);
     }
+    const held = lockState(path);
+    if (held?.stale) {
+      try {
+        createWhole(breaker, JSON.stringify({ pid: process.pid, at: Date.now() }));
+        try {
+          if (lockState(path)?.text === held.text) fs.rmSync(path, { force: true });
+        } finally {
+          fs.rmSync(breaker, { force: true });
+        }
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        // A breaker that died mid-takeover: its few milliseconds are long past.
+        if (lockState(breaker)?.stale) fs.rmSync(breaker, { force: true });
+      }
+      continue;
+    }
+    if (Date.now() > deadline) throw new Refusal('Another Merv sign-in is in progress; try again.');
+    await sleep(held ? 100 : 0);
   }
   try {
     return await fn();
@@ -212,18 +248,20 @@ const clientNames = [
   [/codex/i, 'Codex'],
   [/cursor/i, 'Cursor'],
 ];
+// Merv takes letters, digits, `_` and `-` in single-spaced words: nothing an email could link.
 const clientLabel = (name) =>
   clientNames.find(([pattern]) => pattern.test(name ?? ''))?.[1] ??
   (String(name ?? '')
-    .replace(/[^\p{L}\p{N} ._-]/gu, '')
-    .trim()
-    .slice(0, 40) ||
+    .replace(/[^\p{L}\p{N} _-]/gu, ' ')
+    .replace(/ +/g, ' ')
+    .slice(0, 40)
+    .trim() ||
     'Terminal');
 const host = () =>
   hostname()
     .split('.')[0]
-    .replace(/[^\p{L}\p{N}._-]/gu, '')
-    .slice(0, 64) || 'this machine';
+    .replace(/[^\p{L}\p{N}_-]/gu, '')
+    .slice(0, 64) || 'this-machine';
 const projectsLine = (projects) =>
   projects?.length
     ? projects.map((project) => `${project.name} (${project.role ?? 'member'})`).join(', ')
@@ -348,6 +386,34 @@ const onPath = (name) =>
 const run = (command, args) =>
   spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: 'pipe' });
 const entry = { type: 'stdio', command: SHIM, args: [] };
+/** Installer output reaches the agent's transcript: redacted, and never a client's settings. */
+const say = (message) => console.log(redact(message));
+/** The origin directory of the connector a registration runs, if it runs one. */
+const connectorOf = (settings) =>
+  /\.merv\/connect\/([^/\s"']+)\/bin\/merv-connect/.exec(settings ?? '')?.[1];
+/** Another Merv server's connector under this name is that server's: left alone. */
+function foreign(client, settings) {
+  const other = connectorOf(settings);
+  if (other === undefined || other === HOSTDIR) return false;
+  say(
+    `${client}: "${SERVER_NAME}" runs the connector for another Merv server (${other}), so it was left alone. To switch, run that connector's uninstall first.`,
+  );
+  return true;
+}
+const replacing = (client, settings, copy) =>
+  settings !== undefined &&
+  connectorOf(settings) === undefined &&
+  say(
+    `${client}: replacing an earlier "${SERVER_NAME}"${copy ? ` (previous config saved as ${copy})` : ''}. Its settings are not shown, since they may hold a key. If it used a Merv key, revoke that key on the Keys page once nothing needs it: ${KEYS_PAGE}`,
+  );
+/** A private copy of a client's config before it is changed. */
+function backup(file) {
+  if (!fs.lstatSync(file, { throwIfNoEntry: false })?.isFile()) return undefined;
+  const copy = `${file}.bak-${Date.now()}`;
+  fs.copyFileSync(file, copy, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(copy, 0o600);
+  return copy;
+}
 
 async function cursor(change) {
   const dir = join(HOME, '.cursor');
@@ -356,18 +422,16 @@ async function cursor(change) {
   await withLock(
     () => {
       if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
-        console.log(
+        say(
           `Cursor: ${file} is a symlink, so it was left alone. Add this under "mcpServers": "${SERVER_NAME}": ${JSON.stringify(entry)}`,
         );
         return;
       }
-      let config = {};
-      if (fs.existsSync(file)) {
-        config = JSON.parse(fs.readFileSync(file, 'utf8'));
-        fs.copyFileSync(file, `${file}.bak-${Date.now()}`);
-      }
+      const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
       config.mcpServers = config.mcpServers ?? {};
-      console.log(change(config.mcpServers));
+      const said = change(config.mcpServers, () => backup(file));
+      if (!said) return;
+      say(said);
       writeAtomic(dir, 'mcp.json', `${JSON.stringify(config, null, 2)}\n`);
     },
     join(CONNECT, 'cursor.lock'),
@@ -378,59 +442,75 @@ async function install() {
   let found = false;
   if (onPath('claude')) {
     found = true;
-    const existing = run('claude', ['mcp', 'get', SERVER_NAME]);
-    if (existing.status === 0)
-      console.log(`Claude Code had "${SERVER_NAME}":\n${existing.stdout.trim()}`);
-    for (const scope of ['local', 'user'])
-      if (run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]).status === 0)
-        console.log(`Claude Code: removed the earlier "${SERVER_NAME}" (${scope} scope).`);
-    const added = run('claude', [
-      'mcp',
-      'add-json',
-      SERVER_NAME,
-      JSON.stringify(entry),
-      '-s',
-      'user',
-    ]);
-    console.log(
-      added.status === 0
-        ? `Claude Code: added "${SERVER_NAME}" for this user${process.env.CLAUDE_CONFIG_DIR ? ` (config ${process.env.CLAUDE_CONFIG_DIR})` : ''}.`
-        : `Claude Code: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
-    );
-    if (/merv@/.test(run('claude', ['plugin', 'list']).stdout ?? ''))
-      console.log(
-        'Note: the Merv plugin is installed in Claude Code. If it still registers an HTTP Merv server with a key, Merv would appear twice; update the plugin to 0.3.0 (skills only).',
+    const got = run('claude', ['mcp', 'get', SERVER_NAME]);
+    const had = got.status === 0 ? got.stdout : undefined;
+    if (!foreign('Claude Code', had)) {
+      replacing('Claude Code', had);
+      for (const scope of ['local', 'user'])
+        run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+      const added = run('claude', [
+        'mcp',
+        'add-json',
+        SERVER_NAME,
+        JSON.stringify(entry),
+        '-s',
+        'user',
+      ]);
+      say(
+        added.status === 0
+          ? `Claude Code: added "${SERVER_NAME}" for this user${process.env.CLAUDE_CONFIG_DIR ? ` (config ${process.env.CLAUDE_CONFIG_DIR})` : ''}.`
+          : `Claude Code: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
       );
+      if (/merv@/.test(run('claude', ['plugin', 'list']).stdout ?? ''))
+        say(
+          "Note: the Merv plugin is installed in Claude Code. If it registers a Merv server of its own, Merv's tools appear twice: disable that one in /mcp.",
+        );
+    }
   }
   if (onPath('codex')) {
     found = true;
-    run('codex', ['mcp', 'remove', SERVER_NAME]);
-    const added = run('codex', ['mcp', 'add', SERVER_NAME, '--', SHIM]);
-    console.log(
-      added.status === 0
-        ? `Codex: added "${SERVER_NAME}" (~/.codex/config.toml).`
-        : `Codex: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
-    );
+    const got = run('codex', ['mcp', 'get', SERVER_NAME]);
+    const had = got.status === 0 ? got.stdout : undefined;
+    if (!foreign('Codex', had)) {
+      const config = join(process.env.CODEX_HOME || join(HOME, '.codex'), 'config.toml');
+      replacing('Codex', had, had !== undefined && !connectorOf(had) ? backup(config) : undefined);
+      run('codex', ['mcp', 'remove', SERVER_NAME]);
+      const added = run('codex', ['mcp', 'add', SERVER_NAME, '--', SHIM]);
+      say(
+        added.status === 0
+          ? `Codex: added "${SERVER_NAME}" (${config}).`
+          : `Codex: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
+      );
+    }
   }
-  await cursor((servers) => {
+  await cursor((servers, save) => {
     found = true;
+    const had = servers[SERVER_NAME] && JSON.stringify(servers[SERVER_NAME]);
+    if (foreign('Cursor', had)) return undefined;
+    replacing('Cursor', had, had && !connectorOf(had) ? save() : undefined);
     servers[SERVER_NAME] = entry;
     return `Cursor: added "${SERVER_NAME}" (~/.cursor/mcp.json).`;
   });
   if (!found)
-    console.log(
+    say(
       `No Claude Code, Codex or Cursor found. Register this MCP server by hand: ${SERVER_NAME} -> ${SHIM}`,
     );
-  console.log('Restart the client to load Merv.');
+  say('Restart the client to load Merv.');
 }
 
 async function uninstall() {
-  if (onPath('claude'))
+  // Only this origin's registration: never another server's, nor one a person made by hand.
+  const ours = (client) => {
+    const got = onPath(client) && run(client, ['mcp', 'get', SERVER_NAME]);
+    return got?.status === 0 && connectorOf(got.stdout) === HOSTDIR;
+  };
+  if (ours('claude'))
     for (const scope of ['local', 'user'])
       run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
-  if (onPath('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
+  if (ours('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
   await cursor((servers) => {
-    if (servers[SERVER_NAME]?.command === SHIM) delete servers[SERVER_NAME];
+    if (servers[SERVER_NAME]?.command !== SHIM) return undefined;
+    delete servers[SERVER_NAME];
     return `Cursor: removed "${SERVER_NAME}".`;
   });
   console.log(`Removed "${SERVER_NAME}" from the installed clients.`);
@@ -591,7 +671,7 @@ async function connectorTool(name, input) {
   if (email !== undefined) {
     const started = await startLogin(String(email), client);
     return text(
-      `Code sent if this is a Merv account. Request: ${started.phrase}. Tell the person to check that the email shows the same words, then call connector.login with {code} when they give it to you.`,
+      `Code sent if this is a Merv account (someone in no Merv project yet is emailed how to join one instead). Request: ${started.phrase}. Tell the person to check that the email shows the same words, then call connector.login with {code} when they give it to you.`,
     );
   }
   const done = await finishLogin(code);
@@ -691,7 +771,7 @@ async function main(args) {
         option('--client') ?? (process.env.CLAUDECODE === '1' ? 'Claude Code' : 'Terminal');
       const started = await startLogin(rest[0], client);
       console.log(
-        `If ${started.email} has a Merv account, an 8-digit code is on its way. Request: ${started.phrase}.\nWhen the person has the code, run: merv-connect login --code <code>`,
+        `If ${started.email} has a Merv account, an 8-digit code is on its way (or, if they are in no Merv project yet, how to join one). Request: ${started.phrase}.\nWhen the person has the code, run: merv-connect login --code <code>`,
       );
     } else if (command === 'status') console.log(statusLine(await status()));
     else if (command === 'logout') console.log(await logout());
