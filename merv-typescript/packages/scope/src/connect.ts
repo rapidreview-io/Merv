@@ -1,12 +1,24 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import type { AgentLoginCodeMail, AgentLoginNotice } from '@merv/contracts';
-import { escapeHtml, visible } from '@merv/contracts/text';
+import { escapeHtml } from '@merv/contracts/text';
 import { emailHtml, mailSchema, type Mail } from './mail.js';
 
 const count = (fallback: number) => z.number().int().positive().max(1_000_000).default(fallback);
 const loopback = (hostname: string) => ['127.0.0.1', '[::1]', 'localhost'].includes(hostname);
+/** An address range, as `address/bits`. */
+const cidr = z.string().refine((value) => {
+  const [address = '', bits = '', extra] = value.split('/');
+  const family = isIP(address);
+  return (
+    family !== 0 &&
+    extra === undefined &&
+    /^\d{1,3}$/.test(bits) &&
+    Number(bits) <= (family === 4 ? 32 : 128)
+  );
+}, 'Expected an address range such as 172.16.0.0/12');
 /** Agent sign-in by an emailed code (`/connect`), in the scope-api adapter's configuration. */
 export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .extend({
@@ -30,6 +42,9 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
       .string()
       .regex(/^[a-z][a-z0-9-]{0,31}$/)
       .default('merv'),
+    /** Proxies whose X-Forwarded-For is believed: the host's Caddy reaches a published Docker
+     *  port from the bridge gateway, so a deployment names its bridge range here. */
+    trustedProxies: z.array(cidr).max(32).default(['127.0.0.1/32', '::1/128']),
     keyDays: count(90),
     retentionDays: count(30),
     limits: z
@@ -51,13 +66,13 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .strict();
 export type AgentLoginConfig = z.input<typeof agentLoginSchema>;
 
-const label = (max: number) =>
+/** What the connector sends, and nothing a mail client could render as a link or reorder: letters,
+ *  digits, `_` and `-`, in words a single space apart (the host is one word). */
+const label = (max: number, words: boolean) =>
   z
     .string()
-    .trim()
-    .min(1)
     .max(max)
-    .refine((value) => visible(value) && !/[\p{Cc}]/u.test(value));
+    .regex(words ? /^[\p{L}\p{N}_-]+(?: [\p{L}\p{N}_-]+)*$/u : /^[\p{L}\p{N}_-]+$/u);
 const digestText = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const startInput = z
   .object({
@@ -65,8 +80,12 @@ export const startInput = z
       .string()
       .trim()
       .max(320)
-      .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
-    client: z.object({ name: label(40), host: label(64), installId: z.string().uuid() }).strict(),
+      .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
+      // As invitations do: the directory keeps addresses in lower case.
+      .transform((value) => value.toLowerCase()),
+    client: z
+      .object({ name: label(40, true), host: label(64, false), installId: z.string().uuid() })
+      .strict(),
     verifierHash: digestText,
   })
   .strict();
@@ -79,6 +98,7 @@ const day = (iso: string) => iso.slice(0, 10);
 
 /** The code email: the code, the request words, and what signs in. */
 export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
+  if (mail.code === null) return projectFirstMail(mail, origin);
   const code = `${mail.code.slice(0, 4)}-${mail.code.slice(4)}`;
   const keys = `${origin}/ui/settings/keys`;
   const warning = `The request words only help you match this email to the sign-in you started. Give this code only to an agent you started yourself, and only if it showed you "${mail.phrase}". Whoever has this code and that sign-in request can act as you in Merv. Merv never asks for this code by email, chat or phone. Didn't start this? Ignore this email: nothing happens without the code.`;
@@ -94,6 +114,24 @@ export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
 <p style="margin:0 0 24px;font-size:14px;line-height:1.5">Expires in 10 minutes.</p>
 <p style="margin:0 0 12px;font-size:12px;line-height:1.7">${escapeHtml(warning)}</p>
 <p style="margin:0;font-size:12px;line-height:1.7">Signed-in agents are listed, and can be revoked, at <a href="${escapeHtml(keys)}" style="color:#111111">${escapeHtml(keys)}</a></p>`),
+  };
+}
+
+/** In place of a code, for someone in no project: an agent key works in projects, so join one. */
+function projectFirstMail(mail: AgentLoginCodeMail, origin: string): Mail {
+  const lines = [
+    `An agent asked to sign in to Merv as you (request "${mail.phrase}", ${mail.label}).`,
+    'You are not in a Merv project yet, so there is no code: an agent key works in your projects.',
+    `Create a project, or accept an invitation to one, at ${origin}/ui/ and then ask your agent to sign in again.`,
+    "Didn't start this? Ignore this email: nothing happens.",
+  ];
+  return {
+    to: mail.to,
+    subject: 'Your Merv agent sign-in needs a project first',
+    idempotencyKey: `agent-login/${mail.loginId}`,
+    text: lines.join('\n\n'),
+    html: emailHtml(`<h1 style="margin:0 0 20px;font-size:26px;line-height:1.2;font-weight:600">Join a Merv project first</h1>
+${lines.map((line) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.6">${escapeHtml(line)}</p>`).join('\n')}`),
   };
 }
 
@@ -136,6 +174,16 @@ export function connectAssets(config: z.output<typeof agentLoginSchema>) {
     installer: stamp(source('install.sh')).replace('__CONNECTOR_SHA256__', sha256(connector)),
     connector,
   };
+}
+
+/** The ranges `trustedProxies` names, to check a socket's address against. */
+export function proxyList(ranges: readonly string[]): BlockList {
+  const list = new BlockList();
+  for (const range of ranges) {
+    const [address, bits] = range.split('/') as [string, string];
+    list.addSubnet(address, Number(bits), isIP(address) === 4 ? 'ipv4' : 'ipv6');
+  }
+  return list;
 }
 
 /** Background delivery, after the reply: a few jobs at a time and a bounded number waiting. */

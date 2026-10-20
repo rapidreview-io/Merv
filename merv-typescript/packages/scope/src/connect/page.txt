@@ -3,12 +3,13 @@ Merv: connect your agent
 Tell your agent: "Connect to Merv using __MERV_ORIGIN__/connect"
 
 For agents (Claude Code, Codex, Cursor). Do these steps in order and tell the person what you are
-doing. Needs Node.js 18 or later.
+doing. Needs Node.js 18 or later. Steps 1 to 3 each need network access and write to ~/.merv,
+outside this workspace: in Codex, request escalation for every one of them.
 
 1. Show the person this command, then run it. It installs Merv's connector in
    ~/.merv/connect/__MERV_HOSTDIR__ and adds a "__MERV_SERVER_NAME__" MCP server to Claude Code,
-   Codex and Cursor where they are installed. It needs network access and writes outside this
-   workspace; in Codex, request escalation. Running it trusts this Merv server to run code as you.
+   Codex and Cursor where they are installed. Running it trusts this Merv server to run code as
+   you.
 
      curl -fsSL __MERV_ORIGIN__/connect/install.sh | sh
 
@@ -16,8 +17,9 @@ doing. Needs Node.js 18 or later.
 
      ~/.merv/connect/__MERV_HOSTDIR__/bin/merv-connect login <their email> --client "<Claude Code|Codex|Cursor>"
 
-   Tell them the request words it prints. Merv emails them an 8-digit code with the same words. If
-   nothing arrives within 2 minutes, check the address and run the command again.
+   Tell them the request words it prints. Merv emails them an 8-digit code with the same words, or,
+   if they are in no Merv project yet, an email saying to create or join one first. If nothing
+   arrives within 2 minutes, check the address and run the command again.
 
 3. Ask the person for the code. Then run:
 
@@ -30,6 +32,7 @@ doing. Needs Node.js 18 or later.
    project.list.
 
 Rules: never print, read, copy or ask for anything in ~/.merv/connect, and never run
-`merv-connect logout` unless the person asks. Merv's key is never shown to you.
-No Merv account yet? The person signs up on the web, then signs in once: __MERV_ORIGIN__/ui/
+`merv-connect logout` unless the person asks. Merv's key is never in what these commands print.
+No Merv account yet? The person signs up on the web and creates or joins a project there first:
+__MERV_ORIGIN__/ui/
 Machines, CI and VMs use a key from the Keys page instead: __MERV_ORIGIN__/ui/settings/keys

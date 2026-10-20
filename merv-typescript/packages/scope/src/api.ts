@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isIP } from 'node:net';
+import { isIP, isIPv4, type BlockList } from 'node:net';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -24,6 +24,7 @@ import {
   connectAssets,
   Deliveries,
   noticeMail,
+  proxyList,
   startInput,
   verifyInput,
   type AgentLoginConfig,
@@ -260,16 +261,19 @@ export function scopeRoutes(
   };
 }
 
-/** The client's address: the rightmost X-Forwarded-For entry, but only from the local proxy. */
-export function clientIp(req: IncomingMessage): string | null {
+const LOOPBACK = proxyList(['127.0.0.1/32', '::1/128']);
+/** The client's address: the rightmost X-Forwarded-For entry, but only from a trusted proxy. */
+export function clientIp(req: IncomingMessage, proxies: BlockList = LOOPBACK): string | null {
   const remote = req.socket.remoteAddress ?? null;
-  const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  const address =
+    remote?.startsWith('::ffff:') && isIPv4(remote.slice(7)) ? remote.slice(7) : remote;
+  const trusted = !!address && proxies.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
   const forwarded = req.headers['x-forwarded-for'];
   const last = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
     .split(',')
     .map((entry) => entry.trim())
     .at(-1);
-  return local && last && isIP(last) ? last : remote;
+  return trusted && last && isIP(last) ? last : remote;
 }
 
 function reply(res: ServerResponse, status: number, type: string, body: string): void {
@@ -313,6 +317,7 @@ export function connectRoutes(
   const storeLimits = { ...limits, keyDays: config.keyDays, retentionDays: config.retentionDays };
   const { origin, page, installer, connector } = connectAssets(config);
   const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting);
+  const proxies = proxyList(config.trustedProxies);
   // In process: a restart forgets it. The verifier and per-login tries are the durable bound.
   const verifies = new Map<string, number[]>();
   const handler: MountHandler = async (req, res, r) => {
@@ -326,7 +331,7 @@ export function connectRoutes(
     const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
     if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
       throw unknownEndpoint();
-    const ip = clientIp(req);
+    const ip = clientIp(req, proxies);
     try {
       if (!verifyRoute) {
         if (deliveries.full) throw tooMany('login_capacity', 60);

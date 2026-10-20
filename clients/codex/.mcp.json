@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "merv": {
+      "type": "http",
+      "url": "https://YOUR-MERV-HOST/mcp",
+      "bearer_token_env_var": "MERV_KEY"
+    }
+  }
+}

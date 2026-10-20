@@ -209,7 +209,9 @@ export interface AgentLoginStarted {
 export interface AgentLoginCodeMail {
   to: string;
   loginId: string;
-  code: string;
+  /** Null for someone who has signed in to Merv but is in no project yet: no key can be issued,
+   *  so the email says to create or join one first. */
+  code: string | null;
   phrase: string;
   label: string;
 }

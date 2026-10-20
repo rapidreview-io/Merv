@@ -751,18 +751,22 @@ test('agent sign-in is opt-in, needs the service key and a mail key, and asks fo
     SUPABASE_SERVICE_KEY: 'private-directory-fixture',
     RESEND_API_KEY: 'private-mail-fixture',
   };
-  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true' }).status, 0);
+  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true', MERV_CONNECTOR_NAME: 'merv' }).status, 0);
   assert.notEqual(
     run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'Merv' }).status,
     0,
   );
-  assert.equal(run({ MERV_AGENT_LOGIN: 'true', ...keys }).status, 0);
+  // No default name: a staging that forgot it would take over production's "merv" registration.
+  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true', ...keys }).status, 0);
+  assert.equal(run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'merv' }).status, 0);
   assert.deepEqual(plugin('scope-api').config, {
     agentLogin: {
       apiKeyEnv: 'RESEND_API_KEY',
       from: 'Merv <login@rapidreview.io>',
       publicOrigin: 'https://merv.example',
       serverName: 'merv',
+      // Caddy reaches the published port from the Docker bridge gateway.
+      trustedProxies: ['127.0.0.1/32', '::1/128', '172.16.0.0/12'],
     },
   });
   assert.equal(plugin('identity').config.directoryKeyEnv, 'SUPABASE_SERVICE_KEY');

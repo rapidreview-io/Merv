@@ -196,18 +196,19 @@ export class AgentLogins implements ScopeAgentLogins {
     try {
       const found = await directory.find(email);
       if (!found) return;
-      // Only someone who has signed in to Merv, and belongs to a project a key can be issued in.
+      // Only someone who has signed in to Merv. A key needs a project to anchor it, so one who
+      // belongs to none is mailed how to get one instead of a code.
       stage = 'membership';
-      const member = await this.state.read(
-        async (sql) =>
-          !!(await sql.get(
-            'SELECT 1 FROM shared_users WHERE issuer=? AND subject=?',
-            found.issuer,
-            found.subject,
-          )) &&
-          (await this.members.memberProjects(sql, found.issuer, found.subject, null)).length > 0,
+      const member = await this.state.read(async (sql) =>
+        (await sql.get(
+          'SELECT 1 FROM shared_users WHERE issuer=? AND subject=?',
+          found.issuer,
+          found.subject,
+        ))
+          ? (await this.members.memberProjects(sql, found.issuer, found.subject, null)).length > 0
+          : undefined,
       );
-      if (!member) return;
+      if (member === undefined) return;
       stage = 'directory';
       const user = await directory.user(found.subject);
       if (!eligible(user, emailDigest(email))) return;
@@ -215,9 +216,9 @@ export class AgentLogins implements ScopeAgentLogins {
       const row = await this.state.transaction((tx) =>
         tx.get<LoginRow>(
           `UPDATE agent_logins SET issuer=?,subject=? WHERE id=? AND status='pending'
-             AND issuer IS NULL AND expires_at>? RETURNING *`,
-          found.issuer,
-          found.subject,
+             AND issuer IS NULL AND sent_at IS NULL AND expires_at>? RETURNING *`,
+          member ? found.issuer : null,
+          member ? found.subject : null,
           login.loginId,
           iso(this.clock()),
         ),
@@ -227,7 +228,7 @@ export class AgentLogins implements ScopeAgentLogins {
       await send({
         to: user.email,
         loginId: row.id,
-        code: login.code,
+        code: member ? login.code : null,
         phrase: row.phrase,
         label: `${row.client} on ${row.host}`,
       });

@@ -115,8 +115,15 @@ const projectInvitations = optIn('MERV_PROJECT_INVITATIONS');
 // Agent sign-in by emailed code (/connect). It needs the directory's admin API, so the service key
 // must be a service-role key: identity refuses to boot otherwise. Off until a staging check passes.
 const agentLogin = optIn('MERV_AGENT_LOGIN');
-const connectorName = process.env.MERV_CONNECTOR_NAME ?? 'merv';
-if (!/^[a-z][a-z0-9-]{0,31}$/.test(connectorName)) throw new Error('Invalid MERV_CONNECTOR_NAME');
+// The name each client registers is per deployment, never defaulted, so staging's connector
+// cannot take production's "merv" registration over: `merv` on production, `merv-staging` on staging.
+const connectorName = agentLogin ? required('MERV_CONNECTOR_NAME') : undefined;
+if (agentLogin && !/^[a-z][a-z0-9-]{0,31}$/.test(connectorName))
+  throw new Error('Invalid MERV_CONNECTOR_NAME');
+// Caddy on the host reaches the published port from the Docker bridge gateway.
+const trustedProxies = (process.env.MERV_TRUSTED_PROXIES ?? '127.0.0.1/32,::1/128,172.16.0.0/12')
+  .split(',')
+  .map((range) => range.trim());
 if (projectInvitations || agentLogin) {
   required('SUPABASE_SERVICE_KEY');
   const resendKeyEnv = process.env.MERV_INVITATION_RESEND_KEY_ENV
@@ -136,6 +143,7 @@ if (projectInvitations || agentLogin) {
       agentLogin: {
         ...mail('MERV_AGENT_LOGIN_FROM', 'Merv <login@rapidreview.io>'),
         serverName: connectorName,
+        trustedProxies,
       },
     }),
   });

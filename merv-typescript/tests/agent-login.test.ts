@@ -14,6 +14,7 @@ import type {
 import { openState } from './fixtures/state.js';
 import { connectServer } from './fixtures/agent-login.js';
 import { clientIp, scopeApiPlugin } from '@merv/scope/api';
+import { agentLoginSchema, proxyList, startInput } from '@merv/scope/connect';
 import { Context } from 'cordis';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -186,15 +187,25 @@ test('only an eligible account is mailed its code, and every start answers alike
   });
   f.accounts.set('loner@lab.org', loner.user.subject);
   f.directoryUsers.set(loner.user.subject, { ...record, email: 'loner@lab.org' });
-  await f.start('loner@lab.org');
-  assert.equal(f.codes.length, 1);
+  // They are told to create or join a project, with no code, and nothing they hold signs in.
+  const lonely = await f.start('loner@lab.org');
+  assert.equal(f.codes.length, 2);
+  assert.deepEqual(f.codes[1], {
+    to: 'loner@lab.org',
+    loginId: lonely.login.loginId,
+    code: null,
+    phrase: lonely.login.phrase,
+    label: 'Claude Code on ada-mbp',
+  });
+  await assert.rejects(f.verify(lonely.login, lonely.verifier), invalidCode);
   const rows = await f.state.read((sql) =>
     sql.all<{ issuer: string | null; sent_at: string | null }>(
       'SELECT issuer,sent_at FROM agent_logins ORDER BY created_at',
     ),
   );
   assert.equal(rows.length, 11);
-  assert.equal(rows.filter((row) => row.sent_at !== null).length, 1);
+  assert.equal(rows.filter((row) => row.sent_at !== null).length, 2);
+  assert.equal(rows.at(-1)!.issuer, null);
   const stored = JSON.stringify(
     await f.state.read((sql) => sql.all('SELECT * FROM agent_logins')),
   ).toLowerCase();
@@ -520,6 +531,70 @@ test('a start answers the same for every address; the code arrives only for an e
   );
   assert.equal(listed.status, 200);
   assert.equal(JSON.parse(listed.body.result.content[0].text).projects[0].role, 'operator');
+  // Signed in to Merv once but in no project: an email says how to join one, and carries no code.
+  await f.person('44444444-4444-4444-8444-444444444444', 'cy@lab.org');
+  const cy = await post(`${f.url}/connect/login`, startBody('Cy@Lab.org', 'c'.repeat(43)));
+  assert.equal(cy.status, 202);
+  await f.drain();
+  const told = f.mails.at(-1)!;
+  assert.equal(told.to, 'cy@lab.org');
+  assert.equal(told.subject, 'Your Merv agent sign-in needs a project first');
+  assert.ok(
+    told.text.includes(`request "${cy.body.phrase}"`) && told.text.includes(`${f.url}/ui/`),
+  );
+  assert.doesNotMatch(told.text, /\d{4}-\d{4}/);
+});
+
+test('an email is looked up in lower case, and a client label is plain words', async () => {
+  const body = (client: Record<string, string>) => ({
+    email: ' Ada@Lab.ORG ',
+    client: { installId: '9d5c3a1e-5f0e-4b8c-9a39-4f1e2b7c6d01', ...client },
+    verifierHash: 'a'.repeat(43),
+  });
+  assert.equal(
+    startInput.parse(body({ name: 'Claude Code', host: 'ada-mbp' })).email,
+    'ada@lab.org',
+  );
+  assert.ok(startInput.safeParse(body({ name: 'Visual Studio Code', host: 'Ada_MBP-2' })).success);
+  // Nothing a mail client would link, reorder or hide: these become the code email's "Signs in".
+  for (const [name, host] of [
+    ['Claude Code', '\u202Eurgent: verify at https://merv-verify.example/c'],
+    ['Claude Code', 'merv-verify.example'],
+    ['https://merv-verify.example', 'ada-mbp'],
+    ['Merv: urgent', 'ada-mbp'],
+    ['Claude\u200bCode', 'ada-mbp'],
+    ['Claude  Code', 'ada-mbp'],
+    ['Claude Code', 'ada mbp'],
+  ])
+    assert.equal(startInput.safeParse(body({ name, host })).success, false, `${name} / ${host}`);
+});
+
+test('X-Forwarded-For is believed only from the proxy ranges a deployment names', () => {
+  const request = (remoteAddress: string) =>
+    ({
+      socket: { remoteAddress },
+      headers: { 'x-forwarded-for': '10.9.9.9, 198.51.100.7' },
+    }) as never;
+  // Host Caddy reaches a published Docker port from the bridge gateway, not from loopback.
+  const bridge = proxyList(['127.0.0.1/32', '::1/128', '172.16.0.0/12']);
+  assert.equal(clientIp(request('172.18.0.1'), bridge), '198.51.100.7');
+  assert.equal(clientIp(request('::ffff:172.18.0.1'), bridge), '198.51.100.7');
+  assert.equal(clientIp(request('127.0.0.1'), bridge), '198.51.100.7');
+  assert.equal(clientIp(request('203.0.113.9'), bridge), '203.0.113.9');
+  // Loopback only, unless configured.
+  assert.equal(clientIp(request('172.18.0.1')), '172.18.0.1');
+  const config = {
+    apiKeyEnv: 'RESEND_API_KEY',
+    from: 'Merv <login@example.com>',
+    publicOrigin: 'https://merv.example/',
+  };
+  assert.deepEqual(agentLoginSchema.parse(config).trustedProxies, ['127.0.0.1/32', '::1/128']);
+  for (const range of ['172.16.0.0', '172.16.0.0/33', 'fd00::/129', 'proxy/8', '10.0.0.0/8/1'])
+    assert.equal(
+      agentLoginSchema.safeParse({ ...config, trustedProxies: [range] }).success,
+      false,
+      range,
+    );
 });
 
 test('limits answer 429 with Retry-After, and an address is trusted only from the local proxy', async (t) => {
