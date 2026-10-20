@@ -669,7 +669,8 @@ test('a full delivery queue refuses new starts with login_capacity', async (t) =
   assert.equal(full.body.error.code, 'login_capacity');
 });
 
-test('an email-code key cannot mint, rotate, reveal or revoke keys, nor manage members or secrets', async (t) => {
+// Its refusal at every credential handler is pinned in credential-lock.test.ts.
+test('an email-code key cannot manage members or invitations', async (t) => {
   const f = await connectServer();
   t.after(() => f.close());
   const other = await f.person('22222222-2222-4222-8222-222222222222', 'bob@lab.org', 'Bob');
@@ -692,17 +693,6 @@ test('an email-code key cannot mint, rotate, reveal or revoke keys, nor manage m
     });
     return response.status;
   };
-  const human = await f.scope.members.acceptVerifiedIdentity({
-    issuer: 'https://identity.example/auth/v1',
-    subject: f.ada.human.user.subject,
-    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-  });
-  const handMade = await f.scope.userKeys.create(human, { projectId, label: 'Laptop' });
-  assert.equal(await as('/account/keys', 'POST', { projectId }), 403);
-  assert.equal(await as('/account/keys', 'GET'), 403);
-  assert.equal(await as(`/account/keys/${handMade.key.id}/rotate`, 'POST', {}), 403);
-  assert.equal(await as(`/account/keys/${handMade.key.id}`, 'DELETE'), 403);
-  assert.equal(await as(`/account/keys/${signedIn.body.key.id}/rotate`, 'POST', {}), 403);
   assert.equal(
     await as(`/projects/${projectId}/members/${other.human.user.subject}`, 'PATCH', {
       role: 'reader',
@@ -719,30 +709,6 @@ test('an email-code key cannot mint, rotate, reveal or revoke keys, nor manage m
       role: 'reader',
     }),
     403,
-  );
-  assert.equal(await as('/secrets/huggingface', 'GET'), 403);
-  for (const [name, args] of [
-    ['actor.create', { name: 'x', role: 'operator' }],
-    ['actor.issue_token', { actorId: 'actor_x' }],
-    ['actor.rotate_token', { credentialId: 'cred_x' }],
-    ['actor.credentials', {}],
-  ] as const) {
-    const called = await post(
-      `${f.url}/mcp`,
-      {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name, arguments: { ...args, projectId } },
-      },
-      { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream' },
-    );
-    assert.equal(called.body.result.isError, true, name);
-    assert.match(called.body.result.content[0].text, /tool_forbidden/, name);
-  }
-  assert.equal(
-    (await f.scope.userKeys.keys(human)).find((key) => key.id === handMade.key.id)!.revokedAt,
-    null,
   );
 });
 

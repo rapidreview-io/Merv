@@ -1,9 +1,12 @@
 /**
  * The founder's ruling of 2026-10-20 lets an admin's agent act as its person without approval. What
  * mints, rotates, reveals or reads a credential stays the signed-in person's: an agent holding their
- * key, a leased worker they delegated, and their Pi conversation are each refused at every handler.
+ * key (one made on the Keys page or one their connector got by emailed code), a leased worker they
+ * delegated, and their Pi conversation are each refused at every handler.
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +19,7 @@ import {
   MervError,
   sha256Hex,
   type ArtifactUploadStatus,
+  type AgentLoginLimits,
   type Caller,
   type Principal,
   type SessionToolPolicy,
@@ -39,6 +43,27 @@ import { openState, stateConfig } from './fixtures/state.js';
 const issuer = 'https://identity.example/auth/v1';
 const refused = (code: string, status: number) => (error: unknown) =>
   error instanceof MervError && error.code === code && error.status === status;
+const agentLimits: AgentLoginLimits = {
+  emailPer15Minutes: 9,
+  emailPerDay: 9,
+  ipPerHour: 9,
+  globalPerMinute: 30,
+  globalPerDay: 500,
+  triesPerLogin: 5,
+  keysPerPerson: 10,
+  keyDays: 90,
+  retentionDays: 30,
+};
+const directory = {
+  find: async () => ({ issuer, subject: 'alice' }),
+  user: async () => ({
+    email: 'alice@lab.org',
+    anonymous: false,
+    confirmed: true,
+    banned: false,
+    deleted: false,
+  }),
+};
 
 async function fixture(t: TestContext) {
   const state = await openState(':memory:');
@@ -58,6 +83,36 @@ async function fixture(t: TestContext) {
     key: await scope.userKeys.authenticate(issued.token),
   };
   const key: Caller = { ...(await scope.caller(keyPrincipal)), projectId: project.id };
+  /** A login her connector starts by email; `verify` is the one way it yields a key. */
+  const login = async () => {
+    const verifier = `verifier-${Math.random()}`;
+    const started = await scope.agentLogins.start(
+      {
+        email: 'alice@lab.org',
+        ip: null,
+        client: { name: 'Claude Code', host: 'laptop', installId: crypto.randomUUID() },
+        verifierHash: createHash('sha256').update(verifier).digest('base64url'),
+      },
+      agentLimits,
+    );
+    await scope.agentLogins.deliver(started, 'alice@lab.org', directory, async () => {});
+    const verify = (code = started.code) =>
+      scope.agentLogins.verify(
+        started.loginId,
+        { code, verifier },
+        agentLimits,
+        directory,
+        async () => {},
+      );
+    return { started, verify };
+  };
+  // The account key her agent got by emailed code: refused wherever any key is.
+  const emailed = await (await login()).verify();
+  const emailPrincipal: Principal = {
+    kind: 'key',
+    key: await scope.userKeys.authenticate(emailed.token),
+  };
+  const emailKey = await scope.caller(emailPrincipal, project.id);
   const worker = await state.transaction((tx) =>
     scope.createSessionActor(
       source,
@@ -96,13 +151,26 @@ async function fixture(t: TestContext) {
     await tools.close();
     await state.close();
   });
-  const agents = { key, session, conversation };
+  const agents = { key, emailKey, session, conversation };
   const principals: Record<keyof typeof agents, ApiPrincipal> = {
     key: keyPrincipal,
+    emailKey: emailPrincipal,
     session: { kind: 'session', caller: session },
     conversation: { kind: 'conversation', caller: conversation },
   };
-  return { state, scope, tools, alice, project, person, issued, agents, principals };
+  return {
+    state,
+    scope,
+    tools,
+    alice,
+    project,
+    person,
+    issued,
+    emailed,
+    agents,
+    principals,
+    login,
+  };
 }
 
 /** One mounted handler called as the API would, with this principal. */
@@ -119,7 +187,7 @@ const route =
       } as ApiRequest,
     );
 
-test('credentials stay the signed-in person’s: a key, a worker session and a Pi conversation are each refused at every credential handler and route', async (t) => {
+test('credentials stay the signed-in person’s: a key, an emailed-code key, a worker session and a Pi conversation are each refused at every credential handler and route', async (t) => {
   const f = await fixture(t);
   const agents = Object.entries(f.agents);
   const principals = Object.entries(f.principals);
@@ -173,20 +241,26 @@ test('credentials stay the signed-in person’s: a key, a worker session and a P
   const account = route(scopeRoutes(f.scope));
   const keyId = f.issued.key.id;
   const person: ApiPrincipal = { kind: 'user', user: f.alice.user, expiresAt: f.alice.expiresAt };
-  assert.equal(((await account(person, 'GET', '/account/keys')) as { keys: [] }).keys.length, 1);
+  const listed = (await account(person, 'GET', '/account/keys')) as { keys: [] };
+  assert.equal(listed.keys.length, 2, 'her hand-made key and her agent’s');
   for (const [kind, principal] of principals)
     for (const [method, path, body] of [
       ['GET', '/account/keys'],
       ['POST', '/account/keys', { projectId: f.project.id }],
       ['POST', `/account/keys/${keyId}/rotate`, {}],
       ['DELETE', `/account/keys/${keyId}`],
+      ['POST', `/account/keys/${f.emailed.key.id}/rotate`, {}],
     ] as const)
       await assert.rejects(
         account(principal, method, path, body),
-        kind === 'key' ? refused('forbidden', 403) : refused('not_found', 404),
+        principal.kind === 'key' ? refused('forbidden', 403) : refused('not_found', 404),
         `${kind} ${method} ${path}`,
       );
-  assert.equal(((await account(person, 'GET', '/account/keys')) as { keys: [] }).keys.length, 1);
+  assert.deepEqual(
+    await account(person, 'GET', '/account/keys'),
+    listed,
+    'none rotated or revoked',
+  );
 
   // Her Hugging Face token.
   const status = { available: true, configured: true, updatedAt: null };
@@ -285,6 +359,45 @@ test('credentials stay the signed-in person’s: a key, a worker session and a P
     f.tools.call('probe.leaky', f.agents.conversation, {}),
     refused('tool_result_secret', 403),
   );
+});
+
+test('an emailed-code key is issued only by consuming its challenge, once', async (t) => {
+  const f = await fixture(t);
+  // No handler, tool or route calls the issuer: only AgentLogins.verify does.
+  const callers: string[] = [];
+  const root = new URL('../packages/', import.meta.url);
+  for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' }))
+    if (
+      /\/src\/.*\.ts$/.test(file) &&
+      /issueForEmailLogin\(/.test(readFileSync(new URL(file, root), 'utf8'))
+    )
+      callers.push(file);
+  assert.deepEqual(callers.sort(), ['scope/src/agent-logins.ts', 'scope/src/user-keys.ts']);
+
+  const keys = () => f.state.read((sql) => sql.all<{ id: string }>('SELECT id FROM user_keys'));
+  const before = await keys();
+  const { started, verify } = await f.login();
+  const wrong = started.code === '00000000' ? '00000001' : '00000000';
+  await assert.rejects(verify(wrong), refused('invalid_code', 400));
+  assert.deepEqual(await keys(), before, 'a wrong code issues nothing');
+  // Two verifies race for one challenge: writers are serialized and verify rechecks it inside.
+  const raced = await Promise.allSettled([verify(), verify()]);
+  const won = raced.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  assert.equal(won.length, 1, 'exactly one verify consumed the challenge');
+  for (const r of raced)
+    if (r.status === 'rejected')
+      assert.ok(refused('invalid_code', 400)(r.reason), String(r.reason));
+  const after = await keys();
+  assert.equal(after.length, before.length + 1);
+  const row = await f.state.read((sql) =>
+    sql.get<{ status: string; key_id: string }>(
+      'SELECT status,key_id FROM agent_logins WHERE id=?',
+      started.loginId,
+    ),
+  );
+  assert.deepEqual(row, { status: 'used', key_id: won[0]!.key.id });
+  await assert.rejects(verify(), refused('invalid_code', 400), 'a used challenge yields no key');
+  assert.deepEqual(await keys(), after);
 });
 
 test('the ruling’s allowance: a person’s conversation is given signed upload and download links', async (t) => {
