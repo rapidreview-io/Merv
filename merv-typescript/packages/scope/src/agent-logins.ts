@@ -32,6 +32,7 @@ export interface LoginRow {
   subject: string | null;
   created_at: string;
   expires_at: string;
+  /** When a delivery reserved this code's send: what the caps in all count. Cleared if the send fails. */
   sent_at: string | null;
   failures: number;
   status: 'pending' | 'used' | 'locked';
@@ -100,8 +101,9 @@ const eligible = (user: DirectoryUser | null, emailHash: string): user is Direct
 /**
  * Agent sign-in by an emailed code. The stored rows are the only limits and the audit trail: each
  * start is counted as a row against its email, address and network inside the writer transaction, before
- * any directory call or email; the caps in all count only the rows a delivery reserved, checked
- * again in the transaction that reserves, so no flood of other starts can spend them.
+ * any directory call or email; the caps in all count only the sends a delivery reserved, by the time
+ * it reserved them, checked again in the transaction that reserves, so no flood of other starts can
+ * spend them and a held start is counted when it goes out.
  */
 export class AgentLogins implements ScopeAgentLogins {
   constructor(
@@ -146,14 +148,14 @@ export class AgentLogins implements ScopeAgentLogins {
     await this.capacity(sql, now, limits);
   }
 
-  /** Refuses past the caps in all on codes sent: only rows reserved for an eligible person count,
-   *  and a partial index holds those alone. */
+  /** Refuses past the caps in all on codes sent: only sends reserved and not failed count, by when
+   *  they were reserved, and a partial index holds those alone. */
   private async capacity(sql: Sql, now: number, limits: AgentLoginLimits): Promise<void> {
     const today = now - (now % DAY);
     const sent = await sql.get<Record<string, string | number>>(
-      `SELECT SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS minute,
-         SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS day
-       FROM agent_logins WHERE issuer IS NOT NULL AND created_at>=?`,
+      `SELECT SUM(CASE WHEN sent_at>=? THEN 1 ELSE 0 END) AS minute,
+         SUM(CASE WHEN sent_at>=? THEN 1 ELSE 0 END) AS day
+       FROM agent_logins WHERE sent_at IS NOT NULL AND sent_at>=?`,
       iso(now - MINUTE),
       iso(today),
       iso(Math.min(today, now - MINUTE)),
@@ -232,15 +234,16 @@ export class AgentLogins implements ScopeAgentLogins {
       const user = await directory.user(found.subject);
       if (!eligible(user, emailDigest(email))) return;
       stage = 'reserve';
-      // Reserving counts against the caps in all; past them nothing is sent.
+      // Reserving counts against the caps in all from now; past them nothing is sent.
       const row = await this.state.transaction(async (tx) => {
         const now = this.clock();
         await this.capacity(tx, now, limits);
         return tx.get<LoginRow>(
-          `UPDATE agent_logins SET issuer=?,subject=? WHERE id=? AND status='pending'
+          `UPDATE agent_logins SET issuer=?,subject=?,sent_at=? WHERE id=? AND status='pending'
              AND issuer IS NULL AND sent_at IS NULL AND expires_at>? RETURNING *`,
           found.issuer,
           found.subject,
+          iso(now),
           login.loginId,
           iso(now),
         );
@@ -254,10 +257,17 @@ export class AgentLogins implements ScopeAgentLogins {
         phrase: row.phrase,
         label: `${row.client} on ${row.host}`,
       });
-      await this.state.transaction((tx) =>
-        tx.run('UPDATE agent_logins SET sent_at=? WHERE id=?', iso(this.clock()), row.id),
-      );
     } catch {
+      // A send that failed no longer counts against the caps, and its login can never sign in.
+      if (stage === 'send')
+        await this.state
+          .transaction((tx) =>
+            tx.run(
+              "UPDATE agent_logins SET sent_at=NULL,status='locked' WHERE id=? AND status='pending'",
+              login.loginId,
+            ),
+          )
+          .catch(() => undefined);
       // The sign-in id and stage only: never the email, the code or an upstream message.
       process.stderr.write(
         `${JSON.stringify({ event: 'agent_login_undelivered', loginId: login.loginId, stage })}\n`,

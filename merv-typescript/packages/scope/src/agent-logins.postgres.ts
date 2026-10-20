@@ -25,7 +25,7 @@ CREATE INDEX agent_logins_email ON agent_logins(email_hash, created_at);
 CREATE INDEX agent_logins_ip ON agent_logins(ip_hash, created_at);
 CREATE INDEX agent_logins_net ON agent_logins(net_hash, created_at);
 CREATE INDEX agent_logins_created ON agent_logins(created_at);
-CREATE INDEX agent_logins_sent ON agent_logins(created_at) WHERE issuer IS NOT NULL;
+CREATE INDEX agent_logins_sent ON agent_logins(sent_at) WHERE sent_at IS NOT NULL;
 CREATE INDEX agent_logins_install ON agent_logins(issuer, subject, install_id) WHERE key_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION agent_logins_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN

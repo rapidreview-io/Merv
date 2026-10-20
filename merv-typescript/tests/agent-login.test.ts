@@ -368,6 +368,49 @@ test('the caps in all count codes sent, so a flood of unknown addresses spends n
   });
 });
 
+test('the caps in all count a send when it is reserved, not when its start was made', async (t) => {
+  const f = await fixture(t);
+  const tight = { ...limits, globalPerMinute: 2 };
+  // Three starts held in the queue past the minute they were made in, then delivered together.
+  const held = [];
+  for (let i = 0; i < 3; i++) held.push(await f.start('ada@lab.org', { with: tight, hold: true }));
+  f.advance(61_000);
+  for (const { login } of held) await f.deliver(login, 'ada@lab.org', tight);
+  assert.equal(f.codes.length, 2);
+  await assert.rejects(f.start('ghost@lab.org', { with: tight }), { code: 'login_capacity' });
+});
+
+test('a send counts on the day it goes out, not the day its start was made', async (t) => {
+  const f = await fixture(t);
+  const tight = { ...limits, globalPerDay: 1 };
+  f.advance(Date.parse('2026-10-20T23:59:00.000Z') - f.now());
+  const { login } = await f.start('ada@lab.org', { with: tight, hold: true });
+  f.advance(2 * 60_000);
+  await f.deliver(login, 'ada@lab.org', tight);
+  assert.equal(f.codes.length, 1);
+  await assert.rejects(f.start('ghost@lab.org', { with: tight }), {
+    code: 'login_capacity',
+    details: { retryAfterSeconds: day / 1000 - 60 },
+  });
+});
+
+test('a failed send spends none of the caps in all, and its login never signs in', async (t) => {
+  const f = await fixture(t);
+  const tight = { ...limits, globalPerMinute: 2, globalPerDay: 2 };
+  f.failMail(true);
+  const failed = [
+    await f.start('ada@lab.org', { with: tight }),
+    await f.start('ada@lab.org', { with: tight }),
+  ];
+  f.failMail(false);
+  assert.equal(f.codes.length, 0);
+  const sent = await f.start('ada@lab.org', { with: tight });
+  assert.equal(f.codes.length, 1);
+  for (const { login, verifier } of failed)
+    await assert.rejects(f.verify(login, verifier), invalidCode);
+  assert.match((await f.verify(sent.login, sent.verifier)).token, /^mk_/);
+});
+
 test('unsuccessful requests are pruned after 30 days; issuance evidence is kept', async (t) => {
   const f = await fixture(t);
   const used = await f.start();
