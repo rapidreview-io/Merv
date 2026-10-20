@@ -731,7 +731,8 @@ test('a key revokes only itself at DELETE /account/key, and a person is refused 
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
   });
   assert.equal(refused.status, 401);
-  assert.equal(((await refused.json()) as { connect: string }).connect, '/connect');
+  // No /connect is mounted here, so the agent is sent where a person makes a key.
+  assert.equal(((await refused.json()) as { connect: string }).connect, '/ui/settings/keys');
   assert.equal((await f.request('/account', { token: staying.token })).status, 200);
   const keys = await f.request<{ keys: UserKey[] }>('/account/keys');
   assert.deepEqual(keys.body.keys.map((key) => [key.label, key.revokedAt === null]).sort(), [
