@@ -71,10 +71,23 @@ export const fleetToolsPlugin = {
         reads: ({ action }: Input) => ['list', 'get', 'workflow_retry_status'].includes(action),
         handler: (caller: Caller, parsed: Input) => run[parsed.action](caller, parsed),
       });
-      // For one release the seven tools the 2026-10-20 consolidation merged run as their action.
+      // For one release the seven tools the 2026-10-20 consolidation merged run as their action,
+      // with the arguments each took.
+      const took: Record<Input['action'], string[]> = {
+        list: [],
+        get: ['id'],
+        drain: ['id'],
+        halt: ['id'],
+        project_limit: ['machines'],
+        workflow_retry_status: ['instanceId', 'expectedRevision'],
+        workflow_retry: Object.keys(retryInput.shape),
+      };
       yield ctx.tools.alias((name) => {
-        const action = /^fleet\.(\w+)$/.exec(name)?.[1];
-        return action && Object.hasOwn(run, action) ? { tool: 'fleet', action } : undefined;
+        const action = /^fleet\.(\w+)$/.exec(name)?.[1] as Input['action'] | undefined;
+        const args = action && Object.hasOwn(took, action) && took[action].map((k) => [k, k]);
+        return args
+          ? { tool: 'fleet', action: action!, args: Object.fromEntries(args) }
+          : undefined;
       });
     });
   },

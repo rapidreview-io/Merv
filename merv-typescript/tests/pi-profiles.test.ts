@@ -344,7 +344,7 @@ test('a role with a terminal is told so, and its model may call the terminal too
   await f.pi.validateModel(grant);
 });
 
-test('a turn runs the retired tool names it was offered as the tools they became, healer v1 and v2 included', async (t) => {
+test('a turn runs the retired tool names it was offered, and a new turn of healer v1 and v2 is offered them', async (t) => {
   const f = await fixture(t, { pi: { models: astraModels } });
   const healers: PiProfile[] = [];
   await new CustomerService(
@@ -386,8 +386,9 @@ test('a turn runs the retired tool names it was offered as the tools they became
   });
   t.after(f.tools.alias(retired));
   for (const healer of [undefined, ...bound]) {
-    // Its turn was offered the old tools before the release that retired them.
-    const old = retiredNames.map((name) =>
+    // A plain conversation's turn was offered the old tools before the release that retired them;
+    // a healer's turn is offered them now, as its profile names them.
+    const old = (healer ? [] : retiredNames).map((name) =>
       f.tools.register({
         name,
         description: name,
@@ -411,6 +412,16 @@ test('a turn runs the retired tool names it was offered as the tools they became
     await f.fleet.tick();
     await f.fleet.tick();
     const { work } = await f.pi.next(token, { workerId: 'worker_1' });
+    const offered = new Map(work!.tools.map((tool) => [tool.name, tool]));
+    assert.deepEqual(
+      retiredNames.filter((name) => !offered.has(name)),
+      [],
+    );
+    // Its old arguments, as the model is told them.
+    assert.deepEqual(
+      Object.keys(offered.get('sandbox.release')!.inputSchema.properties as object),
+      ['id'],
+    );
     const turn = {
       conversationId: conversation.id,
       commandId: work!.command.id,
@@ -418,6 +429,13 @@ test('a turn runs the retired tool names it was offered as the tools they became
     };
     for (const unregister of old) await unregister();
     await f.pi.begin(token, turn);
+    // What each call is, as the person's page shows it while it runs: a read, or a change.
+    const run = f.tools.call.bind(f.tools);
+    const shown: (string | undefined)[] = [];
+    f.tools.call = async (...args) => (
+      shown.push((await f.pi.snapshot(f.operator, conversation.id)).stage.detail),
+      run(...args)
+    );
     const call = (name: string, input: object) => f.pi.tool(token, { ...turn, name, input });
     assert.deepEqual(await call('sandboxes.sandbox_list', {}), { tool: 'sandbox', action: 'list' });
     assert.deepEqual(await call('sandboxes.providers_list', {}), {
@@ -425,12 +443,28 @@ test('a turn runs the retired tool names it was offered as the tools they became
       action: 'providers',
     });
     assert.deepEqual(await call('sandboxes.spend_status', {}), { tool: 'spend', action: 'status' });
-    // Its old arguments, renamed, and its own action whatever the input says.
-    assert.deepEqual(await call('sandbox.release', { id: 'sbx_1', action: 'create' }), {
+    // Its old arguments, renamed, and no other: not even its own action.
+    assert.deepEqual(await call('sandbox.release', { id: 'sbx_1' }), {
       tool: 'sandbox',
       action: 'delete',
       sandbox_id: 'sbx_1',
     });
+    assert.equal(
+      (
+        (await call('sandbox.release', { id: 'sbx_1', action: 'create' })) as {
+          error: { code: string };
+        }
+      ).error.code,
+      'invalid_input',
+    );
+    f.tools.call = run;
+    assert.deepEqual(shown, [
+      'Reading',
+      'Reading',
+      'Reading',
+      'Making a change',
+      'Making a change',
+    ]);
     await f.pi.complete(token, f.completion(turn));
   }
   // A profile may name any tool the registry may, one without a dot included.

@@ -216,8 +216,8 @@ export class PiWorkerProtocol {
       const caller = conversationCaller(conversation, command);
       const profile = conversation.profile && this.core.profiles.get(conversation.profile);
       // Every tool the person may use here, read-only for a reader, whose every other call a
-      // handler would refuse.
-      const registered = await this.core.tools.list();
+      // handler would refuse; a retired name its profile names runs as the tool it became.
+      const registered = await this.core.tools.list(profile?.tools);
       const profileTools = new Map(
         registered.map((tool) => [
           tool.name,
@@ -228,7 +228,7 @@ export class PiWorkerProtocol {
       const reading = new Set(registered.flatMap((t) => ('kind' in t || !t.reads ? [] : [t.name])));
       // Every native tool but Pi's own and those it has its own form of (piOffers), run as the
       // person: Scope applies their live role.
-      const described = (await this.core.tools.describe(caller))
+      const described = (await this.core.tools.describe(caller, false, { names: profile?.tools }))
         .filter(({ name }) => piOffers(name))
         // Writing and rendering a report is its executing worker's job, not the chat's.
         .filter(({ name }) => profile?.tools.includes(name) || !WORKER_ONLY.has(name))
@@ -570,7 +570,9 @@ export class PiWorkerProtocol {
         current.calledAt ??= this.core.time();
         await this.core.saveCommand(tx, current);
       });
-    const definition = (await this.core.tools.list()).find(({ name }) => name === value.name);
+    const definition = (await this.core.tools.list([value.name])).find(
+      ({ name }) => name === value.name,
+    );
     this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.core.report(

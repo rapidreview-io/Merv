@@ -1,5 +1,6 @@
 import type { View } from '@merv/contracts/board-view';
 import {
+  check,
   ellipsis,
   MervError,
   plain,
@@ -25,6 +26,7 @@ import type {
   ToolAlias,
   ToolCatalog,
   ToolDescription,
+  ToolDefinition,
   ToolInvocation,
   Tools,
 } from './types.js';
@@ -90,6 +92,8 @@ interface Entry {
   remote?: { mountId: string; toolName: string };
   /** What caller rules see, fixed at registration. */
   tool: RegisteredTool;
+  /** A retired name, run as the tool it became, which keeps that tool's snapshots. */
+  alias?: true;
 }
 /** A remote tool's catalog identity, and how its catalog compiles a schema. */
 type Remote = NonNullable<Entry['remote']> & { compile(schema: unknown): ValidateFunction };
@@ -345,7 +349,7 @@ export class ToolRegistry implements Tools {
     return () => void this.aliases.delete(resolve);
   }
 
-  /** The entry a name runs: its own, else the tool a retired name became, listed to no one. */
+  /** The entry a name runs: its own, else the tool a retired name became, listed only by name. */
   private entry(name: string): Entry | undefined {
     const own = this.entries.get(name);
     if (own) return own;
@@ -353,17 +357,47 @@ export class ToolRegistry implements Tools {
       const alias = resolve(name);
       const target = alias && this.entries.get(alias.tool);
       if (!target || target.remote) continue;
-      const { action, args = {} } = alias;
-      const named = (key: string) => (Object.hasOwn(args, key) ? args[key]! : key);
-      const renamed = (input: unknown, fields = record(input)) =>
-        fields
-          ? { ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [named(k), v])), action }
-          : input;
+      const { action, args } = alias;
+      // Only the old tool's arguments, then their new names: no caller's key meets a renamed one.
+      const takes = (key: string) => (args ? Object.hasOwn(args, key) : key !== 'action');
+      const to = (key: string) => (args && Object.hasOwn(args, key) ? args[key]! : key);
+      const renamed = (input: unknown, fields = record(input)) => {
+        if (!fields) return input;
+        const extra = Object.keys(fields).find((key) => !takes(key));
+        check(
+          extra === undefined,
+          'invalid_input',
+          `${name} takes no ${ellipsis(`${extra}`, 100)}`,
+        );
+        return {
+          ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [to(k), v])),
+          action,
+        };
+      };
       // Its action decides whether it reads, so sessions, readers and scripts judge the old tool.
       const readOnly = target.tool.readOnly || !!target.tool.reads?.({ action });
+      // Its old arguments, typed as the tool it became takes them.
+      const { inputSchema, annotations } = target.description;
+      const { properties = {}, required = [], ...schema } = inputSchema;
+      const keys = args
+        ? [...Object.keys(args), 'projectId']
+        : Object.keys(properties).filter(takes);
+      const needs = keys.filter((key) => required.includes(to(key)));
       return {
         ...target,
         name,
+        alias: true,
+        definition: { ...(target.definition as ToolDefinition), name, readOnly, reads: undefined },
+        description: {
+          ...target.description,
+          name,
+          inputSchema: {
+            ...schema,
+            properties: Object.fromEntries(keys.map((key) => [key, properties[to(key)]])),
+            ...(needs.length && { required: needs }),
+          },
+          annotations: { ...annotations, readOnlyHint: readOnly },
+        },
         tool: { ...target.tool, name, readOnly, reads: undefined },
         parse: (input) => target.parse(renamed(input)),
       };
@@ -468,9 +502,9 @@ export class ToolRegistry implements Tools {
 
   /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
    *  would hold a reader connection for as long as that service takes to answer. */
-  private snapshotted({ remote, description }: Entry): boolean {
+  private snapshotted({ remote, alias, description }: Entry): boolean {
     const hints = description.annotations;
-    return !remote && hints?.readOnlyHint === true && hints.openWorldHint !== true;
+    return !remote && !alias && hints?.readOnlyHint === true && hints.openWorldHint !== true;
   }
   /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
@@ -482,14 +516,22 @@ export class ToolRegistry implements Tools {
     );
   }
 
-  private async visible(caller?: Caller, agent = false): Promise<Entry[]> {
+  /** names: retired names to list too, as the tools they became (a profile naming one). */
+  private async visible(
+    caller?: Caller,
+    agent = false,
+    names?: readonly string[],
+  ): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
     const rules = this.rulesFor(caller);
     // Scope refuses a conversation that also carries another authority.
     const actor = caller ? await this.scope.require(caller, 'read') : undefined;
     const reader = actor?.role === 'reader';
     const session = caller?.session ? this.sessionPolicy() : undefined;
-    const offered = [...this.entries.values()].filter(
+    const retired = [...new Set(names)].flatMap((name) =>
+      this.entries.has(name) ? [] : (this.entry(name) ?? []),
+    );
+    const offered = [...this.entries.values(), ...retired].filter(
       (entry) => (!agent || this.offered(entry, reader)) && (!rules || rules.offers!(entry.tool)),
     );
     // One grant decision covers every mounted tool still in the listing.
@@ -504,7 +546,12 @@ export class ToolRegistry implements Tools {
           (entry.tool.worker !== 'never' &&
             (await this.fenced(
               session,
-              session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
+              // A tool some of whose actions read is listed as one that reads.
+              session.provider.allowsTool(
+                caller!,
+                entry.name,
+                entry.tool.readOnly || !!entry.tool.reads,
+              ),
             )))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
       )
@@ -516,9 +563,9 @@ export class ToolRegistry implements Tools {
   async describe(
     caller?: Caller,
     agent = false,
-    { projectless = false } = {},
+    { projectless = false, names }: { projectless?: boolean; names?: readonly string[] } = {},
   ): Promise<ToolDescription[]> {
-    const entries = await this.visible(caller, agent && !caller?.session);
+    const entries = await this.visible(caller, agent && !caller?.session, names);
     return entries
       .filter((entry) => !projectless || !entry.remote)
       .map((entry) => {
@@ -530,8 +577,8 @@ export class ToolRegistry implements Tools {
       });
   }
 
-  async list(): Promise<ListedTool[]> {
-    return (await this.visible()).map(({ definition, description }) =>
+  async list(names?: readonly string[]): Promise<ListedTool[]> {
+    return (await this.visible(undefined, false, names)).map(({ definition, description }) =>
       isRemoteTool(definition)
         ? { ...structuredClone(description), kind: 'mcp' as const }
         : definition,
@@ -562,14 +609,13 @@ export class ToolRegistry implements Tools {
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       const session = caller.session ? this.sessionPolicy() : undefined;
-      // A read of a tool that also writes is admitted as a read where the session's grants name
-      // the tool; its writes, and a tool no grant names, keep the grants exact.
-      const { reads } = entry.tool;
+      // A read of a tool that also writes is admitted as any read is (founder, 2026-09-17: no
+      // read constraints); its writes keep the grants exact.
+      const { readOnly, reads } = entry.tool;
       const read =
-        entry.tool.readOnly ||
+        readOnly ||
         (!!session &&
           !!reads &&
-          (await this.fenced(session, session.provider.allowsTool(caller, name))) &&
           (await Promise.resolve(input)
             .then(entry.parse)
             .then(reads, () => false)));
@@ -580,9 +626,11 @@ export class ToolRegistry implements Tools {
         if (session) this.fence(session);
         const given = prepared ? prepared.input : input;
         const parsed = await entry.parse(given);
+        // What the session filled in cannot turn a call admitted as a read into a write.
+        check(!read || readOnly || reads!(parsed), 'session_invocation', 'This call writes', 403);
         admit?.(entry.tool, entry.description, parsed);
         // A retired name's arguments are bound as its grant names them.
-        const bound = entry.name === entry.definition.name ? parsed : given;
+        const bound = entry.alias ? given : parsed;
         if (session && prepared)
           await this.fenced(
             session,

@@ -57,7 +57,9 @@ export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'wor
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
 };
-/** A retired name: the tool it became, the action it is, and its old arguments' new names. */
+/** A retired name: the tool it became and the action it is. args: every argument the old tool
+ *  took, by its new name, and no other; absent, it took its action's own, which that tool keeps
+ *  to, and never `action`. */
 export interface ToolAlias {
   tool: string;
   action: string;
@@ -152,14 +154,16 @@ export interface Tools {
   /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
    *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: those that read) plus the mounted
    *  tools its Access grants. That curates; it is no authority boundary (see POST /tools).
-   *  projectless: no caller and no mounted tool, which only a project's grant lists. */
+   *  projectless: no caller and no mounted tool, which only a project's grant lists. names: retired
+   *  names to list too, as the tools they became, such as those a Pi profile names. */
   describe(
     caller?: Caller,
     agent?: boolean,
-    options?: { projectless?: boolean },
+    options?: { projectless?: boolean; names?: readonly string[] },
   ): Promise<ToolDescription[]>;
-  /** Every registered tool, for trusted in-process code only: it takes no caller. */
-  list(): Promise<ListedTool[]>;
+  /** Every registered tool, for trusted in-process code only: it takes no caller. names: retired
+   *  names to list too, as the tools they became, such as those a Pi profile names. */
+  list(names?: readonly string[]): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(
     name: string,
@@ -173,7 +177,7 @@ export interface Tools {
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
   /** The rules for one kind of caller, from the plugin that issues it (409 when registered). */
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void;
-  /** Runs retired tool names, for one release, as the tool they became; none is listed. */
+  /** Runs retired tool names, for one release, as the tool they became; listed only by name. */
   alias(resolve: (name: string) => ToolAlias | undefined): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;

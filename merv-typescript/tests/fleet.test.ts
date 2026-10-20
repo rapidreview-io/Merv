@@ -718,10 +718,12 @@ test('Fleet tools answer with the redacted view, never the source, person or lau
     ),
     [true, true, false, true],
   );
-  // For one release the merged names run as their own action, listed to no one.
+  // For one release the merged names run as their own action with their own arguments, listed
+  // to no one.
   assert.deepEqual(await tools.call('fleet.list', f.caller, {}), [view]);
-  const get = { id: allocation.id, action: 'halt' };
-  assert.deepEqual(await tools.call('fleet.get', f.caller, get), view);
+  assert.deepEqual(await tools.call('fleet.get', f.caller, { id: allocation.id }), view);
+  const halt = { id: allocation.id, action: 'halt' };
+  await assert.rejects(tools.call('fleet.get', f.caller, halt), { code: 'invalid_input' });
   assert.ok(!(await tools.list()).some(({ name }) => name.startsWith('fleet.')));
   const text = JSON.stringify(await fleet({ action: 'drain', id: allocation.id }));
   for (const secret of [
