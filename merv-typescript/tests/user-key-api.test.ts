@@ -710,3 +710,32 @@ test('existing opaque actor tokens can begin with mk_ without becoming user keys
   assert.equal((await f.request('/account', { token })).status, 401);
   assert.equal(f.routing.jwt, 0);
 });
+
+test('a key revokes only itself at DELETE /account/key, and a person is refused there', async (t) => {
+  const f = await fixture(t);
+  const leaving = await f.issue({ grantScope: 'account', label: 'Leaving' });
+  const staying = await f.issue({ grantScope: 'account', label: 'Staying' });
+  const person = await f.request('/account/key', { method: 'DELETE' });
+  assert.equal(person.status, 403);
+  assert.deepEqual(
+    (await f.request('/account/key', { method: 'DELETE', token: leaving.token })).body,
+    { revoked: true },
+  );
+  const refused = await fetch(`${f.url}/mcp`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${leaving.token}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  });
+  assert.equal(refused.status, 401);
+  assert.equal(((await refused.json()) as { connect: string }).connect, '/connect');
+  assert.equal((await f.request('/account', { token: staying.token })).status, 200);
+  const keys = await f.request<{ keys: UserKey[] }>('/account/keys');
+  assert.deepEqual(keys.body.keys.map((key) => [key.label, key.revokedAt === null]).sort(), [
+    ['Leaving', false],
+    ['Staying', true],
+  ]);
+});

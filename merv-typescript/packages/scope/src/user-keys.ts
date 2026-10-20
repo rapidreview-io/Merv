@@ -340,36 +340,48 @@ export class UserKeys {
   }
 
   async revoke(principal: Principal, keyId: string): Promise<void> {
-    await this.state.transaction(async (tx) => {
-      const selected = await this.owned(tx, principal, keyId);
-      const lineage = await tx.all<KeyRow>(
-        `WITH RECURSIVE lineage(id) AS (
-          SELECT id FROM user_keys WHERE id=? UNION ALL
-          SELECT k.id FROM user_keys k JOIN lineage p ON k.previous_id=p.id
-        ) SELECT k.* FROM user_keys k JOIN lineage l ON l.id=k.id`,
-        selected.id,
+    await this.state.transaction(async (tx) =>
+      this.revokeLineage(tx, await this.owned(tx, principal, keyId)),
+    );
+  }
+
+  /** The presenting key revokes itself, with its lineage: it can name no other key. */
+  async revokePresented(principal: Principal): Promise<void> {
+    check(principal?.kind === 'key', 'forbidden', 'Only a key revokes itself here', 403);
+    await this.state.transaction(async (tx) =>
+      this.revokeLineage(tx, await this.current(tx, principal.key?.id)),
+    );
+  }
+
+  /** Revokes `selected` and every rotation descending from it, in `tx`. */
+  private async revokeLineage(tx: Transaction, selected: KeyRow): Promise<void> {
+    const lineage = await tx.all<KeyRow>(
+      `WITH RECURSIVE lineage(id) AS (
+        SELECT id FROM user_keys WHERE id=? UNION ALL
+        SELECT k.id FROM user_keys k JOIN lineage p ON k.previous_id=p.id
+      ) SELECT k.* FROM user_keys k JOIN lineage l ON l.id=k.id`,
+      selected.id,
+    );
+    const time = this.time();
+    let ownerActorId: string | undefined;
+    for (const key of lineage) {
+      // The ledger decides liveness: a key Scope's row calls revoked is retired there too, and
+      // only one revoked in both is left as it is.
+      const before = await this.ledger.retire('user-key', key, tx);
+      if (key.revoked_at !== null && before?.revokedAt !== null) continue;
+      ownerActorId ??= await this.ownerActor(tx, selected);
+      await tx.run(
+        'UPDATE user_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
+        time,
+        key.id,
       );
-      const time = this.time();
-      let ownerActorId: string | undefined;
-      for (const key of lineage) {
-        // The ledger decides liveness: a key Scope's row calls revoked is retired there too, and
-        // only one revoked in both is left as it is.
-        const before = await this.ledger.retire('user-key', key, tx);
-        if (key.revoked_at !== null && before?.revokedAt !== null) continue;
-        ownerActorId ??= await this.ownerActor(tx, selected);
-        await tx.run(
-          'UPDATE user_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
-          time,
-          key.id,
-        );
-        await this.state.appendEvent(tx, {
-          projectId: key.project_id,
-          actorId: ownerActorId,
-          type: 'actor.key_revoked',
-          subjectId: key.id,
-          data: { rootKeyId: selected.id, revokedAt: time },
-        });
-      }
-    });
+      await this.state.appendEvent(tx, {
+        projectId: key.project_id,
+        actorId: ownerActorId,
+        type: 'actor.key_revoked',
+        subjectId: key.id,
+        data: { rootKeyId: selected.id, revokedAt: time },
+      });
+    }
   }
 }

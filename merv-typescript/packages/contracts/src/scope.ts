@@ -161,6 +161,8 @@ export interface ScopeUserKeys {
   ): Promise<IssuedUserKey>;
   /** Revoke the selected key and all of its rotation descendants atomically. */
   revoke(principal: Principal, keyId: string): Promise<void>;
+  /** A key revokes itself (and its descendants); every other principal is refused. */
+  revokePresented(principal: Principal): Promise<void>;
 }
 /** Independent machine actors and their credentials, and the bootstrap of a first project. */
 export interface ScopeActorCredentials {

@@ -171,6 +171,12 @@ export function scopeRoutes(
         };
       }
     }
+    // A key signs itself out; it can name no other key.
+    if (path === '/account/key' && req.method === 'DELETE') {
+      keyQuery(r.url.searchParams);
+      await scope.userKeys.revokePresented(principal);
+      return { revoked: true };
+    }
     if (path === '/account/keys') {
       const projectId = keyQuery(r.url.searchParams, req.method === 'GET');
       if (req.method === 'GET') return { keys: await scope.userKeys.keys(principal, projectId) };
