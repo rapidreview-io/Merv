@@ -70,7 +70,7 @@ test('automation is explicit, owner-bound and independent of ordinary token refr
   assert.equal(await f.github.automation(f.reviewer, 'read', binding, async () => true), true);
 });
 
-test('the owner’s agent enables automation with their key, and automation acts for the owner', async (t) => {
+test('the owner’s agent enables automation with their key, and automation lapses with the key', async (t) => {
   const f = await githubFixture(t);
   const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
   const key = {
@@ -86,12 +86,15 @@ test('the owner’s agent enables automation with their key, and automation acts
     mode: 'write',
     baseBranch: 'main',
   });
-  // Stored as the person behind the key, which every later use of automation accepts.
-  const [row] = await f.state.read((sql) =>
-    sql.all<{ owner_source: string }>('SELECT owner_source FROM code_github'),
-  );
-  assert.equal(JSON.parse(row!.owner_source).kind, 'human');
   assert.equal(await f.github.automation(f.reviewer, 'write', undefined, async () => true), true);
+  // Authority delegated through a key ends with the key.
+  await f.scope.userKeys.revoke(f.principal, issued.key.id);
+  await assert.rejects(
+    f.github.automation(f.reviewer, 'write', undefined, async () => true),
+    {
+      status: 403,
+    },
+  );
 });
 
 async function reconnect(github: CodeGitHubService, caller: Caller) {

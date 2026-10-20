@@ -425,25 +425,8 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       await this.delegated(caller.projectId, row, access, tx);
     }
   }
-  /** The person automation acts for: the caller's own source, or the person behind a key (or
-   *  their conversation on it), held by that key's membership. */
-  private async automationSource(
-    caller: Caller,
-    user: { issuer: string; subject: string },
-    tx: Transaction,
-  ) {
-    const source = await this.scope.delegationSource(caller, tx);
-    return source.kind === 'key'
-      ? {
-          kind: 'human' as const,
-          actorId: source.actorId,
-          projectId: source.projectId,
-          ...user,
-          membershipId: source.membershipId,
-        }
-      : source;
-  }
-  /** Automation acts for the human who turned it on, while they still administer the project. */
+  /** Automation acts for the administrator who turned it on, through the source they used: their
+   *  sign-in, or their key (or their conversation on it) while that key lives. */
   private async delegated(
     projectId: string,
     row: Connection,
@@ -459,15 +442,13 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       403,
     );
     const source = JSON.parse(row.owner_source) as DelegationSource;
+    const invalid = ['github_owner', 'GitHub owner binding is invalid', 403] as const;
     check(
-      source.kind === 'human' &&
-        source.projectId === projectId &&
-        row.owner === JSON.stringify([source.issuer, source.subject]),
-      'github_owner',
-      'GitHub owner binding is invalid',
-      403,
+      (source.kind === 'human' || source.kind === 'key') && source.projectId === projectId,
+      ...invalid,
     );
-    await this.scope.requireDelegation(source, 'admin', tx);
+    const actor = await this.scope.requireDelegation(source, 'admin', tx);
+    check(isAdministrator(actor) && row.owner === owner(actor.user), ...invalid);
   }
   /** `app`: the request carries a server-minted credential, never the owner's OAuth token. */
   private async connection(caller: Caller, tx: Transaction, access: Access = 'owner', app = false) {
@@ -714,7 +695,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         });
       }
       return this.state.transaction(async (tx) => {
-        const actor = await this.admin(caller, tx);
+        await this.admin(caller, tx);
         const row = await this.row(tx, caller.projectId);
         this.revision(row, input.expectedRevision);
         // Any project operator may disable automation; only the connection owner may enable it.
@@ -723,7 +704,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         const source =
           input.mode === 'off'
             ? null
-            : JSON.stringify(await this.automationSource(caller, actor.user, tx));
+            : JSON.stringify(await this.scope.delegationSource(caller, tx));
         await tx.run(
           'UPDATE code_github SET automation=?,base_branch=?,owner_source=?,revision=revision+1 WHERE project_id=?',
           input.mode,
