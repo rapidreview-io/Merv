@@ -32,7 +32,7 @@ test('what the agent shows opens where a link to it would: a page by its name, a
     String(await placeOf({ page: 'Billing' }, rows)),
     /no page called "Billing".*Work, Files, Tasks/,
   );
-  serve('/tools/project.references', (_, sent) => ({
+  serve('/tools/project.read:references', (_, sent) => ({
     body: {
       result: (sent.refs as string[]).map((ref) =>
         ref === 'art_1'

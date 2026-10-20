@@ -117,7 +117,7 @@ function ConnectAgent({
   const filled = secret?.client === client;
   const [where, snippet] = snippets(url, filled ? secret.token : '<key>')[client];
   const test = () =>
-    call<Actor>('actor.whoami').then(
+    call<Actor>('project.read:whoami').then(
       (actor) => current() && setTested(`Connected as ${actor.name} · ${actor.role}`),
       (error) => current() && setTested(message(error)),
     );

@@ -94,7 +94,7 @@ test('a drill-in the server refuses keeps the sign-in it was refused to', async 
     code: 'forbidden',
     message: 'Live platform administrator authority is required',
   };
-  for (const tool of ['ui.shell', 'actor.whoami', 'project.get'])
+  for (const tool of ['ui.shell', 'project.read:whoami', 'project.read:get'])
     serve(`/tools/${tool}`, { status: 403, body: { error: refusal } });
   await mount(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(App)));
   await settle(20);

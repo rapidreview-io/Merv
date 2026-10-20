@@ -308,7 +308,7 @@ test('a key made for a client fills its snippet once, for the person only', asyn
 test('Test says who the agent is connected as, or why not, in one line', async (t) => {
   t.after(async () => await unmount());
   await open([]);
-  serve('/tools/actor.whoami', (call) =>
+  serve('/tools/project.read:whoami', (call) =>
     call === 1
       ? { body: { result: { id: 'actor_1', name: 'Ada', role: 'producer', active: true } } }
       : { status: 403, body: { error: { code: 'forbidden', message: 'Project access denied' } } },

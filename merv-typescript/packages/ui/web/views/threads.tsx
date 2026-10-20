@@ -711,7 +711,7 @@ export function ThreadReading({
 }) {
   const reads = useReadsAgents();
   const actor = useActor();
-  const actors = useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data;
+  const actors = useTool<Actor[]>(actor?.role === 'operator' ? 'project.read:actors' : null).data;
   const said = useTool<ThreadMessages>(
     `/sessions/threads/${encodeURIComponent(thread.id)}/messages`,
     {},

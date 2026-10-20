@@ -116,11 +116,12 @@ async function status(t: TestContext) {
   sessionsToolsPlugin.apply({
     sessions,
     tools: {
-      register: (tool: { name: string; handler: typeof handler }) => {
-        if (tool.name === 'system.status') handler = tool.handler;
-      },
+      register: () => {},
       contributeInstructions: () => () => {},
-      noun: () => () => {},
+      // Sessions contributes project.read's status action, which was system.status.
+      noun: (_: string, noun: { actions: Record<string, { handler: typeof handler }> }) => {
+        if (noun.actions.status) handler = noun.actions.status.handler;
+      },
     },
     effect: (register: () => unknown) => register(),
   } as unknown as Context);

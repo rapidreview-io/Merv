@@ -239,7 +239,7 @@ test('the names History reads are let go on Files: nothing still asks for them',
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', { body: { result: [actor] } });
+  serve('/tools/project.read:actors', { body: { result: [actor] } });
   serve('/code/github', github());
   let go!: (to: string) => void;
   function Steer() {
@@ -259,13 +259,13 @@ test('the names History reads are let go on Files: nothing still asks for them',
     ),
   );
   await settle(10);
-  const asked = () => requests.filter((line) => line === 'POST /tools/actor.list').length;
+  const asked = () => requests.filter((line) => line === 'POST /tools/project.read:actors').length;
   assert.ok(asked() > 0, 'History names who did what');
   await act(async () => go('/code'));
   await settle(10);
   const before = asked();
   // A page that changed a person asks every mounted read of the people again: none is left.
-  await act(async () => refreshTools('actor.list'));
+  await act(async () => refreshTools('project.read:actors'));
   await settle(10);
   assert.equal(asked(), before);
 });
@@ -2844,7 +2844,7 @@ test('the same move drawn inside the canvas offers no control back to the canvas
           };
     });
     // The task opens where the row that lists its workflow opens it, as its owner names it.
-    serve('/tools/project.references', {
+    serve('/tools/project.read:references', {
       body: {
         result: [
           {

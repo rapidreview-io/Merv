@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { AgentLoginCodeMail, AgentLoginNotice } from '@merv/contracts';
 import { escapeHtml } from '@merv/contracts/text';
 import { tooMany } from './agent-logins.js';
-import { emailHtml, mailSchema, type Mail } from './mail.js';
+import { emailHtml, mailSchema, origin, type Mail } from './mail.js';
 
 const count = (fallback: number) => z.number().int().positive().max(1_000_000).default(fallback);
 const loopback = (hostname: string) => ['127.0.0.1', '[::1]', 'localhost'].includes(hostname);
@@ -24,20 +24,7 @@ const cidr = z.string().refine((value) => {
 export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .extend({
     // The origin stamped into the page, installer and connector: https, or http on loopback.
-    publicOrigin: z
-      .string()
-      .url()
-      .refine((value) => {
-        const url = new URL(value);
-        return (
-          (url.protocol === 'https:' || (url.protocol === 'http:' && loopback(url.hostname))) &&
-          !url.username &&
-          !url.password &&
-          !url.search &&
-          !url.hash &&
-          url.pathname === '/'
-        );
-      }),
+    publicOrigin: origin(loopback),
     /** The MCP server name each client registers: `merv-staging` on staging. */
     serverName: z
       .string()

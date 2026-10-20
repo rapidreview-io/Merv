@@ -10,7 +10,7 @@ machinery and steer it. Read first; every control below changes what runs.
 
 ## Read before acting
 
-- `system.status`: the first read for any operational question. Dispatch, Fleet allocations,
+- `project.read` (status): the first read for any operational question. Dispatch, Fleet allocations,
   runners, sessions, waiting work, blockers and model-budget waits. It changes nothing; do not
   propose a control just to inspect.
 - `session.read` (stuck): everything that stopped moving, and why. Each item has `kind`, `code`, `why`
@@ -22,7 +22,7 @@ machinery and steer it. Read first; every control below changes what runs.
   - work_waiting: waiting for its compute; it comes back by itself.
   - ready_quiet, dispatch_disabled, no_live_runner.
 - `workflow.read` (status) with an `instanceId`: one work item's gate and blockers.
-- `usage.read`: what closed sessions cost, in wall minutes (measured by Merv) and tokens
+- `project.read` (usage): what closed sessions cost, in wall minutes (measured by Merv) and tokens
   (self-reported by the machine).
 
 ## Steering a worker

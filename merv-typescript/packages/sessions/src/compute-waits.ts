@@ -9,7 +9,7 @@ import {
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { computeProfile } from './compute.js';
-import { isoNow, live, ordinary, text, type Row } from './common.js';
+import { isoNow, ordinary, ownLive, text, type Row } from './common.js';
 import type {
   ComputeStates,
   ComputeTarget,
@@ -191,12 +191,7 @@ export class ComputeWaits implements SessionComputeWaits {
       await this.scope.require(caller, 'read', tx);
       return this.host.decode(await this.host.row(tx, caller.session!.id));
     });
-    check(
-      live(visit) && visit.actorId === caller.actorId,
-      'session_ended',
-      'This session has ended',
-      409,
-    );
+    ownLive(visit, caller);
     check(
       visit.continuity,
       'compute_wait_unkept',
@@ -241,12 +236,7 @@ export class ComputeWaits implements SessionComputeWaits {
       // A read decision in a write: Sessions' guard checks the call's lease and messages again.
       await this.scope.require(caller, 'read', tx);
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
-      check(
-        live(session) && session.actorId === caller.actorId,
-        'session_ended',
-        'This session has ended',
-        409,
-      );
+      ownLive(session, caller);
       const id = newId('session_compute_wait');
       await tx.run(
         'INSERT INTO session_compute_waits(id,project_id,thread_id,session_id,instance_id,revision,reason,targets_json,created_at,wait_until) VALUES(?,?,?,?,?,?,?,?,?,?)',

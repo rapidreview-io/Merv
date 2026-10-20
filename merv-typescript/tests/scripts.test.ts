@@ -61,12 +61,12 @@ test('script.tools searches, names and sums up only what this agent may use', as
       handler: () => 1,
     }),
   );
-  const found = await mcp('script.tools', { query: 'project.get' });
-  assert.equal(found.tools[0].name, 'project.get');
+  const found = await mcp('script.tools', { query: 'project.read' });
+  assert.equal(found.tools[0].name, 'project.read');
   assert.equal(found.tools[0].scriptable, true);
-  assert.equal(
+  assert.match(
     found.tools[0].declaration,
-    '/** Read the current project. */\ntools.project.get(input: {}): Promise<unknown>',
+    /\ntools\.project\.read\(input: \{ action: "get"; get\?: \{\} \}\): Promise<unknown>\n/,
   );
   assert.ok(found.tools.length <= 8);
   const named = await mcp('script.tools', {
@@ -88,7 +88,7 @@ test('script.tools searches, names and sums up only what this agent may use', as
   );
   const summary = await mcp('script.tools');
   const project = summary.namespaces.find(({ namespace }: any) => namespace === 'project');
-  assert.ok(project.count >= 2 && project.scriptable.includes('project.get'));
+  assert.ok(project.count >= 1 && project.scriptable.includes('project.read'));
   assert.ok(!summary.namespaces.some(({ namespace }: any) => namespace === 'test'));
   const script = summary.namespaces.find(({ namespace }: any) => namespace === 'script');
   assert.deepEqual(script, { namespace: 'script', count: 2, scriptable: [] });

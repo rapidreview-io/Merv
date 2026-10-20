@@ -1112,6 +1112,7 @@ test('a worker is not shown the reads that answer only a person, which still ref
   const retired = ['find', 'threads', 'thread_messages', 'observe', 'stuck'].map(
     (n) => `session.${n}`,
   );
+  retired.push('actor.list');
   const people = [
     'session.read',
     'ui.running',
@@ -1119,7 +1120,6 @@ test('a worker is not shown the reads that answer only a person, which still ref
     'ui.shell',
     'ui.home',
     'ui.read',
-    'actor.list',
     'pi.list',
     'pi.snapshot',
     'pi.prompt',
@@ -1174,7 +1174,7 @@ test("a worker's listing carries no MCP instructions and no project selection, w
   );
   // A person still selects a project by it.
   const person = (await f.app.ctx.tools.describe(f.source)).find(
-    (tool) => tool.name === 'system.status',
+    (tool) => tool.name === 'project.read',
   )!;
   assert.ok(Object.hasOwn(person.inputSchema.properties!, 'projectId'));
   // A worker that passes its own project anyway is answered; another one is refused by name.

@@ -1331,7 +1331,7 @@ test('an operator reads names; a reader reads the words left for them, and a row
       body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
     });
     serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-    serve('/tools/actor.list', {
+    serve('/tools/project.read:actors', {
       body: {
         result: [
           { id: 'actor_ana', projectId: project.id, name: 'Ana', role: 'reviewer', active: true },
@@ -1353,7 +1353,7 @@ test('an operator reads names; a reader reads the words left for them, and a row
   assert.ok(all('.running-section-title').some((item) => item.textContent === 'Details'));
   await unmount();
   await open('reader');
-  assert.ok(!requests.includes('POST /tools/actor.list'), 'a reader never asks for names');
+  assert.ok(!requests.includes('POST /tools/project.read:actors'), 'a reader never asks for names');
   assert.ok(text().includes('Claimed'));
   assert.ok(!text().includes('Ana'));
   assert.ok(!all('.running-facts dt').some((item) => item.textContent === 'Owner'));

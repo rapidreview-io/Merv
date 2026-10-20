@@ -1036,18 +1036,7 @@
       "owner": "knowledge",
       "label": "Knowledge",
       "purpose": "Composes live project, task and experiment records and resolves scoped artifact, review, workflow and code references through their owning services. It has no writable research corpus or publication workflow. Its tool adapter exposes project.records and project.references independently of Research.",
-      "exposedTools": [
-        {
-          "name": "project.records",
-          "description": "Index the project: its id and name, then one short entry per task and experiment (state, review, deliveries, conclusion), terminal work included. Pass ids (up to 20 task or experiment ids) to get those records whole instead, with every attempt, evidence association, submission and delivery confirmation; ids that are neither come back in missing. task.get and experiment.get_state read one record whole. The project Introduction is the Problem of the paper, which paper.read returns. Does not read artifact bytes or advance workflows. To resolve other ids to labels and states use project.references; gate, blockers and next actions use workflow.status_and_next.",
-          "readOnly": true
-        },
-        {
-          "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-knowledge-tools",
@@ -1066,18 +1055,7 @@
       "owner": "knowledge",
       "label": "Knowledge · tools adapter",
       "purpose": "Connects Knowledge to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "project.records",
-          "description": "Index the project: its id and name, then one short entry per task and experiment (state, review, deliveries, conclusion), terminal work included. Pass ids (up to 20 task or experiment ids) to get those records whole instead, with every attempt, evidence association, submission and delivery confirmation; ids that are neither come back in missing. task.get and experiment.get_state read one record whole. The project Introduction is the Problem of the paper, which paper.read returns. Does not read artifact bytes or advance workflows. To resolve other ids to labels and states use project.references; gate, blockers and next actions use workflow.status_and_next.",
-          "readOnly": true
-        },
-        {
-          "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-legacy-history",
@@ -1966,58 +1944,7 @@
       "owner": "scope",
       "label": "Scope",
       "purpose": "Owns projects, security actors, memberships, credentials and permissions, plus the project Introduction. Agent Sessions owns agent identity and lifetime; Scope enforces its security actor and delegated authority. Scope also owns exact remote-tool grants and the registered session policy.",
-      "exposedTools": [
-        {
-          "name": "actor.create",
-          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor. Nothing you create can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.credentials",
-          "description": "Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.",
-          "readOnly": true
-        },
-        {
-          "name": "actor.issue_token",
-          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Nothing you issue can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.list",
-          "description": "Operator: list actors in this project.",
-          "readOnly": true
-        },
-        {
-          "name": "actor.revoke",
-          "description": "Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.revoke_token",
-          "description": "Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.rotate_token",
-          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline, and never beyond the deadline of the credential authenticating it.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.whoami",
-          "description": "Read your authenticated actor identity and role.",
-          "readOnly": true
-        },
-        {
-          "name": "project.brief",
-          "description": "Read what Merv's own agent is told each turn: who you are (actor id, name, role), the project (id, name), today's date (UTC) and the project as it is now (its paper). Your first read in a project, and to re-orient.",
-          "readOnly": true
-        },
-        {
-          "name": "project.get",
-          "description": "Read the current project.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-scope-api",
@@ -2056,58 +1983,7 @@
       "owner": "scope",
       "label": "Scope · tools adapter",
       "purpose": "Connects Scope to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "actor.create",
-          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor. Nothing you create can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.credentials",
-          "description": "Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.",
-          "readOnly": true
-        },
-        {
-          "name": "actor.issue_token",
-          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Nothing you issue can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.list",
-          "description": "Operator: list actors in this project.",
-          "readOnly": true
-        },
-        {
-          "name": "actor.revoke",
-          "description": "Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.revoke_token",
-          "description": "Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.rotate_token",
-          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline, and never beyond the deadline of the credential authenticating it.",
-          "readOnly": false
-        },
-        {
-          "name": "actor.whoami",
-          "description": "Read your authenticated actor identity and role.",
-          "readOnly": true
-        },
-        {
-          "name": "project.brief",
-          "description": "Read what Merv's own agent is told each turn: who you are (actor id, name, role), the project (id, name), today's date (UTC) and the project as it is now (its paper). Your first read in a project, and to re-orient.",
-          "readOnly": true
-        },
-        {
-          "name": "project.get",
-          "description": "Read the current project.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-scripts",
@@ -2128,7 +2004,7 @@
       "exposedTools": [
         {
           "name": "script.run",
-          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.get({}); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.read({ action: 'get' }); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
           "readOnly": true
         },
         {
@@ -2158,7 +2034,7 @@
       "exposedTools": [
         {
           "name": "script.run",
-          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.get({}); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.read({ action: 'get' }); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
           "readOnly": true
         },
         {
@@ -2257,16 +2133,6 @@
           "name": "session.question.resolve",
           "description": "Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.",
           "readOnly": false
-        },
-        {
-          "name": "system.status",
-          "description": "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
-          "readOnly": true
-        },
-        {
-          "name": "usage.read",
-          "description": "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
-          "readOnly": true
         }
       ]
     },
@@ -2331,16 +2197,6 @@
           "name": "session.question.resolve",
           "description": "Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.",
           "readOnly": false
-        },
-        {
-          "name": "system.status",
-          "description": "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
-          "readOnly": true
-        },
-        {
-          "name": "usage.read",
-          "description": "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
-          "readOnly": true
         }
       ]
     },

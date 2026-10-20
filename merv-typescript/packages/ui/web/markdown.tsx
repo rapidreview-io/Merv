@@ -184,7 +184,7 @@ function askNames(ids: readonly string[], again = false): void {
     for (let from = 0; from < ids.length; from += 200) {
       const refs = ids.slice(from, from + 200);
       for (const ref of refs) asking.add(ref);
-      void call<Reference[]>('project.references', { refs })
+      void call<Reference[]>('project.read:references', { refs })
         .then(
           (answer) => {
             if (at !== round) return;

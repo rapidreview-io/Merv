@@ -150,13 +150,13 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
   const tools = (await agent.request('tools/list')).result.tools.map(
     (tool: { name: string }) => tool.name,
   );
-  assert.ok(tools.includes('project.list') && tools.includes('project.brief'));
+  assert.ok(tools.includes('project.list') && tools.includes('project.read'));
   const list = await agent.request('tools/call', { name: 'project.list', arguments: {} });
   const [project] = JSON.parse(list.result.content[0].text).projects;
   assert.equal(project.name, 'Grokking');
   const brief = await agent.request('tools/call', {
-    name: 'project.brief',
-    arguments: { projectId: project.id },
+    name: 'project.read',
+    arguments: { action: 'brief', projectId: project.id },
   });
   assert.equal(JSON.parse(brief.result.content[0].text).project.id, project.id);
 

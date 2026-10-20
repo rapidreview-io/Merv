@@ -713,7 +713,7 @@ export class ApiServer {
             : [
                 this.tools.instructions(),
                 'A tool whose description says so takes its action\'s arguments under the key of the same name, as {"action":"x","x":{…}}. These tools are written for ordinary function calling; strict-mode adapters (every property required) are not supported.',
-                'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.',
+                'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.read brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.',
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -746,8 +746,11 @@ export class ApiServer {
     instance.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const { name, arguments: input = {}, _meta } = request.params;
-        if (name === PROJECT_LIST.name && !('caller' in principal)) {
-          if (Object.keys(input).length > 0)
+        // project.read's list action, in either form, for a person or a key across projects.
+        const listing =
+          name === PROJECT_LIST.name || (name === 'project.read' && input.action === 'list');
+        if (listing && !('caller' in principal)) {
+          if (name === PROJECT_LIST.name && Object.keys(input).length > 0)
             throw new MervError('invalid_input', 'project.list takes no arguments');
           const projects = await this.scope.projects(principal);
           return { content: [{ type: 'text' as const, text: JSON.stringify({ projects }) }] };

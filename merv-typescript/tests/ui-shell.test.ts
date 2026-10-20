@@ -454,7 +454,7 @@ test('the only operator is offered no control that would leave the project witho
   ] as const) {
     boot('Operator');
     serve('/account', { body: { kind: 'user', user, projects: [project] } });
-    serve('/tools/actor.list', { body: { result: names } });
+    serve('/tools/project.read:actors', { body: { result: names } });
     serve(`/projects/${project.id}/members`, {
       body: { memberships: [member(1, 'operator'), member(2, second)], admin: null, payers: [] },
     });
@@ -495,7 +495,7 @@ test('a poll asked before a member is removed never draws them back', async (t) 
   let list = [member(1, 'operator'), member(2, 'reader')];
   boot('Operator');
   serve('/account', { body: { kind: 'user', user, projects: [project] } });
-  serve('/tools/actor.list', {
+  serve('/tools/project.read:actors', {
     body: { result: ['Operator', 'Reviewer'].map((name, at) => ({ id: `actor_${at + 1}`, name })) },
   });
   serve(`/projects/${project.id}/members`, () => ({

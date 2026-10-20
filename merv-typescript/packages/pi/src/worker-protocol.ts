@@ -57,10 +57,9 @@ type Taken = {
 /** The routes a host's worker calls: /next, /begin, /tool, /progress, /complete and /fail. */
 /** The most tools one turn is offered: the model API's and the worker's limit. */
 export const MAX_TOOLS = 128;
-/** Every tool but those Pi has its own forms of: its turn context is its brief, it looks with
- *  screen.look, and its own SDK will give it code mode. Pi's own are tier ui. */
-export const piOffers = (name: string) =>
-  !name.startsWith('script.') && name !== 'project.brief' && name !== 'record.look';
+/** Every tool but those Pi has its own forms of: it looks with screen.look, and its own SDK
+ *  will give it code mode. Pi's own are tier ui. */
+export const piOffers = (name: string) => !name.startsWith('script.') && name !== 'record.look';
 
 export class PiWorkerProtocol {
   constructor(

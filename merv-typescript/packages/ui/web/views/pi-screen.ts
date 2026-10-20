@@ -188,7 +188,7 @@ async function placed(
   // A row that owns an id's prefix opens it without asking anyone what it is.
   const owner = rows.find((row) => row.opens && record!.startsWith(row.opens));
   if (owner) return { path: `${owner.path}/${record}`, title: owner.label };
-  const [found] = await call<Reference[]>('project.references', { refs: [record] });
+  const [found] = await call<Reference[]>('project.read:references', { refs: [record] });
   const path = found?.status === 'resolved' && routeOf(found, rows);
   return path
     ? { path, title: found.label ?? found.id ?? record! }

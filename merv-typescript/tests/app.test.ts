@@ -54,12 +54,12 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 33);
+    assert.equal(catalog.length, 26);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
     );
-    for (const name of ['system.status', 'session.read', 'session.write'])
+    for (const name of ['project.read', 'session.read', 'session.write'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,
@@ -93,19 +93,19 @@ test('assembled Cordis application preserves current MCP task closure across two
       'reflection.read',
       'task.write',
       'task.read',
-      'project.brief',
+      'project.read',
     ])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         name,
       );
     // The brief is what Pi's turn is told: who, where, today, and the project's paper now.
-    const told = await call(producer, 'project.brief');
+    const told = await call(producer, 'project.read', { action: 'brief' });
     assert.deepEqual(told.actor, { id: p.actor.id, name: 'Producer', role: 'producer' });
     assert.deepEqual(told.project, { id: credentials.project.id, name: 'Integration' });
     assert.equal(told.today, new Date().toISOString().slice(0, 10));
     assert.equal(told.context, await app.ctx.tools.context({ ...caller, actorId: p.actor.id }));
-    assert.ok(catalog.find((tool) => tool.name === 'project.brief')!.description!.length < 300);
+    assert.ok(catalog.find((tool) => tool.name === 'project.read')!.description!.length <= 600);
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),
       ['workflow.read', 'workflow.write'],
@@ -472,8 +472,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     assert.equal(named.split('Never write a dollar cap').length, 2);
     const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);
     assert.ok(names.length > 10);
-    // Only what the guide tells agents connected from outside Merv (project.brief first) names
-    // a tool Pi has its own form of (its turn context), and that line is not Pi's to follow.
+    // Every tool the guide names is one Pi is offered.
     for (const name of names.filter(piOffers))
       assert.ok(
         offered.some((tool) => tool.name === name),

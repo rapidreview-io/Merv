@@ -34,7 +34,7 @@ import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fi
 const piRelay = (config: PiRelayConfig & RelayTuning) =>
   new ModelRelay(piModelRelay(config), config);
 
-test('Pi offers and runs system.status in a conversation', async (t) => {
+test('Pi offers and runs project.read status in a conversation', async (t) => {
   const f = await fixture(t);
   const sessions = {
     dispatch: {
@@ -62,10 +62,14 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
     effect: (register: () => unknown) => register(),
   } as unknown as Context);
   const bound = await f.begun(f.operator);
-  assert.ok(bound.work.tools.some((tool) => tool.name === 'system.status'));
+  assert.ok(bound.work.tools.some((tool) => tool.name === 'project.read'));
   assert.deepEqual(
     (
-      (await f.pi.tool(bound.token, { ...bound.input, name: 'system.status', input: {} })) as {
+      (await f.pi.tool(bound.token, {
+        ...bound.input,
+        name: 'project.read',
+        input: { action: 'status' },
+      })) as {
         dispatch: unknown;
       }
     ).dispatch,
@@ -75,9 +79,9 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
 
 test("a turn is offered every native tool the person may use but Pi's own", async (t) => {
   const f = await fixture(t);
-  // Pi's own (its page's, tier ui), and those Pi has its own forms of: its turn context,
-  // screen.look, its SDK's code mode.
-  const own = ['pi.send', 'script.run', 'script.tools', 'project.brief', 'record.look'];
+  // Pi's own (its page's, tier ui), and those Pi has its own forms of: screen.look, its SDK's
+  // code mode.
+  const own = ['pi.send', 'script.run', 'script.tools', 'record.look'];
   for (const name of own)
     f.tools.register({
       name,
@@ -797,7 +801,7 @@ test('each turn says whom the agent serves, where, on what, what the project hol
   const first = await f.begun(producer);
   assert.deepEqual(first.work.notes.slice(0, 3), [
     'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
-    `You serve ${producer.actorId}, a producer in project ${project.id}: they, and so you, can read everything and create and change work, but not review it or administer the project. actor.whoami and project.get name them.`,
+    `You serve ${producer.actorId}, a producer in project ${project.id}: they, and so you, can read everything and create and change work, but not review it or administer the project. project.read whoami and get name them.`,
     'Today is 2026-09-23 (UTC).',
   ]);
   assert.match(first.work.notes[3], /^Machine: Standard/);

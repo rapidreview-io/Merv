@@ -91,6 +91,8 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       briefId: brief.id,
       requestId: 'task-before-unload',
     });
+    // task.get presents guidance for this caller; task.create returns the raw record.
+    const expectedTask = app.ctx.tools.guidance(caller, task);
     const provider = app.getFiber('workflows')!;
     const adapter = app.getFiber('tasks-tools')!;
     const original = {
@@ -193,7 +195,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     const restored = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(restored, toolsBefore);
     assert.equal(new Set(restored).size, restored.length);
-    assert.deepEqual(await call(client, 'task.get', { taskId: task.id }), task);
+    assert.deepEqual(await call(client, 'task.get', { taskId: task.id }), expectedTask);
     assert.deepEqual(await app.ctx.workflows.get(caller, instance.id), instance);
     assert.equal(app.ctx.api.url, url);
   } finally {

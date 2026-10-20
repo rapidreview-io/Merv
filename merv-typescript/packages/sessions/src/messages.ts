@@ -10,7 +10,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
-import { isoNow, live, ordinary, text, threadIn, type Row } from './common.js';
+import { isoNow, ordinary, ownLive, text, threadIn, type Row } from './common.js';
 import { QuestionResponders } from './question-responder.js';
 import type { QuestionResponse } from './models.js';
 import { messageInquiry } from './inquiries.js';
@@ -642,12 +642,7 @@ export class SessionMessages {
     return await this.host.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
-      check(
-        live(session) && session.actorId === caller.actorId,
-        'session_ended',
-        'This session has ended',
-        409,
-      );
+      ownLive(session, caller);
       check(
         session.continuity,
         'question_unkept',
@@ -877,12 +872,7 @@ export class SessionMessages {
         'invalid_session_message',
         'An inquiry is answered by its reply: give one',
       );
-      check(
-        live(session) && session.actorId === caller.actorId,
-        'session_ended',
-        'This session has ended',
-        409,
-      );
+      ownLive(session, caller);
       // An inquiry visit's reply says where its question stands: answered, its visit ended.
       const read = async (item: MessageRow) =>
         this.publicMessage(

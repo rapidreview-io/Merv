@@ -28,7 +28,9 @@ export function ReferenceLookup() {
   const [text, setText] = useState('');
   const [refs, setRefs] = useState<string[] | null>(null);
   const [error, setError] = useState<string>();
-  const lookup = useTool<Reference[]>(refs ? 'project.references' : null, { refs: refs ?? [] });
+  const lookup = useTool<Reference[]>(refs ? 'project.read:references' : null, {
+    refs: refs ?? [],
+  });
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const next = text.split(/\s+/).filter(Boolean);

@@ -1,6 +1,23 @@
 import { z } from 'zod';
 import { MervError, envName } from '@merv/contracts';
 
+/** A bare origin (no credentials, path, query or fragment): https, or http where `local` allows
+ *  the host. */
+export const origin = (local = (_hostname: string) => false) =>
+  z
+    .string()
+    .url()
+    .refine((value) => {
+      const url = new URL(value);
+      return (
+        (url.protocol === 'https:' || (url.protocol === 'http:' && local(url.hostname))) &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash &&
+        url.pathname === '/'
+      );
+    });
 /** A Resend sender's configuration; `purpose` names what its key is for on the admin page. */
 export const mailSchema = (purpose: string) =>
   z
@@ -11,20 +28,7 @@ export const mailSchema = (purpose: string) =>
         .min(3)
         .max(320)
         .refine((value) => !/[\r\n]/.test(value)),
-      publicOrigin: z
-        .string()
-        .url()
-        .refine((value) => {
-          const url = new URL(value);
-          return (
-            url.protocol === 'https:' &&
-            !url.username &&
-            !url.password &&
-            !url.search &&
-            !url.hash &&
-            url.pathname === '/'
-          );
-        }),
+      publicOrigin: origin(),
     })
     .strict();
 

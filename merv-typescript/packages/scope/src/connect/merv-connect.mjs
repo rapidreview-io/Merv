@@ -581,7 +581,7 @@ async function uninstall() {
 
 // ---- The stdio MCP server. ----
 
-const INSTRUCTIONS = `Merv is this person's research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Call project.list, then pass projectId on every call; start with project.brief and workflow.status_and_next. Never ask for, print or read Merv keys or ~/.merv.
+const INSTRUCTIONS = `Merv is this person's research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Call project.list, then pass projectId on every call; start with project.read brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.
 If a Merv tool says not signed in, ask the person for their Merv email and call connector.login with {email}; when they tell you the code, call connector.login with {code}.`;
 const PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26'];
 const NOT_SIGNED_IN =

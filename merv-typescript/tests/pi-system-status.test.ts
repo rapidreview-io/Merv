@@ -128,10 +128,10 @@ test('system.status is a read-only conversation tool and project access is check
   } as unknown as Context);
   const listed = await tools.describe(caller);
   assert.equal(
-    listed.find((tool) => tool.name === 'system.status')?.annotations?.readOnlyHint,
+    listed.find((tool) => tool.name === 'project.read')?.annotations?.readOnlyHint,
     true,
   );
-  const value = await tools.call('system.status', caller, {});
+  const value = await tools.call('project.read:status', caller, {});
   assert.equal((value as { dispatch: { state: string } }).dispatch.state, 'paused');
   allowed = false;
   await assert.rejects(tools.call('system.status', caller, {}), { code: 'forbidden' });

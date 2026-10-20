@@ -34,6 +34,8 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   /** The retired names that ran this action. Each stays callable by name as a hidden alias
    *  (Tools.alias) with this action's flat input and its own description. */
   was?: string[];
+  /** 'people': its retired names are a person's, never listed to a leased session (as the noun's). */
+  for?: 'people';
   /** As ToolDefinition.present, for this action's result and parsed arguments. */
   present?(result: unknown, input: z.infer<S>): CallToolResult;
 }

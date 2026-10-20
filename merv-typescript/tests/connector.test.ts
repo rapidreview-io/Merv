@@ -262,13 +262,13 @@ test('the stdio server answers initialize offline, then forwards to Merv once si
     (tool: { name: string }) => tool.name,
   );
   assert.deepEqual(names.slice(0, 3), ['connector.status', 'connector.login', 'project.list']);
-  assert.ok(names.includes('project.brief') && !names.includes('connector.logout'));
+  assert.ok(names.includes('project.read') && !names.includes('connector.logout'));
   assert.ok(
     c.read('tools.json').tools.some((tool: { name: string }) => tool.name === 'project.list'),
   );
   const projects = JSON.parse((await agent.call('project.list')).content[0].text).projects;
   assert.deepEqual(projects, [{ ...f.ada.project, role: 'operator' }]);
-  const brief = await agent.call('project.brief', { projectId: f.ada.project!.id });
+  const brief = await agent.call('project.read', { action: 'brief', projectId: f.ada.project!.id });
   assert.equal(JSON.parse(brief.content[0].text).project.name, 'Grokking');
   const status = await agent.call('connector.status');
   assert.equal(status.structuredContent.signedIn, true);

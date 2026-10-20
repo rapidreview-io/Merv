@@ -95,7 +95,7 @@ const page = (entry: string, reflection = wave()) => {
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', {
+  serve('/tools/project.read:actors', {
     body: { result: [{ id: 'actor_ada', projectId: project.id, name: 'Ada Byron' }] },
   });
   // The page's one read: the wave and its stage, with no action checked.
@@ -258,7 +258,7 @@ test('the Work page is its title line and the map: nothing is listed, and the sh
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', { body: { result: [] } });
+  serve('/tools/project.read:actors', { body: { result: [] } });
   serve('/tools/ui.running', { body: { result: emptyBoard() } });
   const at = { revision: 1, updatedAt: '2026-10-01T09:00:00Z' };
   const task = (id: string, title: string, state: string) => ({
@@ -348,7 +348,7 @@ test('with no room to draw, the Work page lists the same work as rows, a reflect
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', { body: { result: [] } });
+  serve('/tools/project.read:actors', { body: { result: [] } });
   serve('/tools/ui.running', { body: { result: emptyBoard() } });
   serve('/tools/ui.home', {
     body: {
@@ -399,7 +399,7 @@ test('a list of the wave that could not be read says so, rather than its records
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', { body: { result: [] } });
+  serve('/tools/project.read:actors', { body: { result: [] } });
   serve('/tools/ui.running', { body: { result: emptyBoard() } });
   const task = {
     id: 'wf_sweep',

@@ -582,6 +582,8 @@ export class ToolRegistry implements Tools {
         actions: undefined,
         // A noun for people or conversations alone was never a worker's, nor were its names.
         worker: nested && !target.tool.for ? undefined : target.tool.worker,
+        // A person's action keeps its old names off a leased session's listing too.
+        ...(nested?.for && { for: nested.for }),
       },
       parse,
       alias: { tool: target.name, action, nested: !!nested, wrap },
@@ -805,8 +807,33 @@ export class ToolRegistry implements Tools {
     );
   }
 
+  /** Each noun's contributions in the order they loaded, and the registration they make up. */
+  private readonly nouns = new Map<string, { parts: NounDefinition[]; dispose(): Promise<void> }>();
+
+  /** A noun several plugins contribute actions to is one tool, rebuilt as each loads or unloads:
+   *  they agree on its tier and readOnly, and each brings its own clause of the summary. */
   noun(name: string, definition: NounDefinition): () => Promise<void> {
-    return this.register(noun(name, definition));
+    const rebuild = (parts: NounDefinition[]) => {
+      const [first] = parts;
+      const actions = Object.assign({}, ...parts.map((part) => part.actions));
+      check(
+        parts.every(({ tier, readOnly }) => tier === first!.tier && readOnly === first!.readOnly) &&
+          Object.keys(actions).length === parts.flatMap((part) => Object.keys(part.actions)).length,
+        'invalid_tool',
+        `${name}'s contributors disagree on its tier or readOnly, or bring an action twice`,
+      );
+      // Built before the one it replaces leaves (at once; its calls drain), so one that cannot
+      // join changes nothing.
+      const description = parts.map((part) => part.description).join(' ');
+      const built = first && noun(name, { ...first, description, actions });
+      const drained = this.nouns.get(name)?.dispose();
+      const dispose = built ? this.register(built) : async () => {};
+      this.nouns.set(name, { parts, dispose });
+      return drained;
+    };
+    rebuild([...(this.nouns.get(name)?.parts ?? []), definition]);
+    return async () =>
+      await rebuild(this.nouns.get(name)!.parts.filter((part) => part !== definition));
   }
 
   tool(name: string): RegisteredTool | undefined {

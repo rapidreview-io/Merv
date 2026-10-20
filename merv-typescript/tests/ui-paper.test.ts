@@ -81,7 +81,7 @@ function boot(held: ReturnType<typeof workspace>, role = 'operator') {
     },
   }));
   serve('/tools/artifact.read:list', { body: { result: [] } });
-  serve('/tools/actor.list', { body: { result: [actor] } });
+  serve('/tools/project.read:actors', { body: { result: [actor] } });
 }
 const open = async () => {
   await mount(createElement(MemoryRouter, { initialEntries: ['/paper'] }, createElement(App)));
@@ -399,7 +399,7 @@ test('the paper names its sources and reviews through their owners, and reads no
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows, plugins: [] } } });
-  serve('/tools/actor.list', {
+  serve('/tools/project.read:actors', {
     body: { result: [{ ...actor }, { id: 'actor_r', name: 'Ada', role: 'reviewer' }] },
   });
   serve('/tools/artifact.read:list', { body: { result: [] } });
@@ -407,7 +407,7 @@ test('the paper names its sources and reviews through their owners, and reads no
     body: { result: input.history ? [] : workspace },
   }));
   const asked: string[][] = [];
-  serve('/tools/project.references', (_count, input) => {
+  serve('/tools/project.read:references', (_count, input) => {
     asked.push(input.refs as string[]);
     return {
       body: {
@@ -536,7 +536,7 @@ test('a review’s state on the paper moves as the page polls, while its name st
   boot(held);
   let state = 'in_progress';
   let asked = 0;
-  serve('/tools/project.references', (_call, sent) => {
+  serve('/tools/project.read:references', (_call, sent) => {
     asked++;
     return {
       body: {

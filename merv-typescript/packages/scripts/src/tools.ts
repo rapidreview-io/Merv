@@ -179,7 +179,7 @@ export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
   const run: ToolDefinition = {
     name: 'script.run',
     description:
-      "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.get({}); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+      "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.read({ action: 'get' }); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
     inputSchema: runInput,
     readOnly: true,
     // Not snapshotted: a snapshotted read runs inside one read snapshot its nested reads share

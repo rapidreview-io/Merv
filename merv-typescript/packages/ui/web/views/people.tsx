@@ -27,7 +27,7 @@ export const namesOf = (actors: Actor[] | null | undefined) => {
 export function useActorNames() {
   // A file read outside a session (a test, a preview) names nobody rather than failing.
   const actor = useActor();
-  return namesOf(useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data);
+  return namesOf(useTool<Actor[]>(actor?.role === 'operator' ? 'project.read:actors' : null).data);
 }
 
 type Role = Actor['role'];

@@ -429,7 +429,7 @@ test('zero-project onboarding discovers the account before any scoped call and o
     return Response.json({
       result: path.endsWith('ui.shell')
         ? { actor, project, rows: [], plugins: [] }
-        : path.endsWith('actor.whoami')
+        : path.endsWith('project.read:whoami')
           ? actor
           : project,
     });
@@ -509,7 +509,7 @@ test('pasted machine keys keep project grants fixed and require an explicit acco
       });
     const selected = headers.get('x-merv-project-id');
     return Response.json({
-      result: path.endsWith('actor.whoami')
+      result: path.endsWith('project.read:whoami')
         ? {
             id: `member-${selected}`,
             projectId: selected,

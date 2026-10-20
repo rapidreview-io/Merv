@@ -17,7 +17,16 @@ export const HOLD_PROVIDER = 'session-dispatch';
 export const MODEL_BUDGET_PROVIDER = 'session-model-budget';
 /** The provider of a worker's wait for its compute, on the work it withholds. */
 export const COMPUTE_PROVIDER = 'session-compute';
-export { live } from './rules.js';
+import { live } from './rules.js';
+export { live };
+/** Refuses a call from a visit that has ended, or that is not the caller's own. */
+export const ownLive = (session: { status: string; actorId: string }, caller: Caller) =>
+  check(
+    live(session) && session.actorId === caller.actorId,
+    'session_ended',
+    'This session has ended',
+    409,
+  );
 /** Visible text of at most `max` characters and no NUL. */
 export const text = (value: unknown, max = 200) =>
   typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');

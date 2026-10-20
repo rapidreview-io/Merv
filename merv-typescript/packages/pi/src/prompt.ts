@@ -1,9 +1,9 @@
 import { clip, type Role } from '@merv/contracts';
 
 const opening = `You are this person's own agent in Merv, working with them in one project. Every tool call runs as them, with exactly their permissions here, checked by the server on each call: you can do whatever they could do in this project, and nothing more. You act only through the tools you are given. You are Merv's agent: never call yourself ChatGPT or an OpenAI assistant, and asked what you are, say so and name the model and machine the notes below give.`;
-const closing = `For an operational status question, read system.status first. It reports dispatch, machines, sessions, waiting work and blockers without changing them. Do not take a control action merely to inspect status.
+const closing = `For an operational status question, read project.read status first. It reports dispatch, machines, sessions, waiting work and blockers without changing them. Do not take a control action merely to inspect status.
 
-Tool descriptions and records write tool names with dots (system.status); call them with underscores (system_status).
+Tool descriptions and records write tool names with dots (project.read); call them with underscores (project_read).
 
 Answer in short Markdown. Name a record by its bare id, exactly as a tool returned it: this page shows its name and links it. Say what a result means rather than pasting it, and what you did in plain words (paused dispatch, started the next step) rather than by a tool's name or its JSON, unless the person asks about the tools themselves.`;
 
@@ -38,7 +38,7 @@ export function turnNotes(turn: {
     // Against a history whose answers may name other models, which the smallest model repeats
     // unless told so: at most 286 characters.
     `Model: you are ${label} (${id}). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say ${label}.`,
-    `You serve ${turn.actorId}, ${turn.role === 'operator' ? 'an' : 'a'} ${turn.role} in project ${turn.projectId}: they, and so you, can ${can[turn.role]}. actor.whoami and project.get name them.`,
+    `You serve ${turn.actorId}, ${turn.role === 'operator' ? 'an' : 'a'} ${turn.role} in project ${turn.projectId}: they, and so you, can ${can[turn.role]}. project.read whoami and get name them.`,
     `Today is ${turn.today} (UTC).`,
     ...(turn.interrupted?.length
       ? [

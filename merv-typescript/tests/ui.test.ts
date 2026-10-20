@@ -263,7 +263,7 @@ test('human readers can read Settings membership without a People row or actor a
       .sort(),
     ['operator-user', 'reader-user'],
   );
-  const actors = await fetch(`${app.ctx.api.url}/tools/actor.list`, {
+  const actors = await fetch(`${app.ctx.api.url}/tools/project.read:actors`, {
     method: 'POST',
     headers: { ...headers, 'content-type': 'application/json' },
     body: '{}',

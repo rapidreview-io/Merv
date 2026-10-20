@@ -11,7 +11,7 @@
     "category": "Productivity",
     "capabilities": ["Read", "Write", "Interactive"],
     "defaultPrompt": [
-      "Use Merv. Start with project.brief, then workflow.read status."
+      "Use Merv. Start with project.read brief, then workflow.read status."
     ]
   }
 }

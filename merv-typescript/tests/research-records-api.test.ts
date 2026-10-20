@@ -168,8 +168,11 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   );
   const client = await f.connect(f.reader.token);
   const names = (await client.listTools()).tools;
-  for (const name of ['project.records', 'project.references'])
-    assert.equal(names.find((tool) => tool.name === name)?.annotations?.readOnlyHint, true);
+  // records and references are project.read actions that Knowledge contributes.
+  const read = names.find((tool) => tool.name === 'project.read');
+  assert.equal(read?.annotations?.readOnlyHint, true);
+  const actions = (read?.inputSchema.properties?.action as { enum: string[] }).enum;
+  assert.ok(actions.includes('records') && actions.includes('references'));
   assert.equal(
     names.some((tool) => /^(knowledge|project)\.(capture|snapshot)/.test(tool.name)),
     false,
@@ -238,10 +241,13 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.equal((await f.http('project.records', {}, null)).status, 401);
   const old = f.app.ctx.knowledge;
   await f.app.setEnabled('knowledge', false);
-  assert.equal(
-    (await client.listTools()).tools.some((tool) => tool.name === 'project.records'),
-    false,
-  );
+  // Its actions leave project.read with it, and the rest of the noun stays.
+  const listed = (await client.listTools()).tools.find((tool) => tool.name === 'project.read');
+  const left = (listed?.inputSchema.properties?.action as { enum: string[] }).enum;
+  assert.equal(left.includes('records') || left.includes('references'), false);
+  assert.ok(left.includes('get'));
+  const gone = await f.http('project.read', { action: 'records' }, f.reader.token);
+  assert.equal(gone.body.error.code, 'invalid_input');
   assert.equal(
     (await f.http('ui.shell', {}, f.reader.token)).body.result.rows.some(
       (row: any) => row.id === 'knowledge',

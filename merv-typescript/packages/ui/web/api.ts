@@ -324,7 +324,7 @@ export async function resolveAccountSession(
   const [actor, project] =
     shell?.actor && shell.project
       ? [shell.actor, shell.project]
-      : await Promise.all([call<Actor>('actor.whoami'), call<Project>('project.get')]);
+      : await Promise.all([call<Actor>('project.read:whoami'), call<Project>('project.read:get')]);
   requireScope(selectedEpoch);
   return { phase: 'ready', account, actor, project, epoch: selectedEpoch };
 }

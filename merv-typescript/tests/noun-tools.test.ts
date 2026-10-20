@@ -903,3 +903,38 @@ test('recovery guidance names each action by its address and says it as its call
     },
   });
 });
+
+test('plugins contribute actions to one noun, which loses an action when its plugin unloads', async () => {
+  const tools = new ToolRegistry(scope as never);
+  const part = (actions: string[], readOnly = true): NounDefinition => ({
+    tier: 'core',
+    readOnly,
+    description: `Reads ${actions.join(' and ')}.`,
+    actions: Object.fromEntries(
+      actions.map((action) => [
+        action,
+        { description: action, input: z.object({}).strict(), handler: () => ({ action }) },
+      ]),
+    ),
+  });
+  const actions = async () =>
+    (await tools.describe(owner, true)).find(({ name }) => name === 'project.read')?.inputSchema
+      .properties?.action as { enum: string[] } | undefined;
+  tools.noun('project.read', part(['get', 'brief']));
+  const sessions = tools.noun('project.read', part(['status', 'usage']));
+  assert.deepEqual((await actions())?.enum, ['get', 'brief', 'status', 'usage']);
+  const listed = (await tools.describe(owner, true)).find(({ name }) => name === 'project.read')!;
+  assert.match(listed.description!, /^Reads get and brief\. Reads status and usage\./);
+  assert.deepEqual(await tools.call('project.read:status', owner, {}), { action: 'status' });
+  // Contributors agree on readOnly and bring each action once; one that does not changes nothing.
+  assert.throws(() => tools.noun('project.read', part(['write'], false)), { code: 'invalid_tool' });
+  assert.throws(() => tools.noun('project.read', part(['get'])), { code: 'invalid_tool' });
+  assert.deepEqual((await actions())?.enum, ['get', 'brief', 'status', 'usage']);
+  // Unloading one plugin takes its actions away; a call to one is refused, never a crash.
+  await sessions();
+  assert.deepEqual((await actions())?.enum, ['get', 'brief']);
+  await assert.rejects(tools.call('project.read', owner, { action: 'status' }), {
+    code: 'invalid_input',
+  });
+  assert.deepEqual(await tools.call('project.read', owner, { action: 'get' }), { action: 'get' });
+});

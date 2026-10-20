@@ -101,6 +101,16 @@ const retired = {
     'workflow.begin',
     'workflow.extend_limit',
   ],
+  project: [
+    'project.get',
+    'project.brief',
+    'project.records',
+    'project.references',
+    'actor.whoami',
+    'actor.list',
+    'system.status',
+    'usage.read',
+  ],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -125,7 +135,7 @@ const nouns = [
   'reflection.write',
   'report.read',
 ];
-nouns.push('session.read', 'session.write', 'workflow.read', 'workflow.write');
+nouns.push('session.read', 'session.write', 'workflow.read', 'workflow.write', 'project.read');
 
 /** A result's key shape, as the contract was captured. */
 const shape = (value: unknown): unknown =>
@@ -353,6 +363,9 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   await assert.rejects(app.ctx.tools.invoke('workflow.read', worker, other, true), {
     code: 'execution_arguments_forbidden',
   });
+  // project.read get keeps project.get's exact result, never the brief's.
+  const got = await tool('project.read', boot.token, { action: 'get' });
+  assert.deepEqual({ ok: shape(got.body.result) }, captured.contracts['project.get']!.owner);
   // A noun read called by name is a read, admitted as given.
   const status = (await app.ctx.tools.invoke('code.read', worker, { action: 'status' }, true))
     .value;

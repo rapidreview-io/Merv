@@ -43,7 +43,7 @@ async function open(role: string, admin = 'me', payers: string[] = []) {
     },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/actor.list', {
+  serve('/tools/project.read:actors', {
     body: {
       result: [
         { id: 'actor_me', name: 'Me Myself' },

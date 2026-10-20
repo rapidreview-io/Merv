@@ -1835,6 +1835,121 @@
         "status": 403,
         "error": "forbidden"
       }
+    },
+    "project.get": {
+      "input": {},
+      "owner": {
+        "ok": ["createdAt", "id", "name"]
+      },
+      "reader": {
+        "ok": ["createdAt", "id", "name"]
+      }
+    },
+    "project.brief": {
+      "input": {},
+      "owner": {
+        "ok": ["actor", "context", "project", "today"]
+      },
+      "reader": {
+        "ok": ["actor", "context", "project", "today"]
+      }
+    },
+    "project.records": {
+      "input": {},
+      "owner": {
+        "ok": ["experiments", "formatVersion", "project", "tasks"]
+      },
+      "reader": {
+        "ok": ["experiments", "formatVersion", "project", "tasks"]
+      }
+    },
+    "project.references": {
+      "input": {
+        "refs": ["$experiment"]
+      },
+      "owner": {
+        "ok": {
+          "array": ["id", "kind", "label", "ref", "revision", "state", "status"]
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": ["id", "kind", "label", "ref", "revision", "state", "status"]
+        }
+      }
+    },
+    "actor.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": ["active", "id", "name", "projectId", "role"]
+        }
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "actor.whoami": {
+      "input": {},
+      "owner": {
+        "ok": ["active", "id", "name", "projectId", "role"]
+      },
+      "reader": {
+        "ok": ["active", "id", "name", "projectId", "role"]
+      }
+    },
+    "system.status": {
+      "input": {},
+      "owner": {
+        "ok": [
+          "blockers",
+          "dispatch",
+          "observedAt",
+          "projectId",
+          "scope",
+          "sessions",
+          "waiting",
+          "workers"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "blockers",
+          "dispatch",
+          "observedAt",
+          "projectId",
+          "scope",
+          "sessions",
+          "waiting",
+          "workers"
+        ]
+      }
+    },
+    "usage.read": {
+      "input": {},
+      "owner": {
+        "ok": [
+          "accounting",
+          "budgets",
+          "byInstance",
+          "byWorkflow",
+          "liveSessions",
+          "scope",
+          "totals"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "accounting",
+          "budgets",
+          "byInstance",
+          "byWorkflow",
+          "liveSessions",
+          "scope",
+          "totals"
+        ]
+      }
     }
   }
 }

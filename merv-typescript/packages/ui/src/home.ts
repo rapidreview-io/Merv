@@ -27,8 +27,8 @@ const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
  */
 export async function identityOf(tools: Tools, caller: Caller): Promise<Record<string, Json>> {
   const [actor, project, workflows] = await Promise.all([
-    tools.call('actor.whoami', caller, {}),
-    tools.call('project.get', caller, {}),
+    tools.call('project.read:whoami', caller, {}),
+    tools.call('project.read:get', caller, {}),
     answer(() => tools.call('workflow.read:catalog', caller, {})),
   ]);
   return { actor: actor as Json, project: project as Json, workflows: workflows ?? [] };
@@ -52,9 +52,9 @@ export async function homeRead(
     home[key] = trim(await answer(() => isolated(fn)), keep);
   };
   // The shell's own parts, and the fields of each person they read.
-  await read('project', () => tools.call('project.get', caller, {}));
+  await read('project', () => tools.call('project.read:get', caller, {}));
   const people = ['id', 'name', 'role', 'kind', 'active', 'sessionId'];
-  await read('actors', () => tools.call('actor.list', caller, {}), people);
+  await read('actors', () => tools.call('project.read:actors', caller, {}), people);
   // A blocker's next move names actions by address, said as this caller calls them.
   await read('workflows', async () => (gates ? tools.guidance(caller, await gates(caller)) : null));
   for (const { id, home: part } of rows)

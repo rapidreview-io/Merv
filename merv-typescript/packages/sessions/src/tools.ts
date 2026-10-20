@@ -4,18 +4,9 @@ import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
-import type {
-  ComputeWaitInput,
-  QuestionResolution,
-  SessionBudgetInput,
-  SessionMessageInput,
-  Sessions,
-  ThreadInquiryInput,
-  UsageQuery,
-} from './types.js';
+import type { ComputeWaitInput, QuestionResolution } from './types.js';
 import { systemStatus } from './system-status.js';
 
-type Dispatch = Sessions['dispatch'];
 const id = z.string().min(1).max(200);
 const body = z.string().min(1).max(8000);
 const byInstance = z.object({ instanceId: id }).strict();
@@ -28,30 +19,35 @@ export const sessionsToolsPlugin = {
   inject: ['sessions', 'tools'],
   apply(ctx: Context) {
     const sessions = ctx.sessions;
-    for (const definition of [
-      {
-        name: 'system.status',
-        description:
-          "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
+    ctx.effect(() =>
+      ctx.tools.noun('project.read', {
+        tier: 'core',
         readOnly: true,
-        inputSchema: z.object({}).strict(),
-        handler: async (caller: Caller) => await systemStatus(caller, sessions),
-      },
-      {
-        name: 'usage.read',
         description:
-          "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
-        readOnly: true,
-        inputSchema: z
-          .object({
-            instanceId: z.string().min(1).optional(),
-            includeDependencies: z.boolean().optional(),
-          })
-          .strict(),
-        handler: async (caller: Caller, input: UsageQuery) => await sessions.usage(caller, input),
-      },
-    ])
-      ctx.effect(() => ctx.tools.register(definition));
+          'status (dispatch, machines, sessions, waiting work and blockers; first for an operational question) and usage (what closed sessions cost, and budgets).',
+        actions: {
+          status: {
+            description:
+              "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
+            input: z.object({}).strict(),
+            was: ['system.status'],
+            handler: async (caller) => await systemStatus(caller, sessions),
+          },
+          usage: {
+            description:
+              "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
+            input: z
+              .object({
+                instanceId: z.string().min(1).optional(),
+                includeDependencies: z.boolean().optional(),
+              })
+              .strict(),
+            was: ['usage.read'],
+            handler: async (caller, input) => await sessions.usage(caller, input),
+          },
+        },
+      }),
+    );
     ctx.effect(() =>
       ctx.tools.noun('session.read', {
         tier: 'core',
@@ -65,15 +61,14 @@ export const sessionsToolsPlugin = {
               'Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.',
             input: byInstance,
             was: ['session.find'],
-            handler: async (caller: Caller, input: { instanceId: string }) =>
-              await sessions.findSession(caller, input.instanceId),
+            handler: async (caller, input) => await sessions.findSession(caller, input.instanceId),
           },
           threads: {
             description:
               'Anyone who may read the work item, never a leased worker: the threads of one workflow instanceId, the worker of each stage and role, oldest first. Each has its state, role and status (live, dormant or retired) and its visits, oldest first: each session’s status, when it was offered, started and ended, its outcome and close code (why), whether it launched or resumed the thread’s conversation, its harness and runner.',
             input: byInstance,
             was: ['session.threads'],
-            handler: async (caller: Caller, input: { instanceId: string }) => ({
+            handler: async (caller, input) => ({
               threads: await sessions.threads.list(caller, input.instanceId),
             }),
           },
@@ -82,7 +77,7 @@ export const sessionsToolsPlugin = {
               'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
             input: byThread,
             was: ['session.thread_messages'],
-            handler: async (caller: Caller, input: { threadId: string }) =>
+            handler: async (caller, input) =>
               await sessions.messaging.thread(caller, input.threadId),
           },
           calls: {
@@ -90,7 +85,7 @@ export const sessionsToolsPlugin = {
               'Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.',
             input: byThread,
             was: ['session.observe'],
-            handler: async (caller: Caller, input: { threadId: string }) =>
+            handler: async (caller, input) =>
               await sessions.observations.calls(caller, input.threadId),
           },
           stuck: {
@@ -98,7 +93,7 @@ export const sessionsToolsPlugin = {
               'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target withheld from automatic dispatch after failed launches), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_waiting (work whose agent ended its visit to wait for its Sandboxes compute with session.await_compute; it comes back by itself, so it is listed, not counted in total), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
             input: z.object({}).strict(),
             was: ['session.stuck'],
-            handler: async (caller: Caller) => await sessions.dispatch.stuck(caller),
+            handler: async (caller) => await sessions.dispatch.stuck(caller),
           },
         },
       }),
@@ -115,15 +110,14 @@ export const sessionsToolsPlugin = {
               "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. It also ends a wait its agent started with session.await_compute, which brings that work back at once. This does not interrupt local computation or prove the worker has read it. A pending message refuses the worker's next Merv call, carrying the message, and every one after it until the worker acknowledges it, so put what you have to say in one message rather than several, send none only to ask for status, and ask for a reply only when you need one. Reuse requestId after an uncertain response.",
             input: toThread,
             was: ['session.message'],
-            handler: async (caller: Caller, input: SessionMessageInput) =>
-              await sessions.messaging.message(caller, input),
+            handler: async (caller, input) => await sessions.messaging.message(caller, input),
           },
           ask: {
             description:
               "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer, and a model-token budget charged to you. Reuse requestId after an uncertain response.",
             input: toThread,
             was: ['session.ask_thread'],
-            handler: async (caller: Caller, input: ThreadInquiryInput) => ({
+            handler: async (caller, input) => ({
               inquiry: await sessions.inquiries.ask(caller, input),
             }),
           },
@@ -132,32 +126,28 @@ export const sessionsToolsPlugin = {
               "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its admin, billed in Settings → Members), whoever changed either.",
             input: dispatchSchema,
             was: ['session.dispatch'],
-            handler: async (caller: Caller, input: Parameters<Dispatch['setDispatch']>[1]) =>
-              await sessions.dispatch.setDispatch(caller, input),
+            handler: async (caller, input) => await sessions.dispatch.setDispatch(caller, input),
           },
           halt: {
             description:
               'Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.',
             input: haltSchema,
             was: ['session.halt'],
-            handler: async (caller: Caller, input: { sessionId?: string; reason?: string }) =>
-              await sessions.dispatch.halt(caller, input),
+            handler: async (caller, input) => await sessions.dispatch.halt(caller, input),
           },
           release_hold: {
             description:
               'Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.',
             input: releaseHoldSchema,
             was: ['session.release_hold'],
-            handler: async (caller: Caller, input: Parameters<Dispatch['releaseHold']>[1]) =>
-              await sessions.dispatch.releaseHold(caller, input),
+            handler: async (caller, input) => await sessions.dispatch.releaseHold(caller, input),
           },
           budget: {
             description:
               'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure. Give maxWallMinutes or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a token budget trusts unverified self-reports and is judged only while every session in its scope that was activated reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.',
             input: budgetSchema,
             was: ['usage.set_budget'],
-            handler: async (caller: Caller, input: SessionBudgetInput) =>
-              await sessions.dispatch.setBudget(caller, input),
+            handler: async (caller, input) => await sessions.dispatch.setBudget(caller, input),
           },
         },
       }),

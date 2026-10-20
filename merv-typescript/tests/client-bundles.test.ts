@@ -16,14 +16,13 @@ const skillsOf = (bundle: string) =>
     ]),
   );
 /** Named by a skill but absent from the committed composition: Pi registers record.look, and
- *  production adds Fleet and Sandboxes (deploy/render-config.mjs). project.brief is being added. */
+ *  production adds Fleet and Sandboxes (deploy/render-config.mjs). */
 const elsewhere = new Set([
   // project.list is answered by the MCP route itself; connector.* by the local connector.
   'project.list',
   'connector.login',
   'connector.status',
   'record.look',
-  'project.brief',
   'sandboxes.sandbox',
 ]);
 

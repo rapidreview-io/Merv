@@ -822,7 +822,7 @@ test('ids outside Markdown are named the same way, and a document reads its own 
   const review = `review_${'c'.repeat(32)}`;
   const asked: unknown[] = [];
   // Each record is named and placed as its owner says, whatever its id looks like.
-  serve('/tools/project.references', (_, sent) => {
+  serve('/tools/project.read:references', (_, sent) => {
     asked.push(sent.refs);
     const known: Record<string, object> = {
       [ART]: { kind: 'artifact', label: 'Delivery: grokking curve, seed 7' },
@@ -878,7 +878,7 @@ test('ids outside Markdown are named the same way, and a document reads its own 
 
 test('a name told for one text draws no other text again', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/project.references', (_, sent) => ({
+  serve('/tools/project.read:references', (_, sent) => ({
     body: {
       result: (sent.refs as string[]).map((id) => ({
         ref: id,
@@ -920,7 +920,7 @@ test('a name told for one text draws no other text again', async (t) => {
 test('names a growing text asks for come once, and stay while the next are asked', async (t) => {
   t.after(async () => await unmount());
   const asked: unknown[] = [];
-  serve('/tools/project.references', (call, sent) => {
+  serve('/tools/project.read:references', (call, sent) => {
     asked.push(sent.refs);
     if (call > 1) return { network: true };
     const refs = sent.refs as string[];
@@ -1129,7 +1129,7 @@ test('a file older than the newest page is still named where it is cited', async
     const files = useArtifacts();
     return createElement('p', { className: 'picked' }, files.get(old)?.title ?? 'missing');
   }
-  serve('/tools/project.references', {
+  serve('/tools/project.read:references', {
     body: {
       result: [
         {
@@ -1159,7 +1159,7 @@ test('a reference lookup asks once, and never again for what came back missing',
   t.after(async () => await unmount());
   const { ReferenceLookup } = await import('../packages/ui/web/views/paper-references.js');
   const asked: unknown[] = [];
-  serve('/tools/project.references', (_, sent) => {
+  serve('/tools/project.read:references', (_, sent) => {
     asked.push(sent.refs);
     const refs = sent.refs as string[];
     return {
@@ -1193,7 +1193,7 @@ test('a text drawn again names what it named before without asking again', async
   const named = `art_${'5'.repeat(32)}`;
   const asked: unknown[] = [];
   const answer = () => {
-    serve('/tools/project.references', (_, sent) => {
+    serve('/tools/project.read:references', (_, sent) => {
       asked.push(sent.refs);
       return {
         body: {

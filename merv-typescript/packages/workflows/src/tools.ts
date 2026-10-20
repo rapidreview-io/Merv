@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import type { Caller, Data, WorkflowBegin, WorkflowExtendLimit } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 
 /** Generic node guidance and activation; domain tools own the work's handoff. */
@@ -35,10 +35,7 @@ export const workflowToolsPlugin = {
                 message: 'input requires action',
               }),
             was: ['workflow.status_and_next'],
-            handler: async (
-              caller: Caller,
-              input: { instanceId?: string; action?: string; input?: Data },
-            ) => {
+            handler: async (caller, input) => {
               if (!input.instanceId) return guide(caller, await workflows.overview(caller));
               const decision = await workflows.evaluate(caller, input.instanceId, {
                 action: input.action,
@@ -58,15 +55,14 @@ export const workflowToolsPlugin = {
               'Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. Reading an assignment claims nothing; its handoff names the command that does.',
             input: byInstance,
             was: ['workflow.assignment'],
-            handler: async (caller: Caller, input: { instanceId: string }) =>
-              await workflows.assignment(caller, input.instanceId),
+            handler: async (caller, input) => await workflows.assignment(caller, input.instanceId),
           },
           process: {
             description:
               "Read one instance's process graph, derived on read: the pinned definition's states and edges, which edges the record shows were actually taken and by whom, the live status and blockers of the current state's outgoing edges, and dependency edges to other instances. An edge means the machinery stepped through a gate; it never says a finding is correct. Per-record detail stays with the domain read.",
             input: byInstance,
             was: ['workflow.process'],
-            handler: async (caller: Caller, input: { instanceId: string }) =>
+            handler: async (caller, input) =>
               guide(caller, await workflows.process(caller, input.instanceId)),
           },
           catalog: {
@@ -74,7 +70,7 @@ export const workflowToolsPlugin = {
               "Read the deployed workflow definitions: each program's states, its initial and terminal states, and the actions that connect them. This is the shape of the machine, never any record's place in it.",
             input: z.object({}).strict(),
             was: ['workflow.catalog'],
-            handler: async (caller: Caller) => guide(caller, workflows.catalog()),
+            handler: async (caller) => guide(caller, workflows.catalog()),
           },
         },
       }),
@@ -94,8 +90,7 @@ export const workflowToolsPlugin = {
               })
               .strict(),
             was: ['workflow.begin'],
-            handler: async (caller: Caller, input: WorkflowBegin) =>
-              await workflows.begin(caller, input),
+            handler: async (caller, input) => await workflows.begin(caller, input),
           },
           extend_limit: {
             description:
@@ -110,8 +105,7 @@ export const workflowToolsPlugin = {
               })
               .strict(),
             was: ['workflow.extend_limit'],
-            handler: async (caller: Caller, input: WorkflowExtendLimit) =>
-              await workflows.extendLimit(caller, input),
+            handler: async (caller, input) => await workflows.extendLimit(caller, input),
           },
         },
       }),

@@ -527,7 +527,7 @@ test('a transcript of many tool calls asks nothing of the records it names until
   t.after(async () => await unmount());
   serve('/tools/ui.shell', { body: { result: { rows: [] } } });
   serve('/tools/ui.home', { body: { result: {} } });
-  serve('/tools/project.references', (_, sent) => ({
+  serve('/tools/project.read:references', (_, sent) => ({
     body: {
       result: (sent.refs as string[]).map((id) => ({ ref: id, id, status: 'missing', kind: null })),
     },
@@ -552,7 +552,7 @@ test('a transcript of many tool calls asks nothing of the records it names until
     ),
   });
   await settle(50);
-  const asked = () => requests.filter((r) => r === 'POST /tools/project.references').length;
+  const asked = () => requests.filter((r) => r === 'POST /tools/project.read:references').length;
   // Forty calls are one group line; shut or open, no step's line names its record.
   const head = document.querySelector('.agent-steps-head')!;
   assert.equal(head.querySelector('.agent-step-label')!.textContent, '40 steps');
