@@ -4,6 +4,7 @@ export const postgresMigrations: Record<number, string> = {
   id TEXT PRIMARY KEY,
   email_hash TEXT NOT NULL,
   ip_hash TEXT,
+  net_hash TEXT,
   install_id TEXT NOT NULL,
   client TEXT NOT NULL,
   host TEXT NOT NULL,
@@ -22,6 +23,7 @@ export const postgresMigrations: Record<number, string> = {
 );
 CREATE INDEX agent_logins_email ON agent_logins(email_hash, created_at);
 CREATE INDEX agent_logins_ip ON agent_logins(ip_hash, created_at);
+CREATE INDEX agent_logins_net ON agent_logins(net_hash, created_at);
 CREATE INDEX agent_logins_created ON agent_logins(created_at);
 CREATE INDEX agent_logins_sent ON agent_logins(created_at) WHERE issuer IS NOT NULL;
 CREATE INDEX agent_logins_install ON agent_logins(issuer, subject, install_id) WHERE key_id IS NOT NULL;

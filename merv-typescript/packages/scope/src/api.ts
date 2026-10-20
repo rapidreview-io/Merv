@@ -18,7 +18,6 @@ import {
   ResendInvitationSender,
   type InvitationSender,
 } from './invitation-email.js';
-import { tooMany } from './agent-logins.js';
 import {
   addressBucket,
   Admission,
@@ -313,7 +312,7 @@ export function connectRoutes(
   const { limits } = config;
   const storeLimits = { ...limits, keyDays: config.keyDays, retentionDays: config.retentionDays };
   const { origin, page, installer, connector } = connectAssets(config);
-  const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting);
+  const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting, clock);
   const proxies = proxyList(config.trustedProxies);
   const verifies = new Admission(limits.verifyPerIpMinute, limits.verifyPerNetworkMinute, clock);
   const handler: MountHandler = async (req, res, r) => {
@@ -327,15 +326,20 @@ export function connectRoutes(
     const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
     if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
       throw unknownEndpoint();
-    // An IPv6 client counts by its /64 for a start, and by its /64 and its /48 for a verify.
+    // An IPv6 client counts by its /64 and by its /48; an IPv4 one by its address.
     const address = clientIp(req, proxies);
-    const ip = address && addressBucket(address);
     try {
       if (!verifyRoute) {
-        if (deliveries.full) throw tooMany('login_capacity', 60);
         const body = await r.json(startInput, 4096);
-        const login = await scope.agentLogins.start({ ...body, ip }, storeLimits);
-        deliveries.push(() =>
+        const login = await scope.agentLogins.start(
+          {
+            ...body,
+            ip: address && addressBucket(address),
+            network: address && addressBucket(address, 48),
+          },
+          storeLimits,
+        );
+        deliveries.push(Date.parse(login.expiresAt), () =>
           scope.agentLogins.deliver(login, body.email, storeLimits, directory, (mail) =>
             mailer.send(codeMail(mail, origin)),
           ),

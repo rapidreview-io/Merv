@@ -53,6 +53,8 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
         emailPer15Minutes: count(3),
         emailPerDay: count(10),
         ipPerHour: count(10),
+        // Per IPv4 address or IPv6 /48, so one site cannot fill the delivery queue.
+        networkPerHour: count(30),
         globalPerMinute: count(30),
         globalPerDay: count(500),
         triesPerLogin: count(5),
@@ -61,7 +63,7 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
         verifyPerIpMinute: count(30),
         verifyPerNetworkMinute: count(120),
         queueConcurrency: count(4),
-        queueWaiting: count(100),
+        queueWaiting: count(10_000),
       })
       .strict()
       .default({}),
@@ -170,24 +172,28 @@ export function proxyList(ranges: readonly string[]): BlockList {
   return list;
 }
 
-/** Background delivery, after the reply: a few jobs at a time and a bounded number waiting. */
+/** Background delivery, after the reply: a few jobs at a time, the rest held oldest first and
+ *  started as each one ends, so a flood delays codes and never refuses a start. A held job is
+ *  dropped once its sign-in has expired, and past `capacity` held the oldest is dropped. */
 export class Deliveries {
   private readonly running = new Set<Promise<void>>();
-  private readonly waiting: (() => Promise<void>)[] = [];
+  private readonly waiting: { until: number; job: () => Promise<void> }[] = [];
   constructor(
     private readonly concurrency: number,
     private readonly capacity: number,
+    private readonly clock: () => number = Date.now,
   ) {}
-  get full(): boolean {
-    return this.running.size + this.waiting.length >= this.concurrency + this.capacity;
-  }
-  push(job: () => Promise<void>): void {
-    this.waiting.push(job);
+  /** Holds `job` until a slot frees, or until `until` (ms) passes and it is no use. */
+  push(until: number, job: () => Promise<void>): void {
+    if (this.waiting.length >= this.capacity) this.waiting.shift();
+    this.waiting.push({ until, job });
     this.pump();
   }
   private pump(): void {
     while (this.running.size < this.concurrency && this.waiting.length) {
-      const run: Promise<void> = this.waiting.shift()!().finally(() => {
+      const { until, job } = this.waiting.shift()!;
+      if (until <= this.clock()) continue;
+      const run: Promise<void> = job().finally(() => {
         this.running.delete(run);
         this.pump();
       });
@@ -221,10 +227,11 @@ export function addressBucket(ip: string | null, bits: 48 | 64 = 64): string {
 
 /**
  * Verify admission in fixed one-minute windows, constant work a request: per address (an IPv4
- * address or IPv6 /64) and per network (an IPv4 address or IPv6 /48), with no cap on all callers,
- * so no network can spend another's attempts. A window holds at most `ceiling` buckets: past it
- * only a new bucket is refused, and a new window drops the tables whole. In process: a restart
- * forgets it, and the per-login tries stay the durable bound.
+ * address or IPv6 /64) and per network (an IPv6 /48; an IPv4 address is its own network, one
+ * bucket), with no cap on all callers, so no network can spend another's attempts. A window
+ * tracks at most `ceiling` buckets: past it a request in an untracked bucket is admitted without
+ * being tracked, since a verify costs one bounded read and each sign-in locks after its tries;
+ * a new window drops the table whole. In process: a restart forgets it.
  */
 export class Admission {
   private start = -Infinity;
@@ -235,7 +242,7 @@ export class Admission {
     private readonly clock: () => number = Date.now,
     private readonly ceiling = 100_000,
   ) {}
-  /** The number of buckets this window holds. */
+  /** The number of buckets this window tracks. */
   get size(): number {
     return this.counts.size;
   }
@@ -246,19 +253,22 @@ export class Admission {
       this.start = now;
       this.counts = new Map();
     }
-    const buckets = [addressBucket(ip), `${addressBucket(ip, 48)} network`];
-    const [address = 0, network = 0] = buckets.map((bucket) => this.counts.get(bucket) ?? 0);
-    const fresh = Number(!address) + Number(!network);
-    if (
-      address >= this.perAddress ||
-      network >= this.perNetwork ||
-      this.size + fresh > this.ceiling
-    )
-      throw tooMany(
-        'login_rate_limited',
-        Math.ceil((this.start + 60_000 - now) / 1000),
-        'Too many sign-in attempts; wait a minute and try again',
-      );
-    this.counts.set(buckets[0]!, address + 1).set(buckets[1]!, network + 1);
+    // For IPv4 both are the address, so the second entry leaves one bucket at the address limit.
+    const limits = new Map([
+      [addressBucket(ip, 48), this.perNetwork],
+      [addressBucket(ip), this.perAddress],
+    ]);
+    for (const [bucket, limit] of limits)
+      if ((this.counts.get(bucket) ?? 0) >= limit)
+        throw tooMany(
+          'login_rate_limited',
+          Math.ceil((this.start + 60_000 - now) / 1000),
+          'Too many sign-in attempts; wait a minute and try again',
+        );
+    for (const bucket of limits.keys()) {
+      const seen = this.counts.get(bucket);
+      if (seen !== undefined || this.counts.size < this.ceiling)
+        this.counts.set(bucket, (seen ?? 0) + 1);
+    }
   }
 }

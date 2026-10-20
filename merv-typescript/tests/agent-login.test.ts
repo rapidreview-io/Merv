@@ -30,6 +30,7 @@ export const limits: AgentLoginLimits = {
   emailPer15Minutes: 3,
   emailPerDay: 10,
   ipPerHour: 10,
+  networkPerHour: 30,
   globalPerMinute: 30,
   globalPerDay: 500,
   triesPerLogin: 5,
@@ -96,6 +97,7 @@ async function fixture(t: TestContext) {
       {
         email,
         ip,
+        network: ip,
         client: { name: 'Claude Code', host: 'ada-mbp', installId },
         verifierHash: verifierHash(verifier),
       },
@@ -715,19 +717,27 @@ test('verify admission holds each /64 and each /48, with no cap on all callers',
   // A fresh /48 for every request is admitted: no cap on all callers to exhaust.
   const many = Array.from({ length: 20_000 }, () => in64(randomPrefix()));
   assert.deepEqual(tally(gate, many), { admitted: 20_000 });
-  // The next window starts empty.
+  // The next window starts empty, and an IPv4 address is one bucket at the address limit.
   now += 60_000;
-  assert.deepEqual(tally(gate, ['198.51.100.7']), { admitted: 1 });
-  assert.equal(gate.size, 2);
-  // At the ceiling on buckets, only a new bucket is refused.
+  assert.deepEqual(tally(gate, Array(7).fill('198.51.100.7')), {
+    admitted: 5,
+    login_rate_limited: 2,
+  });
+  assert.equal(gate.size, 1);
+  // At the ceiling on buckets, a request in an untracked bucket is admitted untracked, and the
+  // buckets already counting still hold.
   const full = new Admission(5, 20, () => now, 10);
-  const known = ['198.51.100.7', '2001:db8:dd:1::1'];
+  const known = ['198.51.100.7', '198.51.100.8', '2001:db8:dd:1::1'];
   const fill = [...known, ...Array.from({ length: 3 }, () => in64(randomPrefix()))];
-  assert.deepEqual(tally(full, fill), { admitted: 5 });
+  assert.deepEqual(tally(full, fill), { admitted: 6 });
   assert.equal(full.size, 10);
-  const fresh = [in64(randomPrefix()), '198.51.100.8', in64('2001:db8:dd:2')];
-  assert.deepEqual(tally(full, fresh), { login_rate_limited: 3 });
-  assert.deepEqual(tally(full, [...known, ...known]), { admitted: 4 });
+  assert.deepEqual(tally(full, Array(50).fill('198.51.100.9')), { admitted: 50 });
+  const fresh = Array.from({ length: 30 }, () => in64(`2001:db8:dd:${randomGroup()}`));
+  assert.deepEqual(tally(full, fresh), { admitted: 19, login_rate_limited: 11 });
+  assert.deepEqual(tally(full, Array(6).fill('198.51.100.7')), {
+    admitted: 4,
+    login_rate_limited: 2,
+  });
   assert.equal(full.size, 10);
 });
 
@@ -795,27 +805,53 @@ test('rotating IPv6 addresses and random login ids cost one bounded lookup each,
   assert.equal(lookups, 0);
 });
 
-test('a full delivery queue refuses new starts with login_capacity', async (t) => {
+test('a start flood from one /48 is held by that /48, and other networks still start', async (t) => {
+  const f = await connectServer();
+  t.after(() => f.close());
+  const start = (n: number, ip: string) =>
+    post(`${f.url}/connect/login`, startBody(`ghost${n}@lab.org`, 'a'.repeat(43)), {
+      'x-forwarded-for': ip,
+    });
+  const seen: Record<number, number> = {};
+  for (let n = 0; n < 40; n++) {
+    const { status } = await start(n, in64(`2001:db8:ee:${randomGroup()}`));
+    seen[status] = (seen[status] ?? 0) + 1;
+  }
+  assert.deepEqual(seen, { 202: 30, 429: 10 });
+  assert.equal((await start(40, in64('2001:db8:ef:1'))).status, 202);
+  await f.drain();
+});
+
+test('with the delivery queue full, a start is accepted and its code is sent once it drains', async (t) => {
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
+  const sent: string[] = [];
   const f = await connectServer({
-    limits: { queueConcurrency: 1, queueWaiting: 1 },
-    mailer: () => held,
+    limits: { queueConcurrency: 1, queueWaiting: 2 },
+    mailer: async (mail) => {
+      await held;
+      sent.push(mail.idempotencyKey);
+    },
   });
   t.after(async () => {
     release();
     await f.close();
   });
-  const start = (n: number) =>
-    post(`${f.url}/connect/login`, startBody('ada@lab.org', 'a'.repeat(43)), {
+  const start = (email: string, n: number) =>
+    post(`${f.url}/connect/login`, startBody(email, 'a'.repeat(43)), {
       'x-forwarded-for': `198.51.100.${n}`,
     });
-  assert.equal((await start(1)).status, 202);
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal((await start(2)).status, 202);
-  const full = await start(3);
-  assert.equal(full.status, 429);
-  assert.equal(full.body.error.code, 'login_capacity');
+  // Ada's first code holds the one slot, and starts for unknown addresses overfill the queue.
+  const first = await start('ada@lab.org', 1);
+  for (let n = 2; n < 6; n++) assert.equal((await start(`ghost${n}@lab.org`, n)).status, 202);
+  const again = await start('ada@lab.org', 6);
+  assert.equal(again.status, 202);
+  release();
+  await f.drain();
+  assert.deepEqual(sent, [
+    `agent-login/${first.body.loginId}`,
+    `agent-login/${again.body.loginId}`,
+  ]);
 });
 
 // Its refusal at every credential handler is pinned in credential-lock.test.ts.

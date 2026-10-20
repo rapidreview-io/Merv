@@ -21,6 +21,7 @@ export interface LoginRow {
   id: string;
   email_hash: string;
   ip_hash: string | null;
+  net_hash: string | null;
   install_id: string;
   client: string;
   host: string;
@@ -68,6 +69,8 @@ const verifierDigest = (verifier: string) =>
   createHash('sha256').update(verifier).digest('base64url');
 const codeDigest = (id: string, code: string) => digest(`${id}:${code}`);
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
+/** The digests a start is counted by: its email, its address and its network. */
+type Hashes = [email: string, ip: string | null, network: string | null];
 const iso = (ms: number) => new Date(ms).toISOString();
 const untilTomorrow = (now: number) => Math.ceil((DAY - (now % DAY)) / 1000);
 /** 429 past a sign-in limit: `login_capacity` for Merv's own caps, else `login_rate_limited`. */
@@ -96,7 +99,7 @@ const eligible = (user: DirectoryUser | null, emailHash: string): user is Direct
 
 /**
  * Agent sign-in by an emailed code. The stored rows are the only limits and the audit trail: each
- * start is counted as a row against its email and address inside the writer transaction, before
+ * start is counted as a row against its email, address and network inside the writer transaction, before
  * any directory call or email; the caps in all count only the rows a delivery reserved, checked
  * again in the transaction that reserves, so no flood of other starts can spend them.
  */
@@ -108,32 +111,35 @@ export class AgentLogins implements ScopeAgentLogins {
     private readonly keys: UserKeys,
   ) {}
 
-  /** Refuses a start past a limit on its email or address, or once the caps in all are spent.
+  /** Refuses a start past a limit on its email, address or network, or once the caps in all are spent.
    *  Each count reads an index range no longer than its own limit. */
   private async admit(
     sql: Sql,
-    emailHash: string,
-    ipHash: string | null,
+    [emailHash, ipHash, netHash]: Hashes,
     now: number,
     limits: AgentLoginLimits,
   ): Promise<void> {
     const since = (column: string) =>
       `(SELECT COUNT(*) FROM agent_logins WHERE ${column}=? AND created_at>=?)`;
+    const hour = iso(now - 60 * MINUTE);
     const counts = await sql.get<Record<string, string | number>>(
       `SELECT ${since('email_hash')} AS email_recent, ${since('email_hash')} AS email_day,
-         ${since('ip_hash')} AS ip_hour`,
+         ${since('ip_hash')} AS ip_hour, ${since('net_hash')} AS net_hour`,
       emailHash,
       iso(now - 15 * MINUTE),
       emailHash,
       iso(now - (now % DAY)),
       ipHash,
-      iso(now - 60 * MINUTE),
+      hour,
+      netHash,
+      hour,
     );
     const count = (name: string) => Number(counts?.[name] ?? 0);
     const refusals: [boolean, number][] = [
       [count('email_recent') >= limits.emailPer15Minutes, 15 * 60],
       [count('email_day') >= limits.emailPerDay, untilTomorrow(now)],
       [count('ip_hour') >= limits.ipPerHour, 60 * 60],
+      [count('net_hour') >= limits.networkPerHour, 60 * 60],
     ];
     const refused = refusals.find(([over]) => over);
     if (refused) throw tooMany('login_rate_limited', refused[1]);
@@ -158,10 +164,13 @@ export class AgentLogins implements ScopeAgentLogins {
   }
 
   async start(request: AgentLoginRequest, limits: AgentLoginLimits): Promise<AgentLoginStarted> {
-    const emailHash = emailDigest(request.email);
-    const ipHash = request.ip === null ? null : digest(request.ip);
+    const hashes: Hashes = [
+      emailDigest(request.email),
+      request.ip === null ? null : digest(request.ip),
+      request.network === null ? null : digest(request.network),
+    ];
     // Obvious refusals take no writer lock; the transaction counts again before it inserts.
-    await this.state.read((sql) => this.admit(sql, emailHash, ipHash, this.clock(), limits));
+    await this.state.read((sql) => this.admit(sql, hashes, this.clock(), limits));
     const login: AgentLoginStarted = {
       loginId: `login_${randomBytes(16).toString('base64url')}`,
       phrase: `${WORDS[randomInt(WORDS.length)]} ${WORDS[randomInt(WORDS.length)]}`,
@@ -170,7 +179,7 @@ export class AgentLogins implements ScopeAgentLogins {
     };
     await this.state.transaction(async (tx) => {
       const now = this.clock();
-      await this.admit(tx, emailHash, ipHash, now, limits);
+      await this.admit(tx, hashes, now, limits);
       // Unsuccessful requests are kept for retentionDays; issuance evidence for good.
       await tx.run(
         `DELETE FROM agent_logins WHERE id IN (SELECT id FROM agent_logins
@@ -179,11 +188,10 @@ export class AgentLogins implements ScopeAgentLogins {
       );
       login.expiresAt = iso(now + TTL);
       await tx.run(
-        `INSERT INTO agent_logins(id,email_hash,ip_hash,install_id,client,host,phrase,
-           verifier_hash,code_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO agent_logins(id,email_hash,ip_hash,net_hash,install_id,client,host,phrase,
+           verifier_hash,code_hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
         login.loginId,
-        emailHash,
-        ipHash,
+        ...hashes,
         request.client.installId,
         request.client.name,
         request.client.host,

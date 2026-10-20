@@ -47,6 +47,7 @@ const agentLimits: AgentLoginLimits = {
   emailPer15Minutes: 9,
   emailPerDay: 9,
   ipPerHour: 9,
+  networkPerHour: 9,
   globalPerMinute: 30,
   globalPerDay: 500,
   triesPerLogin: 5,
@@ -90,6 +91,7 @@ async function fixture(t: TestContext) {
       {
         email: 'alice@lab.org',
         ip: null,
+        network: null,
         client: { name: 'Claude Code', host: 'laptop', installId: crypto.randomUUID() },
         verifierHash: createHash('sha256').update(verifier).digest('base64url'),
       },

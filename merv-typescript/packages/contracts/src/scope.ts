@@ -184,6 +184,7 @@ export interface AgentLoginLimits {
   emailPer15Minutes: number;
   emailPerDay: number;
   ipPerHour: number;
+  networkPerHour: number;
   globalPerMinute: number;
   globalPerDay: number;
   triesPerLogin: number;
@@ -196,6 +197,8 @@ export interface AgentLoginRequest {
   email: string;
   /** The client's address (an IPv6 one as its /64), when known; only its digest is stored. */
   ip: string | null;
+  /** Its network: the IPv4 address itself, or the IPv6 /48; only its digest is stored. */
+  network: string | null;
   client: { name: string; host: string; installId: string };
   /** sha256 (base64url) of the verifier only this connector holds. */
   verifierHash: string;
