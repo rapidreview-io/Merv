@@ -357,29 +357,21 @@ export class ActorCredentials {
       403,
     );
   }
-  /** Admin authority over independent actors and their credentials, which a user key or a worker
-   * session never holds, nor a conversation started with a key. Returns the credential the call
-   * rests on (a conversation's source credential), which the self-revoke and self-rotate checks
-   * name, and that credential's deadline, which bounds anything the call mints. */
+  /** Admin authority over independent actors and their credentials, which a user key, a worker
+   * session or a conversation never holds. Returns the credential the call rests on, which the
+   * self-revoke and self-rotate checks name, and that credential's deadline, which bounds anything
+   * the call mints. */
   private async administer(
     caller: Caller,
     tx: Transaction,
   ): Promise<{ credentialId?: string; limit: string | null }> {
-    const { source, lifetime } = await this.authorize(caller, 'admin', tx);
-    const via = caller.conversation ? source : undefined;
+    const { lifetime } = await this.authorize(caller, 'admin', tx);
     check(
-      caller.key === undefined && caller.session === undefined && via?.kind !== 'key',
+      caller.key === undefined && caller.session === undefined && caller.conversation === undefined,
       'forbidden',
-      'User keys and worker sessions cannot administer independent actor credentials or actors',
+      'User keys, worker sessions and conversations cannot administer independent actor credentials or actors',
       403,
     );
-    // A conversation rests on its actor source, whose expiresAt requireDelegation has just matched
-    // to the row. Humans, bare in-process callers and non-expiring credentials impose no limit. (A
-    // service-sourced conversation cannot reach here: a service actor is never an operator.)
-    if (via)
-      return via.kind === 'actor'
-        ? { credentialId: via.credentialId, limit: via.expiresAt }
-        : { limit: null };
     if (caller.credentialId === undefined) return { limit: null };
     check(lifetime !== undefined, 'scope_internal', 'Credential lifetime unavailable', 500);
     return { credentialId: caller.credentialId, limit: lifetime };

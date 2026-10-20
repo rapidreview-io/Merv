@@ -980,7 +980,7 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
   );
 });
 
-test('nothing minted through an expiring operator credential outlives it, directly or through a conversation', async (t) => {
+test('nothing minted through an expiring operator credential outlives it, and its conversation mints nothing', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
   const deadline = new Date(start + 2000).toISOString();
@@ -1006,10 +1006,18 @@ test('nothing minted through an expiring operator credential outlives it, direct
   const source = await f.scope.delegationSource(asCaller(limited));
   t.after(f.scope.registerConversationAuthority({ require: async () => structuredClone(source) }));
   assert.equal((await f.scope.delegationSource(conversation)).kind, 'actor');
-  for (const [name, caller] of [
-    ['credential', asCaller(limited)],
-    ['conversation', conversation],
-  ] as const) {
+  // A conversation never administers actors or their credentials, whatever its source.
+  for (const attempt of [
+    () => f.scope.credentials.issueActor(conversation, { name: 'Via Pi', role: 'reader' }),
+    () => f.scope.credentials.issueActorCredential(conversation, { actorId: lasting.actor.id }),
+    () =>
+      f.scope.credentials.rotateCredential(conversation, {
+        credentialId: lasting.credential.id,
+        expiresAt: deadline,
+      }),
+  ])
+    await assert.rejects(attempt(), { code: 'forbidden', status: 403 });
+  for (const [name, caller] of [['credential', asCaller(limited)]] as const) {
     const actors = await f.scope.actors(f.operator);
     const credentials = await f.scope.credentials.actorCredentials(f.operator, lasting.actor.id);
     const head = await f.state.eventHead();

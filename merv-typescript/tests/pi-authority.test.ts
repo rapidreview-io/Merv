@@ -359,7 +359,7 @@ test(
 );
 
 test(
-  'a conversation administers exactly as its source does, and names the source credential in self-checks',
+  'a conversation never administers actors or their credentials, whatever its source',
   { skip: !database && 'Requires MERV_TEST_POSTGRES_URL' },
   async (t) => {
     const { openState } = await import('./fixtures/state.js');
@@ -393,52 +393,25 @@ test(
       source = await scope.delegationSource(direct);
       return { actorId: direct.actorId, projectId: direct.projectId, conversation };
     };
-    // A signed-in person's agent administers, and the event names the conversation.
-    const made = await scope.credentials.issueActor(await agent(human), {
-      name: 'Made',
-      role: 'reader',
-    });
-    const created = (await state.events(project.id)).find(
-      (event) => event.type === 'actor.created' && event.subjectId === made.actor.id,
-    );
-    assert.deepEqual(created?.data.source, {
-      kind: 'conversation',
-      conversationId: conversation.id,
-      commandId: conversation.commandId,
-    });
-    // A key refuses administration directly, and so does the agent of a key's conversation.
+    // No conversation administers actors or their credentials, whatever its source: the person,
+    // their key, or an operator actor's credential. The source itself still does, except a key.
+    const made = await scope.credentials.issueActor(human, { name: 'Made', role: 'reader' });
+    for (const direct of [human, key, actor]) {
+      const via = await agent(direct);
+      for (const attempt of [
+        () => scope.credentials.issueActor(via, { name: 'No', role: 'reader' }),
+        () => scope.credentials.actorCredentials(via, made.actor.id),
+        () => scope.credentials.issueActorCredential(via, { actorId: made.actor.id }),
+        () => scope.credentials.rotateCredential(via, { credentialId: made.credential.id }),
+        () => scope.credentials.revokeCredential(via, made.credential.id),
+        () => scope.credentials.revokeActor(via, made.actor.id),
+      ])
+        await assert.rejects(attempt(), { code: 'forbidden', status: 403 });
+    }
     await assert.rejects(scope.credentials.issueActor(key, { name: 'No', role: 'reader' }), {
       code: 'forbidden',
     });
-    await assert.rejects(
-      scope.credentials.issueActor(await agent(key), { name: 'No', role: 'reader' }),
-      {
-        code: 'forbidden',
-      },
-    );
-    await assert.rejects(scope.credentials.actorCredentials(await agent(key), made.actor.id), {
-      code: 'forbidden',
-    });
-    assert.equal(
-      (await scope.credentials.actorCredentials(await agent(human), made.actor.id)).length,
-      1,
-    );
-    // An actor credential's agent cannot revoke or rotate the credential its source rests on.
-    const spare = await scope.credentials.issueActorCredential(actor, { actorId: robot.actor.id });
-    await assert.rejects(
-      scope.credentials.revokeCredential(await agent(actor), robot.credential.id),
-      {
-        code: 'self_revoke',
-      },
-    );
-    await assert.rejects(
-      scope.credentials.rotateCredential(await agent(actor), { credentialId: robot.credential.id }),
-      { code: 'self_rotation' },
-    );
-    await scope.credentials.revokeCredential(await agent(actor), spare.credential.id);
-    await assert.rejects(scope.credentials.revokeActor(await agent(actor), robot.actor.id), {
-      code: 'self_revoke',
-    });
+    assert.equal((await scope.credentials.actorCredentials(actor, made.actor.id)).length, 1);
   },
 );
 

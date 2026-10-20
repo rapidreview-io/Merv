@@ -571,8 +571,8 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
     );
     for (const name of ['probe.never', 'pi.probe', '_remote.read', 'task.list'])
       await assert.rejects(agent(name), code('pi_tool_forbidden'), `${label} ${name}`);
-    // The real actor tools: only an operator reads another actor's credentials, and never
-    // through a key, directly or through the agent.
+    // The real actor tools: only an operator reads another actor's credentials, never through a
+    // key, and never through the agent.
     // What only the person may run is proposed, never run; Run runs it as them, with exactly the
     // outcome of their own direct call.
     const proposed: string[] = [];
@@ -589,7 +589,7 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
       () => false,
     );
     const via = (await agent('actor.credentials', other)) as { error?: { code: string } };
-    assert.deepEqual([direct, !via.error], [allowed, allowed], label);
+    assert.deepEqual([direct, !via.error], [allowed, false], label);
     for (const name of ['probe.propose', 'probe.secret', 'probe.never', 'pi.probe'])
       assert.equal(runs[name], undefined);
     await f.pi.complete(token, f.completion(input));
