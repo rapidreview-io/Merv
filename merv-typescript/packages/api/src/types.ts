@@ -10,6 +10,11 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
   inputSchema: S;
+  /** Optional public argument schema when Zod conversion loses constraints. Runtime parsing still
+   *  uses inputSchema. Object branches must be inline and use properties/required rather than
+   *  property-name, property-count, dependency or whole-object enum/const constraints. Nested values
+   *  may use any schema. A legacy alias still needs an object-root Zod publication. */
+  inputJsonSchema?: Tool['inputSchema'];
   readOnly?: boolean;
   /** The tool calls a service outside Merv (the MCP openWorldHint). A read like this runs outside
    *  the snapshot other reads hold, so a slow remote call keeps no reader connection; it is

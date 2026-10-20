@@ -41,18 +41,70 @@ export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
 }
 
+/** These schemas constrain the same arguments; properties/$defs constrain nested values instead. */
+function inputBranches(
+  schema: Record<string, unknown>,
+  visit: (schema: Record<string, unknown>) => void,
+): void {
+  visit(schema);
+  for (const key of ['allOf', 'anyOf', 'oneOf']) {
+    const branches = schema[key];
+    if (Array.isArray(branches))
+      for (const branch of branches) if (record(branch)) inputBranches(branch, visit);
+  }
+  for (const key of ['if', 'then', 'else', 'not']) {
+    const branch = record(schema[key]);
+    if (branch) inputBranches(branch, visit);
+  }
+}
+
 /** Canonical public metadata; project selection is a transport envelope, not handler input. */
 export function describeTool(tool: AnyToolDefinition): ToolDescription {
   if (isRemoteTool(tool)) {
     const { handler: _handler, kind: _kind, ...description } = tool;
     return structuredClone(description);
   }
-  const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
-  if (!('type' in schema) || schema.type !== 'object')
+  const schema =
+    tool.inputJsonSchema === undefined
+      ? zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' })
+      : cloneJson(tool.inputJsonSchema);
+  if (!record(schema) || !('type' in schema) || schema.type !== 'object')
     throw new MervError('invalid_tool', 'Tool input must be an object');
   // Transports take projectId out of a native tool's arguments to select the project.
-  if ('properties' in schema && Object.hasOwn(schema.properties, 'projectId'))
-    throw new MervError('invalid_tool', 'projectId is reserved for project selection');
+  if (tool.inputJsonSchema !== undefined) compileSchema(schema);
+  const prepareBranch = (branch: Record<string, unknown>) => {
+    if (tool.inputJsonSchema !== undefined) {
+      for (const key of [
+        '$ref',
+        '$dynamicRef',
+        '$recursiveRef',
+        'propertyNames',
+        'patternProperties',
+        'minProperties',
+        'maxProperties',
+        'dependencies',
+        'dependentRequired',
+        'dependentSchemas',
+        'const',
+        'enum',
+      ])
+        if (key in branch)
+          throw new MervError(
+            'invalid_schema',
+            `Native tool object branches cannot use ${key}: projectId is a transport field`,
+          );
+      if (Array.isArray(branch.required) && branch.required.includes('projectId'))
+        throw new MervError('invalid_tool', 'projectId is reserved for project selection');
+    }
+    const properties = record(branch.properties) ?? {};
+    if (Object.hasOwn(properties, 'projectId'))
+      throw new MervError('invalid_tool', 'projectId is reserved for project selection');
+    // A closed action branch must admit the transport envelope too. Keep its type at the root.
+    if ('additionalProperties' in branch || 'unevaluatedProperties' in branch)
+      branch.properties = { ...properties, projectId: {} };
+  };
+  if (tool.inputJsonSchema === undefined) prepareBranch(schema);
+  else inputBranches(schema, prepareBranch);
   return {
     name: tool.name,
     description: tool.description,
@@ -74,7 +126,7 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
       ...(tool.act && { title: tool.act.title }),
       readOnlyHint: tool.readOnly ?? false,
       ...('properties' in schema &&
-        Object.hasOwn(schema.properties, 'requestId') && {
+        Object.hasOwn(schema.properties ?? {}, 'requestId') && {
           idempotentHint: true,
         }),
       openWorldHint: tool.openWorld ?? false,
@@ -86,6 +138,8 @@ interface Entry {
   name: string;
   definition: AnyToolDefinition;
   description: ToolDescription;
+  /** Legacy aliases project the original Zod metadata, before action conditions were added. */
+  aliasInput?: ToolDefinition['inputSchema'];
   parse(input: unknown): unknown;
   complete(value: unknown): ToolInvocation;
   running: Set<Promise<ToolInvocation>>;
@@ -157,6 +211,9 @@ export class ToolRegistry implements Tools {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema, readOnly }),
+      ...(definition.inputJsonSchema !== undefined && {
+        aliasInput: inputSchema,
+      }),
       tool: { name: definition.name, remote: false, conversation, readOnly, worker, agent, reads },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
@@ -377,7 +434,14 @@ export class ToolRegistry implements Tools {
       // Its action decides whether it reads, so sessions, readers and scripts judge the old tool.
       const readOnly = target.tool.readOnly || !!target.tool.reads?.({ action });
       // Its old arguments, typed as the tool it became takes them.
-      const { inputSchema, annotations } = target.description;
+      const { annotations } = target.description;
+      const inputSchema = target.aliasInput
+        ? describeTool({
+            ...(target.definition as ToolDefinition),
+            inputSchema: target.aliasInput,
+            inputJsonSchema: undefined,
+          }).inputSchema
+        : target.description.inputSchema;
       const { properties = {}, required = [], ...schema } = inputSchema;
       const keys = args
         ? [...Object.keys(args), 'projectId']
@@ -572,7 +636,11 @@ export class ToolRegistry implements Tools {
         const description = structuredClone(entry.description);
         // A session's project is fixed by its lease, so a native tool is listed to it without the
         // projectId people choose one with, which every tool would otherwise repeat.
-        if (caller?.session && !entry.remote) delete description.inputSchema.properties?.projectId;
+        if (caller?.session && !entry.remote)
+          inputBranches(description.inputSchema, (branch) => {
+            const properties = record(branch.properties);
+            if (properties) delete properties.projectId;
+          });
         return description;
       });
   }
