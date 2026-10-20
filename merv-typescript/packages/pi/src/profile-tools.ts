@@ -1,16 +1,22 @@
 import { MervError } from '@merv/contracts';
-import type { ToolDescription, ToolIdentity } from '@merv/api/types';
+import type { ToolDescription, ToolIdentity, Tools } from '@merv/api/types';
 
 /** What a profile grants: each tool with the actions it may call, or null for all of them. */
 export type ProfileGrants = Map<string, Set<string> | null>;
 
 /**
  * A profile's `tools[]` resolved at offer time, separately from its hash: a tool name grants all of
- * that tool (a retired name, the old tool it names), an address `tool:action` that action alone.
+ * that tool; a retired noun name resolves to its one action, an address `tool:action` that action alone.
  */
-export function profileGrants(names: readonly string[]) {
+export function profileGrants(
+  names: readonly string[],
+  registry?: Pick<Tools, 'identity' | 'tool'>,
+) {
   const grants: ProfileGrants = new Map();
-  for (const name of names) {
+  for (let name of names) {
+    const identity = registry?.identity(name, {});
+    if (identity?.action && registry?.tool(identity.tool)?.actions)
+      name = `${identity.tool}:${identity.action}`;
     const colon = name.indexOf(':');
     const [tool, action] = colon < 0 ? [name] : [name.slice(0, colon), name.slice(colon + 1)];
     const actions = grants.get(tool);
@@ -24,7 +30,8 @@ export function profileGrants(names: readonly string[]) {
 export function requireGranted(grants: ProfileGrants, name: string, identity?: ToolIdentity) {
   const granted = grants.get(name);
   if (granted === null) return;
-  if (identity?.action && grants.get(identity.tool)?.has(identity.action)) return;
+  const actions = identity && grants.get(identity.tool);
+  if (identity?.action && (actions === null || actions?.has(identity.action))) return;
   if (granted)
     throw new MervError(
       'pi_profile_action_forbidden',

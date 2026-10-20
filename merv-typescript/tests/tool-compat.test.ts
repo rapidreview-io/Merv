@@ -18,6 +18,7 @@ import { taskToolsPlugin } from '../packages/tasks/src/tools.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
 import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
+import { intakeProfiles } from './fixtures/intake.js';
 import { fixture as piFixture } from './fixtures/pi.js';
 
 interface Outcome {
@@ -29,6 +30,8 @@ interface Contract {
   input: Record<string, unknown>;
   owner: Outcome;
   reader: Outcome;
+  agent?: Outcome;
+  worker?: Outcome;
 }
 const captured = JSON.parse(
   readFileSync(new URL('./fixtures/tool-contracts.json', import.meta.url), 'utf8'),
@@ -111,6 +114,17 @@ const retired = {
     'system.status',
     'usage.read',
   ],
+  intake: [
+    'customer_experiments.read',
+    'customer_experiments.plan_read',
+    'customer_experiments.files',
+    'customer_experiments.file_read',
+    'customer_experiments.file_fetch',
+    'customer_experiments.compute_options',
+    'customer_experiments.plan_write',
+    'customer_experiments.plan_verify',
+    'customer_experiments.propose',
+  ],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -147,6 +161,10 @@ const shape = (value: unknown): unknown =>
 
 test('every retired name answers as it did, over MCP, from a page and to a leased worker', async (t) => {
   const { app, tool } = await httpApp(t, 'merv-tool-compat-');
+  const { dispose } = await intakeProfiles(app.ctx.tools);
+  t.after(async () => {
+    for (const unregister of dispose.reverse()) await unregister();
+  });
   const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'C', actorName: 'Owner' });
   const owner: Caller = {
     projectId: boot.project.id,
@@ -200,15 +218,27 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   };
 
   for (const name of [...all, ...kept]) {
-    const contract = captured.contracts[name]!;
-    assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
-    assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
-    const agent = await mcp(name);
-    assert.deepEqual(
-      agent,
-      contract.owner.ok === undefined ? { error: contract.owner.error } : { ok: contract.owner.ok },
-      `${name} over MCP`,
-    );
+    await t.test(name, async () => {
+      const contract = captured.contracts[name]!;
+      assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
+      assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
+      if (retired.intake.includes(name)) {
+        assert.equal(
+          (await page(name, boot.token, { ...input(name), action: 'request' })).error,
+          'invalid_input',
+          `${name} keeps strict old arguments`,
+        );
+      }
+      const agent = await mcp(name);
+      assert.deepEqual(
+        agent,
+        contract.agent ??
+          (contract.owner.ok === undefined
+            ? { error: contract.owner.error }
+            : { ok: contract.owner.ok }),
+        `${name} over MCP`,
+      );
+    });
   }
   // A kept flat name reads its old flat input as the action it routes to.
   assert.deepEqual(
@@ -282,7 +312,9 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   assert.deepEqual(
     (await app.ctx.tools.describe(owner)).map(({ name }) => name),
-    traded(captured.listings.page),
+    [...traded(captured.listings.page), 'intake.read', 'intake.write'].sort((a, b) =>
+      a.localeCompare(b),
+    ),
   );
 
   // A planning worker on the published experiment policy is listed exactly the base names.
@@ -316,12 +348,23 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     'task.list',
     'task.get',
   );
-  for (const name of [...reads, 'artifact.get', 'artifact.list', ...kept]) {
-    const outcome = await app.ctx.tools.invoke(name.split('#')[0]!, worker, input(name), true).then(
-      ({ value }) => ({ ok: shape(value) }),
-      (error: { status: number; code: string }) => ({ status: error.status, error: error.code }),
-    );
-    assert.deepEqual(outcome, captured.contracts[name]!.owner, `${name} by a worker`);
+  for (const name of [...reads, ...retired.intake, 'artifact.get', 'artifact.list', ...kept]) {
+    await t.test(`${name} by a worker`, async () => {
+      const outcome = await app.ctx.tools
+        .invoke(name.split('#')[0]!, worker, input(name), true)
+        .then(
+          ({ value }) => ({ ok: shape(value) }),
+          (error: { status: number; code: string }) => ({
+            status: error.status,
+            error: error.code,
+          }),
+        );
+      assert.deepEqual(
+        outcome,
+        captured.contracts[name]!.worker ?? captured.contracts[name]!.owner,
+        `${name} by a worker`,
+      );
+    });
   }
   const shown = new Map(
     (await app.ctx.tools.describe(worker, true)).map((tool) => [tool.name, tool.description]),

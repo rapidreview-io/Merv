@@ -44,7 +44,7 @@ export type NounActions = Record<string, NounAction>;
  *  one clause per action, at most 600 characters with the calling rule the helper adds. */
 export type NounDefinition = Pick<
   ToolDefinition,
-  'tier' | 'readOnly' | 'description' | 'for' | 'removed' | 'legacy'
+  'tier' | 'readOnly' | 'description' | 'for' | 'removed' | 'legacy' | 'conversationProfile'
 > & { actions: NounActions };
 
 /** A tool whose handler receives the input its schema parsed. */

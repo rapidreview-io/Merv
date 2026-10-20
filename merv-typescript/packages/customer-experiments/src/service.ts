@@ -183,6 +183,30 @@ const criteriaInstructions = researchedInstructions.replace(
   "To accept, pass the question, the success criteria and the limits. The criteria are what the person would call success, at most three, in plain words of at most 25 each: never Merv's limits, compute, review, deliverables or method rules.",
 );
 
+/** New profiles use the addresses registered in this release; old definitions keep their hashes. */
+const intakeAddresses: Record<string, string> = {
+  'customer_experiments.read': 'intake.read:request',
+  'customer_experiments.plan_read': 'intake.read:plan',
+  'customer_experiments.files': 'intake.read:files',
+  'customer_experiments.file_read': 'intake.read:file',
+  'customer_experiments.file_fetch': 'intake.read:file_link',
+  'customer_experiments.compute_options': 'intake.read:compute',
+  'customer_experiments.plan_write': 'intake.write:edit_plan',
+  'customer_experiments.plan_verify': 'intake.write:verify_plan',
+  'customer_experiments.propose': 'intake.write:propose',
+  'web.search': 'web.read:search',
+  'web.extract': 'web.read:extract',
+  'nisa.search': 'nisa.read:search',
+  'nisa.semantic_search': 'nisa.read:semantic_search',
+  'nisa.paper': 'nisa.read:paper',
+  'nisa.excerpts': 'nisa.read:excerpts',
+};
+const addressed = (text: string) =>
+  text.replace(
+    /\b(?:customer_experiments|web|nisa)\.[a-z_]+\b/g,
+    (name) => intakeAddresses[name] ?? name,
+  );
+
 export class CustomerService {
   /** Who a call acts as; index.ts gives it the identity plugin while one is installed. */
   readonly access = new CustomerAccess(this);
@@ -270,7 +294,7 @@ export class CustomerService {
         requestId: record.id,
         profile: {
           id: 'customer-experiments-intake',
-          version: plansDocument(exp.workflow.version) ? 8 : 1,
+          version: plansDocument(exp.workflow.version) ? 9 : 1,
           requestId: record.id,
         },
       });
@@ -567,7 +591,7 @@ export class CustomerService {
         return plan;
       await this.pi.send(caller, conversation, {
         commandId: prefix + (turns.length + 1),
-        text: `The customer submitted plan revision ${plan.revision} for verification. Read it with customer_experiments.plan_read, verify it, call customer_experiments.plan_verify, and tell the customer the outcome in the form your instructions give ("Plan approved." or "Plan not approved." with what needs more work).`,
+        text: `The customer submitted plan revision ${plan.revision} for verification. Read it with intake.read action plan, verify it, call intake.write action verify_plan, and tell the customer the outcome in the form your instructions give ("Plan approved." or "Plan not approved." with what needs more work).`,
       });
     } catch (error) {
       if (before.status === 'drafting' || before.status === 'changes_requested')
@@ -640,15 +664,19 @@ export class CustomerService {
     return record;
   }
   async registerIntake(tools: Tools): Promise<(() => void | Promise<void>)[]> {
-    const scoped = {
-      context: async ({ binding, caller }: Parameters<NonNullable<PiProfile['context']>>[0]) => {
-        const record = await this.store.get(binding.requestId);
-        check(
-          record.projectId === caller.projectId,
-          'forbidden',
-          'Request context belongs to its isolated project',
-          403,
-        );
+    const scopedRequest = async (caller: Caller, id: string) => {
+      const record = await this.store.get(id);
+      check(
+        record.projectId === caller.projectId,
+        'forbidden',
+        'Request context belongs to its isolated project',
+        403,
+      );
+      return record;
+    };
+    const scoped: Pick<PiProfile, 'context' | 'authorizeTool'> = {
+      context: async ({ binding, caller }) => {
+        const record = await scopedRequest(caller, binding.requestId);
         // Every turn opens with the request's files as they are now and what changed since the
         // agent's last turn, so an upload between two messages is never missed.
         const files = this.files ? await this.files.manifest(record.id) : [];
@@ -673,15 +701,10 @@ export class CustomerService {
           JSON.stringify(await this.agentSnapshot(record))
         ).slice(0, 32000);
       },
-      authorizeTool: async ({
-        binding,
-        caller,
-        name,
-        input,
-      }: Parameters<NonNullable<PiProfile['authorizeTool']>>[0]) => {
+      authorizeTool: async ({ binding, caller, name, input }) => {
         // The request's own tools name it; open-world reads (web, literature) name none and touch
         // no request data, so only the bound request is checked.
-        if (!name.startsWith('customer_experiments.')) return;
+        if (!name.startsWith('customer_experiments.') && !name.startsWith('intake.')) return;
         check(
           input.id === binding.requestId,
           'forbidden',
@@ -710,79 +733,42 @@ export class CustomerService {
     ];
     // The request as it is now, read only from its own isolated project.
     const snapshot: NonNullable<PiProfile['context']> = async ({ binding, caller }) => {
-      const record = await this.store.get(binding.requestId);
-      check(
-        record.projectId === caller.projectId,
-        'forbidden',
-        'Request context belongs to its isolated project',
-        403,
-      );
+      const record = await scopedRequest(caller, binding.requestId);
       return JSON.stringify(await this.agentSnapshot(record)).slice(0, 32000);
     };
     const installations = [
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 1,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
+      // Definitions stay unchanged for conversations stored under every earlier version.
+      ...[
+        {
           instructions,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.propose',
-          ],
+          tools: [terminalTools[0]!, terminalTools[1]!, 'customer_experiments.propose'],
           context: snapshot,
-          authorizeTool: async ({ binding, caller, input }) => {
-            check(
-              input.id === binding.requestId,
-              'forbidden',
-              'The interviewer may only access its bound request',
-              403,
-            );
-            await this.intakeRecord(caller, binding.requestId);
-          },
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 2,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: documentInstructions,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-          ],
-          ...scoped,
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 3,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
+        },
+        { instructions: documentInstructions, tools: terminalTools.slice(0, 5) },
+        {
           instructions: guideInstructions,
           tools: terminalTools.filter((name) => name !== 'customer_experiments.file_fetch'),
-          ...scoped,
-        }),
-      // Every version stays registered for the conversations stored under it.
-      ...[
-        terminalInstructions,
-        budgetInstructions,
-        leadInstructions,
-        researchedInstructions,
-        criteriaInstructions,
+        },
+        ...[
+          terminalInstructions,
+          budgetInstructions,
+          leadInstructions,
+          researchedInstructions,
+          criteriaInstructions,
+          addressed(criteriaInstructions),
+        ].map((instructions, index) => ({
+          instructions,
+          shell: true as const,
+          tools: index < 5 ? terminalTools : terminalTools.map((name) => intakeAddresses[name]!),
+        })),
       ].map(
-        (instructions, index) => () =>
+        (profile, index) => () =>
           this.pi.registerProfile({
             id: 'customer-experiments-intake',
-            version: 4 + index,
+            version: index + 1,
             model: { id: 'gpt-6-astra', effort: 'medium' },
-            instructions,
-            shell: true,
-            tools: terminalTools,
             ...scoped,
+            ...profile,
           }),
       ),
       ...healers.map(
@@ -791,15 +777,16 @@ export class CustomerService {
             id: 'customer-experiments-healer',
             version: 1 + index,
             model: { id: 'gpt-6-astra', effort: 'medium' },
-            instructions,
+            instructions: index < 2 ? instructions : addressed(instructions),
             tools: [
               'session.thread_messages',
               'session.message',
               ...(index < 2 ? healerSandboxes : ['sandboxes.sandbox', 'sandboxes.spend']),
               'report.open',
               'report.check',
-              'web.search',
-              'web.extract',
+              ...(index < 2
+                ? ['web.search', 'web.extract']
+                : ['web.read:search', 'web.read:extract']),
             ],
             context: snapshot,
             // Threads are its request's run's only; machines and reports live in the request's own
@@ -828,190 +815,190 @@ export class CustomerService {
           }),
       ),
       () =>
-        tools.register({
-          name: 'customer_experiments.file_fetch',
+        tools.noun('intake.read', {
           conversationProfile: 'customer-experiments-intake',
-          description:
-            'A short-lived (5 minute) download link for one uploaded file, to fetch into your terminal folder with curl.',
-          inputSchema: z.object({ id: z.string(), key: z.string().min(1).max(1024) }).strict(),
+          for: 'conversations',
           readOnly: true,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            check(this.files?.link, 'files_unavailable', 'File storage is not configured', 503);
-            return this.files.link(record.id, input.key);
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.files',
-          conversationProfile: 'customer-experiments-intake',
           description:
-            'List every file the person uploaded to this request: path, size in bytes and ETag.',
-          inputSchema: z.object({ id: z.string() }).strict(),
-          readOnly: true,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            return { files: this.files ? await this.files.manifest(record.id) : [] };
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.file_read',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Read one uploaded file as text, 64 KB at a time from offset (default 0); continue with nextOffset while it is not null. A binary file answers only its size and type.',
-          inputSchema: z
-            .object({
-              id: z.string(),
-              key: z.string().min(1).max(1024),
-              offset: z.number().int().nonnegative().optional(),
-            })
-            .strict(),
-          readOnly: true,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            check(this.files?.read, 'files_unavailable', 'File storage is not configured', 503);
-            return this.files.read(record.id, input.key, input.offset ?? 0);
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.plan_read',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Read the plan document at its current revision, its status and feedback, and the request files it can rely on.',
-          inputSchema: z.object({ id: z.string() }).strict(),
-          readOnly: true,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            const owner = await this.caller(record);
-            return {
-              ...(await this.domain.plan(owner, record.experimentId!, this.store.state.ambient)),
-              files: this.files ? await this.files.manifest(record.id) : [],
-            };
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.plan_write',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Replace the plan document with a new Markdown revision. expectedRevision is the revision you read; a conflict means the customer edited it. Only while the plan is drafting or returned with changes.',
-          inputSchema: z
-            .object({
-              id: z.string(),
-              expectedRevision: z.number().int().nonnegative(),
-              document: planDocumentSchema,
-            })
-            .strict(),
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            return this.domain.writePlan(await this.caller(record), {
-              id: record.experimentId!,
-              expectedRevision: input.expectedRevision,
-              document: input.document,
-              by: 'agent',
-            });
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.plan_verify',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Verify the revision the customer submitted. accept freezes the document, its question, criteria and limits, the request file manifest and the $10 price into the contract the customer pays for; changes_requested returns the plan with your feedback.',
-          inputSchema: planVerifySchema,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            const { id: _id, ...fields } = input;
-            const verdict = fields as PlanVerification;
-            // Provider I/O stays outside the transaction that freezes the manifest.
-            if (verdict.decision === 'accept' && this.files)
-              check(
-                !(await this.files.deleted(record.id)),
-                'files_deleted',
-                'This request’s files were deleted; it cannot be accepted',
-                410,
-              );
-            const files =
-              verdict.decision === 'accept' && this.files
-                ? await this.files.manifest(record.id)
-                : [];
-            return this.domain.verifyPlan(await this.caller(record), {
-              ...verdict,
-              id: record.experimentId!,
-              files,
-            });
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.read',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Read this customer intake request, draft plan, data requirements, and readiness.',
-          inputSchema: z.object({ id: z.string() }).strict(),
-          readOnly: true,
-          handler: async (caller, input) => {
-            const r = await this.intakeRecord(caller, input.id);
-            return this.agentSnapshot(r);
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.compute_options',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Inspect current internal CPU/GPU hardware availability and pricing for planning. Does not reserve, rent, or change funding. Hardware selection remains internal to execution.',
-          inputSchema: z.object({ id: z.string() }).strict(),
-          readOnly: true,
-          openWorld: true,
-          handler: async (caller, input) => {
-            const record = await this.intakeRecord(caller, input.id);
-            check(this.compute, 'compute_unavailable', 'Internal compute is not configured', 503);
-            return this.compute.options(await this.caller(record));
-          },
-        }),
-      () =>
-        tools.register({
-          name: 'customer_experiments.propose',
-          conversationProfile: 'customer-experiments-intake',
-          description:
-            'Save the agreed experiment draft and exact data requirements. The server only offers approval after all required files pass validation. Never approves or executes.',
-          inputSchema: z.object({ id: z.string(), plan: planSchema }).strict(),
-          handler: async (caller, input) => {
-            await this.intakeRecord(caller, input.id);
-            const owner = await this.caller(await this.store.get(input.id));
-            return this.store.mutate(input.id, async (record, tx) => {
-              await this.intakeRecord(caller, input.id, tx);
-              const exp = await this.domain.get(owner, record.experimentId!, tx);
-              check(
-                ['planning', 'ready'].includes(exp.workflow.state),
-                'fixed_contract',
-                'Customer acceptance freezes this plan',
-                409,
-              );
-              if (exp.workflow.state === 'ready' && digest(record.draft) === digest(input.plan))
-                return { saved: true, approvalReady: true };
-              if (exp.workflow.state === 'ready')
-                await this.domain.revise(
-                  owner,
-                  {
-                    id: exp.id,
-                    expectedRevision: exp.workflow.revision,
-                    requestId: `draft-${exp.workflow.revision}-${digest(input.plan)}`,
-                  },
-                  tx,
+            'Read the bound intake request, plan, uploaded files, one file or its download link, and current compute offers.',
+          actions: {
+            request: {
+              was: ['customer_experiments.read'],
+              description:
+                'Read this customer intake request, draft plan, data requirements, and readiness.',
+              input: z.object({ id: z.string() }).strict(),
+              handler: async (caller, input) =>
+                this.agentSnapshot(await this.intakeRecord(caller, input.id)),
+            },
+            plan: {
+              was: ['customer_experiments.plan_read'],
+              description:
+                'Read the plan document at its current revision, its status and feedback, and the request files it can rely on.',
+              input: z.object({ id: z.string() }).strict(),
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                return {
+                  ...(await this.domain.plan(
+                    await this.caller(record),
+                    record.experimentId!,
+                    this.store.state.ambient,
+                  )),
+                  files: this.files ? await this.files.manifest(record.id) : [],
+                };
+              },
+            },
+            files: {
+              was: ['customer_experiments.files'],
+              description:
+                'List every file the person uploaded to this request: path, size in bytes and ETag.',
+              input: z.object({ id: z.string() }).strict(),
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                return { files: this.files ? await this.files.manifest(record.id) : [] };
+              },
+            },
+            file: {
+              was: ['customer_experiments.file_read'],
+              description:
+                'Read one uploaded file as text, 64 KB at a time from offset (default 0); continue with nextOffset while it is not null. A binary file answers only its size and type.',
+              input: z
+                .object({
+                  id: z.string(),
+                  key: z.string().min(1).max(1024),
+                  offset: z.number().int().nonnegative().optional(),
+                })
+                .strict(),
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                check(this.files?.read, 'files_unavailable', 'File storage is not configured', 503);
+                return this.files.read(record.id, input.key, input.offset ?? 0);
+              },
+            },
+            file_link: {
+              was: ['customer_experiments.file_fetch'],
+              description:
+                'A short-lived (5 minute) download link for one uploaded file, to fetch into your terminal folder with curl.',
+              input: z.object({ id: z.string(), key: z.string().min(1).max(1024) }).strict(),
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                check(this.files?.link, 'files_unavailable', 'File storage is not configured', 503);
+                return this.files.link(record.id, input.key);
+              },
+            },
+            compute: {
+              was: ['customer_experiments.compute_options'],
+              description:
+                'Inspect current internal CPU/GPU hardware availability and pricing for planning. Does not reserve, rent, or change funding. Hardware selection remains internal to execution.',
+              input: z.object({ id: z.string() }).strict(),
+              openWorld: true,
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                check(
+                  this.compute,
+                  'compute_unavailable',
+                  'Internal compute is not configured',
+                  503,
                 );
-              record.draft = input.plan;
-              await this.ready(record, owner, tx);
-              return {
-                saved: true,
-                dataRequired: input.plan.dataRequirements,
-                approvalReady:
-                  (await this.domain.get(owner, exp.id, tx)).workflow.state === 'ready',
-              };
-            });
+                return this.compute.options(await this.caller(record));
+              },
+            },
+          },
+        }),
+      () =>
+        tools.noun('intake.write', {
+          conversationProfile: 'customer-experiments-intake',
+          for: 'conversations',
+          description:
+            'Edit or verify the bound request’s plan, or propose a structured offer. Only its intake conversation may act.',
+          actions: {
+            edit_plan: {
+              was: ['customer_experiments.plan_write'],
+              description:
+                'Replace the plan document with a new Markdown revision. expectedRevision is the revision you read; a conflict means the customer edited it. Only while the plan is drafting or returned with changes.',
+              input: z
+                .object({
+                  id: z.string(),
+                  expectedRevision: z.number().int().nonnegative(),
+                  document: planDocumentSchema,
+                })
+                .strict(),
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                return this.domain.writePlan(await this.caller(record), {
+                  id: record.experimentId!,
+                  expectedRevision: input.expectedRevision,
+                  document: input.document,
+                  by: 'agent',
+                });
+              },
+            },
+            verify_plan: {
+              was: ['customer_experiments.plan_verify'],
+              description:
+                'Verify the revision the customer submitted. accept freezes the document, its question, criteria and limits, the request file manifest and the $10 price into the contract the customer pays for; changes_requested returns the plan with your feedback.',
+              input: planVerifySchema,
+              handler: async (caller, input) => {
+                const record = await this.intakeRecord(caller, input.id);
+                const { id: _id, ...fields } = input;
+                const verdict = fields as PlanVerification;
+                // Provider I/O stays outside the transaction that freezes the manifest.
+                if (verdict.decision === 'accept' && this.files)
+                  check(
+                    !(await this.files.deleted(record.id)),
+                    'files_deleted',
+                    'This request’s files were deleted; it cannot be accepted',
+                    410,
+                  );
+                const files =
+                  verdict.decision === 'accept' && this.files
+                    ? await this.files.manifest(record.id)
+                    : [];
+                return this.domain.verifyPlan(await this.caller(record), {
+                  ...verdict,
+                  id: record.experimentId!,
+                  files,
+                });
+              },
+            },
+            propose: {
+              was: ['customer_experiments.propose'],
+              description:
+                'Save the agreed experiment draft and exact data requirements. The server only offers approval after all required files pass validation. Never approves or executes.',
+              input: z.object({ id: z.string(), plan: planSchema }).strict(),
+              handler: async (caller, input) => {
+                const owner = await this.caller(await this.intakeRecord(caller, input.id));
+                return this.store.mutate(input.id, async (record, tx) => {
+                  await this.intakeRecord(caller, input.id, tx);
+                  const exp = await this.domain.get(owner, record.experimentId!, tx);
+                  check(
+                    ['planning', 'ready'].includes(exp.workflow.state),
+                    'fixed_contract',
+                    'Customer acceptance freezes this plan',
+                    409,
+                  );
+                  if (exp.workflow.state === 'ready' && digest(record.draft) === digest(input.plan))
+                    return { saved: true, approvalReady: true };
+                  if (exp.workflow.state === 'ready')
+                    await this.domain.revise(
+                      owner,
+                      {
+                        id: exp.id,
+                        expectedRevision: exp.workflow.revision,
+                        requestId: `draft-${exp.workflow.revision}-${digest(input.plan)}`,
+                      },
+                      tx,
+                    );
+                  record.draft = input.plan;
+                  await this.ready(record, owner, tx);
+                  return {
+                    saved: true,
+                    dataRequired: input.plan.dataRequirements,
+                    approvalReady:
+                      (await this.domain.get(owner, exp.id, tx)).workflow.state === 'ready',
+                  };
+                });
+              },
+            },
           },
         }),
       () =>

@@ -365,7 +365,7 @@ test('a turn runs the retired tool names it was offered, and a new turn of heale
     () => undefined,
     undefined,
     { publicOrigin: 'https://merv.example', sponsor: { issuer: 'i', subject: 's' } } as never,
-  ).registerIntake({ register: () => () => {} } as never);
+  ).registerIntake({ noun: () => () => {} } as never);
   const bound = healers.filter((p) => p.id === 'customer-experiments-healer' && p.version < 3);
   const retiredNames = bound[0]!.tools.filter((name) => name.startsWith('sandbox'));
   assert.deepEqual(
@@ -477,4 +477,37 @@ test('a turn runs the retired tool names it was offered, and a new turn of heale
   }
   // A profile may name any tool the registry may, one without a dot included.
   f.pi.registerProfile({ ...profile, id: 'fleet-role', tools: ['fleet'] });
+});
+
+test('intake v9 and healer v3 register addresses while all stored earlier profile hashes survive', async () => {
+  const { PiProfiles } = await import('../packages/pi/src/profiles.js');
+  const { intakeProfiles } = await import('./fixtures/intake.js');
+  const { readFileSync } = await import('node:fs');
+  // Captured from c06127657 before changing the service registrations.
+  const hashes = JSON.parse(
+    readFileSync(new URL('./fixtures/intake-profile-hashes.json', import.meta.url), 'utf8'),
+  );
+  const registry = new PiProfiles();
+  const { profiles } = await intakeProfiles();
+  for (const profile of profiles) registry.register(profile);
+  for (const [key, definitionHash] of Object.entries(hashes)) {
+    const [id, version] = key.split('@');
+    const binding = { id: id!, version: Number(version), requestId: 'stored-request' };
+    assert.equal(registry.bind(binding).definitionHash, definitionHash, key);
+    assert.equal(
+      registry.get({ ...binding, definitionHash: String(definitionHash) }).version,
+      Number(version),
+    );
+  }
+  const intake = registry.get(
+    registry.bind({ id: 'customer-experiments-intake', version: 9, requestId: 'r' }),
+  );
+  assert.ok(intake.tools.includes('intake.read:request'));
+  assert.ok(intake.tools.includes('intake.write:verify_plan'));
+  assert.ok(intake.tools.includes('nisa.read:excerpts'));
+  assert.ok(!intake.tools.includes('intake.write:propose'));
+  const healer = registry.get(
+    registry.bind({ id: 'customer-experiments-healer', version: 3, requestId: 'r' }),
+  );
+  assert.ok(healer.tools.includes('web.read:search'));
 });

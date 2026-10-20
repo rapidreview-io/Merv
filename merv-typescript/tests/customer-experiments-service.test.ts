@@ -13,7 +13,8 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { AnyToolDefinition } from '@merv/api/types';
+import type { AnyToolDefinition, NounDefinition, ToolDefinition, Tools } from '@merv/api/types';
+import { fixture as piFixture, models } from './fixtures/pi.js';
 import type { PiRuntime, PiProfile } from '@merv/pi/types';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { CUSTOMER_PRODUCT, CustomerService } from '../packages/customer-experiments/src/service.js';
@@ -300,11 +301,18 @@ async function fixture(
       customerToken: new URL(response.body.customerUrl).hash.slice('#token='.length),
     } as { id: string; agentToken: string; customerToken: string; customerUrl: string };
   };
+  // This fixture's Pi runtime is a stub; invoke the registered noun with its real schema.
+  // The stored-v8 test below uses a real Pi runtime and the full registry authorization path.
+  const intake = async (address: string, caller: Caller, args: object) => {
+    const [name, action] = address.split(':');
+    const definition = registered.get(name!) as ToolDefinition;
+    return definition.handler(caller, definition.inputSchema.parse({ action, [action!]: args }));
+  };
   const propose = async (id: string, next = plan) => {
     const record = await store.get(id);
     const caller = await service.caller(record);
-    const definition = registered.get('customer_experiments.propose')!;
-    return definition.handler(
+    return intake(
+      'intake.write:propose',
       { ...caller, conversation: { id: record.conversationId } } as Caller,
       { id, plan: next },
     );
@@ -341,6 +349,7 @@ async function fixture(
     computePreparations,
     tools,
     registered,
+    intake,
   };
 }
 
@@ -666,8 +675,8 @@ test('a replacement upload invalidates the offer until the newest file validates
 
 test('intake reads work in a read-only snapshot but ordinary project callers cannot use either intake tool', async (t) => {
   const f = await fixture(t);
-  for (const name of ['read', 'compute_options', 'propose']) {
-    const tool = f.registered.get(`customer_experiments.${name}`)!;
+  for (const name of ['intake.read', 'intake.write']) {
+    const tool = f.registered.get(name)!;
     assert.equal(
       'conversationProfile' in tool && tool.conversationProfile,
       'customer-experiments-intake',
@@ -679,14 +688,14 @@ test('intake reads work in a read-only snapshot but ordinary project callers can
   const conversationCaller = { ...owner, conversation: { id: record.conversationId } } as Caller;
   const head = await f.state.eventHead();
   const snapshot = await f.state.snapshot(() =>
-    f.registered.get('customer_experiments.read')!.handler(conversationCaller, { id: request.id }),
+    f.intake('intake.read:request', conversationCaller, { id: request.id }),
   );
   assert.equal((snapshot as { id: string }).id, request.id);
   assert.equal(await f.state.eventHead(), head, 'the read tool does not write workflow state');
-  const catalogTool = f.registered.get('customer_experiments.compute_options')!;
+  const catalogTool = f.registered.get('intake.read')!;
   assert.equal('readOnly' in catalogTool && catalogTool.readOnly, true);
   assert.equal('openWorld' in catalogTool && catalogTool.openWorld, true);
-  await catalogTool.handler(conversationCaller, { id: request.id });
+  await f.intake('intake.read:compute', conversationCaller, { id: request.id });
   assert.deepEqual(f.computeReads, [record.projectId]);
   assert.equal(f.computePreparations.length, 0, 'Planning never enables funded execution');
   const reader = await f.scope.credentials.issueActor(owner, {
@@ -712,12 +721,14 @@ test('intake reads work in a read-only snapshot but ordinary project callers can
     );
   }
   const other = await f.create('other-intake');
-  await assert.rejects(async () => catalogTool.handler(conversationCaller, { id: other.id }), {
-    code: 'forbidden',
-  });
   await assert.rejects(
-    async () =>
-      f.registered.get('customer_experiments.read')!.handler(conversationCaller, { id: other.id }),
+    async () => f.intake('intake.read:compute', conversationCaller, { id: other.id }),
+    {
+      code: 'forbidden',
+    },
+  );
+  await assert.rejects(
+    async () => f.intake('intake.read:request', conversationCaller, { id: other.id }),
     { code: 'forbidden' },
   );
   await assert.rejects(
@@ -971,16 +982,19 @@ async function planFixture(t: TestContext) {
     ...(await f.service.caller(record)),
     conversation: { id: record.conversationId },
   } as Caller;
-  const tool = (name: string, input: Record<string, unknown>) => {
-    const definition = f.registered.get('customer_experiments.' + name) as unknown as {
-      inputSchema: { parse(value: unknown): unknown };
-      handler(caller: Caller, input: unknown): Promise<unknown>;
-    };
-    return definition.handler(
-      intake,
-      definition.inputSchema.parse({ id: a.id, ...input }),
-    ) as Promise<unknown>;
+  const addresses: Record<string, string> = {
+    read: 'intake.read:request',
+    plan_read: 'intake.read:plan',
+    files: 'intake.read:files',
+    file_read: 'intake.read:file',
+    file_fetch: 'intake.read:file_link',
+    compute_options: 'intake.read:compute',
+    plan_write: 'intake.write:edit_plan',
+    plan_verify: 'intake.write:verify_plan',
+    propose: 'intake.write:propose',
   };
+  const tool = (name: string, input: Record<string, unknown>) =>
+    f.intake(addresses[name]!, intake, { id: a.id, ...input });
   // v3 customers are the capability plus the browser bound to the request.
   f.service.access.identity = {
     async verify(token) {
@@ -1022,9 +1036,9 @@ const conflict = (code: string) => (error: unknown) =>
 test('v3 requests start on service_experiment@3 with the plan-document intake profile', async (t) => {
   const f = await planFixture(t);
   assert.equal((await f.experiment(f.a.id)).workflow.version, 3);
-  // New requests talk to the lead (profile 6): proactive, short linked plans, fixed verdicts.
-  assert.equal(f.conversations[0].profile!.version, 8);
-  const profile = f.profiles.find((p) => p.version === 8)!;
+  // New requests talk to the lead (profile 9): proactive, short linked plans, fixed verdicts.
+  assert.equal(f.conversations[0].profile!.version, 9);
+  const profile = f.profiles.find((p) => p.version === 9)!;
   assert.match(profile.instructions, /never Merv's limits, compute, review/);
   assert.equal(f.profiles.find((p) => p.version === 7)!.shell, true);
   assert.match(profile.instructions, /"decision models"/);
@@ -1039,23 +1053,23 @@ test('v3 requests start on service_experiment@3 with the plan-document intake pr
   assert.equal(f.profiles.find((p) => p.version === 4)!.shell, true);
   assert.equal(f.profiles.find((p) => p.version === 3)!.shell, undefined);
   assert.deepEqual(profile.tools, [
-    'customer_experiments.read',
-    'customer_experiments.compute_options',
-    'customer_experiments.plan_read',
-    'customer_experiments.plan_write',
-    'customer_experiments.plan_verify',
-    'customer_experiments.files',
-    'customer_experiments.file_read',
-    'customer_experiments.file_fetch',
-    'web.search',
-    'web.extract',
-    'nisa.search',
-    'nisa.semantic_search',
-    'nisa.paper',
-    'nisa.excerpts',
+    'intake.read:request',
+    'intake.read:compute',
+    'intake.read:plan',
+    'intake.write:edit_plan',
+    'intake.write:verify_plan',
+    'intake.read:files',
+    'intake.read:file',
+    'intake.read:file_link',
+    'web.read:search',
+    'web.read:extract',
+    'nisa.read:search',
+    'nisa.read:semantic_search',
+    'nisa.read:paper',
+    'nisa.read:excerpts',
   ]);
   assert.match(profile.instructions, /At most two questions per turn/);
-  assert.match(profile.instructions, /customer_experiments\.file_fetch/);
+  assert.match(profile.instructions, /intake\.read:file_link/);
   // Earlier versions stay registered for the conversations already bound to them.
   assert.ok(f.profiles.find((p) => p.version === 2));
   assert.ok(f.profiles.find((p) => p.version === 3));
@@ -1175,7 +1189,9 @@ test('submit hands the exact revision to the intake agent, which returns it or f
     f.tool('plan_write', { expectedRevision: 1, document: 'Edit' }),
     conflict('plan_locked'),
   );
-  assert.throws(() => f.tool('plan_verify', { revision: 1, decision: 'changes_requested' }));
+  await assert.rejects(f.tool('plan_verify', { revision: 1, decision: 'changes_requested' }), {
+    name: 'ZodError',
+  });
   const returned = (await f.tool('plan_verify', {
     revision: 1,
     decision: 'changes_requested',
@@ -1199,7 +1215,7 @@ test('submit hands the exact revision to the intake agent, which returns it or f
     }),
     conflict('revision_conflict'),
   );
-  assert.throws(() =>
+  await assert.rejects(
     f.tool('plan_verify', {
       revision: 2,
       decision: 'accept',
@@ -1532,4 +1548,131 @@ test('submitting a plan requires an explicit email and sends its link before che
   assert.equal(f.emails[0].url, f.a.customerUrl);
   assert.equal(f.checkoutCalls.length, 0);
   assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).submissionEmailSent, true);
+});
+
+test('a stored v8 intake offers nouns, checks nested request IDs, and executes its pre-release frozen names', async (t) => {
+  const f = await piFixture(t, {
+    pi: {
+      models: models.map((model) =>
+        model.id === 'gpt-6-astra' ? { ...model, effort: 'medium' as const } : model,
+      ),
+    },
+  });
+  const records = new Map<
+    string,
+    { id: string; projectId: string; conversationId: string; toldFiles?: string[] }
+  >();
+  const request = { id: 'request_stored_v8', projectId: f.operator.projectId!, conversationId: '' };
+  records.set(request.id, request);
+  records.set('request_other', {
+    ...request,
+    id: 'request_other',
+    conversationId: 'another-conversation',
+  });
+  const service = new CustomerService(
+    {
+      get: async (id: string) => records.get(id),
+      mutate: async (id: string, change: (record: object) => void) => change(records.get(id)!),
+    } as never,
+    {} as never,
+    {} as never,
+    { registerFileProvider: () => () => {} } as never,
+    f.pi,
+    undefined,
+    () => undefined,
+    undefined,
+    {} as never,
+  );
+  service.agentSnapshot = async (record) => ({ id: record.id }) as never;
+  const nouns = new Map<string, NounDefinition>();
+  const disposers = await service.registerIntake({
+    noun: (name: string, definition: NounDefinition) => {
+      nouns.set(name, definition);
+      return async () => {};
+    },
+  } as unknown as Tools);
+  t.after(async () => {
+    for (const dispose of disposers.reverse()) await dispose();
+  });
+  // Before the release, the v8 profile stores its original hash and freezes the flat tools.
+  const old = [...nouns.values()].flatMap((noun) =>
+    Object.values(noun.actions).map((action) =>
+      f.tools.register({
+        name: action.was![0]!,
+        description: action.description,
+        inputSchema: action.input,
+        readOnly: noun.readOnly,
+        openWorld: action.openWorld,
+        conversationProfile: 'customer-experiments-intake',
+        handler: action.handler,
+      }),
+    ),
+  );
+  const conversation = await f.pi.createProfiled(f.operator, {
+    requestId: 'stored-v8',
+    title: 'Stored intake',
+    profile: { id: 'customer-experiments-intake', version: 8, requestId: request.id },
+  });
+  request.conversationId = conversation.id;
+  const frozen = await f.claimed(await f.send(conversation));
+  assert.ok(frozen.work.tools.some((tool) => tool.name === 'customer_experiments.read'));
+  await f.pi.begin(frozen.token, frozen.input);
+  for (const dispose of old) await dispose();
+  for (const [name, definition] of nouns) f.tools.noun(name, definition);
+  const call = (turn: typeof frozen, name: string, input: object) =>
+    f.pi.tool(turn.token, { ...turn.input, name, input });
+  assert.deepEqual(await call(frozen, 'customer_experiments.read', { id: request.id }), {
+    id: request.id,
+  });
+  await assert.rejects(call(frozen, 'customer_experiments.read', { id: 'request_other' }), {
+    code: 'forbidden',
+  });
+  assert.equal(
+    (
+      (await call(frozen, 'customer_experiments.read', { id: request.id, action: 'request' })) as {
+        error: { code: string };
+      }
+    ).error.code,
+    'invalid_input',
+  );
+  await assert.rejects(
+    call(frozen, 'intake.read', { action: 'request', request: { id: request.id } }),
+    { code: 'pi_tool_forbidden' },
+  );
+  await f.pi.complete(frozen.token, f.completion(frozen.input));
+  const command = await f.send(conversation);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const { work } = await f.pi.next(frozen.token, { workerId: 'worker_1' });
+  assert.ok(work);
+  const next = { token: frozen.token, work, input: { ...frozen.input, commandId: command.id } };
+  assert.deepEqual(next.work.tools.map((tool) => tool.name).sort(), [
+    'intake.read',
+    'intake.write',
+  ]);
+  const schema = next.work.tools.find((tool) => tool.name === 'intake.write')!.inputSchema as {
+    properties: { action: { enum: string[] } };
+  };
+  assert.deepEqual(schema.properties.action.enum, ['edit_plan', 'verify_plan']);
+  await f.pi.begin(next.token, next.input);
+  await assert.rejects(
+    call(next, 'intake.read', { action: 'request', request: { id: 'request_other' } }),
+    { code: 'forbidden' },
+  );
+  await assert.rejects(
+    call(next, 'intake.write', {
+      action: 'edit_plan',
+      edit_plan: { id: 'request_other', expectedRevision: 0, document: '# Plan' },
+    }),
+    { code: 'forbidden' },
+  );
+  await assert.rejects(
+    call(next, 'intake.write', { action: 'propose', propose: { id: request.id, plan } }),
+    { code: 'pi_profile_action_forbidden' },
+  );
+  assert.deepEqual(
+    await call(next, 'intake.read', { action: 'request', request: { id: request.id } }),
+    { id: request.id },
+  );
+  await f.pi.complete(next.token, f.completion(next.input));
 });

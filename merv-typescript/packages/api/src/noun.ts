@@ -126,6 +126,7 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
       }),
     ...(openWorld && { openWorld }),
     tier: definition.tier ?? 'deferred',
+    ...(definition.conversationProfile && { conversationProfile: definition.conversationProfile }),
     ...(definition.for && { for: definition.for }),
     // A kept name stays a leased worker's, listed its old input (legacy).
     ...(legacy ? { legacy } : { worker: 'never' as const }),

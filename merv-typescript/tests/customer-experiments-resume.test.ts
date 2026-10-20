@@ -123,7 +123,7 @@ test('a stalled external run gets a healer once Pi has stopped investigating', a
 
 test('a healer leaves a Merv defect that blocks the results open for an operator', async () => {
   const { service, profiles } = harness(null);
-  await service.registerIntake({ register: () => () => {} } as never);
+  await service.registerIntake({ noun: () => () => {} } as never);
   const healers = profiles.filter((p) => p.id === 'customer-experiments-healer');
   assert.deepEqual(
     healers.map((p) => p.version),

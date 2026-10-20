@@ -1950,6 +1950,218 @@
           "totals"
         ]
       }
+    },
+    "customer_experiments.read": {
+      "input": {
+        "id": "$request"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.plan_read": {
+      "input": {
+        "id": "$request"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.files": {
+      "input": {
+        "id": "$request"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.file_read": {
+      "input": {
+        "id": "$request",
+        "key": "data/train.csv"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.file_fetch": {
+      "input": {
+        "id": "$request",
+        "key": "data/train.csv"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.compute_options": {
+      "input": {
+        "id": "$request"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "customer_experiments.plan_write": {
+      "input": {
+        "id": "$request",
+        "expectedRevision": 0,
+        "document": "# Plan"
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "execution_tool_forbidden"
+      }
+    },
+    "customer_experiments.plan_verify": {
+      "input": {
+        "id": "$request",
+        "revision": 1,
+        "decision": "changes_requested",
+        "feedback": "Clarify the method."
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "execution_tool_forbidden"
+      }
+    },
+    "customer_experiments.propose": {
+      "input": {
+        "id": "$request",
+        "plan": {
+          "title": "Compare fixed classification rules",
+          "question": "Does the candidate improve accuracy?",
+          "decision": "Choose the classifier for deployment.",
+          "rationale": "The evaluation resolves a concrete model choice.",
+          "hypothesis": "The candidate improves accuracy by five points.",
+          "method": ["Score both classifiers on the same fixed cases."],
+          "baseline": "Always predict the majority class.",
+          "metric": "Accuracy",
+          "successCriteria": ["Accuracy improves by at least 0.05."],
+          "research": [],
+          "code": null,
+          "models": [],
+          "dataRequirements": [],
+          "limits": {
+            "wallMinutes": 10,
+            "maxTokens": 10000,
+            "maxAttempts": 2
+          },
+          "turnaround": "Within one hour once a worker is available",
+          "deliverables": ["Metrics, report, and runnable code"],
+          "executionSpec": "Generate 100 deterministic labeled integers, compare parity to the majority baseline using TypeScript, and retain the metrics.",
+          "feasibility": "100 cases, CPU only, no network or external services."
+        }
+      },
+      "owner": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
+      },
+      "worker": {
+        "status": 403,
+        "error": "execution_tool_forbidden"
+      }
     }
-  }
+  },
+  "intakeBase": "origin/main c06127657"
 }
