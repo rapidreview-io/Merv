@@ -181,6 +181,31 @@ test('a retired name takes only its old arguments, so a grant bound to them bind
   assert.equal(ran.length, 2);
 });
 
+test('a retired name is never offered to an agent past the tool it became', async () => {
+  const { tools } = leased([]);
+  const ran: object[] = [];
+  // Sandboxes' access tool hands out SSH certificates: a page-only (ui) tool, never an agent's.
+  tools.register({
+    name: 'sandboxes.access',
+    description: 'Access',
+    tier: 'ui',
+    inputSchema: z
+      .object({ action: z.enum(['certificate', 'gateway']).default('gateway') })
+      .passthrough(),
+    readOnly: true,
+    handler: (_caller, input) => (ran.push(input), input),
+  });
+  tools.alias(retired);
+  const person: Caller = { projectId: 'p', actorId: 'alice', credentialId: 'key-alice' };
+  for (const name of [
+    'sandboxes.access',
+    'sandboxes.access_certificate',
+    'sandboxes.access_gateway',
+  ])
+    await assert.rejects(tools.invoke(name, person, {}, true), { code: 'tool_forbidden' }, name);
+  assert.deepEqual(ran, []);
+});
+
 test('a worker and an inquiry visit with no grants read tools that also write, and write nothing', async (t) => {
   const fleet = { list: async () => [], drain: async () => assert.fail('drained') };
   for (const kind of ['work', 'inquiry']) {

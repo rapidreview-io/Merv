@@ -918,7 +918,9 @@ export class ToolRegistry implements Tools {
       throw this.renamed(name, entry.alias, entry.alias.wrap(input));
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
-    if (agent && !caller.session && !entry.alias && !this.offered(entry, false))
+    // A retired name is judged by the tool it became: never more than that tool is offered.
+    const judged = entry.alias ? this.entries.get(entry.alias.tool) : entry;
+    if (agent && !caller.session && (!judged || !this.offered(judged, false)))
       throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
     if (entry.remote && !this.access)
       throw new MervError('tool_forbidden', 'Remote tools require an explicit access policy', 403);
