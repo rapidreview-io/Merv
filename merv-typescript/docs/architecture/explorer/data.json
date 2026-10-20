@@ -387,48 +387,7 @@
       "owner": "artifacts",
       "label": "Artifacts · tools adapter",
       "purpose": "Connects Artifacts to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "artifact.create",
-          "description": "Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Pass a requestId so a retry after an uncertain result (a timeout, an HTTP 502) is safe: the same call returns the artifact already stored.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.get",
-          "description": "Read immutable artifact metadata. For a collection, files lists its members (name, size, SHA-256) in order: limit of them (default 100 for an agent) from offset; fileCount is the total and nextOffset is set when more follow. prefix keeps names starting with it, such as \"run-a/\"; matchCount counts them.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.list",
-          "description": "List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them a page at a time.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.read",
-          "description": "Read immutable artifact content: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from the returned offset + content.length. A file of up to 2 MB reads whole; a larger one, up to 16 MiB, only by a range with a length. Leased workers read files over 64,000 bytes only by a range with a length; a length over 8192 characters is cut to 8192. For a collection, fileName reads one member the same way, by its exact path from the collection’s files (artifact.get). With mode download, get private URLs to fetch with curl instead: of the file, of one collection member by fileName, or of up to 100 members at once by fileNames; for a collection without either, of its manifest.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.storage_status",
-          "description": "Whether this project can retain files up to 512 MiB.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.upload_begin",
-          "description": "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.upload_complete",
-          "description": "Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.upload_resume",
-          "description": "Get a fresh signed URL for a pending upload.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-artifact-ui",
@@ -469,48 +428,7 @@
       "owner": "artifacts",
       "label": "Artifacts",
       "purpose": "Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs.",
-      "exposedTools": [
-        {
-          "name": "artifact.create",
-          "description": "Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Pass a requestId so a retry after an uncertain result (a timeout, an HTTP 502) is safe: the same call returns the artifact already stored.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.get",
-          "description": "Read immutable artifact metadata. For a collection, files lists its members (name, size, SHA-256) in order: limit of them (default 100 for an agent) from offset; fileCount is the total and nextOffset is set when more follow. prefix keeps names starting with it, such as \"run-a/\"; matchCount counts them.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.list",
-          "description": "List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them a page at a time.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.read",
-          "description": "Read immutable artifact content: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from the returned offset + content.length. A file of up to 2 MB reads whole; a larger one, up to 16 MiB, only by a range with a length. Leased workers read files over 64,000 bytes only by a range with a length; a length over 8192 characters is cut to 8192. For a collection, fileName reads one member the same way, by its exact path from the collection’s files (artifact.get). With mode download, get private URLs to fetch with curl instead: of the file, of one collection member by fileName, or of up to 100 members at once by fileNames; for a collection without either, of its manifest.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.storage_status",
-          "description": "Whether this project can retain files up to 512 MiB.",
-          "readOnly": true
-        },
-        {
-          "name": "artifact.upload_begin",
-          "description": "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.upload_complete",
-          "description": "Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.",
-          "readOnly": false
-        },
-        {
-          "name": "artifact.upload_resume",
-          "description": "Get a fresh signed URL for a pending upload.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-blobs",
@@ -939,28 +857,7 @@
       "owner": "feed",
       "label": "Feed",
       "purpose": "Records project posts, replies and activity with optional artifact references.",
-      "exposedTools": [
-        {
-          "name": "feed.activity",
-          "description": "Read durable activity events for the current project: the newest 1,000 without a cursor, or the 1,000 after the exclusive event ID cursor `after`, which is independent of the feed post sequence.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.get",
-          "description": "Read an immutable post in the current project.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.list",
-          "description": "Read project posts in ascending sequence order: the newest page without a cursor, or the page after the exclusive post sequence cursor `after`. limit defaults to 50 and is capped at 100.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.post",
-          "description": "Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-feed-tools",
@@ -979,28 +876,7 @@
       "owner": "feed",
       "label": "Feed · tools adapter",
       "purpose": "Connects Feed to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "feed.activity",
-          "description": "Read durable activity events for the current project: the newest 1,000 without a cursor, or the 1,000 after the exclusive event ID cursor `after`, which is independent of the feed post sequence.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.get",
-          "description": "Read an immutable post in the current project.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.list",
-          "description": "Read project posts in ascending sequence order: the newest page without a cursor, or the page after the exclusive post sequence cursor `after`. limit defaults to 50 and is capped at 100.",
-          "readOnly": true
-        },
-        {
-          "name": "feed.post",
-          "description": "Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.",
-          "readOnly": false
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-feed-ui",
@@ -1374,23 +1250,7 @@
       "owner": "paper",
       "label": "Paper",
       "purpose": "Stores the living research narrative, citations and revision history. Main agents edit all sections; experiment and reflection reviewers author Methods/Results updates with their verdicts. Experiment references display names and link to the underlying records; earlier proposals remain historical.",
-      "exposedTools": [
-        {
-          "name": "paper.cite",
-          "description": "Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic_search, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.",
-          "readOnly": false
-        },
-        {
-          "name": "paper.patch",
-          "description": "The main agent can directly edit any living-paper document with expectedRevision, the revision it read: an edit made against an earlier revision is merged line by line with the edits made since, and refused only where both changed the same lines, naming the sections to read again. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual experiment name as the visible label and a stable ID in the link destination. New sections require title/content. An existing section takes content, which replaces it whole, or edits: [{find, replace}], made in turn, each find quoting text that occurs exactly once in the section as it then stands, so a sentence added to a long section is sent alone; an edit made at an earlier revision applies wherever each find still occurs once. afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Assigned experiment and reflection reviewers submit Methods/Results edits in review.submit.paperChanges; producer assignments cannot edit the paper.",
-          "readOnly": false
-        },
-        {
-          "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document, current and newest published; you are shown a published section that reads as the current one as {id, title, sameAsCurrent: true}, not twice. With kind: outline lists its sections, each with its length in characters, without their content; history lists its retained revisions without their section bodies, which revision reads; section, one of its section ids, returns that section of the current document, and offset and length, which need section, read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one: whole, as an outline, or by section, offset and length. paper.patch, and the paperChanges a reviewer submits with review.submit, change part of a section with edits [{find, replace}] instead of resending its whole content.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-paper-tools",
@@ -1409,23 +1269,7 @@
       "owner": "paper",
       "label": "Paper · tools adapter",
       "purpose": "Connects Paper to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "paper.cite",
-          "description": "Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic_search, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.",
-          "readOnly": false
-        },
-        {
-          "name": "paper.patch",
-          "description": "The main agent can directly edit any living-paper document with expectedRevision, the revision it read: an edit made against an earlier revision is merged line by line with the edits made since, and refused only where both changed the same lines, naming the sections to read again. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual experiment name as the visible label and a stable ID in the link destination. New sections require title/content. An existing section takes content, which replaces it whole, or edits: [{find, replace}], made in turn, each find quoting text that occurs exactly once in the section as it then stands, so a sentence added to a long section is sent alone; an edit made at an earlier revision applies wherever each find still occurs once. afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Assigned experiment and reflection reviewers submit Methods/Results edits in review.submit.paperChanges; producer assignments cannot edit the paper.",
-          "readOnly": false
-        },
-        {
-          "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document, current and newest published; you are shown a published section that reads as the current one as {id, title, sameAsCurrent: true}, not twice. With kind: outline lists its sections, each with its length in characters, without their content; history lists its retained revisions without their section bodies, which revision reads; section, one of its section ids, returns that section of the current document, and offset and length, which need section, read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one: whole, as an outline, or by section, offset and length. paper.patch, and the paperChanges a reviewer submits with review.submit, change part of a section with edits [{find, replace}] instead of resending its whole content.",
-          "readOnly": true
-        }
-      ]
+      "exposedTools": []
     },
     {
       "plugin": "merv-paper-ui",
