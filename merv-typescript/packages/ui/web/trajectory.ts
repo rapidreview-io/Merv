@@ -79,8 +79,8 @@ const JOB = /(^|[._-])(runs?|submit|launch|start|exec|command)(?![a-z])/;
 /** A tool's kind from the words Sessions gives it, and a Merv tool's from its name and action. */
 export function kindOf(name: string | undefined, label: string, input?: string): Kind {
   if (label === 'Searched web' || label === 'Fetched page') return 'search';
-  // Merv's own web tools (`web.search`, `web.fetch`) are searches, not Merv calls.
-  if (/^web\.(search|fetch)$/.test(name ?? '')) return 'search';
+  // Merv's own web tools (`web.read`, and `web.search` as workers call it) are searches, not Merv calls.
+  if (/^web\.(search|fetch|read)$/.test(name ?? '')) return 'search';
   if (READS.has(label)) return 'read';
   if (EDITS.has(label)) return 'edit';
   if (label === 'Ran shell' || label === 'Ran subagent') return 'run';

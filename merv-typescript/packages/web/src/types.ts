@@ -1,7 +1,7 @@
 import type { Caller } from '@merv/contracts';
 import type {} from 'cordis';
 import type { z } from 'zod';
-import type { webConfig } from './input.js';
+import type { extractInput, searchInput, webConfig } from './input.js';
 
 /** Configuration names each key's environment variable and never carries a key. */
 export type WebConfig = z.input<typeof webConfig>;
@@ -9,22 +9,8 @@ export type WebConfig = z.input<typeof webConfig>;
 export type WebProvider = 'tavily' | 'openai_web_search';
 
 /** Input as the model gives it: Nisa's web_search arguments, normalized rather than refused. */
-export interface WebSearchInput {
-  /** One query, or up to 4, each run as its own search. */
-  query: string | string[];
-  max_results?: number | null;
-  search_depth?: string | null;
-  topic?: string | null;
-  time_range?: string | null;
-}
-export interface WebExtractInput {
-  url: string;
-  extract_depth?: string | null;
-  start_text?: string | null;
-  end_text?: string | null;
-  /** Characters of the page, or of its section, to skip: a cut answer's next_offset. */
-  offset?: number | null;
-}
+export type WebSearchInput = z.input<typeof searchInput>;
+export type WebExtractInput = z.input<typeof extractInput>;
 
 /** One result, and only these fields, whatever the provider sent. */
 export interface WebResult {

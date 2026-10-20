@@ -21,7 +21,7 @@ import {
   SEARCH_OFFSETS,
   searchInput,
   SEMANTIC_OFFSETS,
-  semanticInput,
+  semanticSearchInput,
   type NisaSettings,
 } from './input.js';
 import {
@@ -100,7 +100,7 @@ export class NisaService implements Nisa {
   }
 
   async semanticSearch(caller: Caller, input: NisaSemanticSearchInput): Promise<NisaPaperList> {
-    const value = parse(semanticInput, input);
+    const value = parse(semanticSearchInput, input);
     const data = await this.call(caller, '/api/sdk/semantic_search', this.config.searchTimeoutMs, {
       body: value,
     });

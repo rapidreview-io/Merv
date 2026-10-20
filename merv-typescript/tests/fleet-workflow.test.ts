@@ -74,7 +74,7 @@ import { openState } from './fixtures/state.js';
 import { createApp } from './fixtures/app.js';
 import { loadConfiguration } from '../src/config.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
-import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
+import { built, keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
@@ -2421,7 +2421,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     web.close();
     papers.close();
   });
-  for (const tool of [...webTools(web), ...nisaTools(papers)]) tools.register(tool);
+  for (const tool of built([webTools(web), ...nisaTools(papers)])) tools.register(tool);
   tools.registerSessionPolicy(h.sessions.invocations);
   const worker = await h.sessions.authenticate(machine.secret);
   const offered = (await tools.describe(worker)).map(({ name }) => name);
@@ -2435,6 +2435,9 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     'nisa.related',
   ])
     assert.ok(offered.includes(name), name);
+  // Its list is name for name today's: the nouns those names became are never a worker's.
+  for (const name of ['web.read', 'nisa.read', 'nisa.write'])
+    assert.ok(!offered.includes(name), name);
   const found = (await tools.call('web.search', worker, { query: 'cordis plugin' })) as WebSearch;
   assert.deepEqual(
     found.results.map(({ url }) => url),

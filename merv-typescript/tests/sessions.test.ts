@@ -28,7 +28,7 @@ import type { WorkerLineage } from '../packages/sessions/src/types.js';
 import { deferred } from './fixtures/deferred.js';
 import { rewindInquiries } from './fixtures/retired-instances.js';
 import { openState } from './fixtures/state.js';
-import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
+import { keyEnv, provider, tavilyResults, built } from './fixtures/web.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext) {
@@ -1011,9 +1011,9 @@ test('a leased worker lists and runs web and literature search, open reads its p
     { keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin },
     { log: () => {} },
   );
-  for (const tool of webTools(web)) tools.register(tool);
+  for (const tool of built([webTools(web)])) tools.register(tool);
   const papers = new NisaService({ keyEnv: keyEnv(t, 'rr_sk_fixture'), origin: nisa.origin });
-  for (const tool of nisaTools(papers)) tools.register(tool);
+  for (const tool of built(nisaTools(papers))) tools.register(tool);
   tools.registerSessionPolicy(f.sessions.invocations);
   assert.deepEqual(
     (await tools.describe(caller)).map(({ name }) => name),

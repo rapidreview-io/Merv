@@ -1,3 +1,5 @@
+import type { NounDefinition, ToolDefinition } from '@merv/api/types';
+import { noun } from '@merv/api/noun';
 /**
  * Fake search providers for @merv/web: a loopback HTTP server that records every request and
  * answers as the test says, and environment variables holding keys for one test.
@@ -75,3 +77,8 @@ export const tavilyResults = (count: number, chars = 100) => ({
     score: 0.9 - index / 100,
   })),
 });
+
+/** A package's tools as the registry takes them: each noun built as ctx.tools.noun builds it. */
+export const built = (
+  tools: (ToolDefinition | (NounDefinition & { name: string }))[],
+): ToolDefinition[] => tools.map((tool) => ('handler' in tool ? tool : noun(tool.name, tool)));

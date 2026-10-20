@@ -30,7 +30,7 @@ import { createApp } from './fixtures/app.js';
 import { deferred } from './fixtures/deferred.js';
 import { fixture as piFixture } from './fixtures/pi.js';
 // Nisa is faked with the same recording loopback server as the web search providers.
-import { keyEnv, provider, type Reply, type Seen } from './fixtures/web.js';
+import { keyEnv, provider, type Reply, type Seen, built } from './fixtures/web.js';
 
 const caller: Caller = { actorId: 'alice', projectId: 'project-a', credentialId: 'key-alice' };
 const open = { require: async () => ({}) as Actor };
@@ -149,7 +149,7 @@ const related = {
 
 function registry(t: TestContext, service: NisaService) {
   const tools = new ToolRegistry(open);
-  for (const tool of nisaTools(service)) tools.register(tool);
+  for (const tool of built(nisaTools(service))) tools.register(tool);
   t.after(() => tools.close());
   return tools;
 }
@@ -683,26 +683,27 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
     return await run();
   });
   t.after(() => tools.close());
-  for (const tool of nisaTools(service)) tools.register(tool);
+  for (const tool of built(nisaTools(service))) tools.register(tool);
   await tools.call('nisa.search', caller, { query: 'q' });
-  await tools.call('nisa.related', caller, { arxiv_id: '2303.08774' });
+  await tools.call('nisa.read:related', caller, { arxiv_id: '2303.08774' });
   assert.equal(snapshots, 0);
-  const definitions = nisaTools(service).filter(({ name }) => name !== 'nisa.research');
+  const [, read, write] = built(nisaTools(service));
   assert.deepEqual(
-    definitions.map(({ name }) => piModelToolName(name)),
-    ['nisa_search', 'nisa_semantic_search', 'nisa_paper', 'nisa_excerpts', 'nisa_related'],
+    [read!, write!].map(({ name }) => piModelToolName(name)),
+    ['nisa_read', 'nisa_write'],
   );
-  for (const definition of definitions) {
-    const description = describeTool(definition);
-    assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
-    // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(definition.tier, undefined);
-    assert.ok(piTool(description), definition.name);
-    assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
-    assert.match(definition.description, /untrusted source material/);
-  }
+  const description = describeTool(read!);
+  assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
+  assert.deepEqual(describeTool(write!).annotations, { readOnlyHint: false, openWorldHint: true });
+  // The agent runs it directly, and the relay takes its schema, which names no address.
+  assert.equal(read!.tier, 'core');
+  assert.equal(write!.tier, 'deferred');
+  assert.ok(piTool(description));
+  assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
   // A model picks by description: papers here, not through a web search.
-  const described = (name: string) => definitions.find((tool) => tool.name === name)!.description;
+  const described = (name: string) => read!.actions![name.slice('nisa.'.length)]!.description;
+  for (const name of ['search', 'semantic_search', 'paper', 'excerpts', 'related'])
+    assert.match(described(`nisa.${name}`), /untrusted source material/);
   for (const name of ['nisa.search', 'nisa.semantic_search'])
     assert.match(
       described(name),
@@ -718,12 +719,12 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
   // A passage carries no title or authors: the paper's record does.
   assert.match(described('nisa.excerpts'), /nisa\.paper reads the paper's record/);
   // Naming a citation is Paper's to say, not a literature search's.
-  for (const { description } of definitions) assert.doesNotMatch(description, /paper\.cite/);
+  assert.doesNotMatch(JSON.stringify(description), /paper\.cite/);
   assert.match(described('nisa.related'), /nisa_no_related/);
   // Nisa filters authors by whole words in one search and by substring in the other.
   const author = (name: string) =>
-    (describeTool(definitions.find((tool) => tool.name === name)!).inputSchema.properties as any)
-      .author.description;
+    (description.inputSchema.properties as any)[name.slice('nisa.'.length)].properties.author
+      .description;
   assert.match(author('nisa.search'), /whole words.*commas separate alternative authors/);
   assert.match(author('nisa.semantic_search'), /substring/);
 });
@@ -732,7 +733,7 @@ test('a Pi turn is offered Nisa and runs it as its person, a reader included', a
   const fake = await nisa(t);
   const f = await piFixture(t);
   const service = new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin });
-  for (const tool of nisaTools(service)) f.tools.register(tool);
+  for (const tool of built(nisaTools(service))) f.tools.register(tool);
   const issued = await f.scope.credentials.issueActor(f.operator, {
     name: 'Reader',
     role: 'reader',
@@ -751,11 +752,11 @@ test('a Pi turn is offered Nisa and runs it as its person, a reader included', a
         `${person.actorId} ${tool}`,
       );
     const grant = await f.pi.authorizeModel(work.modelToken);
-    assert.ok(grant.toolNames.includes('nisa_search'));
+    assert.ok(grant.toolNames.includes('nisa_read'));
     const result = (await f.pi.tool(token, {
       ...input,
-      name: 'nisa.search',
-      input: { query: 'attention' },
+      name: 'nisa.read',
+      input: { action: 'search', search: { query: 'attention' } },
     })) as NisaPaperList;
     assert.deepEqual(
       result.papers.map(({ identifier }) => identifier),
@@ -765,7 +766,7 @@ test('a Pi turn is offered Nisa and runs it as its person, a reader included', a
   assert.equal(fake.seen.length, 2);
 });
 const definitionsOf = (service: NisaService) =>
-  nisaTools(service)
+  built(nisaTools(service))
     .filter((tool) => tool.readOnly)
     .map(({ name }) => name);
 
@@ -863,8 +864,8 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
     }),
   );
   const catalog = (await mcp.listTools()).tools;
-  // A reader's agent is offered the default composition's 38 reads, and these five.
-  assert.equal(catalog.length, 39);
+  // A reader's agent is offered the default composition's 34 reads, and nisa.read.
+  assert.equal(catalog.length, 35);
   for (const name of definitionsOf(new NisaService()))
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

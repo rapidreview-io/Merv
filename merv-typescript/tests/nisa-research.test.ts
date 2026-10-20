@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { researchResult, researchScope } from '../packages/nisa/src/research.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
-import { provider, keyEnv } from './fixtures/web.js';
+import { provider, keyEnv, built } from './fixtures/web.js';
 import { execution } from '../packages/experiments/src/execution-policy.js';
 import { taskExecutionPolicy } from '../packages/tasks/src/execution-policy.js';
 const caller = {
@@ -53,10 +53,32 @@ test('research delegates directly, scopes requests, bounds reports, and keeps st
   });
   assert.equal(last.answer.length, 3000);
   assert.equal(auth, 6);
-  const tool = nisaTools(nisa).find((t) => t.name === 'nisa.research')!;
-  assert.equal(tool.readOnly, false);
-  assert.equal(tool.openWorld, true);
-  assert.equal(tool.tier, undefined);
+  const [tool, read, write] = built(nisaTools(nisa));
+  assert.equal(tool!.name, 'nisa.research');
+  assert.equal(tool!.readOnly, false);
+  assert.equal(tool!.openWorld, true);
+  // Leased workers' as their policies grant it; everyone else has nisa.read and nisa.write.
+  assert.equal(tool!.tier, 'worker');
+  // Each action is research's own: status reads and the rest write, gated alike.
+  const status = read!.inputSchema.parse({ action: 'status', status: { operation_id: op } });
+  assert.deepEqual(await read!.handler(caller, status), first);
+  assert.equal(fake.seen.at(-1)!.body.action, 'status');
+  const cancel = { operation_id: op, request_id: 'stop' };
+  await write!.handler(caller, write!.inputSchema.parse({ action: 'cancel', cancel }));
+  assert.deepEqual(fake.seen.at(-1)!.body, {
+    action: 'cancel',
+    ...cancel,
+    scope: researchScope(caller),
+  });
+  const refused = new NisaService({ origin: fake.origin, keyEnv: env }, async () => {
+    throw new Error('Research requires a producing or reviewing role');
+  });
+  t.after(() => refused.close());
+  const [, readerRead] = built(nisaTools(refused));
+  await assert.rejects(
+    async () => await readerRead!.handler(caller, status),
+    /producing or reviewing role/,
+  );
   await assert.rejects(
     nisa.research(caller, { action: 'start', brief: 'x', request_id: '1', scope: 'forged' } as any),
     { code: 'invalid_input' },

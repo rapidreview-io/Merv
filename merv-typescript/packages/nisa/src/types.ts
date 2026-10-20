@@ -6,7 +6,7 @@ import type * as input from './input.js';
 /** Each input as its schema in input.ts takes it, before defaults; the schema describes it. */
 export type NisaConfig = z.input<typeof input.nisaConfig>;
 export type NisaSearchInput = z.input<typeof input.searchInput>;
-export type NisaSemanticSearchInput = z.input<typeof input.semanticInput>;
+export type NisaSemanticSearchInput = z.input<typeof input.semanticSearchInput>;
 export type NisaPaperInput = z.input<typeof input.paperInput>;
 export type NisaExcerptsInput = z.input<typeof input.excerptsInput>;
 export type NisaRelatedInput = z.input<typeof input.relatedInput>;

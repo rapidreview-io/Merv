@@ -127,7 +127,7 @@ export const searchInput = z
       !date_from || !date_to || month(date_from, true) <= month(date_to, false),
     { message: 'date_from is after date_to', path: ['date_to'] },
   );
-export const semanticInput = z
+export const semanticSearchInput = z
   .object({
     query: phrasings(
       4,
