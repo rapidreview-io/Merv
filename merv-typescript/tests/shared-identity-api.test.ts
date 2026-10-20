@@ -341,7 +341,8 @@ test('HTTP and MCP select membership for both catalogs and calls without rewriti
       requestInit: { headers: { authorization: `Bearer ${f.aliceToken}` } },
     }),
   );
-  await assert.rejects(client.listTools(), /Select a project/);
+  const projectless = (await client.listTools()).tools.map((tool) => tool.name);
+  assert.ok(projectless.includes('project.list') && !projectless.includes('_nisa.search'));
   assert.ok(
     (await client.listTools({ _meta: { 'merv/projectId': a.id } })).tools.some(
       (tool) => tool.name === '_nisa.search',

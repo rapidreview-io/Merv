@@ -74,7 +74,7 @@ test('project keys reuse owner membership attribution, default to their fixed pr
   assert.equal((await f.scope.require(caller, 'read')).role, 'reader');
   await assert.rejects(async () => await f.scope.require(caller, 'write'), { code: 'forbidden' });
   await assert.rejects(async () => await f.scope.require(caller, 'review'), { code: 'forbidden' });
-  assert.deepEqual(await f.scope.projects(principal), [f.project]);
+  assert.deepEqual(await f.scope.projects(principal), [{ ...f.project, role: 'reader' }]);
   assert.deepEqual(await f.scope.actors(f.operator), beforeActors);
   const stored = await f.state.read(
     async (sql) =>
@@ -134,7 +134,9 @@ test('account grants cover only current and future owner memberships and always 
     async () => await f.scope.caller(await f.principal(fixed.token), future.id),
     { code: 'forbidden' },
   );
-  assert.deepEqual(await f.scope.projects(await f.principal(fixed.token)), [f.project]);
+  assert.deepEqual(await f.scope.projects(await f.principal(fixed.token)), [
+    { ...f.project, role: 'operator' },
+  ]);
   const metadataForgery: Principal = {
     kind: 'key',
     key: { ...fixed.key, grantScope: 'account', projectId: future.id, owner: other.user },

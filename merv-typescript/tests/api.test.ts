@@ -1349,14 +1349,14 @@ test('a 401 names its Bearer scheme, and JSON bodies accept any media-type case'
   assert.equal(refused.status, 401);
   assert.equal(refused.headers.get('www-authenticate'), 'Bearer');
   assert.equal((await refused.json()).connect, undefined);
-  // An agent refused at /mcp is told where a person makes it a key; /auth/config says where to point it.
+  // An agent refused at /mcp is told where to connect; /auth/config says where to point it.
   const agent = await fetch(`${url}/mcp`, {
     method: 'POST',
     headers: { authorization: 'Bearer stale' },
   });
   assert.deepEqual(await agent.json(), {
     error: { code: 'unauthorized', message: 'Invalid token' },
-    connect: '/ui/settings/keys',
+    connect: '/connect',
   });
   assert.deepEqual(await (await fetch(`${url}/auth/config`)).json(), {
     enabled: false,

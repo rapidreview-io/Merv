@@ -471,14 +471,21 @@ export class ToolRegistry implements Tools {
   }
 
   /** agent: a person's own agent over MCP, never a leased worker. */
-  async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
-    return (await this.visible(caller, agent && !caller?.session)).map((entry) => {
-      const description = structuredClone(entry.description);
-      // A session's project is fixed by its lease, so a native tool is listed to it without the
-      // projectId people choose one with, which every tool would otherwise repeat.
-      if (caller?.session && !entry.remote) delete description.inputSchema.properties?.projectId;
-      return description;
-    });
+  async describe(
+    caller?: Caller,
+    agent = false,
+    { projectless = false } = {},
+  ): Promise<ToolDescription[]> {
+    const entries = await this.visible(caller, agent && !caller?.session);
+    return entries
+      .filter((entry) => !projectless || !entry.remote)
+      .map((entry) => {
+        const description = structuredClone(entry.description);
+        // A session's project is fixed by its lease, so a native tool is listed to it without the
+        // projectId people choose one with, which every tool would otherwise repeat.
+        if (caller?.session && !entry.remote) delete description.inputSchema.properties?.projectId;
+        return description;
+      });
   }
 
   async list(): Promise<ListedTool[]> {

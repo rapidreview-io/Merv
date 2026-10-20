@@ -373,8 +373,8 @@ export class Memberships {
   /** The projects where this person's membership and actor are active, `only` one if given. */
   async memberProjects(sql: Sql, issuer: string, subject: string, only: string | null) {
     return (
-      await sql.all<ProjectRow>(
-        `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
+      await sql.all<ProjectRow & { role: Role }>(
+        `SELECT p.*,m.role FROM projects p JOIN project_memberships m ON m.project_id=p.id
          JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
          WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1
            AND (CAST(? AS TEXT) IS NULL OR p.id=?) ORDER BY m.created_at,m.project_id`,
@@ -383,7 +383,7 @@ export class Memberships {
         only,
         only,
       )
-    ).map(projectValue);
+    ).map(({ role, ...row }) => ({ ...projectValue(row), role }));
   }
 
   async createProject(

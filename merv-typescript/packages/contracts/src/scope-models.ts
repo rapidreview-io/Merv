@@ -21,6 +21,8 @@ export interface Project {
   id: string;
   name: string;
   createdAt: string;
+  /** The reader's own role, where a listing of their memberships gives it. */
+  role?: Role;
 }
 /** The person billed for a project, a live operator of it. */
 export type ProjectAdmin = { issuer: string; subject: string };

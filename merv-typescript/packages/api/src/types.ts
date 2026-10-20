@@ -141,8 +141,13 @@ export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
    *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: its reads alone) plus the mounted
-   *  tools its Access grants. That curates; it is no authority boundary (see POST /tools). */
-  describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
+   *  tools its Access grants. That curates; it is no authority boundary (see POST /tools).
+   *  projectless: no caller and no mounted tool, which only a project's grant lists. */
+  describe(
+    caller?: Caller,
+    agent?: boolean,
+    options?: { projectless?: boolean },
+  ): Promise<ToolDescription[]>;
   /** Every registered tool, for trusted in-process code only: it takes no caller. */
   list(): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;

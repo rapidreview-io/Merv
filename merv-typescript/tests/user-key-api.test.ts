@@ -280,7 +280,7 @@ test('project and account keys resolve current owner roles while account keys re
   const projectAccount = await f.request<{ projects: Project[] }>('/account', {
     token: projectKey.token,
   });
-  assert.deepEqual(projectAccount.body.projects, [f.project]);
+  assert.deepEqual(projectAccount.body.projects, [{ ...f.project, role: 'operator' }]);
   const bound = await f.request<{ result: { caller: Caller } }>('/tools/read', {
     token: projectKey.token,
     body: {},
@@ -441,7 +441,23 @@ test('HTTP and MCP key catalogs use selected authority and preserve remote proje
       requestInit: { headers: { authorization: `Bearer ${key.token}` } },
     }),
   );
-  await assert.rejects(client.listTools(), /explicit project selection/);
+  // Codex repeats a server's instructions at every tool: Merv's own part stays short.
+  const guide = client.getInstructions()!.split('\n\n').at(-1)!;
+  assert.ok(guide.length <= 600 && guide.includes('project.list'), guide);
+  // With no project selected, an account key is offered the native catalog and project.list.
+  const projectless = (await client.listTools()).tools.map((tool) => tool.name);
+  assert.equal(projectless[0], 'project.list');
+  assert.ok(projectless.includes('read') && !projectless.includes('_nisa.search'));
+  const listed = await client.callTool({ name: 'project.list', arguments: {} });
+  assert.deepEqual(
+    JSON.parse((listed.content as { text: string }[])[0]!.text).projects.find(
+      (project: Project) => project.id === f.project.id,
+    ),
+    { ...f.project, role: 'operator' },
+  );
+  const unselected = await client.callTool({ name: 'read', arguments: {} });
+  assert.equal(unselected.isError, true);
+  assert.match((unselected.content as { text: string }[])[0]!.text, /call project\.list/);
   assert.ok(
     (await client.listTools({ _meta: { 'merv/projectId': f.project.id } })).tools.some(
       (tool) => tool.name === '_nisa.search',

@@ -127,8 +127,16 @@ function rpcError(error: unknown) {
   });
 }
 
-/** The Settings › Keys page, where a person connects an agent. */
-const KEYS_PAGE = '/ui/settings/keys';
+/** The agent-readable page that connects an agent. */
+const CONNECT_PAGE = '/connect';
+/** Answered by the MCP route itself: a tool in the registry needs a project to act in. */
+const PROJECT_LIST = {
+  name: 'project.list',
+  description:
+    "List the projects you can work in, with your role in each. Pass a project's id as projectId to every other Merv tool.",
+  inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+};
 /** The request's path without its query, which a log must never carry. */
 const pathOf = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').pathname;
 
@@ -301,7 +309,7 @@ export class ApiServer {
         this.handle(req, res).catch((error: unknown) => {
           const { status, error: body } = errorBody(error);
           // A refused agent is told where a person makes it a key.
-          const connect = status === 401 && pathOf(req) === '/mcp' && { connect: KEYS_PAGE };
+          const connect = status === 401 && pathOf(req) === '/mcp' && { connect: CONNECT_PAGE };
           if (!res.headersSent) json(res, status, { error: body, ...connect });
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
@@ -674,7 +682,7 @@ export class ApiServer {
             ? undefined
             : [
                 this.tools.instructions(),
-                'Human sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.',
+                'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.brief and workflow.status_and_next. Never ask for, print or read Merv keys or ~/.merv.',
               ]
                 .filter(Boolean)
                 .join('\n\n'),
@@ -682,9 +690,22 @@ export class ApiServer {
     );
     const selected = (meta?: Record<string, unknown>) =>
       projectSelection(req.headers['x-merv-project-id'], meta?.['merv/projectId']);
+    // A person, or a key across their projects, chooses a project per call.
+    const accountWide =
+      principal.kind === 'user' ||
+      (principal.kind === 'key' && 'key' in principal && principal.key.grantScope === 'account');
     instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
       try {
-        const caller = await this.selectedCaller(principal, selected(request.params?._meta));
+        const project = selected(request.params?._meta);
+        // With no project yet, the agent is offered every native tool and the list of projects.
+        if (project === undefined && accountWide)
+          return {
+            tools: [
+              PROJECT_LIST,
+              ...(await this.tools.describe(undefined, true, { projectless: true })),
+            ],
+          };
+        const caller = await this.selectedCaller(principal, project);
         // MCP curates what a person's agent is offered; Merv's pages call /tools.
         return { tools: await this.tools.describe(caller, true) };
       } catch (error) {
@@ -694,6 +715,12 @@ export class ApiServer {
     instance.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const { name, arguments: input = {}, _meta } = request.params;
+        if (name === PROJECT_LIST.name && !('caller' in principal)) {
+          if (Object.keys(input).length > 0)
+            throw new MervError('invalid_input', 'project.list takes no arguments');
+          const projects = await this.scope.projects(principal);
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ projects }) }] };
+        }
         const result = await this.call(principal, name, input, selected(_meta), 'agent');
         return result.format === 'mcp'
           ? (result.value as CallToolResult)

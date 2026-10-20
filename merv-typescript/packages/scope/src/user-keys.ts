@@ -137,7 +137,7 @@ export class UserKeys {
       check(
         typeof selected === 'string' && selected.length > 0,
         'project_required',
-        'Account keys require an explicit project selection',
+        'This key works across projects: pass projectId (call project.list to see them)',
       );
       check(
         key.grant_scope === 'account' || key.project_id === selected,

@@ -127,8 +127,12 @@ test('a human lists the projects they belong to in the order they joined them', 
   await f.scope.members.removeMember(bob, left.id, 'alice');
   await f.scope.members.addMember(bob, joinedLast.id, { subject: 'alice', role: 'reader' });
   const expected = [];
-  for (const project of [first, second, joinedLast])
-    expected.push(await f.scope.project(await f.scope.caller(alice, project.id)));
+  for (const [project, role] of [
+    [first, 'operator'],
+    [second, 'operator'],
+    [joinedLast, 'reader'],
+  ] as const)
+    expected.push({ ...(await f.scope.project(await f.scope.caller(alice, project.id))), role });
   assert.deepEqual(await f.scope.projects(alice), expected);
 });
 
