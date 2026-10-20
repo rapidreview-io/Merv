@@ -127,8 +127,10 @@ function rpcError(error: unknown) {
   });
 }
 
-/** The agent-readable page that connects an agent. */
+/** Where an agent is sent to connect: the agent-readable page where agent sign-in is mounted,
+ *  else the Settings › Keys page, where a person makes it a key. */
 const CONNECT_PAGE = '/connect';
+const KEYS_PAGE = '/ui/settings/keys';
 /** Answered by the MCP route itself: a tool in the registry needs a project to act in. */
 const PROJECT_LIST = {
   name: 'project.list',
@@ -271,6 +273,7 @@ export class ApiServer {
         return {
           ...(this.identity?.configuration() ?? { enabled: false }),
           mcpUrl: `${origin}/mcp`,
+          ...(this.mounts.get(CONNECT_PAGE) && { connectUrl: `${origin}${CONNECT_PAGE}` }),
         };
       },
       { public: true },
@@ -309,7 +312,10 @@ export class ApiServer {
         this.handle(req, res).catch((error: unknown) => {
           const { status, error: body } = errorBody(error);
           // A refused agent is told where a person makes it a key.
-          const connect = status === 401 && pathOf(req) === '/mcp' && { connect: CONNECT_PAGE };
+          const connect = status === 401 &&
+            pathOf(req) === '/mcp' && {
+              connect: this.mounts.get(CONNECT_PAGE) ? CONNECT_PAGE : KEYS_PAGE,
+            };
           if (!res.headersSent) json(res, status, { error: body, ...connect });
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();

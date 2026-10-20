@@ -1349,19 +1349,27 @@ test('a 401 names its Bearer scheme, and JSON bodies accept any media-type case'
   assert.equal(refused.status, 401);
   assert.equal(refused.headers.get('www-authenticate'), 'Bearer');
   assert.equal((await refused.json()).connect, undefined);
-  // An agent refused at /mcp is told where to connect; /auth/config says where to point it.
-  const agent = await fetch(`${url}/mcp`, {
-    method: 'POST',
-    headers: { authorization: 'Bearer stale' },
-  });
-  assert.deepEqual(await agent.json(), {
+  // An agent refused at /mcp is told where a person makes it a key, or, once agent sign-in has
+  // mounted /connect, that page; /auth/config says where to point it.
+  const agent = () =>
+    fetch(`${url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer stale' } }).then(
+      (response) => response.json(),
+    );
+  const config = () => fetch(`${url}/auth/config`).then((response) => response.json());
+  assert.deepEqual(await agent(), {
     error: { code: 'unauthorized', message: 'Invalid token' },
-    connect: '/connect',
+    connect: '/ui/settings/keys',
   });
-  assert.deepEqual(await (await fetch(`${url}/auth/config`)).json(), {
+  assert.deepEqual(await config(), { enabled: false, mcpUrl: `${url}/mcp` });
+  const unmount = api.mount('/connect', () => ({}), { public: true });
+  assert.equal((await agent()).connect, '/connect');
+  assert.deepEqual(await config(), {
     enabled: false,
     mcpUrl: `${url}/mcp`,
+    connectUrl: `${url}/connect`,
   });
+  unmount();
+  assert.equal((await agent()).connect, '/ui/settings/keys');
   assert.equal((await fetch(`${url}/health`)).headers.get('www-authenticate'), null);
   const accepted = await fetch(`${url}/tools/echo`, {
     method: 'POST',
