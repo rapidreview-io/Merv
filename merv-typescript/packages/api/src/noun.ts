@@ -86,7 +86,7 @@ const RULE =
 /**
  * One noun tool: `action` and the argument object named after it. No worker is listed one in
  * this campaign (worker 'never'): leased workers keep the retired names, which the registry
- * registers from each action's `was`.
+ * runs as aliases from each action's `was`. Whether a call reads is its action's.
  */
 export function noun(name: string, definition: NounDefinition): ToolDefinition {
   const { actions } = definition;
@@ -94,11 +94,20 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   if (description.length > 600)
     throw new MervError('invalid_tool', `${name}'s summary is over 600 characters`);
   const openWorld = Object.values(actions).some((action) => action.openWorld);
+  // Whether a call reads is its action's: every one (readOnly), or some (reads).
+  const reading = Object.keys(actions).filter(
+    (key) => definition.readOnly || actions[key]!.readOnly,
+  );
+  const readOnly = reading.length === Object.keys(actions).length;
   return {
     name,
     description,
     inputSchema: nounInput(actions),
-    readOnly: definition.readOnly,
+    readOnly,
+    ...(!readOnly &&
+      reading.length > 0 && {
+        reads: ({ action }: { action: string }) => reading.includes(action),
+      }),
     ...(openWorld && { openWorld }),
     tier: definition.tier ?? 'deferred',
     ...(definition.for && { for: definition.for }),

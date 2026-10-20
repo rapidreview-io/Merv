@@ -206,9 +206,9 @@ export class PiWorkerProtocol {
       const profile = conversation.profile && this.core.profiles.get(conversation.profile);
       // Every tool the person may use here, read-only for a reader, whose every other call a
       // handler would refuse: tiers core and deferred, and a tier worker tool (a report's
-      // writing, a profile's own) or a retired name only where the profile names it. A
-      // profile's names resolve to the noun actions they now run, which its noun tool is cut to.
-      const grants = profile ? profileGrants(this.core.tools, profile.tools) : undefined;
+      // writing, a profile's own) or a retired name only where the profile names it; a noun
+      // tool is cut to the actions a profile's addresses name.
+      const grants = profile ? profileGrants(profile.tools) : undefined;
       const registry = this.core.tools;
       const described = (await registry.describe(caller, false, { names: profile?.tools }))
         .filter(({ name }) => piOffers(name))
@@ -526,7 +526,7 @@ export class PiWorkerProtocol {
       // A retired name and its noun action are one call: the profile and its own check see
       // both alike, by the name rules know it as, with its arguments flat.
       const identity = this.core.tools.identity(value.name, value.input);
-      requireGranted(profileGrants(this.core.tools, profile.tools), value.name, identity);
+      requireGranted(profileGrants(profile.tools), value.name, identity);
       await profile.authorizeTool?.({
         binding: conversation.profile,
         caller: conversationCaller(conversation, command),

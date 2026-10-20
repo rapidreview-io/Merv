@@ -487,12 +487,11 @@ test('a profile naming an address registers, and one naming only tools keeps its
   assert.throws(() => profiles.register({ ...base, version: 10, tools: ['intake.read:Request'] }), {
     code: 'pi_profile_invalid',
   });
-  // Resolution is separate from the hash: a retired name grants the noun action it now runs.
-  const registered = new Map([
-    ['customer_experiments.request', { alias: 'intake.read:request' }],
-  ]) as Map<string, { alias?: string }>;
-  const grants = profileGrants({ tool: (name) => registered.get(name) as never }, [
+  // Resolution is separate from the hash: a retired name grants the old tool it names (which runs
+  // as its noun action), an address only that action.
+  const grants = profileGrants([
     'customer_experiments.request',
+    'intake.read:request',
     'board.read',
   ]);
   assert.deepEqual(

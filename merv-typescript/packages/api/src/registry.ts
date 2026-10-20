@@ -142,8 +142,6 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
   };
 }
 
-/** A retired name's noun action: `tool:action`. */
-const address = (tool: string, action: string) => `${tool}:${action}`;
 /** The vendored Sandboxes host still marks its page-only tools `conversation: 'never'`. */
 const legacyTier = (definition: ToolDefinition): ToolTier =>
   definition.conversationProfile
@@ -160,15 +158,19 @@ interface Entry {
   aliasInput?: ToolDefinition['inputSchema'];
   parse(input: unknown): unknown;
   complete(value: unknown, input: unknown): ToolInvocation;
-  /** Whether this parsed call reaches outside Merv: a noun tool decides per action. */
-  openWorld(input: unknown): boolean;
+  /** Whether this parsed call reads on a snapshot: a read that stays inside Merv (a noun tool's,
+   *  by its action), as decided by the tool a retired name became. A call to a service outside
+   *  Merv would hold a reader connection for as long as that service takes to answer. */
+  snapshot(input: unknown): boolean;
   running: Set<Promise<ToolInvocation>>;
   remote?: { mountId: string; toolName: string };
   /** What caller rules see, fixed at registration. */
   tool: RegisteredTool;
-  /** A retired name: the noun action it runs. */
-  alias?: { tool: string; action: string };
+  /** A retired name: the action it runs, and how its old arguments become that tool's input
+   *  (nested: under the action's key, as a noun tool takes them). */
+  alias?: { tool: string; action: string; nested: boolean; wrap(input: unknown): unknown };
 }
+type Retired = ToolAlias & { gone?: true };
 /** A remote tool's catalog identity, and how its catalog compiles a schema. */
 type Remote = NonNullable<Entry['remote']> & { compile(schema: unknown): ValidateFunction };
 interface CatalogState {
@@ -188,8 +190,12 @@ export const isMountedToolName = (name: string): boolean => name.startsWith(name
 /** Registrations own admission and draining; remote catalogs swap as one validated generation. */
 export class ToolRegistry implements Tools {
   private readonly entries = new Map<string, Entry>();
-  /** Retired names with no executable path, by the noun action that remains. */
-  private readonly removed = new Map<string, { tool: string; action: string }>();
+  /** Noun actions' retired names, and names with no executable path (gone), by what remains. */
+  private readonly retired = new Map<string, Retired>();
+  /** Plugins' retired names (Tools.alias), resolved when called or named. */
+  private readonly resolvers = new Set<(name: string) => ToolAlias | undefined>();
+  /** Each retired name's entry, by the registration of the tool it became. */
+  private readonly derived = new WeakMap<Entry, Map<string, Entry>>();
   /** For one release every caller runs a retired name; then only a leased session does, until the
    *  published versions that grant those names drain, and every other caller is told the noun. */
   aliasesOpen = true;
@@ -197,7 +203,6 @@ export class ToolRegistry implements Tools {
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
   private readonly callerRules = new Map<CallerKind, CallerRules>();
-  private readonly aliases = new Set<(name: string) => ToolAlias | undefined>();
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
@@ -251,7 +256,6 @@ export class ToolRegistry implements Tools {
         readOnly,
         worker,
         tier,
-        noun: !!actions,
         ...(actions && { outputs: nounOutputs(actions) }),
         ...(definition.for && { for: definition.for }),
         ...(conversationProfile && { conversationProfile }),
@@ -263,36 +267,9 @@ export class ToolRegistry implements Tools {
         definition.present
           ? { format: 'json', value, mcp: definition.present(value, input) }
           : { format: 'json', value },
-      openWorld: (input) =>
-        actions ? outside.has((input as { action: string }).action) : openWorld,
+      snapshot: (input) =>
+        readOnly && !(actions ? outside.has((input as { action: string }).action) : openWorld),
       running: new Set(),
-    };
-  }
-
-  /** A retired name run as one noun action: that action's flat input, handler, old result shape
-   *  and the noun's readOnly. It is listed to no agent; a leased session is listed it as the old
-   *  tool was, and every name-keyed rule (authorization, policy grants, request ids) sees the
-   *  name as called. */
-  private prepareAlias(name: string, noun: ToolDefinition, actionName: string): Entry {
-    const action = noun.actions![actionName]!;
-    const entry = this.prepare({
-      name,
-      description: action.description,
-      inputSchema: action.input,
-      readOnly: noun.readOnly,
-      ...(action.openWorld && { openWorld: true }),
-      // Never loaded up front: a worker is listed it exactly as the old tool was.
-      tier: noun.tier === 'core' ? 'deferred' : noun.tier,
-      handler: async (caller, input) => {
-        const result = await action.handler(caller, input);
-        return action.legacyResult ? action.legacyResult(result) : result;
-      },
-      ...(action.present && { present: action.present }),
-    });
-    return {
-      ...entry,
-      tool: { ...entry.tool, alias: address(noun.name, actionName) },
-      alias: { tool: noun.name, action: actionName },
     };
   }
 
@@ -320,8 +297,8 @@ export class ToolRegistry implements Tools {
       definition,
       description,
       remote,
-      tool: { name: definition.name, remote: true, readOnly: false, tier: 'deferred', noun: false },
-      openWorld: () => description.annotations?.openWorldHint === true,
+      tool: { name: definition.name, remote: true, readOnly: false, tier: 'deferred' },
+      snapshot: () => false,
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -381,32 +358,29 @@ export class ToolRegistry implements Tools {
     if (isMountedToolName(definition.name))
       throw new MervError('reserved_namespace', 'Mounted tool namespaces are owned by catalogs');
     const entry = this.prepare(definition);
-    const aliases = Object.entries(definition.actions ?? {}).flatMap(([action, { was = [] }]) =>
-      was.map((name) => this.prepareAlias(name, definition, action)),
-    );
-    const removed = Object.entries(definition.removed ?? {});
-    for (const name of [definition.name, ...aliases.map((alias) => alias.name)])
-      if (this.entries.has(name) || this.removed.has(name))
+    const { actions = {}, removed = {} } = definition;
+    // Its actions' retired names run as them; a removed name only says what remains.
+    const retired: [string, Retired][] = [
+      ...Object.entries(actions).flatMap(([action, { was = [] }]) =>
+        was.map((name) => [name, { tool: entry.name, action }] as [string, Retired]),
+      ),
+      ...Object.entries(removed).map(
+        ([name, action]) => [name, { tool: entry.name, action, gone: true }] as [string, Retired],
+      ),
+    ];
+    for (const name of [entry.name, ...retired.map(([name]) => name)])
+      if (this.entries.has(name) || this.retired.has(name))
         throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
-    for (const [name, action] of removed) {
-      if (this.entries.has(name) || this.removed.has(name))
-        throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
-      if (!definition.actions?.[action])
-        throw new MervError('invalid_tool', `${name} names no action of ${definition.name}`);
-    }
-    const owned = [entry, ...aliases];
-    for (const item of owned) this.entries.set(item.name, item);
-    const gone = removed.map(([name, action]) => {
-      const target = { tool: definition.name, action };
-      this.removed.set(name, target);
-      return [name, target] as const;
-    });
+    for (const [name, { action }] of retired)
+      if (!Object.hasOwn(actions, action))
+        throw new MervError('invalid_tool', `${name} names no action of ${entry.name}`);
+    this.entries.set(entry.name, entry);
+    for (const [name, alias] of retired) this.retired.set(name, alias);
     return async () => {
-      for (const item of owned)
-        if (this.entries.get(item.name) === item) this.entries.delete(item.name);
-      for (const [name, target] of gone)
-        if (this.removed.get(name) === target) this.removed.delete(name);
-      await this.drain(owned);
+      if (this.entries.get(entry.name) === entry) this.entries.delete(entry.name);
+      for (const [name, alias] of retired)
+        if (this.retired.get(name) === alias) this.retired.delete(name);
+      await this.drain([entry]);
     };
   }
 
@@ -494,37 +468,69 @@ export class ToolRegistry implements Tools {
   }
 
   alias(resolve: (name: string) => ToolAlias | undefined): () => void {
-    this.aliases.add(resolve);
-    return () => void this.aliases.delete(resolve);
+    this.resolvers.add(resolve);
+    return () => void this.resolvers.delete(resolve);
   }
 
-  /** The entry a name runs: its own, else the tool a retired name became, listed only by name. */
+  /** The entry a name runs: its own, else the tool a retired name became (a noun action's own
+   *  retired name, or one a plugin resolves). */
   private entry(name: string): Entry | undefined {
     const own = this.entries.get(name);
     if (own) return own;
-    for (const resolve of this.aliases) {
-      const alias = resolve(name);
-      const target = alias && this.entries.get(alias.tool);
+    const named = this.retired.get(name);
+    const found: (Retired | undefined)[] = named
+      ? [named]
+      : [...this.resolvers].map((resolve) => resolve(name));
+    for (const alias of found) {
+      const target = alias && !alias.gone && this.entries.get(alias.tool);
       if (!target || target.remote) continue;
-      const { action, args } = alias;
+      let derived = this.derived.get(target);
+      if (!derived) this.derived.set(target, (derived = new Map()));
+      const entry = derived.get(name) ?? this.derive(name, alias, target);
+      derived.set(name, entry);
+      return entry;
+    }
+  }
+
+  /** A retired name run as the tool it became: only the old tool's arguments, as it took them;
+   *  whether its action reads; a noun action's own text. It shares that tool's handler,
+   *  admission, snapshots and draining. */
+  private derive(name: string, { action, args }: ToolAlias, target: Entry): Entry {
+    const definition = target.definition as ToolDefinition;
+    const nested = definition.actions?.[action];
+    // Its action decides whether it reads, so sessions, readers and scripts judge the old tool.
+    const readOnly = target.tool.readOnly || !!target.tool.reads?.({ action });
+    let wrap = (input: unknown): unknown => ({ action, [action]: input });
+    let parse = async (input: unknown) =>
+      wrap(validated(await nested!.input.safeParseAsync(input), 'Tool input failed validation'));
+    let description: ToolDescription;
+    if (nested) {
+      // Its own text and flat arguments, as a leased worker was listed the old tool.
+      description = describeTool({
+        name,
+        description: nested.description,
+        inputSchema: nested.input,
+        readOnly,
+        ...(nested.openWorld && { openWorld: true }),
+        handler: definition.handler,
+      });
+    } else {
       // Only the old tool's arguments, then their new names: no caller's key meets a renamed one.
       const takes = (key: string) => (args ? Object.hasOwn(args, key) : key !== 'action');
       const to = (key: string) => (args && Object.hasOwn(args, key) ? args[key]! : key);
-      const renamed = (input: unknown, fields = record(input)) => {
-        if (!fields) return input;
-        const extra = Object.keys(fields).find((key) => !takes(key));
+      wrap = (input, fields = record(input)) =>
+        fields
+          ? { ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [to(k), v])), action }
+          : input;
+      parse = async (input) => {
+        const extra = Object.keys(record(input) ?? {}).find((key) => !takes(key));
         check(
           extra === undefined,
           'invalid_input',
           `${name} takes no ${ellipsis(`${extra}`, 100)}`,
         );
-        return {
-          ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [to(k), v])),
-          action,
-        };
+        return await target.parse(wrap(input));
       };
-      // Its action decides whether it reads, so sessions, readers and scripts judge the old tool.
-      const readOnly = target.tool.readOnly || !!target.tool.reads?.({ action });
       // Its old arguments, typed as the tool it became takes them.
       const { annotations } = target.description;
       const inputSchema = target.aliasInput
@@ -539,33 +545,36 @@ export class ToolRegistry implements Tools {
         ? [...Object.keys(args), 'projectId']
         : Object.keys(properties).filter(takes);
       const needs = keys.filter((key) => required.includes(to(key)));
-      return {
-        ...target,
+      description = {
+        ...target.description,
         name,
-        alias: { tool: alias.tool, action },
-        definition: { ...(target.definition as ToolDefinition), name, readOnly, reads: undefined },
-        description: {
-          ...target.description,
-          name,
-          inputSchema: {
-            ...schema,
-            properties: Object.fromEntries(keys.map((key) => [key, properties[to(key)]])),
-            ...(needs.length && { required: needs }),
-          },
-          annotations: { ...annotations, readOnlyHint: readOnly },
+        inputSchema: {
+          ...schema,
+          properties: Object.fromEntries(keys.map((key) => [key, properties[to(key)]])),
+          ...(needs.length && { required: needs }),
         },
-        tool: {
-          ...target.tool,
-          name,
-          readOnly,
-          reads: undefined,
-          alias: address(alias.tool, action),
-        },
-        parse: (input) => target.parse(renamed(input)),
-        // Never on a snapshot: the tool it became may also write.
-        openWorld: () => true,
+        annotations: { ...annotations, readOnlyHint: readOnly },
       };
     }
+    const { tier } = target.tool;
+    return {
+      ...target,
+      name,
+      definition: { ...definition, name, readOnly, reads: undefined },
+      description,
+      // Never loaded up front, and a noun's listed to leased workers as the old tool was.
+      tool: {
+        ...target.tool,
+        name,
+        readOnly,
+        reads: undefined,
+        tier: tier === 'core' ? 'deferred' : tier,
+        outputs: undefined,
+        worker: nested ? undefined : target.tool.worker,
+      },
+      parse,
+      alias: { tool: target.name, action, nested: !!nested, wrap },
+    };
   }
 
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void {
@@ -664,12 +673,6 @@ export class ToolRegistry implements Tools {
     await this.fenced(session, session.provider.validate(caller, name, input));
   }
 
-  /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
-   *  would hold a reader connection for as long as that service takes to answer. A noun tool
-   *  decides by the parsed call's action; a retired name as the tool it became. */
-  private snapshotted(entry: Entry, input: unknown): boolean {
-    return entry.tool.readOnly && !entry.openWorld(input);
-  }
   /** What MCP offers a person's agent (see Tools.describe): tiers core and deferred, never a
    *  retired name. It curates; it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
@@ -677,7 +680,7 @@ export class ToolRegistry implements Tools {
     const reads = tool.readOnly || !!tool.reads;
     return (
       !!entry.remote ||
-      (!tool.alias &&
+      (!entry.alias &&
         (tool.tier === 'core' || tool.tier === 'deferred') &&
         tool.for !== 'conversations' &&
         (!reader || reads))
@@ -696,15 +699,14 @@ export class ToolRegistry implements Tools {
     const actor = caller ? await this.scope.require(caller, 'read') : undefined;
     const reader = actor?.role === 'reader';
     const session = caller?.session ? this.sessionPolicy() : undefined;
-    const retired = [...new Set(names)].flatMap((name) =>
-      this.entries.has(name) ? [] : (this.entry(name) ?? []),
-    );
-    // A retired name is listed to a leased session, as the old tool was, and to whoever names it.
-    const offered = [...this.entries.values(), ...retired].filter(
-      (entry) =>
-        (!entry.alias || !!session || !!names?.includes(entry.name)) &&
-        (!agent || this.offered(entry, reader)) &&
-        (!rules || rules.offers!(entry.tool)),
+    // A noun action's retired name is listed to a leased session, as the old tool was; any
+    // retired name to whoever names it.
+    const retired = [...new Set([...(session ? this.retired.keys() : []), ...(names ?? [])])];
+    const offered = [
+      ...this.entries.values(),
+      ...retired.flatMap((name) => (this.entries.has(name) ? [] : (this.entry(name) ?? []))),
+    ].filter(
+      (entry) => (!agent || this.offered(entry, reader)) && (!rules || rules.offers!(entry.tool)),
     );
     // One grant decision covers every mounted tool still in the listing.
     const grant =
@@ -766,8 +768,8 @@ export class ToolRegistry implements Tools {
    *  `code.status` is `code.read status`. */
   private renaming() {
     const to = new Map(
-      [...this.entries.values()].flatMap((entry) =>
-        entry.alias ? [[entry.name, `${entry.alias.tool} ${entry.alias.action}`] as const] : [],
+      [...this.retired].flatMap(([name, { tool, action, gone }]) =>
+        gone ? [] : [[name, `${tool} ${action}`] as const],
       ),
     );
     if (!to.size) return undefined;
@@ -804,7 +806,7 @@ export class ToolRegistry implements Tools {
     if (colon < 0) return { entry: this.entry(name), input };
     const [tool, action] = [name.slice(0, colon), name.slice(colon + 1)];
     const entry = this.entries.get(tool);
-    if (!entry?.tool.noun) return { input };
+    if (!(entry?.definition as ToolDefinition | undefined)?.actions) return { input };
     return { entry, input: { action, [action]: input } };
   }
 
@@ -813,33 +815,27 @@ export class ToolRegistry implements Tools {
     return resolved.entry && this.identify(resolved.entry, resolved.input);
   }
 
-  private identify(entry: Entry, input: unknown): ToolIdentity {
-    const args = (value: unknown): Data =>
-      value && typeof value === 'object' && !Array.isArray(value) ? (value as Data) : {};
-    if (entry.alias) return { ...entry.alias, as: entry.name, args: args(input) };
-    const actions = !isRemoteTool(entry.definition) ? entry.definition.actions : undefined;
-    const action = (input as { action?: unknown } | undefined)?.action;
-    if (!actions || typeof action !== 'string' || !Object.hasOwn(actions, action))
-      return { tool: entry.name, as: entry.name, args: args(input) };
-    return {
-      tool: entry.name,
-      action,
-      as: actions[action]!.was?.[0] ?? entry.name,
-      args: args((input as Record<string, unknown>)[action]),
-    };
+  private identify({ name, alias, definition }: Entry, input: unknown): ToolIdentity {
+    const args = (value: unknown) => (record(value) ?? {}) as Data;
+    if (alias) return { tool: alias.tool, action: alias.action, as: name, args: args(input) };
+    const actions = (definition as ToolDefinition).actions ?? {};
+    const action = record(input)?.action;
+    if (typeof action !== 'string' || !Object.hasOwn(actions, action))
+      return { tool: name, as: name, args: args(input) };
+    const as = actions[action]!.was?.[0] ?? name;
+    return { tool: name, action, as, args: args(record(input)![action]) };
   }
 
-  /** What a retired name's caller is told once it no longer runs, with its input in noun form. */
-  private renamed(name: string, target: { tool: string; action: string }, input?: unknown) {
-    const call =
-      input === undefined ? undefined : { action: target.action, [target.action]: input };
+  /** What a retired name's caller is told once it no longer runs, with its input as that tool
+   *  takes it. */
+  private renamed(name: string, target: ToolAlias, call?: unknown) {
     return new MervError(
       'tool_renamed',
       call
         ? `${name} is now ${target.tool} with action ${target.action}: ${ellipsis(JSON.stringify(call), 300)}`
         : `${name} was removed; what remains is ${target.tool} with action ${target.action}`,
       404,
-      { tool: target.tool, action: target.action, ...(call && { arguments: call }) },
+      { tool: target.tool, action: target.action, ...(call !== undefined && { arguments: call }) },
     );
   }
 
@@ -913,13 +909,13 @@ export class ToolRegistry implements Tools {
     const entry = resolved.entry;
     input = resolved.input;
     if (!entry) {
-      const gone = this.removed.get(name);
+      const gone = this.retired.get(name);
       if (gone) throw this.renamed(name, gone);
       throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
     }
     name = entry.name;
     if (entry.alias && !this.aliasesOpen && !caller.session)
-      throw this.renamed(name, entry.alias, input);
+      throw this.renamed(name, entry.alias, entry.alias.wrap(input));
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !entry.alias && !this.offered(entry, false))
@@ -956,7 +952,11 @@ export class ToolRegistry implements Tools {
         check(!read || readOnly || reads!(parsed), 'session_invocation', 'This call writes', 403);
         admit?.(entry.tool, entry.description, parsed);
         // A retired name's arguments are bound as its grant names them.
-        const bound = entry.alias ? given : parsed;
+        const bound = !entry.alias
+          ? parsed
+          : entry.alias.nested
+            ? (parsed as Record<string, unknown>)[entry.alias.action]
+            : given;
         if (session && prepared)
           await this.fenced(
             session,
@@ -970,7 +970,7 @@ export class ToolRegistry implements Tools {
         // snapshot so that it decides on the rows the read sees. A read outside a snapshot
         // (open-world, or of a tool that also writes) is decided again after its handler: a
         // revocation while it waited withholds what it brought back (a signed link, an answer).
-        const snapshot = this.snapshotted(entry, parsed);
+        const snapshot = entry.snapshot(parsed);
         const dispatch = async (activeCaller: Caller) => {
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
@@ -1021,7 +1021,7 @@ export class ToolRegistry implements Tools {
   async close(): Promise<void> {
     this.stopping = true;
     this.entries.clear();
-    this.removed.clear();
+    this.retired.clear();
     for (const catalog of this.catalogs.values()) catalog.active = false;
     this.catalogs.clear();
     await Promise.allSettled([...this.running]);

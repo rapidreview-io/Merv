@@ -25,13 +25,13 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   /** Fields scripts rely on (ids, states, revisions, lists, cursors), as a passthrough object:
    *  it types a script's result, and is never a runtime validator. */
   output?: ZodTypeAny;
+  /** The action only reads, in a noun tool whose other actions write (its `reads`). */
+  readOnly?: boolean;
   /** The action calls a service outside Merv (see ToolDefinition.openWorld). */
   openWorld?: boolean;
-  /** The retired names that ran this action. Each stays callable by name as a hidden alias with
-   *  this action's flat input and the old result shape (legacyResult). */
+  /** The retired names that ran this action. Each stays callable by name as a hidden alias
+   *  (Tools.alias) with this action's flat input and its own description. */
   was?: string[];
-  /** The old result shape, where the action's result differs from the retired tool's. */
-  legacyResult?(result: unknown): unknown;
   /** As ToolDefinition.present, for this action's result and parsed arguments. */
   present?(result: unknown, input: z.infer<S>): CallToolResult;
 }
@@ -39,6 +39,7 @@ export type NounActions = Record<string, NounAction>;
 /** A noun tool: `action` and the argument object named after it (Tools.noun). */
 export interface NounDefinition {
   tier?: ToolTier;
+  /** Every action only reads. */
   readOnly?: boolean;
   /** One clause per action, at most 600 characters with the calling rule the helper adds. */
   description: string;
@@ -85,7 +86,7 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** What an MCP client (an agent) is shown in place of the JSON result, such as a rendered
    *  image beside a text summary. Other callers receive the JSON result. */
   present?(result: unknown, input?: z.infer<S>): CallToolResult;
-  /** A noun tool's actions (built by `noun`): the registry also registers their retired names. */
+  /** A noun tool's actions (built by `noun`): the registry also runs their retired names. */
   actions?: NounActions;
   /** Retired names with no executable path, each answering tool_renamed with what remains: the
    *  action of this tool that took its place. */
@@ -132,16 +133,12 @@ export type RegisteredTool = Pick<
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
   tier: ToolTier;
-  /** A noun tool, which takes an action and that action's argument object. */
-  noun: boolean;
-  /** A retired name, run as this noun action (`tool:action`). */
-  alias?: string;
   /** A noun tool's declared output per action, as JSON Schema (NounAction.output). */
   outputs?: Record<string, unknown>;
 };
 /** A retired name: the tool it became and the action it is. args: every argument the old tool
- *  took, by its new name, and no other; absent, it took its action's own, which that tool keeps
- *  to, and never `action`. */
+ *  took, by its new name, and no other; absent, it took its action's own (a noun action's object,
+ *  flat), never `action`. A noun action's `was` names are these too. */
 export interface ToolAlias {
   tool: string;
   action: string;

@@ -1,31 +1,21 @@
 import { MervError } from '@merv/contracts';
-import type { ToolDescription, ToolIdentity, Tools } from '@merv/api/types';
+import type { ToolDescription, ToolIdentity } from '@merv/api/types';
 
 /** What a profile grants: each tool with the actions it may call, or null for all of them. */
 export type ProfileGrants = Map<string, Set<string> | null>;
 
-const add = (grants: ProfileGrants, tool: string, action?: string) => {
-  const actions = grants.get(tool);
-  if (action === undefined) grants.set(tool, null);
-  else if (actions !== null) grants.set(tool, (actions ?? new Set()).add(action));
-};
-
 /**
  * A profile's `tools[]` resolved at offer time, separately from its hash: a tool name grants all of
- * that tool, an address `tool:action` that action alone, and a retired name the noun action it now
- * runs (and itself, so that a turn frozen with it still calls it).
+ * that tool (a retired name, the old tool it names), an address `tool:action` that action alone.
  */
-export function profileGrants(tools: Pick<Tools, 'tool'>, names: readonly string[]) {
+export function profileGrants(names: readonly string[]) {
   const grants: ProfileGrants = new Map();
   for (const name of names) {
     const colon = name.indexOf(':');
-    if (colon >= 0) {
-      add(grants, name.slice(0, colon), name.slice(colon + 1));
-      continue;
-    }
-    add(grants, name);
-    const alias = tools.tool(name)?.alias;
-    if (alias) add(grants, alias.slice(0, alias.indexOf(':')), alias.slice(alias.indexOf(':') + 1));
+    const [tool, action] = colon < 0 ? [name] : [name.slice(0, colon), name.slice(colon + 1)];
+    const actions = grants.get(tool);
+    if (action === undefined) grants.set(tool, null);
+    else if (actions !== null) grants.set(tool, (actions ?? new Set()).add(action));
   }
   return grants;
 }
