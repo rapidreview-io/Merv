@@ -2646,6 +2646,11 @@
           "readOnly": true
         },
         {
+          "name": "project.brief",
+          "description": "Read what Merv's own agent is told each turn: who you are (actor id, name, role), the project (id, name), today's date (UTC) and the project as it is now (its paper). Your first read in a project, and to re-orient.",
+          "readOnly": true
+        },
+        {
           "name": "project.get",
           "description": "Read the current project.",
           "readOnly": true
@@ -2728,6 +2733,11 @@
         {
           "name": "actor.whoami",
           "description": "Read your authenticated actor identity and role.",
+          "readOnly": true
+        },
+        {
+          "name": "project.brief",
+          "description": "Read what Merv's own agent is told each turn: who you are (actor id, name, role), the project (id, name), today's date (UTC) and the project as it is now (its paper). Your first read in a project, and to re-orient.",
           "readOnly": true
         },
         {

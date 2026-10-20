@@ -166,7 +166,7 @@ test('shared-identity CLI server starts before any local actor initialization an
     });
   });
   const publicConfig = await (await fetch(url + '/auth/config')).json();
-  assert.deepEqual(publicConfig, { enabled: true });
+  assert.deepEqual(publicConfig, { enabled: true, mcpUrl: url + '/mcp' });
   const bearer = await token('new-human');
   const account = await (
     await fetch(url + '/account', { headers: { authorization: `Bearer ${bearer}` } })
