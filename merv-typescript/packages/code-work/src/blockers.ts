@@ -109,7 +109,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
       // is the destination control's own words, as the verb table asks.
       return {
         sentence: 'Waiting on a person to merge the pull request',
-        who: 'A signed-in operator',
+        who: 'An operator',
         whose: 'operator',
         control: { label: 'Merge reviewed proposal', to: CANVAS },
       };

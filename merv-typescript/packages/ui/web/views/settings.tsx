@@ -234,7 +234,7 @@ interface MachineLimit {
 
 /** How many Fleet machines the project runs at once; its administrators change it. */
 function Machines() {
-  const { account, actor } = useSession();
+  const { actor } = useSession();
   const limit = useTool<MachineLimit>('fleet.project_limit');
   const [draft, setDraft] = useState<string>();
   const save = useCommand<{ machines: number }>({
@@ -248,7 +248,7 @@ function Machines() {
   });
   if (limit.error && !limit.data) return <Nothing icon="settings" said="No machines" />;
   if (!limit.data) return <LoadState {...limit} />;
-  const editable = account.kind === 'user' && permits(actor.role, 'admin');
+  const editable = permits(actor.role, 'admin');
   const value = draft ?? String(limit.data.machines);
   const machines = Number(value);
   const valid = Number.isSafeInteger(machines) && machines >= 1 && machines <= limit.data.max;

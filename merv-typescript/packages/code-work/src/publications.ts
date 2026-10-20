@@ -19,7 +19,7 @@ import {
   type Sql,
   type State,
   type Transaction,
-  requireHuman,
+  requireAdministrator,
   idSchema,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
@@ -80,6 +80,7 @@ interface Row {
 const due = 'settled=0 AND (synced_at<? OR (pull_json IS NULL AND synced_at<?))';
 const since = (idle: number) => [idle, 30_000].map((ms) => new Date(Date.now() - ms).toISOString());
 const IDLE = 600_000;
+const merger = 'A project administrator or their agent must merge';
 
 /** What a unit's publication reads of its pull request: which one, and whether it closed unmerged. */
 const reading = (pull: GitHubPullRequest | null) =>
@@ -711,11 +712,10 @@ export class CodePublicationService implements CodePublicationApi {
   async mergePublication(caller: Caller, value: CodePublicationMerge) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codePublicationMergeSchema, value);
-    await this.scope.require(caller, 'admin');
-    requireHuman(
-      caller,
+    requireAdministrator(
+      await this.scope.require(caller, 'admin'),
       'github_human_required',
-      'A signed-in project operator must merge the reviewed proposal',
+      'A project administrator or their agent must merge the reviewed proposal',
     );
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
@@ -852,9 +852,9 @@ export class CodePublicationService implements CodePublicationApi {
             409,
           );
           const admit = async (tx: Transaction) => {
-            await this.scope.require(caller, 'admin', tx);
+            const actor = await this.scope.require(caller, 'admin', tx);
             await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-            requireHuman(caller, 'github_human_required', 'A signed-in human must merge');
+            requireAdministrator(actor, 'github_human_required', merger);
             const latest = this.decode(await this.owned(caller, record.proposalId, lock, tx));
             check(
               latest.review?.verdict === 'pass' &&
@@ -922,8 +922,11 @@ export class CodePublicationService implements CodePublicationApi {
         },
         async (tx) => {
           const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
-          await this.scope.require(caller, 'admin', tx);
-          requireHuman(caller, 'github_human_required', 'A signed-in human must merge');
+          requireAdministrator(
+            await this.scope.require(caller, 'admin', tx),
+            'github_human_required',
+            merger,
+          );
           if (current.merge && !current.verified && !current.stale && !current.incident) {
             check(
               current.merge.requestId === input.requestId &&

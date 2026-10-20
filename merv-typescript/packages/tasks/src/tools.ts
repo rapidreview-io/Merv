@@ -155,7 +155,7 @@ export const taskToolsPlugin = {
         act: { title: 'Mark task failed' },
         conversation: 'propose' as const,
         description:
-          'Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
+          'Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a project administrator (or their agent) resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
         inputSchema: z
           .object({
             taskId: id,

@@ -64,7 +64,7 @@ export function board(now = Date.now()): RunningBoard {
       lines: [[], ['Done']],
       attention: {
         says: ['Waiting on a person to merge the pull request'],
-        who: 'A signed-in operator',
+        who: 'An operator',
         to: { route: '/code', text: 'Merge reviewed proposal' },
       },
       owner: 'tasks',

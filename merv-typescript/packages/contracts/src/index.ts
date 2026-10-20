@@ -81,7 +81,7 @@ import type { Artifact, ArtifactContent, ArtifactFile } from './artifact-models.
 export type { Artifact, ArtifactContent } from './artifact-models.js';
 export type { Actor, IssuedUserKey, Project, ProjectAdmin, UserKey } from './scope-models.js';
 import { visible } from './text.js';
-import type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
+import type { Actor, Caller, DelegationSource, Permission, Role } from './scope-models.js';
 export type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
 export class MervError extends Error {
   /** Set by the refusing component when the refusal only means "not yet": nothing is wrong
@@ -762,6 +762,21 @@ export function requireHuman(
   message: string,
 ): asserts caller is Caller & { human: NonNullable<Caller['human']> } {
   check(isDirectHuman(caller), code, message, 403);
+}
+/** The project's administrator or their own agent (their key, their Pi conversation): an
+ *  operator's member actor. Never a leased worker, managed runner, service or machine actor.
+ *  Pass the actor scope.require(caller, 'admin') returned. */
+export const isAdministrator = (
+  actor: Actor,
+): actor is Actor & { user: NonNullable<Actor['user']> } =>
+  actor.role === 'operator' && !!actor.user;
+/** Refuses (403) anyone but a project administrator or their agent: see isAdministrator. */
+export function requireAdministrator(
+  actor: Actor,
+  code: string,
+  message: string,
+): asserts actor is Actor & { user: NonNullable<Actor['user']> } {
+  check(isAdministrator(actor), code, message, 403);
 }
 /**
  * One installed session manager owns the authority of credentialless worker actors. It answers

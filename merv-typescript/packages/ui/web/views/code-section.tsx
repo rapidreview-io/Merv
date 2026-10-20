@@ -75,7 +75,7 @@ export function UnitCode({
   unit,
   named,
   open,
-  signedIn,
+  manages,
 }: {
   unit: CodeUnit;
   /** Who accepted it, by name; nobody is named by an identifier. */
@@ -86,11 +86,12 @@ export function UnitCode({
    */
   open?: ReactNode;
   /**
-   * Whether the reader is the signed-in operator the publication verbs answer. The move
-   * is said to everybody, and offered only to whoever can make it: a control a reader
-   * would follow to a page that draws no button for them promises an act (ruling 11).
+   * Whether the reader is a project administrator (or their agent), whom the publication
+   * verbs answer. The move is said to everybody, and offered only to whoever can make it: a
+   * control a reader would follow to a page that draws no button for them promises an act
+   * (ruling 11).
    */
-  signedIn?: boolean;
+  manages?: boolean;
 }) {
   const accepted = unit.acceptance;
   const names = useRecordNames(
@@ -124,7 +125,7 @@ export function UnitCode({
           </span>
           {/* Every move of this vocabulary is made on the canvas, so drawn inside the
               canvas the control would lead to the page it already stands on. */}
-          {!!held.move.control && signedIn && !open && (
+          {!!held.move.control && manages && !open && (
             <Link className="btn-text" to={held.move.control.to}>
               {held.move.control.label} <Icon name="arrow-right" size={14} />
             </Link>

@@ -25,7 +25,7 @@ const { act } = await import('react-dom/test-utils');
 const { refreshTools, setProject } = await import('../packages/ui/web/api.js');
 const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
 const { CodeFiles } = await import('../packages/ui/web/views/code-files.js');
-const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
+const { CodePage, managesCode } = await import('../packages/ui/web/views/code.js');
 const { GitHubPublications } = await import('../packages/ui/web/views/github-publications.js');
 const { PageLede } = await import('../packages/ui/web/shell.js');
 const { chipsOf, gitModel, relationsOf, waitersOf } =
@@ -77,7 +77,7 @@ const Probe = () => {
  * shell's own line and nowhere else. `manages` is the principal: false is what a leased
  * session sees.
  */
-const page = (rows = [row], { at = '/code', manages = true, signedIn = manages } = {}) =>
+const page = (rows = [row], { at = '/code', manages = true } = {}) =>
   createElement(
     MemoryRouter,
     { initialEntries: [at] },
@@ -94,7 +94,6 @@ const page = (rows = [row], { at = '/code', manages = true, signedIn = manages }
           // The rows the records it names open under.
           shell: { rows: [...rows, ...lists], plugins: [] },
           manages,
-          signedIn,
           named: () => undefined,
         },
       ),
@@ -1062,7 +1061,6 @@ test('the fold under a row says the row’s own head once, and the card beside s
               publications: [],
               names,
               manages: false,
-              signedIn: false,
               named: () => undefined,
               onSelect: () => {},
               onDone: () => {},
@@ -1232,25 +1230,13 @@ test('a recoverable writer waits; only quarantine is called quarantine', () => {
   );
 });
 
-test('the two principals are the server’s two rules, and each verb hangs off one', () => {
-  const account = (kind: 'user' | 'key' | 'actor') => ({ kind, projects: [] }) as never;
+test('one rule draws every Code verb: a project administrator, by any credential of theirs', () => {
   const actor = (role: string) => ({ id: 'a', projectId: 'p', name: 'Ada', role, active: true });
-  for (const kind of ['user', 'key', 'actor'] as const) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    assert.equal(managesCode(actor('operator') as any), true, `an operator by ${kind}`);
-    assert.equal(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      signedInAdmin(actor('operator') as any, account(kind)),
-      kind === 'user',
-      'only a person fences a writer or merges a publication',
-    );
-  }
-  for (const role of ['producer', 'reviewer', 'reader']) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(managesCode(actor('operator') as any), true);
+  for (const role of ['producer', 'reviewer', 'reader'])
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     assert.equal(managesCode(actor(role) as any), false, `${role} controls no server work`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    assert.equal(signedInAdmin(actor(role) as any, account('user')), false, role);
-  }
 });
 
 test('the units waiting on a base are joined by the member set alone', () => {
@@ -1402,7 +1388,6 @@ test('a merge made from an earlier merge says what it joined, by name', async (t
         publications: [],
         names,
         manages: false,
-        signedIn: false,
         named: () => undefined,
         onSelect: () => {},
         onDone: () => {},
@@ -1526,12 +1511,12 @@ test('the refusal colour marks what cannot be undone, opener and confirm alike',
   assert.ok(refusal.className.includes('btn--danger'), refusal.className);
 });
 
-test('fencing a writer is offered to a person and to nobody else', async (t) => {
+test('fencing a writer is offered to a project administrator and to nobody else', async (t) => {
   t.after(unmount);
-  // An operator holding a key manages the bases; the server answers this one tool only
-  // to a signed-in person, so the page does not offer what would come back refused.
+  // The server answers this tool only to an administrator (or their agent), so the page does
+  // not offer what would come back refused.
   servedProject();
-  await mount(page([row], { at: '/code/unit/u8', manages: true, signedIn: false }));
+  await mount(page([row], { at: '/code/unit/u8', manages: false }));
   assert.ok(!text().includes('Fence the writer'), text().slice(0, 300));
   await unmount();
   servedProject();
@@ -1540,7 +1525,7 @@ test('fencing a writer is offered to a person and to nobody else', async (t) => 
     sent = body;
     return { body: { result: { unitId: 'u8', state: 'closed' } } };
   });
-  await mount(page([row], { at: '/code/unit/u8', manages: true, signedIn: true }));
+  await mount(page([row], { at: '/code/unit/u8', manages: true }));
   await click('Fence the writer');
   await click('Fence the writer');
   assert.deepEqual(Object.keys(sent).sort(), ['requestId', 'unitId'], JSON.stringify(sent));
@@ -1738,7 +1723,7 @@ test('publishing that is off says why, and a fold with no machinery does not ope
   assert.equal(document.querySelector('.code-ops'), null, text().slice(0, 400));
 });
 
-test('the release canary is recorded by the signed-in operator where publication is, and by nobody else', async (t) => {
+test('the release canary is recorded by a project administrator where publication is, and by nobody else', async (t) => {
   t.after(unmount);
   const controls = { blockers: ['code_publication_canary_required'] };
   const sent: Record<string, unknown>[] = [];
@@ -1746,9 +1731,9 @@ test('the release canary is recorded by the signed-in operator where publication
     sent.push(body);
     return { body: { result: { canary: { staleMerged: false } } } };
   });
-  // A reader who is not a signed-in operator is shown neither the state nor a control.
+  // A reader who is not an administrator is shown neither the state nor a control.
   servedProject({ publication: { records: [], controls } });
-  await mount(page([row], { manages: true, signedIn: false }));
+  await mount(page([row], { manages: false }));
   assert.ok(!text().includes('Canary'), text().slice(0, 600));
   await unmount();
 
@@ -2144,7 +2129,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     }),
     {
       sentence: 'Waiting on a person to merge the pull request',
-      who: 'A signed-in operator',
+      who: 'An operator',
       whose: 'operator',
       // The reviewed merge is a control this app draws, and it stands on Code, in the
       // words the control there reads.
@@ -2352,12 +2337,12 @@ test('a unit waiting on its publication says so, and shows where that publicatio
       MemoryRouter,
       { initialEntries: ['/tasks/u10'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(UnitCode as any, { unit: sealed, named: () => 'Ada', signedIn: true }),
+      createElement(UnitCode as any, { unit: sealed, named: () => 'Ada', manages: true }),
     ),
   );
   const said = text();
   assert.ok(said.includes('Waiting on a person to merge the pull request'), said);
-  assert.ok(said.includes('A signed-in operator'), said);
+  assert.ok(said.includes('An operator'), said);
   // The move a page of this app makes is offered, level with the sentence.
   const control = [...document.querySelectorAll('a.btn-text')].find((link) =>
     link.textContent?.startsWith('Merge reviewed proposal'),
@@ -2379,7 +2364,7 @@ test('a unit waiting on its publication says so, and shows where that publicatio
   assert.ok(fold.includes('code.publication.merge'), fold);
 });
 
-test('the merge is offered to the signed-in operator alone, and said to everyone', async (t) => {
+test('the merge is offered to a project administrator alone, and said to everyone', async (t) => {
   t.after(unmount);
   serve('/tools/ui.home', { body: { result: {} } });
   await mount(
@@ -2404,9 +2389,9 @@ test('the merge is offered to the signed-in operator alone, and said to everyone
     ),
   );
   const said = text();
-  // A reader, and an operator holding a key, read the wait and who ends it.
+  // A reader who is no administrator reads the wait and who ends it.
   assert.ok(said.includes('Waiting on a person to merge the pull request'), said);
-  assert.ok(said.includes('A signed-in operator'), said);
+  assert.ok(said.includes('An operator'), said);
   // The publication verbs refuse them, so nothing here promises them the act: the only
   // link left is the canvas, and the pull request GitHub keeps.
   assert.equal(
@@ -2435,7 +2420,7 @@ test('a pending publication with no pull request yet promises no merge', async (
             publication: { state: 'pending' },
           }),
           named: () => undefined,
-          signedIn: true,
+          manages: true,
         },
       ),
     ),
@@ -2543,7 +2528,7 @@ test('the same move drawn inside the canvas offers no control back to the canvas
         {
           unit: sealed,
           named: () => 'Ada',
-          signedIn: true,
+          manages: true,
           open: createElement('span', null, 'Open record'),
         },
       ),
@@ -2852,13 +2837,13 @@ test('a local integration waits on the server without promising a GitHub pull re
           publication: { state: 'pending', destination: 'local' },
         }),
         named: () => undefined,
-        signedIn: true,
+        manages: true,
       }),
     ),
   );
   assert.match(text(), /Waiting for the reviewed commit to reach Merv main/);
   assert.match(text(), /The server/);
-  assert.doesNotMatch(text(), /pull request|signed-in operator|Merge reviewed proposal/);
+  assert.doesNotMatch(text(), /pull request|Merge reviewed proposal/);
 });
 
 test('only a quarantine an operator set is offered for release; an inherited one goes with its source', () => {

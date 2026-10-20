@@ -15,7 +15,7 @@ import {
   type Sql,
   type State,
   type Transaction,
-  requireHuman,
+  requireAdministrator,
   oidPattern,
 } from '@merv/contracts';
 import type { CodeStoreWarning } from './store/protocol.js';
@@ -294,11 +294,10 @@ export class CodeUnitStore {
     caller = structuredClone(caller);
     const input = parseCodeInput(codeLocalBindInputSchema, value);
     return await inTransaction(this.state, tx, async (tx) => {
-      await this.scope.require(caller, 'admin', tx);
-      requireHuman(
-        caller,
+      requireAdministrator(
+        await this.scope.require(caller, 'admin', tx),
         'code_human_required',
-        'A signed-in project administrator binds the repository and names its main',
+        'A project administrator or their agent binds the repository and names its main',
       );
       const principal = `actor:${caller.actorId}`;
       const { requestId, ...payload } = input;

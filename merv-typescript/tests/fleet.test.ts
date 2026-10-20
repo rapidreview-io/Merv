@@ -429,11 +429,21 @@ test('a project administrator sets how many machines the project runs at once', 
   await f.fleet.tick();
   assert.deepEqual(await phases(), ['provisioning', 'queued']);
   assert.deepEqual(await f.fleet.projectLimit(f.caller), { machines: 1, default: 1, max: 3 });
+  // Only an administrator, or their agent: a producer is refused.
+  const producer = await f.scope.credentials.issueActor(f.caller, {
+    name: 'Producer',
+    role: 'producer',
+  });
   await assert.rejects(
-    f.fleet.setProjectLimit({ ...f.caller, key: { id: 'key_1', membershipId: 'm_1' } }, 2),
-    {
-      code: 'fleet_forbidden',
-    },
+    f.fleet.setProjectLimit(
+      {
+        projectId: f.caller.projectId,
+        actorId: producer.actor.id,
+        credentialId: producer.credential.id,
+      },
+      2,
+    ),
+    { code: 'forbidden' },
   );
   await assert.rejects(f.fleet.setProjectLimit(f.caller, 4), { code: 'invalid_fleet_limit' });
   assert.deepEqual(await f.fleet.setProjectLimit(f.caller, 2), {

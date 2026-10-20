@@ -6,7 +6,6 @@ import {
   mapAsync,
   runningKey,
   runningKeyPattern,
-  type Actor,
   type Caller,
   type CodeCommandRecord,
   type RunningAttention,
@@ -24,7 +23,7 @@ import {
   type State,
   type Transaction,
   type Workflows,
-  isDirectHuman,
+  isAdministrator,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlocker } from '@merv/workflows/models';
 import { personMove } from './blockers.js';
@@ -70,15 +69,11 @@ export function personMoves(blockers: readonly WorkflowProvidedBlocker[]): HeldM
 
 /**
  * The one way to a move, offered only to whoever can make it. Every control of this
- * vocabulary answers a signed-in operator, and a link a reader would follow to a page that
+ * vocabulary answers an operator (or their agent), and a link a reader would follow to a page that
  * draws no button for them promises an act (ruling 11): the move is said to everybody.
  */
 const way = (move: PersonMove, operator: boolean) =>
   move.control && operator ? { route: move.control.to, text: move.control.label } : undefined;
-
-/** The reader Code's publication controls answer: an operator signed in as a person. */
-const signedIn = (caller: Caller, actor: Actor) =>
-  actor.role === 'operator' && isDirectHuman(caller);
 
 /**
  * The marks. Open work is drawn by its owner whatever Code says, so each of its moves is a
@@ -472,7 +467,7 @@ export class CodeRunningReader {
       return holdsOf(
         open,
         moves.filter(({ blocker }) => PUBLICATION_CODES.has(blocker.code)),
-        signedIn(caller, actor),
+        isAdministrator(actor),
       );
     });
   }
@@ -522,7 +517,7 @@ export class CodeRunningReader {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
-      const operator = signedIn(caller, actor);
+      const operator = isAdministrator(actor);
       const sections: RunningSection[] = [];
       for (const unitId of units) {
         const unit = await this.sources.unit(caller, unitId, tx).catch(absent);

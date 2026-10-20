@@ -52,7 +52,7 @@ export const fleetToolsPlugin = {
         name: 'fleet.project_limit',
         conversation: 'never' as const,
         description:
-          'How many Fleet machines this project may run at once. A project administrator, signed in, can change it; machines already running finish their work.',
+          'How many Fleet machines this project may run at once. A project administrator or their agent can change it; machines already running finish their work.',
         inputSchema: z.object({ machines: z.number().int().min(1).max(64).optional() }).strict(),
         handler: async (caller: Caller, input: { machines?: number }) =>
           input.machines === undefined

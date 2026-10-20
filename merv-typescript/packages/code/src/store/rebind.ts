@@ -8,7 +8,7 @@ import {
   now,
   type Caller,
   type Transaction,
-  requireHuman,
+  requireAdministrator,
 } from '@merv/contracts';
 import {
   codeRepositoryRebindInputSchema,
@@ -70,7 +70,7 @@ export class CodeRebinder {
     // code_operations_unit_open does not apply, and one prepared rebind per project is what
     // the read below enforces inside this transaction rather than an index.
     const prepared = await this.core.state.transaction(async (tx) => {
-      await this.humanAdministrator(caller, tx);
+      await this.administrator(caller, tx);
       const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
       // A finished rebind replays its own answer; the refusals below are about work in
@@ -183,7 +183,7 @@ export class CodeRebinder {
     await this.core.state.transaction(async (tx) => {
       const current = await this.core.row(tx, row.id);
       if (current?.status !== 'prepared') return;
-      await this.humanAdministrator(caller, tx);
+      await this.administrator(caller, tx);
       await this.rebindable(caller, input, tx);
       const at = now();
       const held = (await this.core.project(tx, row.project_id))!;
@@ -272,13 +272,12 @@ export class CodeRebinder {
     });
   }
 
-  /** Verbatim the code.local.bind rule: a leased session never gains a human-only power. */
-  private async humanAdministrator(caller: Caller, tx: Transaction): Promise<void> {
-    await this.core.scope.require(caller, 'admin', tx);
-    requireHuman(
-      caller,
+  /** Verbatim the code.local.bind rule: a leased session never gains an administrator's power. */
+  private async administrator(caller: Caller, tx: Transaction): Promise<void> {
+    requireAdministrator(
+      await this.core.scope.require(caller, 'admin', tx),
       'code_human_required',
-      'A signed-in project administrator rebinds the repository',
+      'A project administrator or their agent rebinds the repository',
     );
   }
 

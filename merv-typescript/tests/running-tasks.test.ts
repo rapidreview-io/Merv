@@ -374,7 +374,7 @@ test('a done task stays, quiet, only while another owner holds its key on the bo
       {
         key: `work:${task.id}`,
         says: ['Waiting on a person to merge the pull request'],
-        who: 'A signed-in operator',
+        who: 'An operator',
       },
     ],
   });
@@ -384,7 +384,7 @@ test('a done task stays, quiet, only while another owner holds its key on the bo
   assert.equal(held?.look, 'quiet');
   assert.deepEqual(held?.attention, {
     says: ['Waiting on a person to merge the pull request'],
-    who: 'A signed-in operator',
+    who: 'An operator',
   });
 });
 

@@ -368,8 +368,8 @@ export class CodeUnitService {
 
   /**
    * Seals an immutable snapshot and the exact independent review. Local integration retains
-   * that head on Merv main; GitHub publication adds a pull request and a signed-in operator's
-   * merge. The accepted unit remains done while its integration is reconciled.
+   * that head on Merv main; GitHub publication adds a pull request and an operator's merge
+   * (or their agent's). The accepted unit remains done while its integration is reconciled.
    *
    * A unit whose facts cannot open a publication is still accepted. Acceptance is the record
    * of work that was done and reviewed, and `publishes_at` is write-once, so refusing here
@@ -421,8 +421,8 @@ export class CodeUnitService {
 
   /**
    * Records, once, that this unit's accepted code goes to main. It is a declaration and not a
-   * power: integration requires independent review, and GitHub merges also require a signed-in
-   * operator. The declaration is the operator's or directing agent's, never the worker's own.
+   * power: integration requires independent review, and GitHub merges also require an operator
+   * or their agent. The declaration is the operator's or directing agent's, never the worker's own.
    * It has to come before the
    * first lease, because main joins the base at derivation and a pin is immutable.
    */

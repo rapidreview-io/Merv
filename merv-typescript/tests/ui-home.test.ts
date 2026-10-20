@@ -430,7 +430,7 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
     key: 'publication',
     code: 'code_publication_pending',
     status: 409,
-    message: 'waiting on publication: a signed-in operator merges the pull request',
+    message: 'waiting on publication: an operator merges the pull request',
     next: 'A signed-in project operator merges pull request #1 with code.publication.merge.',
     related: [{ kind: 'pull-request', id: 'https://github.com/x/y/pull/1', label: '#1' }],
     since: '2026-09-21T09:00:00.000Z',
@@ -442,7 +442,7 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
     experiments: [experiment('wf_quiet', me.id)],
     workflows: {
       workflows: [
-        // As the gate answers a signed-in operator: Code publishes whose move it is.
+        // As the gate answers an operator: Code publishes whose move it is.
         gate('wf_pub', {
           terminal: true,
           state: 'done',
@@ -466,7 +466,7 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
   assert.equal(lines.length, 2);
   assert.equal(line?.id, 'wf_pub');
   assert.equal(line.sentence, 'Waiting on a person to merge the pull request');
-  assert.equal(line.who, 'A signed-in operator');
+  assert.equal(line.who, 'An operator');
   // Since it took this code, not since the record last moved.
   assert.equal(line.at, '2026-09-21T09:00:00.000Z');
   // The move this app makes is on the card; the agent's words stay in the fold.

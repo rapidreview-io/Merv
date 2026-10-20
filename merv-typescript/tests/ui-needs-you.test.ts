@@ -110,10 +110,9 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
   assert.equal(yoursOf(delivery, owner, me), undefined);
   assert.deepEqual(yoursOf(delivery, { actorId: me }, me), {});
   // A blocker another plugin published says whose move ending it is, on ended work too, and
-  // the gate names it: the record's owner's (an admin's too), an admin's, an operator's (an
-  // admin signed in as a person), or nobody's.
-  const admin = { admin: true },
-    person = { admin: true, person: true };
+  // the gate names it: the record's owner's (an admin's too), an admin's, an operator's (any
+  // admin's, or their agent's, too), or nobody's.
+  const admin = { admin: true };
   const held = (whose: string, key = whose) => ({
     ...blocker('held'),
     provider: 'plugin',
@@ -139,16 +138,15 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
     yoursOf(published(held('admin')), undefined, 'actor_ada', admin),
     asked('admin'),
   );
-  assert.equal(yoursOf(published(held('operator')), owner, 'actor_ada', admin), undefined);
   assert.deepEqual(
-    yoursOf(published(held('operator')), owner, 'actor_ada', person),
+    yoursOf(published(held('operator')), owner, 'actor_ada', admin),
     asked('operator'),
   );
   // While a blocker holds the record for somebody else, or for nobody, its owner's own ask
   // waits; a wait that is nobody's never hides a move that is somebody's.
   for (const whose of ['admin', 'operator', 'nobody'])
     assert.equal(yoursOf(published(held(whose)), owner, me), undefined, whose);
-  assert.equal(yoursOf(published(held('nobody')), owner, 'actor_ada', person), undefined);
+  assert.equal(yoursOf(published(held('nobody')), owner, 'actor_ada', admin), undefined);
   assert.deepEqual(yoursOf(published(held('nobody'), held('owner')), owner, me), asked('owner'));
   // Every round used is a project admin's move, never the owner's as such.
   const capped = gate({
@@ -395,7 +393,7 @@ const policy: WorkflowPolicy = {
 function before(
   rows: { id: string; path: string; view: { kind: string }; needs?: Record<string, unknown> }[],
   home: Record<string, any>,
-  viewer: { id: string; role: string; signedIn?: boolean },
+  viewer: { id: string; role: string },
   asks: Record<string, string>,
 ) {
   const me = viewer.id;
@@ -424,7 +422,7 @@ function before(
     if (held) {
       if (
         viewer.role === 'operator' &&
-        (held.move.whose === 'admin' || (held.move.whose === 'operator' && viewer.signedIn))
+        (held.move.whose === 'admin' || held.move.whose === 'operator')
       )
         lines.push([item.id, held.move.sentence]);
       continue;
@@ -612,7 +610,7 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
   }));
   const named = () => undefined;
 
-  const operator = { id: me.actorId, role: 'operator', signedIn: true };
+  const operator = { id: me.actorId, role: 'operator' };
   const home = await read(me);
   const lines = needsYou(rows as never, home as never, operator, named);
   const said = lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]);
@@ -627,7 +625,7 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
   );
   assert.deepEqual(said, before(rows, home, operator, { submit: ASK }));
   // Code's move is an administrator's: for anyone else the record is held, and not their move.
-  const viewer = { id: reader.actorId, role: 'reader', signedIn: true };
+  const viewer = { id: reader.actorId, role: 'reader' };
   const theirs = await read(reader);
   const listed = needsYou(rows as never, theirs as never, viewer, named)
     .map((line: { id: string; sentence: string }) => [line.id, line.sentence])
@@ -883,7 +881,7 @@ test('a wait a plugin names as one person’s is theirs alone, and its Settings 
   assert.deepEqual(yoursOf(decision, owner, 'actor_payer'), yours);
   for (const [reader, as] of [
     ['actor_owner', {}],
-    ['actor_admin', { admin: true, person: true }],
+    ['actor_admin', { admin: true }],
   ] as const)
     assert.equal(yoursOf(decision, owner, reader, as), undefined, reader);
   const rows = [

@@ -543,13 +543,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     check(parsed.success, 'invalid_retry', 'Retry needs an exact revision, reason and requestId');
     const input = parsed.data;
     const hash = digest(input);
+    // A project administrator or their agent: a worker session is never an operator.
     await this.scope.require(caller, 'admin');
-    check(
-      !caller.session && !caller.key,
-      'fleet_forbidden',
-      'Only a project administrator may retry a workflow rental',
-      403,
-    );
     // Demand uses Sessions' own snapshot transaction; never call it under this writer lock.
     const status = (await this.retryState(caller, [input]))[0]!;
     const result = await this.state.transaction(async (tx) => {

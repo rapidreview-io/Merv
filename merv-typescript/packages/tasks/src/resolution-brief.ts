@@ -84,5 +84,5 @@ export function resolutionBrief(work: ResolutionWork): {
 export const resolutionTasks = (tasks: ServiceTaskCreator): ResolutionWorkCreator => ({
   create: ({ work, ...input }, tx) => tasks.create({ ...input, ...resolutionBrief(work) }, tx),
   resume:
-    'A signed-in human operator must extend review_rounds with workflow.extend_limit to resume this same task',
+    'A project administrator (or their agent) must extend review_rounds with workflow.extend_limit to resume this same task',
 });

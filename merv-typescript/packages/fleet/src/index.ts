@@ -291,14 +291,9 @@ export class FleetService implements Fleet {
       };
     });
   }
-  /** A project administrator, signed in, sets it; machines already running finish their work. */
+  /** A project administrator or their agent sets it (a worker is never an operator); machines
+   *  already running finish their work. */
   async setProjectLimit(caller: Caller, machines: number): Promise<FleetProjectLimit> {
-    check(
-      !caller.session && !caller.key,
-      'fleet_forbidden',
-      'Only a project administrator, signed in, can change how many machines run at once',
-      403,
-    );
     check(
       Number.isSafeInteger(machines) &&
         machines >= 1 &&

@@ -19,7 +19,7 @@ import {
   type Sql,
   type State,
   type Transaction,
-  requireHuman,
+  requireAdministrator,
   idSchema,
 } from '@merv/contracts';
 import type { CodePublication, CodePublicationControls } from './models.js';
@@ -389,11 +389,10 @@ export class PublicationHost {
     caller = structuredClone(caller);
     const input = parseCodeInput(publicationControlSchema, value);
     return this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'admin', tx);
-      requireHuman(
-        caller,
+      requireAdministrator(
+        await this.scope.require(caller, 'admin', tx),
         'github_human_required',
-        'A signed-in human administrator must attest publication enforcement',
+        'A project administrator or their agent must attest publication enforcement',
       );
       return await receipted(
         tx,

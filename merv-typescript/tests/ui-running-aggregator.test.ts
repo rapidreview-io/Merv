@@ -124,7 +124,7 @@ test('a mark holds its key on the board, reaches every nodes() as include, colou
   const seen: Record<string, string[]> = {};
   const merge = {
     says: ['Waiting on a person to merge the pull request'],
-    who: 'A signed-in operator',
+    who: 'An operator',
   };
   const answer = await board(
     {

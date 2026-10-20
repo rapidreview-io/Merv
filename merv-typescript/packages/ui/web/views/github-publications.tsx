@@ -166,7 +166,7 @@ export function GitHubPublications({
 }: {
   rows: CodePublication[];
   onDone(): void;
-  /** True where the reader may sync and merge: an operator signed in as a person. */
+  /** True where the reader may sync and merge: a project administrator or their agent. */
   operator: boolean;
   /** Who reviewed and who merged, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;

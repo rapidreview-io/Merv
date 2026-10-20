@@ -33,7 +33,7 @@ const policy: WorkflowPolicy = {
 /**
  * A project of its own signed-in administrator, bound and imported, whose repository holds the
  * two commits these tests move main between. The fixture's own project stays out of the way:
- * a rebind is one of the few things only a signed-in human may ask for.
+ * a rebind is one of the few things only a project administrator or their agent may ask for.
  */
 async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   const source = gitSource(t);
@@ -53,7 +53,6 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
     requestId: 'project',
   });
   const human = await f.scope.caller(principal, project.id);
-  // The identity behind that administrator, for the key that must still be refused.
   const build = await f.workflows.register(definition, policy);
   const paths = f.pathsOf(human.projectId);
   const bind = async (mainOid: string, expectedMainOid?: string) =>
@@ -97,7 +96,6 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
     f,
     source,
     human,
-    principal,
     one,
     two,
     bind,
@@ -381,21 +379,25 @@ test('a rebind refuses what it cannot prove, what it would not change and the ma
   const before = await h.binding();
 
   await assert.rejects(h.rebind({ repositoryId: OLD }), { code: 'code_rebind_unchanged' });
-  // An operator key has the project authority and is still refused; a leased session does
-  // not even have the authority, so it is refused before that.
-  const issued = await h.f.scope.userKeys.create(h.principal, { projectId: h.human.projectId });
-  const key = await h.f.scope.caller({
-    kind: 'key',
-    key: await h.f.scope.userKeys.authenticate(issued.token),
+  // An operator machine actor has the project authority and is still refused; a leased session
+  // does not even have the authority, so it is refused before that.
+  const robot = await h.f.scope.credentials.issueActor(h.human, {
+    name: 'Robot',
+    role: 'operator',
   });
+  const machine: Caller = {
+    projectId: h.human.projectId,
+    actorId: robot.actor.id,
+    credentialId: robot.credential.id,
+  };
   const asked = (caller: Caller, requestId: string) =>
     h.f.code.rebindRepository(caller, {
       repositoryId: NEW,
       mainOid: h.two,
-      reason: 'not a signed-in administrator',
+      reason: 'not a project administrator',
       requestId,
     });
-  await assert.rejects(asked(key, 'key'), { code: 'code_human_required', status: 403 });
+  await assert.rejects(asked(machine, 'machine'), { code: 'code_human_required', status: 403 });
   await assert.rejects(asked({ ...h.human, session: { id: 'session' } } as Caller, 'session'), {
     status: 403,
   });

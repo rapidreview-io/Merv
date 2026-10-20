@@ -2,7 +2,7 @@ import { reviewActions } from '@merv/reviews/rules';
 import { reviewReturn } from '@merv/reviews/returns';
 import {
   check,
-  requireHuman,
+  requireAdministrator,
   type Caller,
   type Data,
   type ReviewRequest,
@@ -96,7 +96,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
         snapshot.state === 'suspended'
           ? [
               'suspended',
-              'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.',
+              'This service task is suspended. A project administrator (or their agent) can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.',
             ]
           : snapshot.state === 'in_progress'
             ? ['delivery_required', 'The task producer must complete and submit the delivery.']
@@ -153,14 +153,13 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
               tool: 'workflow.extend_limit',
               suggested: false,
               instruction:
-                'A signed-in human operator extends review_rounds to resume this same task.',
+                'A project administrator (or their agent) extends review_rounds to resume this same task.',
               check: async ({ caller, tx, snapshot }: WorkflowCheckContext) => {
-                requireHuman(
-                  caller,
+                requireAdministrator(
+                  await ctx.scope.require(caller, 'admin', tx),
                   'forbidden',
-                  'Only a signed-in human operator resumes service work',
+                  'Only a project administrator or their agent resumes service work',
                 );
-                await ctx.scope.require(caller, 'admin', tx);
                 const limit = (
                   await ctx.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
                 ).get(snapshot.id)!;
@@ -224,7 +223,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
         requiredInput: ['reason'],
         arguments: taskArguments,
         instruction: serviceOwned(version)
-          ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
+          ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a project administrator (or their agent) can extend review_rounds to resume the same task.'
           : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
         check: async (context) => {
           if (!ctx.checked.found(context)) await checkFailure(ctx, context);

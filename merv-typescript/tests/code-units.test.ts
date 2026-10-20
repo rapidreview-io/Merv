@@ -268,7 +268,7 @@ const unhosted = {
   warnings: [],
 };
 
-test('only a signed-in administrator binds the repository, and main moves by compare-and-set', async (t) => {
+test('only a project administrator or their agent binds the repository, and main moves by compare-and-set', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(await f.code.status(f.admin), {
     ...unhosted,
@@ -278,11 +278,22 @@ test('only a signed-in administrator binds the repository, and main moves by com
   const first = { repositoryId: 'runner-repository', mainOid: oid('a'), requestId: 'bind' };
 
   const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
-  const machine = await f.scope.caller({
+  // The administrator's key is their agent's; an operator machine actor and a leased worker are
+  // neither.
+  const agent = await f.scope.caller({
     kind: 'key',
     key: await f.scope.userKeys.authenticate(issued.token),
   });
+  const robot = await f.scope.credentials.issueActor(f.admin, { name: 'Robot', role: 'operator' });
+  const machine = {
+    projectId: f.project.id,
+    actorId: robot.actor.id,
+    credentialId: robot.credential.id,
+  };
   await assert.rejects(f.code.bindLocal(machine, first), { code: 'code_human_required' });
+  await assert.rejects(f.code.bindLocal({ ...f.admin, session: { id: 'session' } }, first), {
+    status: 403,
+  });
   const reader = await f.scope.members.acceptVerifiedIdentity(f.identity('reader'));
   await f.scope.members.addMember(f.principal, f.project.id, { subject: 'reader', role: 'reader' });
   await assert.rejects(
@@ -333,7 +344,7 @@ test('only a signed-in administrator binds the repository, and main moves by com
     }),
     { code: 'code_rebind_required' },
   );
-  const moved = await f.code.bindLocal(f.admin, { ...move, expectedMainOid: oid('a') });
+  const moved = await f.code.bindLocal(agent, { ...move, expectedMainOid: oid('a') });
   assert.deepEqual(
     [moved.main.oid, moved.boundAt, moved.repositoryId],
     [oid('b'), bound.boundAt, bound.repositoryId],

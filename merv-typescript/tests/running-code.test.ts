@@ -330,7 +330,7 @@ const tasks = (drawn: string[] = []): RunningContribution => ({
 const codeOf = (sections: RunningSection[]) =>
   sections.find((section) => section.owner === 'code-work' && section.title === 'Code');
 
-test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a signed-in operator is offered the merge', async (t) => {
+test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a project administrator is offered the merge', async (t) => {
   const f = await fixture(t);
   const work = await f.publishing('Publish the index');
   const key = `work:${work.id}`;
@@ -361,7 +361,8 @@ test('done work whose pull request waits for a merge is held on the board in the
   assert.equal(move.sentence, 'Waiting on a person to merge the pull request');
 
   // The mark is the Code page's sentence and who ends the wait. The way to the merge is
-  // offered to the signed-in operator alone; an operator's key and a reader are only told.
+  // offered to a project administrator (or their agent) alone; an operator machine actor and a
+  // reader are only told.
   const said = { key, says: [move.sentence], who: move.who };
   const merge = { route: '/code', text: 'Merge reviewed proposal' };
   assert.deepEqual(await f.holds(), { marks: [{ ...said, to: merge }], summary: null });

@@ -3,7 +3,7 @@ import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { permits } from '@merv/scope/rules';
-import { githubRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
+import { githubRequest, useScopeVersion, useTool, type Actor } from '../api';
 import { EmptyState, LoadState, PageLoad, Short, StatusPill } from '../components';
 import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
@@ -82,7 +82,7 @@ function mainSaid(status: CodeProjectStatus | undefined): string {
 /** A count not yet read is the em dash the console uses, never a zero. */
 const EM = '—';
 
-export function CodePage({ row, shell, manages, signedIn }: ViewProps & Omit<Reader, 'named'>) {
+export function CodePage({ row, shell, manages }: ViewProps & Omit<Reader, 'named'>) {
   const named = useActorNames();
   const read = useTool<{
     commands: CodeCommandRecord[];
@@ -176,7 +176,6 @@ export function CodePage({ row, shell, manages, signedIn }: ViewProps & Omit<Rea
           head={head}
           onDone={read.reload}
           manages={manages}
-          signedIn={signedIn}
           named={named}
         />
       )
@@ -238,7 +237,7 @@ export function CodePage({ row, shell, manages, signedIn }: ViewProps & Omit<Rea
       <GitHubPublications
         rows={published}
         onDone={read.reload}
-        operator={signedIn}
+        operator={manages}
         named={named}
         controls={unlinked ? undefined : read.data?.status?.publication?.controls}
       />
@@ -248,31 +247,24 @@ export function CodePage({ row, shell, manages, signedIn }: ViewProps & Omit<Rea
 }
 
 /**
- * Code's own machinery — the base verbs and the blocked ref — answers a project
- * administrator who is not a leased worker: a signed-in person, the bearer credential
- * that is that person's own actor, or an operator key. A worker's lease is not an
- * account credential and never reaches this page, so the role is the whole of the test.
+ * Code's machinery — the base verbs, the blocked ref, fencing a writer and every publication
+ * control — answers a project administrator or their agent, never a leased worker. A worker's
+ * lease is not an account credential and never reaches this page, so the role is the whole of
+ * the test.
  */
 export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
-/**
- * Fencing a writer and every publication control ask for more than authority: their
- * tools refuse a key and a bearer actor outright and answer only a person. The two
- * rules are the server's two rules, and each verb is drawn by the one that governs it.
- */
-export const signedInAdmin = (actor: Actor, account: Account) =>
-  permits(actor.role, 'admin') && account.kind === 'user';
 
 /**
- * A record's Code section. The publication verbs answer a signed-in operator and nobody else,
- * so it is told who is reading before it offers the move.
+ * A record's Code section. The publication verbs answer a project administrator and nobody
+ * else, so it is told who is reading before it offers the move.
  */
 export function RecordCode(props: Pick<Parameters<typeof UnitCode>[0], 'unit' | 'named'>) {
-  const { actor, account } = useSession();
-  return <UnitCode {...props} signedIn={signedInAdmin(actor, account)} />;
+  const { actor } = useSession();
+  return <UnitCode {...props} manages={managesCode(actor)} />;
 }
 
 export const CodeView = (props: ViewProps) => {
-  const { actor, account } = useSession();
+  const { actor } = useSession();
   const { pathname } = useLocation();
   const root = props.row.path;
   const rest = pathname.slice(root.length);
@@ -297,11 +289,7 @@ export const CodeView = (props: ViewProps) => {
           <CodeFiles {...props} root={root} />
         </div>
       ) : (
-        <CodePage
-          {...props}
-          manages={managesCode(actor)}
-          signedIn={signedInAdmin(actor, account)}
-        />
+        <CodePage {...props} manages={managesCode(actor)} />
       )}
     </>
   );

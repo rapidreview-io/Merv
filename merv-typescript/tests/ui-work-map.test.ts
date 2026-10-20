@@ -1024,7 +1024,7 @@ test('a held card’s sidebar borrows the board’s mark: the sentence, who ends
   const says = $('.running-says')!;
   assert.ok(says.classList.contains('running-attn'));
   assert.equal(says.textContent, 'Waiting on a person to merge the pull request');
-  assert.ok(text().includes('A signed-in operator'));
+  assert.ok(text().includes('An operator'));
   const move = $<HTMLAnchorElement>('a.running-move')!;
   assert.equal(move.getAttribute('href'), '/code');
   assert.equal(move.textContent, 'Merge reviewed proposal');
@@ -1179,7 +1179,7 @@ test('a link that is a fact’s whole value is a target of its own; one inside a
     code.rows.unshift({
       label: 'Needs',
       value: [
-        'Merge the reviewed proposal · a signed-in operator · ',
+        'Merge the reviewed proposal · an operator · ',
         { link: { route: '/code' }, text: 'Merge reviewed proposal' },
       ],
       attention: true,

@@ -13,7 +13,7 @@ import {
   type Sql,
   type State,
   type Transaction,
-  requireHuman,
+  requireAdministrator,
 } from '@merv/contracts';
 import {
   codeUnitFenceInputSchema,
@@ -368,11 +368,10 @@ export class CodeWriterService {
   async fence(caller: Caller, value: unknown, tx: Transaction): Promise<CodeWriterStatus> {
     this.assertOpen();
     const input = parseCodeInput(codeUnitFenceInputSchema, value);
-    await this.scope.require(caller, 'admin', tx);
-    requireHuman(
-      caller,
+    requireAdministrator(
+      await this.scope.require(caller, 'admin', tx),
       'code_human_required',
-      'A signed-in project administrator fences a writer',
+      'A project administrator or their agent fences a writer',
     );
     const principal = `actor:${caller.actorId}`;
     const { requestId, ...body } = input;

@@ -71,7 +71,7 @@ export const codeToolsPlugin = {
         name: 'code.publication.merge',
         conversation: 'propose' as const,
         description:
-          'Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
+          'Project administrator or their agent, never a leased worker: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
         inputSchema: codePublicationMergeSchema,
         handler: (caller: Caller, input: CodePublicationMerge) =>
           ctx.codeWork.mergePublication(caller, input),
@@ -104,7 +104,7 @@ export const codeToolsPlugin = {
         },
         conversation: 'propose' as const,
         description:
-          'Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
+          'Project administrator or their agent, never a leased worker: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
         inputSchema: publicationControlSchema,
         handler: (caller: Caller, input: unknown) => ctx.codeWork.controlPublication(caller, input),
       },
@@ -164,7 +164,7 @@ export const codeToolsPlugin = {
         name: `code.base.${action}`,
         // Only a pause is the agent's own; every other verb spends work or lifts a quarantine.
         conversation: action === 'suspend' ? undefined : ('propose' as const),
-        description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a human or operator key with project admin permission may call it, never a leased worker.`,
+        description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a project administrator or their agent may call it, never a leased worker.`,
         inputSchema: baseControlSchema.omit({ action: true }),
         handler: async (caller: Caller, input: Omit<CodeBaseControl, 'action'>) =>
           ctx.codeWork.controlBase(caller, { ...input, action }),
@@ -175,7 +175,7 @@ export const codeToolsPlugin = {
         act: { title: 'Bind repository' },
         conversation: 'propose' as const,
         description:
-          'Bind this project to a repository identity and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
+          'Bind this project to a repository identity and name the commit of its main. Only a project administrator or their agent may call it; a leased worker is refused. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
         inputSchema: codeLocalBindInputSchema,
         handler: async (caller: Caller, input: CodeLocalBindInput) =>
           await ctx.codeWork.bindLocal(caller, input),
@@ -248,7 +248,7 @@ export const codeToolsPlugin = {
         name: 'code.repository.rebind',
         conversation: 'propose' as const,
         description:
-          'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base that can still merge is unresolved (a suspended or quarantined one is not) or has its project check queued or running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
+          'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a project administrator or their agent may call it; a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base that can still merge is unresolved (a suspended or quarantined one is not) or has its project check queued or running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
         inputSchema: codeRepositoryRebindInputSchema,
         handler: async (caller: Caller, input: CodeRepositoryRebindInput) =>
           await ctx.codeWork.rebindRepository(caller, input),
@@ -257,7 +257,7 @@ export const codeToolsPlugin = {
         name: 'code.unit.fence',
         conversation: 'propose' as const,
         description:
-          'End the writer generation of a unit whose final capture is quarantined (code_capture_quarantined; read the findings in code.status first): every other writer generation ends by itself with its session. Refused with code_fence_unneeded for a unit no quarantined capture holds. The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
+          'End the writer generation of a unit whose final capture is quarantined (code_capture_quarantined; read the findings in code.status first): every other writer generation ends by itself with its session. Refused with code_fence_unneeded for a unit no quarantined capture holds. The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a project administrator or their agent may call it, never a leased worker. Supply a stable requestId.',
         inputSchema: codeUnitFenceInputSchema,
         handler: async (caller: Caller, input: CodeUnitFenceInput) =>
           await ctx.codeWork.fenceUnit(caller, input),

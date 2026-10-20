@@ -406,7 +406,7 @@ export interface CodeProjectStatus {
 /**
  * Where a unit that publishes its accepted code to main stands. Null for every unit that
  * does not publish, and for one that is marked but not accepted yet: publication begins at
- * acceptance. `pending` is a wait on a signed-in operator, never a failure of the work, and
+ * acceptance. `pending` is a wait on an operator (or their agent), never a failure of the work, and
  * `unsealed` is the accepted unit whose facts could not open a publication at all.
  */
 export interface CodeUnitPublication {

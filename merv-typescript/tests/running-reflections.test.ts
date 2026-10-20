@@ -565,7 +565,7 @@ test('on the board a session on a lens lands on its wave, and a mark on a lens c
   const [first, second] = wave.lenses;
   const held = {
     says: ['Held after 5 failed launches'],
-    who: 'A signed-in operator',
+    who: 'An operator',
   };
   let asked: readonly string[] = [];
   const sessions: RunningContribution = {

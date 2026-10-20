@@ -387,10 +387,7 @@ export async function decision(
     decided,
     described.owner,
     actorId,
-    {
-      admin: adminsMove(decided, described.owner, actorId, limit) && (await admin()),
-      person: !!context.caller.human,
-    },
+    { admin: adminsMove(decided, described.owner, actorId, limit) && (await admin()) },
     limit,
   );
   return yours ? { ...decided, yours } : decided;
@@ -443,22 +440,20 @@ const adminsMove = (
 const answers = (
   whose: WorkflowProvidedBlocker['whose'],
   owner: boolean,
-  reader: { admin?: boolean; person?: boolean },
+  reader: { admin?: boolean },
   actorId: string,
 ) =>
   whose?.startsWith('actor:')
     ? whose === `actor:${actorId}`
     : whose === 'owner'
       ? owner || !!reader.admin
-      : whose === 'admin'
-        ? !!reader.admin
-        : whose === 'operator' && !!reader.admin && !!reader.person;
+      : (whose === 'admin' || whose === 'operator') && !!reader.admin;
 
 /**
  * Whether a record is the reading caller's own move. A blocker another plugin published that
  * names whose move it is comes first, on ended work too, and it names the blocker: the record's
- * owner's (which a project admin makes too), a project admin's, an operator's (an admin signed
- * in as a person), or nobody's. An open record at a used-up limit, or suspended where only an
+ * owner's (which a project admin makes too), a project admin's (`admin` or `operator`, which an
+ * admin's agent makes as they do), or nobody's. An open record at a used-up limit, or suspended where only an
  * admin's allowance resumes it, is a project admin's. While a
  * blocker names somebody else's move, or nobody's, the record is no move of the reader's own.
  * Otherwise it goes by its program's word on whose the record
@@ -481,8 +476,8 @@ export function yoursOf(
   >,
   owner: WorkflowOwner | undefined,
   actorId: string,
-  /** The reader: a project admin where the record may wait on one, and signed in as a person. */
-  reader: { admin?: boolean; person?: boolean } = {},
+  /** The reader: a project admin (or their agent) where the record may wait on one. */
+  reader: { admin?: boolean } = {},
   /** The move only an admin makes that the open work waits on (`limitOf`). */
   limit?: WorkflowLimitMove,
 ): WorkflowDecision['yours'] {

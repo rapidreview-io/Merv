@@ -54,16 +54,10 @@ const CARD = 'code-props';
 /** Who is reading. A session sees the page and none of its verbs. */
 export interface Reader {
   /**
-   * A project administrator who is not a leased worker, which is what the base and
-   * mirror tools require: admin scope and no session.
+   * A project administrator or their agent, never a leased worker, which is what the
+   * base, mirror, fence and publication tools require: admin scope and no session.
    */
   manages: boolean;
-  /**
-   * The same administrator, signed in as a person. Fencing a writer and every
-   * publication control refuse a key and a bearer actor outright, so the narrower
-   * rule is what draws them.
-   */
-  signedIn: boolean;
   /** Who accepted or merged, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;
 }
@@ -385,7 +379,6 @@ export function CodeCard({
   publications,
   names,
   manages,
-  signedIn,
   named,
   head = true,
   onDone,
@@ -461,10 +454,8 @@ export function CodeCard({
         <>
           <UnitCode unit={unit} named={named} open={open} />
           {/* The one verb a quarantined capture needs, where the writer is read: every other
-              writer generation ends with its session. Its tool is the one here that asks for a
-              person rather than an administrator: a key and a bearer actor are refused by the
-              server, so neither is offered it. */}
-          {signedIn && !!unit.quarantine && (
+              writer generation ends with its session. */}
+          {manages && !!unit.quarantine && (
             <Verb
               tool="code.unit.fence"
               input={{ unitId: unit.unitId }}
