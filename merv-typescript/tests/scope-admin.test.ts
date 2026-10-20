@@ -137,10 +137,12 @@ test('scope@12 backfills each admin from the longest-standing signed-in operator
   await f.login('carol');
   await f.scope.members.removeMember(alice, moved.id, 'alice');
   const boot = await f.scope.credentials.bootstrap({ projectName: 'Unowned', actorName: 'Op' });
-  // The database as it stood before scope@12, which the next start applies.
+  // The database as it stood before scope@12 (and so before @13), which the next start applies.
   await f.state.transaction(async (tx) => {
+    await tx.run('DROP TABLE agent_logins');
+    await tx.run('DROP FUNCTION agent_logins_no_delete_guard()');
     await tx.run('ALTER TABLE projects DROP COLUMN admin_issuer, DROP COLUMN admin_subject');
-    await tx.run("DELETE FROM component_migrations WHERE component='scope' AND version=12");
+    await tx.run("DELETE FROM component_migrations WHERE component='scope' AND version>=12");
   });
   await createService(new ProjectScope(f.state));
   const admins = await f.state.read((sql) =>

@@ -164,6 +164,90 @@ export interface ScopeUserKeys {
   /** A key revokes itself (and its descendants); every other principal is refused. */
   revokePresented(principal: Principal): Promise<void>;
 }
+/** What the identity directory says about one account, as agent sign-in needs it. */
+export interface DirectoryUser {
+  email: string;
+  anonymous: boolean;
+  confirmed: boolean;
+  banned: boolean;
+  deleted: boolean;
+}
+/** The identity directory as agent sign-in reads it: an exact email lookup, then the account's
+ *  administrative record (null when the directory has none). */
+export interface AgentLoginDirectory {
+  find(email: string): Promise<{ issuer: string; subject: string } | null>;
+  user(subject: string): Promise<DirectoryUser | null>;
+}
+/** Deployment limits on agent sign-in; every count is of stored sign-in requests. */
+export interface AgentLoginLimits {
+  emailPer15Minutes: number;
+  emailPerDay: number;
+  ipPerHour: number;
+  globalPerMinute: number;
+  globalPerDay: number;
+  triesPerLogin: number;
+  keysPerPerson: number;
+  keyDays: number;
+  retentionDays: number;
+}
+/** One request for an emailed sign-in code from a person's own agent connector. */
+export interface AgentLoginRequest {
+  email: string;
+  /** The client's address, when known; only its digest is stored. */
+  ip: string | null;
+  client: { name: string; host: string; installId: string };
+  /** sha256 (base64url) of the verifier only this connector holds. */
+  verifierHash: string;
+}
+/** The code is the caller's to deliver, never to answer with. */
+export interface AgentLoginStarted {
+  loginId: string;
+  phrase: string;
+  expiresAt: string;
+  code: string;
+}
+export interface AgentLoginCodeMail {
+  to: string;
+  loginId: string;
+  code: string;
+  phrase: string;
+  label: string;
+}
+export interface AgentLoginNotice {
+  to: string;
+  keyId: string;
+  label: string;
+  phrase: string;
+  at: string;
+  expiresAt: string;
+}
+export interface AgentLoginIssued {
+  token: string;
+  key: { id: string; label: string; expiresAt: string };
+  email: string;
+  projects: Project[];
+}
+/** Email-code sign-in for a person's own agents. Only consuming an emailed challenge issues a key:
+ *  an account key whose owner is the challenge's, never anything a request names. */
+export interface ScopeAgentLogins {
+  /** 429 (login_rate_limited, login_capacity) with details.retryAfterSeconds past a limit. */
+  start(request: AgentLoginRequest, limits: AgentLoginLimits): Promise<AgentLoginStarted>;
+  /** Mails the code only to an eligible account; never throws, and says nothing either way. */
+  deliver(
+    login: AgentLoginStarted,
+    email: string,
+    directory: AgentLoginDirectory,
+    send: (mail: AgentLoginCodeMail) => Promise<void>,
+  ): Promise<void>;
+  /** 400 invalid_code for every refusal of the challenge itself; a key only after `notify`. */
+  verify(
+    loginId: string,
+    proof: { code: string; verifier: string },
+    limits: AgentLoginLimits,
+    directory: AgentLoginDirectory,
+    notify: (notice: AgentLoginNotice) => Promise<void>,
+  ): Promise<AgentLoginIssued>;
+}
 /** Independent machine actors and their credentials, and the bootstrap of a first project. */
 export interface ScopeActorCredentials {
   bootstrap(input: { projectName: string; actorName: string }): Promise<Credentials>;
@@ -186,6 +270,7 @@ export interface ScopeActorCredentials {
 export interface Scope {
   readonly members: ScopeMembers;
   readonly userKeys: ScopeUserKeys;
+  readonly agentLogins: ScopeAgentLogins;
   readonly credentials: ScopeActorCredentials;
   /** Each project's owner: its admin (`members.setAdmin`), as a person, who directs and pays for
    * its work on Fleet's machines. A project with none is left out. */

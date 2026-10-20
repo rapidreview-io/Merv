@@ -1,5 +1,7 @@
-import type { VerifiedIdentity } from '@merv/contracts';
+import type { DirectoryUser, VerifiedIdentity } from '@merv/contracts';
 import type {} from 'cordis';
+
+export type { DirectoryUser };
 
 export interface IdentityConfiguration {
   enabled: boolean;
@@ -15,15 +17,6 @@ export interface IdentityProvider {
   /** The directory's administrative record of one user, null when it has none; present only where
    *  the directory key is a service-role key (`directoryAdmin`). */
   directoryUser?(subject: string): Promise<DirectoryUser | null>;
-}
-
-/** What the directory says about one account, as agent sign-in needs it. */
-export interface DirectoryUser {
-  email: string;
-  anonymous: boolean;
-  confirmed: boolean;
-  banned: boolean;
-  deleted: boolean;
 }
 
 /** Trusted deployment configuration; secrets are environment references only. */

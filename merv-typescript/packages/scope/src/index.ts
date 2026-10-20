@@ -7,6 +7,7 @@ import { postgresMigrations as invitations } from './invitations.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
 import { postgresMigrations as userKeys } from './user-keys.postgres.js';
 import { postgresMigrations as projectContext } from './project-context.postgres.js';
+import { postgresMigrations as agentLogins } from './agent-logins.postgres.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
 import type { ToolGrant, ToolPolicy } from '@merv/contracts';
@@ -38,6 +39,7 @@ import {
 } from '@merv/contracts';
 import { identityValid, LIVE_OPERATOR, Memberships } from './memberships.js';
 import { UserKeys } from './user-keys.js';
+import { AgentLogins } from './agent-logins.js';
 import { projectValue as project, type ProjectRow } from './project-context.js';
 import {
   ACTOR_WITH_MEMBER,
@@ -97,6 +99,7 @@ export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   readonly members: Memberships;
   readonly userKeys: UserKeys;
+  readonly agentLogins: AgentLogins;
   readonly credentials: ActorCredentials;
   private ledger: Ledger;
   private sessions = new AuthoritySlot<SessionAuthority>(
@@ -144,6 +147,7 @@ export class ProjectScope implements Scope {
       this.members,
       async (caller, permission, tx) => await this.require(caller, permission, tx),
     );
+    this.agentLogins = new AgentLogins(state, clock, this.members, this.userKeys);
   }
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -156,6 +160,7 @@ export class ProjectScope implements Scope {
       ...userKeys,
       ...projectContext,
       ...invitations,
+      ...agentLogins,
     });
   }
   async directory(): Promise<PlatformDirectory> {

@@ -606,6 +606,12 @@
       "published": true
     },
     {
+      "component": "scope",
+      "version": 13,
+      "hash": "4a57b980dea2ed154258b7c74b95b748649ce082037c861f3a02b9398a157bf2",
+      "published": false
+    },
+    {
       "component": "session_dispatch",
       "version": 1,
       "hash": "9a8881c18c9c4f190f946896c39332353d9d9bcf2911941687363d945ee33644",
