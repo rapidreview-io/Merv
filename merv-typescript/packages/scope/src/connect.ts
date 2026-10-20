@@ -7,6 +7,8 @@ import { escapeHtml } from '@merv/contracts/text';
 import { tooMany } from './agent-logins.js';
 import { emailHtml, mailSchema, origin, type Mail } from './mail.js';
 
+const loopback = (hostname: string) => ['127.0.0.1', '[::1]', 'localhost'].includes(hostname);
+
 const count = (fallback: number, max = 1_000_000) =>
   z.number().int().positive().max(max).default(fallback);
 const cidr = z.string().refine((value) => {
