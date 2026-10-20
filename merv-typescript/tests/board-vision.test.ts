@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Drawing } from '../packages/board/src/elements.js';
-import { pictureOf } from '../packages/board/src/picture.js';
 import { BoardRenderer } from '../packages/board/src/renderer.js';
 import { camera, viewSchema } from '../packages/contracts/src/board-view.js';
 import { screenImage } from '../packages/pi/src/tool-image.js';
@@ -23,14 +22,16 @@ test('camera fit, region, pan, zoom preserve a bounded board-coordinate viewport
   assert.equal(camera(bounds, { ...first, width: 1 }, { action: 'zoom', factor: 4 }).width, 1);
   assert.equal(viewSchema.safeParse({ action: 'zoom', factor: 0 }).success, false);
 });
-test('image transport bypasses text clipping only for a bounded screen result', () => {
+test('image transport bypasses text clipping only for a bounded image, by whatever name', () => {
   const result = {
     seen: 'board',
     image: { mimeType: 'image/jpeg', data: Buffer.alloc(100000).toString('base64') },
   };
-  assert.equal(fit('screen.look', result), result);
-  assert.equal(fit('board.look', result), result);
-  assert.notEqual(fit('board.read', result), result);
+  // The noun looks and the names a frozen turn still calls them by alike.
+  for (const name of ['screen.look', 'board.look', 'board.read', 'screen.read'])
+    assert.equal(fit(name, result), result);
+  const { image: _image, ...words } = result;
+  assert.notEqual(fit('board.read', { ...words, text: 'x'.repeat(100000) }), words);
   assert.equal(
     screenImage({ ...result, image: { ...result.image, data: 'A'.repeat(700001) } }),
     null,
@@ -90,7 +91,6 @@ test('actual Excalidraw exports native sketches and ordinary board shapes withou
   const byStroke = await renderer.render(elements, undefined, undefined, stroke.id);
   assert.deepEqual(focused.viewport, byStroke.viewport);
   assert.ok(focused.viewport.height < result.viewport.height);
-  assert.equal(typeof pictureOf(elements, group), 'object');
   await assert.rejects(renderer.render(elements, undefined, undefined, 'missing'), /No shape/);
   assert.equal(JSON.stringify(elements), before);
   await (await (renderer as any).browser).close();

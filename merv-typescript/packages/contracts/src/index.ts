@@ -1077,4 +1077,4 @@ export type {
   GitHubAutomationInput,
 } from './github-models.js';
 
-export { camera as boardCamera, viewSchema as boardViewSchema } from './board-view.js';
+export { camera as boardCamera, viewSchema as boardViewSchema, pictured } from './board-view.js';

@@ -1,4 +1,4 @@
-import { MervError, type Caller } from '@merv/contracts';
+import { MervError, type Caller, type Data } from '@merv/contracts';
 import { z, type ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type {
@@ -95,7 +95,7 @@ const RULE =
  * runs as aliases from each action's `was`. Whether a call reads is its action's.
  */
 export function noun(name: string, definition: NounDefinition): ToolDefinition {
-  const { actions } = definition;
+  const { actions, legacy } = definition;
   const description = definition.description + RULE;
   if (description.length > 600)
     throw new MervError('invalid_tool', `${name}'s summary is over 600 characters`);
@@ -108,7 +108,15 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   return {
     name,
     description,
-    inputSchema: nounInput(actions),
+    // A kept name's old flat call (no action) runs as the action it names.
+    inputSchema: legacy
+      ? z.preprocess((value) => {
+          const flat = value && typeof value === 'object' && !Array.isArray(value);
+          if (!flat || 'action' in value) return value;
+          const action = legacy.action(value as Data);
+          return { action, [action]: value };
+        }, nounInput(actions))
+      : nounInput(actions),
     readOnly,
     ...(!readOnly &&
       reading.length > 0 && {
@@ -117,7 +125,8 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
     ...(openWorld && { openWorld }),
     tier: definition.tier ?? 'deferred',
     ...(definition.for && { for: definition.for }),
-    worker: 'never',
+    // A kept name stays a leased worker's, listed its old input (legacy).
+    ...(legacy ? { legacy } : { worker: 'never' as const }),
     actions,
     ...(definition.removed && { removed: definition.removed }),
     handler: async (caller, input: Record<string, unknown> & { action: string }) =>

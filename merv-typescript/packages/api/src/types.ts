@@ -47,6 +47,9 @@ export interface NounDefinition {
   for?: 'people' | 'conversations';
   /** Retired names with no executable path, by the action that remains. */
   removed?: Record<string, string>;
+  /** A name the noun keeps (§2.6): a call without action is its old flat input, run as the action
+   *  it names, and a leased session is listed that input and text, as before. */
+  legacy?: { input: ZodTypeAny; description: string; action(input: Data): string };
 }
 
 /** A tool whose handler receives the input its schema parsed. */
@@ -91,6 +94,8 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** Retired names with no executable path, each answering tool_renamed with what remains: the
    *  action of this tool that took its place. */
   removed?: Record<string, string>;
+  /** A kept name's old flat input and text, as a leased session is listed them (NounDefinition). */
+  legacy?: NounDefinition['legacy'];
 }
 /** How one call is known to rules keyed on a tool's name, whatever form it took: an alias as the
  *  noun action it runs, a noun call as its own action, with that action's arguments flat. `as` is

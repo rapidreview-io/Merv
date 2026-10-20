@@ -48,6 +48,11 @@ const dispatch = (enabled: boolean): Step[] => [
     say: `I’ve ${enabled ? 'started' : 'paused'} dispatch. ${enabled ? 'Agents take new work again' : 'Agents take no new work; work already leased keeps running'}.`,
   },
 ];
+/** One action of a noun tool, its arguments under its own name. */
+const act = (tool: string, action: string, input: object): Step => ({
+  call: tool,
+  input: { action, [action]: input },
+});
 /** The first record of a list the agent was shown, whole or as its index. */
 const newest = (shown: unknown) =>
   ((Array.isArray(shown) ? shown : (shown as { index?: unknown[] })?.index)?.[0] as { id?: string })
@@ -55,124 +60,118 @@ const newest = (shown: unknown) =>
 function plan(asked: string, read: (tool: string) => unknown): Step[] {
   if (/pause/i.test(asked)) return dispatch(false);
   if (/\brose\b/i.test(asked)) {
-    const drawn = read('board.draw') as { board?: { id: string } } | undefined;
+    const drawn = read('board.write') as { board?: { id: string } } | undefined;
     return [
-      {
-        call: 'board.draw',
-        input: {
-          title: 'A rose',
-          ops: [
-            {
-              op: 'sketch',
-              key: 'rose',
-              size: 'l',
-              strokes: [
-                {
-                  path: 'M50 10 C 25 5, 15 30, 25 45 C 30 55, 70 55, 75 45 C 85 30, 75 5, 50 10 Z',
-                  fill: 'red',
-                  color: 'red',
-                },
-                {
-                  path: 'M25 45 C 20 60, 40 70, 50 62 C 40 60, 30 55, 25 45 Z',
-                  fill: 'pink',
-                  color: 'red',
-                },
-                {
-                  path: 'M75 45 C 80 60, 60 70, 50 62 C 60 60, 70 55, 75 45 Z',
-                  fill: 'pink',
-                  color: 'red',
-                },
-                {
-                  path: 'M50 22 C 40 22, 38 35, 50 38 C 60 40, 62 28, 54 26 C 48 25, 46 31, 51 32',
-                  color: 'red',
-                },
-                { path: 'M50 62 C 48 90, 52 120, 50 160', color: 'green', width: 'bold' },
-                {
-                  path: 'M50 110 C 30 95, 15 105, 20 115 C 30 118, 42 115, 50 110 Z',
-                  fill: 'green',
-                  color: 'green',
-                },
-                {
-                  path: 'M50 130 C 70 115, 85 125, 80 135 C 70 138, 58 135, 50 130 Z',
-                  fill: 'green',
-                  color: 'green',
-                },
-              ],
-            },
-          ],
-        },
-      },
-      ...(drawn?.board ? [{ call: 'screen.show', input: { record: drawn.board.id } }] : []),
+      act('board.write', 'draw', {
+        title: 'A rose',
+        ops: [
+          {
+            op: 'sketch',
+            key: 'rose',
+            size: 'l',
+            strokes: [
+              {
+                path: 'M50 10 C 25 5, 15 30, 25 45 C 30 55, 70 55, 75 45 C 85 30, 75 5, 50 10 Z',
+                fill: 'red',
+                color: 'red',
+              },
+              {
+                path: 'M25 45 C 20 60, 40 70, 50 62 C 40 60, 30 55, 25 45 Z',
+                fill: 'pink',
+                color: 'red',
+              },
+              {
+                path: 'M75 45 C 80 60, 60 70, 50 62 C 60 60, 70 55, 75 45 Z',
+                fill: 'pink',
+                color: 'red',
+              },
+              {
+                path: 'M50 22 C 40 22, 38 35, 50 38 C 60 40, 62 28, 54 26 C 48 25, 46 31, 51 32',
+                color: 'red',
+              },
+              { path: 'M50 62 C 48 90, 52 120, 50 160', color: 'green', width: 'bold' },
+              {
+                path: 'M50 110 C 30 95, 15 105, 20 115 C 30 118, 42 115, 50 110 Z',
+                fill: 'green',
+                color: 'green',
+              },
+              {
+                path: 'M50 130 C 70 115, 85 125, 80 135 C 70 138, 58 135, 50 130 Z',
+                fill: 'green',
+                color: 'green',
+              },
+            ],
+          },
+        ],
+      }),
+      ...(drawn?.board ? [act('screen.read', 'show', { record: drawn.board.id })] : []),
       { say: drawn?.board ? 'Here is a rose.' : 'I could not draw it.' },
     ];
   }
   if (/\bboard\b/i.test(asked) && /\b(look|see)\b/i.test(asked)) {
     const board = (read('board.read') as { boards?: { id: string }[] } | undefined)?.boards?.[0];
-    const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;
+    const seen = (read('screen.read') as { seen?: string } | undefined)?.seen;
     return [
       { call: 'board.read', input: {} },
-      { call: 'screen.look', input: { question: asked, at: { record: board?.id ?? 'none' } } },
+      act('screen.read', 'look', { question: asked, at: { record: board?.id ?? 'none' } }),
       { say: seen ?? 'I could not see the board.' },
     ];
   }
   if (/\bboard\b/i.test(asked)) {
-    const drawn = read('board.draw') as { board?: { id: string; title: string } } | undefined;
+    const drawn = read('board.write') as { board?: { id: string; title: string } } | undefined;
     return [
-      {
-        call: 'board.draw',
-        input: {
-          title: 'Calibration ideas',
-          ops: [
-            { op: 'text', key: 'h', text: 'Keep the LEDGAR gain, lose no calibration', size: 'l' },
-            { op: 'note', key: 'a', text: 'Temperature per head, fit on dev only', near: 'h' },
-            {
-              op: 'note',
-              key: 'b',
-              text: 'KL to the base on general replay',
-              color: 'blue',
-              near: 'a',
-            },
-            {
-              op: 'note',
-              key: 'c',
-              text: 'LoRA instead of last-block updates',
-              color: 'green',
-              near: 'b',
-            },
-            { op: 'frame', key: 'f', title: 'Methods to try', holds: ['a', 'b', 'c'] },
-            {
-              op: 'flow',
-              nodes: [
-                { key: 'base', text: 'Base model' },
-                { key: 'adapt', text: 'Adapt on LEDGAR' },
-                { key: 'eval', text: 'Fresh holdouts', shape: 'diamond' },
-              ],
-              edges: [
-                { from: 'base', to: 'adapt' },
-                { from: 'adapt', to: 'eval', label: 'then' },
-              ],
-            },
-          ],
-        },
-      },
-      ...(drawn?.board ? [{ call: 'screen.show', input: { record: drawn.board.id } }] : []),
+      act('board.write', 'draw', {
+        title: 'Calibration ideas',
+        ops: [
+          { op: 'text', key: 'h', text: 'Keep the LEDGAR gain, lose no calibration', size: 'l' },
+          { op: 'note', key: 'a', text: 'Temperature per head, fit on dev only', near: 'h' },
+          {
+            op: 'note',
+            key: 'b',
+            text: 'KL to the base on general replay',
+            color: 'blue',
+            near: 'a',
+          },
+          {
+            op: 'note',
+            key: 'c',
+            text: 'LoRA instead of last-block updates',
+            color: 'green',
+            near: 'b',
+          },
+          { op: 'frame', key: 'f', title: 'Methods to try', holds: ['a', 'b', 'c'] },
+          {
+            op: 'flow',
+            nodes: [
+              { key: 'base', text: 'Base model' },
+              { key: 'adapt', text: 'Adapt on LEDGAR' },
+              { key: 'eval', text: 'Fresh holdouts', shape: 'diamond' },
+            ],
+            edges: [
+              { from: 'base', to: 'adapt' },
+              { from: 'adapt', to: 'eval', label: 'then' },
+            ],
+          },
+        ],
+      }),
+      ...(drawn?.board ? [act('screen.read', 'show', { record: drawn.board.id })] : []),
       { say: drawn?.board ? `I drew our ideas on ${drawn.board.title}.` : 'I could not draw it.' },
     ];
   }
   if (/screen|looking at/i.test(asked)) {
-    const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;
+    const seen = (read('screen.read') as { seen?: string } | undefined)?.seen;
     return [
-      { call: 'screen.look', input: { question: asked } },
+      act('screen.read', 'look', { question: asked }),
       { say: seen ?? 'I could not see your screen.' },
     ];
   }
   if (/\b(open|pull up)\b/i.test(asked)) {
     const page = /\b(work|files|paper|code)\b page/i.exec(asked)?.[1];
     const first = page ? undefined : newest(read('artifact.list'));
-    const shown = read('screen.show') as { title?: string; said?: string } | undefined;
+    const shown = read('screen.read') as { title?: string; said?: string } | undefined;
     return [
       ...(page ? [] : [{ call: 'artifact.list', input: {} }]),
-      { call: 'screen.show', input: page ? { page } : { record: first ?? 'none' } },
+      act('screen.read', 'show', page ? { page } : { record: first ?? 'none' }),
       { say: shown?.title ? `Here is ${shown.title}.` : (shown?.said ?? 'I could not open it.') },
     ];
   }

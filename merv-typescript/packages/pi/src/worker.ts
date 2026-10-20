@@ -573,10 +573,7 @@ async function executeTurn(
       const canonicalCallId = callId.split('|')[0];
       if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId))
         throw stop(new Error('Invalid tool result'));
-      const visual =
-        tool.name === 'screen.look' || tool.name === 'board.look'
-          ? screenImage(output.result)
-          : null;
+      const visual = screenImage(output.result);
       const result = visual ? visual.metadata : output.result;
       const text = JSON.stringify(result) ?? 'null';
       const size = Buffer.byteLength(text);
@@ -966,7 +963,7 @@ function shorten(entry: Entry, room: number): Entry {
           (part as { type?: string }).type === 'image'
             ? {
                 type: 'text',
-                text: '[Earlier board image omitted; use board.look to inspect it again.]',
+                text: '[Earlier board image omitted; use board.read look to inspect it again.]',
               }
             : typeof part.text === 'string'
               ? { ...part, text: clip(part.text) }

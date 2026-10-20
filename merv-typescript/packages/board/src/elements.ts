@@ -191,7 +191,7 @@ export class Drawing {
     if (this.group(ref).length)
       throw new MervError(
         'board_group_operation',
-        'This is a group handle. Use move, delete, frame holds, near, or board.look focus; edit and arrow require an individual element ID.',
+        'This is a group handle. Use move, delete, frame holds, near, or board.read look focus; edit and arrow require an individual element ID.',
         400,
       );
     const element = this.elements.get(this.created[ref] ?? ref);

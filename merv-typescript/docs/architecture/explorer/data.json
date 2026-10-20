@@ -551,21 +551,6 @@
       "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins.",
       "exposedTools": [
         {
-          "name": "board.draw",
-          "description": "Use board.look to confirm the drawing and visual details match the intended outcome. All operations in a call are atomic: if any fails, nothing in that call is created or changed. Correct the failed operation and retry the batch. Arrow endpoints must be individual shape IDs, not sketch-group handles; use sketch strokes for arrows between freehand drawings. Keys name new objects within this call only; later calls must use the IDs returned in created. Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond; color sets a fill with no outline, including white; omit color for a visible outlined box; optional width, height and fontSize 8–96; dimensions grow to fit text; use small fontSize for dense reference diagrams; text may be empty), text (a heading or label; size s, m or l; optional fontSize 8–96 overrides size; optional color), link (a card that opens target: a Merv record id or a web address; text is what it says; optional details contains title, text, caller-supplied preview {title, description}, and/or artifactId shown in a persistent popup), arrow (from and to shapes, an optional label and fontSize 8–96), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (precise native Excalidraw lines with fixed widths and zero roughness: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Use size native to preserve distances in board units, or s, m or l to fit a preset size. With size native, at is the path origin: a point [x,y] lands at [at.x+x,at.y+y], including negative coordinates. With preset sizes, at places the bounding box top-left. A sketch returns a group ID: move and delete affect every stroke; board.look focus inspects the whole group. Colors accept palette names or #RRGGBB; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape or sketch-group id. With title and no board it starts a new board; with board and title it renames it.",
-          "readOnly": false
-        },
-        {
-          "name": "board.look",
-          "description": "See an actual Excalidraw image of a board without the user’s screen. Optional focus fits a shape, sketch group or frame. Optional view controls fit, region (x, y, width, height in board units), pan (dx, dy), or zoom (factor, optional center). Within a conversation, omitted view preserves its last camera; use fit to see the whole board again. Outside a conversation, each call starts fitted unless a region or focus is supplied. Does not change the board.",
-          "readOnly": true
-        },
-        {
-          "name": "board.read",
-          "description": "Read the project's whiteboards. Without board: every board, newest first. With board: its frames, its shapes (notes, boxes, text, link cards with the record or address they open, freehand drawings) with their ids, text and rough place, and its arrows with the shapes they join. Shape ids are what board.draw's operations name.",
-          "readOnly": true
-        },
-        {
           "name": "board.save",
           "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
           "readOnly": false
@@ -600,21 +585,6 @@
       "label": "Board · tools adapter",
       "purpose": "Connects Board to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
-        {
-          "name": "board.draw",
-          "description": "Use board.look to confirm the drawing and visual details match the intended outcome. All operations in a call are atomic: if any fails, nothing in that call is created or changed. Correct the failed operation and retry the batch. Arrow endpoints must be individual shape IDs, not sketch-group handles; use sketch strokes for arrows between freehand drawings. Keys name new objects within this call only; later calls must use the IDs returned in created. Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond; color sets a fill with no outline, including white; omit color for a visible outlined box; optional width, height and fontSize 8–96; dimensions grow to fit text; use small fontSize for dense reference diagrams; text may be empty), text (a heading or label; size s, m or l; optional fontSize 8–96 overrides size; optional color), link (a card that opens target: a Merv record id or a web address; text is what it says; optional details contains title, text, caller-supplied preview {title, description}, and/or artifactId shown in a persistent popup), arrow (from and to shapes, an optional label and fontSize 8–96), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (precise native Excalidraw lines with fixed widths and zero roughness: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Use size native to preserve distances in board units, or s, m or l to fit a preset size. With size native, at is the path origin: a point [x,y] lands at [at.x+x,at.y+y], including negative coordinates. With preset sizes, at places the bounding box top-left. A sketch returns a group ID: move and delete affect every stroke; board.look focus inspects the whole group. Colors accept palette names or #RRGGBB; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape or sketch-group id. With title and no board it starts a new board; with board and title it renames it.",
-          "readOnly": false
-        },
-        {
-          "name": "board.look",
-          "description": "See an actual Excalidraw image of a board without the user’s screen. Optional focus fits a shape, sketch group or frame. Optional view controls fit, region (x, y, width, height in board units), pan (dx, dy), or zoom (factor, optional center). Within a conversation, omitted view preserves its last camera; use fit to see the whole board again. Outside a conversation, each call starts fitted unless a region or focus is supplied. Does not change the board.",
-          "readOnly": true
-        },
-        {
-          "name": "board.read",
-          "description": "Read the project's whiteboards. Without board: every board, newest first. With board: its frames, its shapes (notes, boxes, text, link cards with the record or address they open, freehand drawings) with their ids, text and rough place, and its arrows with the shapes they join. Shape ids are what board.draw's operations name.",
-          "readOnly": true
-        },
         {
           "name": "board.save",
           "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
@@ -1560,16 +1530,6 @@
           "name": "pi.warm",
           "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
           "readOnly": false
-        },
-        {
-          "name": "screen.look",
-          "description": "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. For JPEG, PNG or WebP reference artifacts, set at.record to the artifact ID to see actual pixels; do not read base64 text or request a download. Use view region to inspect detail in source pixels. The legacy at.record board route remains supported.",
-          "readOnly": true
-        },
-        {
-          "name": "screen.show",
-          "description": "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. focus (a board's shape or frame id) opens it zoomed to that part. It only navigates; their back button returns them. Answers where it went, or why it could not.",
-          "readOnly": true
         }
       ]
     },
@@ -1669,16 +1629,6 @@
           "name": "pi.warm",
           "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
           "readOnly": false
-        },
-        {
-          "name": "screen.look",
-          "description": "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. For JPEG, PNG or WebP reference artifacts, set at.record to the artifact ID to see actual pixels; do not read base64 text or request a download. Use view region to inspect detail in source pixels. The legacy at.record board route remains supported.",
-          "readOnly": true
-        },
-        {
-          "name": "screen.show",
-          "description": "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. focus (a board's shape or frame id) opens it zoomed to that part. It only navigates; their back button returns them. Answers where it went, or why it could not.",
-          "readOnly": true
         }
       ]
     },

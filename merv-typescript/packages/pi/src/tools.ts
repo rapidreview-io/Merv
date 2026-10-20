@@ -1,7 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
-import type { Caller } from '@merv/contracts';
+import { pictured, type Caller } from '@merv/contracts';
 import type {} from './types.js';
 import {
   createInput,
@@ -70,41 +70,6 @@ export const piToolsPlugin = {
         handler: (caller: Caller, input: unknown) => ctx.pi.warm(caller, input),
       },
       {
-        name: 'screen.look',
-        description:
-          "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. For JPEG, PNG or WebP reference artifacts, set at.record to the artifact ID to see actual pixels; do not read base64 text or request a download. Use view region to inspect detail in source pixels. The legacy at.record board route remains supported.",
-        inputSchema: lookInput,
-        readOnly: true,
-        worker: 'never' as const,
-        // Pi's conversations' own: no MCP client is listed it.
-        for: 'conversations' as const,
-        // Waits on the person's page, Cloudflare and the model, then writes its charge: no snapshot.
-        openWorld: true,
-        handler: (caller: Caller, input: unknown) => ctx.pi.look(caller, input),
-        present: (value: unknown) => {
-          const { image, ...metadata } = value as import('./types.js').ScreenLook;
-          return {
-            content: [
-              { type: 'text' as const, text: JSON.stringify(metadata) },
-              ...(image ? [{ type: 'image' as const, ...image }] : []),
-            ],
-          };
-        },
-      },
-      {
-        name: 'screen.show',
-        description:
-          "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. focus (a board's shape or frame id) opens it zoomed to that part. It only navigates; their back button returns them. Answers where it went, or why it could not.",
-        inputSchema: showInput,
-        readOnly: true,
-        worker: 'never' as const,
-        // Pi's conversations' own: no MCP client is listed it.
-        for: 'conversations' as const,
-        // Waits on the person's page, holding no read snapshot meanwhile.
-        openWorld: true,
-        handler: (caller: Caller, input: unknown) => ctx.pi.show(caller, input),
-      },
-      {
         name: 'pi.screen',
         description:
           "Answer your agent's ask of your screen: a snapshot of this page for a look, or where it went for a show (sent by the page itself).",
@@ -149,9 +114,37 @@ export const piToolsPlugin = {
     ];
     // Pi's page's own (pi.*): no agent is listed them.
     for (const definition of definitions)
-      ctx.effect(() =>
-        ctx.tools.register({ ...definition, tier: definition.for ? 'deferred' : 'ui' }),
-      );
+      ctx.effect(() => ctx.tools.register({ ...definition, tier: 'ui' }));
+    // Pi's conversations' own: no MCP client is listed it. Both wait on the person's page (look
+    // also on Cloudflare and the model, then writes its charge), holding no read snapshot.
+    ctx.effect(() =>
+      ctx.tools.noun('screen.read', {
+        tier: 'core',
+        for: 'conversations',
+        readOnly: true,
+        description:
+          "The person's screen in Merv: look (see the page they are looking at, or a record or page without navigating them) and show (put a record or a page on their screen, as following a link would).",
+        actions: {
+          look: {
+            description:
+              "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. For JPEG, PNG or WebP reference artifacts, set at.record to the artifact ID to see actual pixels; do not read base64 text or request a download. Use view region to inspect detail in source pixels. The legacy at.record board route remains supported.",
+            input: lookInput,
+            openWorld: true,
+            was: ['screen.look'],
+            handler: (caller: Caller, input: unknown) => ctx.pi.look(caller, input),
+            present: pictured,
+          },
+          show: {
+            description:
+              "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. focus (a board's shape or frame id) opens it zoomed to that part. It only navigates; their back button returns them. Answers where it went, or why it could not.",
+            input: showInput,
+            openWorld: true,
+            was: ['screen.show'],
+            handler: (caller: Caller, input: unknown) => ctx.pi.show(caller, input),
+          },
+        },
+      }),
+    );
   },
 };
 export default piToolsPlugin;

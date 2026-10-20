@@ -30,7 +30,7 @@ function BoardList({ row }: ViewProps) {
   const [busy, setBusy] = useState(false);
   const start = async () => {
     setBusy(true);
-    const made = await call<{ board: BoardSummary }>('board.draw', {
+    const made = await call<{ board: BoardSummary }>('board.write:draw', {
       title: 'Untitled board',
     }).catch(() => null);
     setBusy(false);

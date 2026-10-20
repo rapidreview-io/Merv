@@ -2112,6 +2112,6 @@ test('repeated large board.look images stay bounded in relay history and saved c
   assert.ok(Buffer.byteLength(app.completions[0].checkpoint) < 2000000);
   assert.match(
     encoded,
-    /Earlier image omitted; use screen.look for the reference or board.look for the drawing/,
+    /Earlier image omitted; use screen.read look for the reference or board.read look for the drawing/,
   );
 });

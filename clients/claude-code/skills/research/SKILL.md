@@ -82,8 +82,8 @@ yourself. `task.get` returns Merv's guidance for a task.
   to the signed URL it returns, then `artifact.upload_complete`. Do not base64 a large file into
   artifact.create.
 - `artifact.get` reads metadata, `artifact.read` reads content, `artifact.list` lists files.
-- `record.look` shows a board or a JPEG, PNG or WebP image artifact as an image;
-  `board.read` says what a board's shapes say.
+- `record.look` shows a JPEG, PNG or WebP image artifact as an image. `board.read` with action
+  `get` says what a board's shapes say, and with `look` shows the board as an image.
 
 Artifacts are immutable: a corrected file is a new artifact.
 

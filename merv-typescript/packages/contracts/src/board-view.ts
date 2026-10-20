@@ -56,3 +56,15 @@ export function camera(bounds: Region, current?: Region, view?: View): Region {
   const [x, y] = view.center ?? [base.x + base.width / 2, base.y + base.height / 2];
   return { x: x - width / 2, y: y - height / 2, width, height };
 }
+
+/** A look (a board's, an image's, the screen's) as an agent is shown it: its image as an image, the
+ *  rest as text. */
+export const pictured = (value: unknown) => {
+  const { image, ...metadata } = value as { image?: { data: string; mimeType: string } };
+  return {
+    content: [
+      { type: 'text' as const, text: JSON.stringify(metadata) },
+      ...(image ? [{ type: 'image' as const, ...image }] : []),
+    ],
+  };
+};

@@ -820,6 +820,55 @@
         "status": 403,
         "error": "forbidden"
       }
+    },
+    "board.read": {
+      "input": {},
+      "owner": {
+        "ok": ["boards"]
+      },
+      "reader": {
+        "ok": ["boards"]
+      }
+    },
+    "board.read#get": {
+      "input": {
+        "board": "$board"
+      },
+      "owner": {
+        "ok": ["arrows", "board", "frames", "shapes"]
+      },
+      "reader": {
+        "ok": ["arrows", "board", "frames", "shapes"]
+      }
+    },
+    "board.look": {
+      "input": {
+        "board": "$board"
+      },
+      "owner": {
+        "ok": ["height", "image", "path", "viewport", "width"]
+      },
+      "reader": {
+        "ok": ["height", "image", "path", "viewport", "width"]
+      }
+    },
+    "board.draw": {
+      "input": {
+        "board": "$board",
+        "ops": [
+          {
+            "op": "note",
+            "text": "Captured"
+          }
+        ]
+      },
+      "owner": {
+        "ok": ["board", "changed", "created"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
     }
   }
 }

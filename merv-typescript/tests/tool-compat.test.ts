@@ -64,10 +64,13 @@ const retired = {
     'experiment.attach',
     'experiment.transition',
   ],
+  board: ['board.look', 'board.draw'],
 };
+/** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
+const kept = ['board.read', 'board.read#get'];
 /** Retired with no executable path: they answer tool_renamed. */
 const removed = ['code.local.bind', 'code.repository.rebind'];
-const nouns = ['code.read', 'code.write', 'experiment.read', 'experiment.write'];
+const nouns = ['code.read', 'code.write', 'experiment.read', 'experiment.write', 'board.write'];
 
 /** A result's key shape, as the contract was captured. */
 const shape = (value: unknown): unknown =>
@@ -93,12 +96,15 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     requestId: 'create',
   });
   const experiment = created.body.result;
+  const drawn = await tool('board.write:draw', boot.token, { title: 'Seed', ops: [] });
   const input = (name: string) =>
     JSON.parse(
-      JSON.stringify(captured.contracts[name]!.input).replaceAll('$experiment', experiment.id),
+      JSON.stringify(captured.contracts[name]!.input)
+        .replaceAll('$experiment', experiment.id)
+        .replaceAll('$board', drawn.body.result.board.id),
     ) as Record<string, unknown>;
   const page = async (name: string, token: string, body = input(name)): Promise<Outcome> => {
-    const { status, body: answer } = await tool(name, token, body);
+    const { status, body: answer } = await tool(name.split('#')[0]!, token, body);
     return status === 200 ? { ok: shape(answer.result) } : { status, error: answer.error?.code };
   };
   const client = new Client({ name: 'compat', version: '1' });
@@ -109,13 +115,15 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   t.after(() => client.close());
   const mcp = async (name: string, args = input(name)) => {
-    const result = await client.callTool({ name, arguments: args });
-    const text = (result.content as { type: string; text: string }[])[0]!.text;
-    const value = JSON.parse(text);
+    const result = await client.callTool({ name: name.split('#')[0]!, arguments: args });
+    const [first, ...rest] = result.content as { type: string; text: string }[];
+    const value = JSON.parse(first!.text);
+    // A look's image comes as an image beside its text, as it always did.
+    if (rest.some((part) => part.type === 'image')) value.image = true;
     return result.isError ? { error: value.error.code as string } : { ok: shape(value) };
   };
 
-  for (const name of [...retired.code, ...retired.experiment]) {
+  for (const name of [...retired.code, ...retired.experiment, ...retired.board, ...kept]) {
     const contract = captured.contracts[name]!;
     assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
     assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
@@ -148,7 +156,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.equal(changed.body.error.code, 'request_conflict');
 
   // What an agent is listed: the base listing with the retired names traded for the nouns.
-  const gone = new Set([...retired.code, ...retired.experiment, ...removed]);
+  const gone = new Set([...retired.code, ...retired.experiment, ...retired.board, ...removed]);
   const traded = (base: string[]) =>
     [...base.filter((name) => !gone.has(name)), ...nouns].sort((a, b) => a.localeCompare(b));
   const listed = (await client.listTools()).tools.map(({ name }) => name);
@@ -181,8 +189,12 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
   const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];
-  for (const name of [...reads, 'experiment.list', 'experiment.get_state', 'experiment.exhibit']) {
-    const outcome = await app.ctx.tools.invoke(name, worker, input(name), true).then(
+  for (const name of [
+    ...reads,
+    ...['experiment.list', 'experiment.get_state', 'experiment.exhibit', 'board.look'],
+    ...kept,
+  ]) {
+    const outcome = await app.ctx.tools.invoke(name.split('#')[0]!, worker, input(name), true).then(
       ({ value }) => ({ ok: shape(value) }),
       (error: { status: number; code: string }) => ({ status: error.status, error: error.code }),
     );
@@ -193,6 +205,8 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   assert.match(shown.get('code.status')!, /^Read retained bases/);
   assert.match(shown.get('code.unit.get')!, /waits for code\.unit\.fence/);
+  // A kept name is shown its old flat input and text.
+  assert.match(shown.get('board.read')!, /^Read the project's whiteboards\. Without board/);
   assert.doesNotMatch(JSON.stringify([...shown.values()]), /code\.(read|write) /);
   // A noun read called by name is a read, admitted as given.
   const status = (await app.ctx.tools.invoke('code.read', worker, { action: 'status' }, true))

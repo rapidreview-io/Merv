@@ -1,4 +1,5 @@
-/** Only native screen.look and board.look images bypass text budgets; other tools keep ordinary JSON. */
+/** A look's image (any tool's result of this shape, by whatever name it was called) bypasses text
+ *  budgets; every other result keeps ordinary JSON. */
 export function screenImage(
   result: unknown,
 ): { image: { data: string; mimeType: 'image/jpeg' }; metadata: Record<string, unknown> } | null {
@@ -53,7 +54,7 @@ export function recentImages<T extends { role: string }>(messages: T[]): T[] {
         part.type === 'image' && !keep.has(part)
           ? {
               type: 'text',
-              text: '[Earlier image omitted; use screen.look for the reference or board.look for the drawing to inspect it again.]',
+              text: '[Earlier image omitted; use screen.read look for the reference or board.read look for the drawing to inspect it again.]',
             }
           : part,
       ),

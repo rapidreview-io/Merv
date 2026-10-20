@@ -1123,11 +1123,13 @@ test('a worker is not shown the reads that answer only a person, which still ref
     'pi.list',
     'pi.snapshot',
     'pi.prompt',
-    'screen.look',
-    'screen.show',
+    'screen.read',
   ];
+  // Nor the names screen.read retired, which were never a worker's either.
   assert.deepEqual(
-    [...people, 'profiled.read'].filter((name) => listed.includes(name)),
+    [...people, 'profiled.read', 'screen.look', 'screen.show'].filter((name) =>
+      listed.includes(name),
+    ),
     [],
   );
   for (const name of ['session.messages', 'system.status', 'actor.whoami'])

@@ -173,6 +173,8 @@ interface Entry {
   /** A retired name: the action it runs, and how its old arguments become that tool's input
    *  (nested: under the action's key, as a noun tool takes them). */
   alias?: { tool: string; action: string; nested: boolean; wrap(input: unknown): unknown };
+  /** A kept name's old flat input and text, which a leased session is listed. */
+  flat?: ToolDescription;
 }
 type Retired = ToolAlias & { gone?: true };
 /** A remote tool's catalog identity, and how its catalog compiles a schema. */
@@ -238,7 +240,7 @@ export class ToolRegistry implements Tools {
     // Schema changes require a new registration, keeping validation paired with its catalog.
     // Tier and whether it only reads (which a session may call, as may a platform reader) are
     // likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversationProfile, actions, reads } = definition;
+    const { inputSchema, conversationProfile, actions, reads, legacy } = definition;
     const readOnly = definition.readOnly === true;
     // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
     const worker = conversationProfile ? 'never' : definition.worker;
@@ -254,6 +256,9 @@ export class ToolRegistry implements Tools {
       description: describeTool({ ...definition, inputSchema, readOnly, tier }),
       ...(definition.inputJsonSchema !== undefined && {
         aliasInput: inputSchema,
+      }),
+      ...(legacy && {
+        flat: describeTool({ ...definition, ...legacy, inputSchema: legacy.input, tier: 'worker' }),
       }),
       tool: {
         name: definition.name,
@@ -575,10 +580,12 @@ export class ToolRegistry implements Tools {
         reads: undefined,
         tier: tier === 'core' ? 'deferred' : tier,
         actions: undefined,
-        worker: nested ? undefined : target.tool.worker,
+        // A noun for people or conversations alone was never a worker's, nor were its names.
+        worker: nested && !target.tool.for ? undefined : target.tool.worker,
       },
       parse,
       alias: { tool: target.name, action, nested: !!nested, wrap },
+      flat: undefined,
     };
   }
 
@@ -752,7 +759,7 @@ export class ToolRegistry implements Tools {
       .map((entry) => {
         // A retired name's text is written as its leased workers know it; everyone else, who is
         // listed the noun tools instead, reads each such name as the noun action it now runs.
-        const description = structuredClone(entry.description);
+        const description = structuredClone((caller?.session && entry.flat) || entry.description);
         if (renamed && !entry.remote) renamed(description);
         // A session's project is fixed by its lease, so a native tool is listed to it without the
         // projectId people choose one with, which every tool would otherwise repeat.

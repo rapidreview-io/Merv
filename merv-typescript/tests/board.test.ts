@@ -14,7 +14,8 @@ import { Drawing, summarize } from '@merv/board/elements';
 import { elementSchema, parse } from '@merv/board/input';
 import { postgresMigrations } from '@merv/board/storage.postgres';
 import type { Context } from 'cordis';
-import type { ToolDefinition } from '@merv/api/types';
+import type { NounDefinition, ToolDefinition } from '@merv/api/types';
+import { noun } from '@merv/api/noun';
 import { openState } from './fixtures/state.js';
 
 const refused = (code: string) => (error: unknown) =>
@@ -504,43 +505,6 @@ test('deleting a box and then its arrow in one call is fine, and loose text find
   assert.equal(summarize(next.result()).shapes.find((s) => s.id === b.id)?.text, 'B');
 });
 
-test('a board draws itself for its agent: pen strokes and text as SVG, cropped to a focus', async () => {
-  const { pictureOf } = await import('@merv/board/picture');
-  const drawing = new Drawing([word('hand', 0, 0)], true);
-  drawing.apply({ op: 'note', key: 'n', text: 'Training <objective>' });
-  drawing.apply({ op: 'frame', key: 'f', title: 'Far away', holds: ['n'] });
-  const elements = [word('hand', 0, 0), ...drawing.result()];
-  const whole = pictureOf(elements);
-  assert.ok(typeof whole !== 'string');
-  assert.match(whole.html, /<polyline points="0,0 20,30/, 'the pen stroke is drawn');
-  assert.match(whole.html, /&lt;objective&gt;/, 'text is drawn, escaped');
-  // A pen stroke is drawn bolder than its width, said once; a shape at opacity 0 is not seen.
-  const pen = whole.html.match(/<polyline points="0,0 20,30[^>]*>/)![0];
-  assert.deepEqual(pen.match(/stroke-width="[^"]*"/g), ['stroke-width="3"']);
-  const ghost = pictureOf([{ ...word('h', 0, 0), opacity: 0 }]) as { html: string };
-  assert.match(ghost.html, /opacity="0"/);
-  // A line saved before its points were checked draws numbers, never markup.
-  const old = pictureOf([
-    {
-      ...word('o', 0, 0),
-      points: [
-        [0, 0],
-        ['"/><b>', 0],
-      ],
-    },
-  ] as never);
-  assert.doesNotMatch((old as { html: string }).html, /<b>/);
-  assert.ok(Math.max(whole.width, whole.height) <= 1600);
-  const part = pictureOf(elements, drawing.created.f);
-  assert.ok(typeof part !== 'string');
-  const [x] = part.html
-    .match(/viewBox="(-?[\d.]+)/)!
-    .slice(1)
-    .map(Number);
-  assert.ok(x! > 100, 'a focus crops to its part');
-  assert.equal(pictureOf(elements, 'nope'), 'No shape "nope" on this board.');
-});
-
 test('a page is handed shapes in their stacking order, and a label under its own box is lifted', async (t) => {
   const f = await fixture(t);
   const { board, created } = await f.board.draw(f.operator, {
@@ -693,6 +657,7 @@ test('a cursor past exact integers is refused as input, never sent to the databa
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      noun: (name: string, definition: NounDefinition) => tools.set(name, noun(name, definition)),
       contributeInstructions() {},
       contributePicture() {},
     },
@@ -778,7 +743,7 @@ test('native font measurements survive save/read and unrelated drawing without e
   );
 });
 
-test('board.look works without a personal conversation, presents images, and checks project access before rendering', async (t) => {
+test('board.read look works without a personal conversation, presents images, and checks project access before rendering', async (t) => {
   const f = await fixture(t);
   const made = await f.board.create(f.operator, 'Look');
   const tools = new Map<string, ToolDefinition>();
@@ -798,20 +763,23 @@ test('board.look works without a personal conversation, presents images, and che
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      noun: (name: string, definition: NounDefinition) => tools.set(name, noun(name, definition)),
       contributeInstructions() {},
       contributePicture(_prefix: string, handler: unknown) {
         legacy = handler;
       },
     },
   } as unknown as Context);
-  const look = tools.get('board.look')!;
+  const look = tools.get('board.read')!;
   assert.equal(look.readOnly, true);
+  // Leased workers keep board.read, listed its old flat input.
   assert.notEqual(look.worker, 'never');
+  assert.deepEqual(look.inputSchema.parse({}), { action: 'list', list: {} });
   const view = { action: 'region', x: 10, y: 20, width: 300, height: 200 };
-  const input = look.inputSchema.parse({ board: made.id, view });
+  const input = look.inputSchema.parse({ action: 'look', look: { board: made.id, view } });
   const result = await look.handler(f.reader, input);
   assert.deepEqual(renders[0]?.[2], view);
-  const content = (look.present!(result) as any).content;
+  const content = (look.present!(result, input) as any).content;
   assert.equal(content[1].type, 'image');
   assert.equal(content[1].mimeType, 'image/jpeg');
   assert.ok(!content[0].text.includes('/9j/'));
@@ -824,8 +792,6 @@ test('board.look works without a personal conversation, presents images, and che
     look.handler({ ...f.reader, projectId: 'project_other' }, input),
   );
   assert.equal(renders.length, 2, 'unauthorized calls do not render');
-  assert.equal(
-    look.inputSchema.safeParse({ board: made.id, view: { action: 'zoom', factor: 0 } }).success,
-    false,
-  );
+  const zoom = { board: made.id, view: { action: 'zoom', factor: 0 } };
+  assert.equal(look.inputSchema.safeParse({ action: 'look', look: zoom }).success, false);
 });

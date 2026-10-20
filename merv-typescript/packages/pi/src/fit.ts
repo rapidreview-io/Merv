@@ -57,7 +57,7 @@ const newest = (value: unknown, count: number, cut: string[], name = 'items'): u
  * it still says the write succeeded, and keeps its ids. */
 export function fit(name: string, result: unknown): unknown {
   // A bounded, validated image is transported as pixels, never clipped as JSON text.
-  if ((name === 'screen.look' || name === 'board.look') && screenImage(result)) return result;
+  if (screenImage(result)) return result;
   // Text a tool reads from an offset (an artifact's, a document section's): a slice, and where
   // to read on.
   const paged = result as { content?: unknown; offset?: unknown } | null;
