@@ -10,7 +10,12 @@ import {
 } from 'jose';
 import { z } from 'zod';
 import { MervError, readCapped, type VerifiedIdentity } from '@merv/contracts';
-import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
+import type {
+  DirectoryUser,
+  IdentityConfig,
+  IdentityConfiguration,
+  IdentityProvider,
+} from './types.js';
 
 const MAX_JWT_BYTES = 16_384;
 const MAX_JWKS_BYTES = 65_536;
@@ -26,9 +31,11 @@ const fields = new Set([
   'secretEnv',
   'publishableKeyEnv',
   'directoryKeyEnv',
+  'directoryAdmin',
   'allowLocalHttp',
 ]);
 const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const userId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const compactJwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null &&
@@ -65,6 +72,17 @@ function publicKey(reference: unknown): string {
     // Neither parsing errors nor the configured value leave this boundary.
   }
   throw invalidConfig();
+}
+
+/** A key the admin API accepts: a secret key, or a legacy JWT whose role is service_role. Only
+ *  the key's class is read here; Supabase verifies it. */
+function serviceKey(value: string): boolean {
+  if (/^sb_secret_[A-Za-z0-9_-]{16,256}$/.test(value)) return true;
+  try {
+    return compactJwt.test(value) && decodeJwt(value).role === 'service_role';
+  } catch {
+    return false;
+  }
 }
 
 /** GET the key set: no redirects or cookies, at most 64 KiB, abandoned when `signal` aborts. */
@@ -194,6 +212,8 @@ export class SupabaseIdentity implements IdentityProvider {
   #clock: () => number;
   #directoryKey?: string;
   #fetch: typeof globalThis.fetch;
+  /** Set only with `directoryAdmin`: the admin API needs a service-role key. */
+  directoryUser?: (subject: string) => Promise<DirectoryUser | null>;
 
   constructor(
     config: IdentityConfig = {},
@@ -209,7 +229,8 @@ export class SupabaseIdentity implements IdentityProvider {
         typeof config.supabaseUrl !== 'string' ||
         config.supabaseUrl.length > 2048 ||
         config.supabaseUrl.trim() !== config.supabaseUrl ||
-        (config.allowLocalHttp !== undefined && typeof config.allowLocalHttp !== 'boolean')
+        (config.allowLocalHttp !== undefined && typeof config.allowLocalHttp !== 'boolean') ||
+        (config.directoryAdmin !== undefined && typeof config.directoryAdmin !== 'boolean')
       )
         throw invalidConfig();
       const url = new URL(config.supabaseUrl);
@@ -227,6 +248,11 @@ export class SupabaseIdentity implements IdentityProvider {
       this.#issuer = `${url.origin}/auth/v1`;
       if (config.directoryKeyEnv !== undefined)
         this.#directoryKey = environment(config.directoryKeyEnv);
+      if (config.directoryAdmin) {
+        // A key that can only call the lookup RPC fails here, not silently at sign-in.
+        if (!this.#directoryKey || !serviceKey(this.#directoryKey)) throw invalidConfig();
+        this.directoryUser = (subject) => this.#adminUser(subject);
+      }
       const mode = config.mode ?? 'jwks';
       if (mode === 'hs256') {
         const secret = environment(config.secretEnv);
@@ -293,6 +319,41 @@ export class SupabaseIdentity implements IdentityProvider {
         'Account lookup is temporarily unavailable',
         503,
       );
+    }
+  }
+
+  /** GET /auth/v1/admin/users/<subject>: no redirects, 5 s, at most 64 KiB; null when the
+   *  directory has no such user, and directory_unavailable for anything it cannot judge. */
+  async #adminUser(subject: string): Promise<DirectoryUser | null> {
+    const unavailable = () =>
+      new MervError('directory_unavailable', 'Account lookup is temporarily unavailable', 503);
+    if (typeof subject !== 'string' || !userId.test(subject)) throw unavailable();
+    try {
+      const response = await this.#fetch(`${this.#issuer}/admin/users/${subject}`, {
+        method: 'GET',
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
+        headers: { apikey: this.#directoryKey!, authorization: `Bearer ${this.#directoryKey}` },
+      });
+      if (response.status === 404) {
+        void response.body?.cancel().catch(() => undefined);
+        return null;
+      }
+      if (response.status !== 200 || !response.body) throw unavailable();
+      const body = await readCapped(response.body.getReader(), MAX_JWKS_BYTES, unavailable);
+      const user: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
+      if (!object(user) || user.id !== subject) throw unavailable();
+      const set = (value: unknown) => typeof value === 'string' && value !== '';
+      return {
+        email: typeof user.email === 'string' ? user.email : '',
+        anonymous: user.is_anonymous !== false,
+        confirmed: set(user.email_confirmed_at),
+        banned:
+          set(user.banned_until) && !(Date.parse(user.banned_until as string) <= this.#clock()),
+        deleted: user.deleted_at !== undefined && user.deleted_at !== null,
+      };
+    } catch {
+      throw unavailable();
     }
   }
 

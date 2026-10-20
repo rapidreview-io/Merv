@@ -701,3 +701,98 @@ test('JWKS refreshes leave no unhandled rejections', async (t) => {
   await settled();
   assert.deepEqual(unhandled, []);
 });
+
+test('agent sign-in reads the admin API only with a service-role directory key', async (t) => {
+  const unsigned = (role: string) =>
+    `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({ role })).toString('base64url')}.c2ln`;
+  const config = (key: string) => ({
+    supabaseUrl: url,
+    mode: 'hs256' as const,
+    secretEnv: environment(t, secret),
+    directoryKeyEnv: environment(t, key),
+    directoryAdmin: true,
+  });
+  for (const key of [
+    unsigned('anon'),
+    unsigned('authenticated'),
+    'sb_publishable_abcdefghijklmnop',
+  ])
+    assert.throws(() => new SupabaseIdentity(config(key)), { code: 'invalid_identity_config' });
+  assert.throws(
+    () =>
+      new SupabaseIdentity({ ...config(unsigned('service_role')), directoryAdmin: 'yes' } as never),
+    {
+      code: 'invalid_identity_config',
+    },
+  );
+  assert.equal(
+    new SupabaseIdentity({ ...config(unsigned('anon')), directoryAdmin: false }).directoryUser,
+    undefined,
+  );
+  assert.ok(new SupabaseIdentity(config('sb_secret_abcdefghijklmnopqrstuv')).directoryUser);
+
+  const subject = '33333333-3333-4333-8333-333333333333';
+  let answer: () => Response = () => new Response('{}');
+  const seen: { url: string; init: RequestInit }[] = [];
+  const identity = new SupabaseIdentity(config(unsigned('service_role')), {
+    clock: () => start,
+    fetch: fetching(async (target, init) => {
+      seen.push({ url: target, init: init! });
+      return answer();
+    }),
+  });
+  const user = (fields: Record<string, unknown>) => () =>
+    new Response(
+      JSON.stringify({
+        id: subject,
+        email: 'Ada@Lab.org',
+        is_anonymous: false,
+        email_confirmed_at: '2026-01-01T00:00:00Z',
+        banned_until: null,
+        ...fields,
+      }),
+    );
+  answer = user({});
+  assert.deepEqual(await identity.directoryUser!(subject), {
+    email: 'Ada@Lab.org',
+    anonymous: false,
+    confirmed: true,
+    banned: false,
+    deleted: false,
+  });
+  assert.equal(seen[0]!.url, `${issuer}/admin/users/${subject}`);
+  assert.equal(seen[0]!.init.redirect, 'error');
+  assert.equal(seen[0]!.init.method, 'GET');
+  answer = user({ email_confirmed_at: null, banned_until: '2999-01-01T00:00:00Z' });
+  assert.deepEqual(await identity.directoryUser!(subject), {
+    email: 'Ada@Lab.org',
+    anonymous: false,
+    confirmed: false,
+    banned: true,
+    deleted: false,
+  });
+  answer = user({ banned_until: '2001-01-01T00:00:00Z', deleted_at: '2026-01-01T00:00:00Z' });
+  assert.equal((await identity.directoryUser!(subject))!.banned, false);
+  assert.equal((await identity.directoryUser!(subject))!.deleted, true);
+  answer = user({ is_anonymous: undefined });
+  assert.equal((await identity.directoryUser!(subject))!.anonymous, true, 'fails closed');
+  answer = () => new Response('{}', { status: 404 });
+  assert.equal(await identity.directoryUser!(subject), null);
+  const failing = [
+    () => new Response('{}', { status: 500 }),
+    () => new Response('', { status: 307, headers: { location: 'https://elsewhere.example' } }),
+    user({ id: '44444444-4444-4444-8444-444444444444' }),
+    () => new Response('x'.repeat(70_000)),
+    () => {
+      throw new TypeError('fetch failed: redirect mode is set to error');
+    },
+  ];
+  for (const failure of failing) {
+    answer = failure;
+    await assert.rejects(identity.directoryUser!(subject), {
+      code: 'directory_unavailable',
+      status: 503,
+    });
+  }
+  await assert.rejects(identity.directoryUser!('../admin'), { code: 'directory_unavailable' });
+});

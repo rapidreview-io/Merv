@@ -12,6 +12,18 @@ export interface IdentityProvider {
   verify(token: string, options?: { allowAnonymous?: boolean }): Promise<VerifiedIdentity>;
   configuration(): IdentityConfiguration;
   findUserByEmail?(email: string): Promise<{ issuer: string; subject: string } | null>;
+  /** The directory's administrative record of one user, null when it has none; present only where
+   *  the directory key is a service-role key (`directoryAdmin`). */
+  directoryUser?(subject: string): Promise<DirectoryUser | null>;
+}
+
+/** What the directory says about one account, as agent sign-in needs it. */
+export interface DirectoryUser {
+  email: string;
+  anonymous: boolean;
+  confirmed: boolean;
+  banned: boolean;
+  deleted: boolean;
 }
 
 /** Trusted deployment configuration; secrets are environment references only. */
@@ -21,6 +33,8 @@ export interface IdentityConfig {
   secretEnv?: string;
   publishableKeyEnv?: string;
   directoryKeyEnv?: string;
+  /** The directory key must be a service-role key, which reads the admin API (agent sign-in). */
+  directoryAdmin?: boolean;
   allowLocalHttp?: boolean;
 }
 
