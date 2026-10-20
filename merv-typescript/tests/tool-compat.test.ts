@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller } from '@merv/contracts';
+import { taskToolsPlugin } from '../packages/tasks/src/tools.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
 import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
@@ -411,4 +412,131 @@ test('a Pi turn frozen with a retired name before the release still calls it', a
   const next = (await f.begun(f.operator)).work.tools.map(({ name }) => name);
   assert.ok(next.includes('code.read'));
   assert.ok(!next.includes('code.files'));
+});
+
+test('a frozen Pi task.get returns executable task.mark_failed guidance with flat arguments', async (t) => {
+  const f = await piFixture(t);
+  const args = { taskId: 'task_frozen', expectedRevision: 0 };
+  const reached: unknown[] = [];
+  const before = ['task.get', 'task.mark_failed'].map((name) =>
+    f.tools.register({
+      name,
+      description: name,
+      readOnly: name === 'task.get',
+      inputSchema: z
+        .object({
+          taskId: z.string(),
+          expectedRevision: z.number().optional(),
+          reason: z.string().optional(),
+          requestId: z.string().optional(),
+        })
+        .strict(),
+      handler: () => ({}),
+    }),
+  );
+  const bound = await f.begun(f.operator);
+  assert.ok(bound.work.tools.some(({ name }) => name === 'task.mark_failed'));
+  await Promise.all([...before, f.removeTaskCreate].map((remove) => remove()));
+  taskToolsPlugin.apply({
+    tools: f.tools,
+    effect: (fn: () => unknown) => fn(),
+    tasks: {
+      get: async () => ({
+        guidance: { nextAction: { tool: 'task.write:mark_failed', arguments: args } },
+      }),
+      markFailed: async (_caller: Caller, input: unknown) => {
+        reached.push(input);
+        return { stopped: true };
+      },
+    },
+  } as unknown as Context);
+  const call = (name: string, input: object) =>
+    f.pi.tool(bound.token, { ...bound.input, name, input });
+  const old = (await call('task.get', { taskId: args.taskId })) as any;
+  assert.deepEqual(old.guidance.nextAction, { tool: 'task.mark_failed', arguments: args });
+  const input = {
+    ...old.guidance.nextAction.arguments,
+    reason: 'Cannot continue',
+    requestId: 'stop',
+  };
+  assert.deepEqual(await call(old.guidance.nextAction.tool, input), { stopped: true });
+  assert.deepEqual(reached, [input]);
+  await assert.rejects(call('task.write', { action: 'mark_failed', mark_failed: input }), {
+    code: 'pi_tool_forbidden',
+  });
+  const noun = (await f.tools.call('task.read', f.operator, {
+    action: 'get',
+    get: { taskId: args.taskId },
+  })) as any;
+  assert.deepEqual(noun.guidance.nextAction, {
+    tool: 'task.write',
+    arguments: { action: 'mark_failed', mark_failed: args },
+  });
+});
+
+test('an operator MCP caller can still open reports by name and legacy task reads keep flat guidance', async (t) => {
+  const { app, tool } = await httpApp(t, 'merv-cached-research-');
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Compatibility',
+    actorName: 'Owner',
+  });
+  const owner: Caller = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  await waitForManagedCode(app.ctx.codeWork, owner);
+  const client = new Client({ name: 'compat', version: '1' });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${app.ctx.api.url}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${boot.token}` } },
+    }),
+  );
+  t.after(() => client.close());
+  const experiment = (
+    await tool('experiment.create', boot.token, {
+      name: 'Report',
+      intent: 'Check the report.',
+      requestId: 'experiment',
+    })
+  ).body.result;
+  // The operator's cached report.open still reaches Reports, though MCP no longer lists it.
+  const subject = { subjectKind: 'experiment', subjectId: experiment.id };
+  const opens: unknown[] = [];
+  app.ctx.reports.open = async (caller, input) => {
+    assert.equal(caller.actorId, owner.actorId);
+    opens.push(input);
+    return { reportId: 'compat_report' } as never;
+  };
+  const opened = await client.callTool({ name: 'report.open', arguments: subject });
+  assert.ok(!opened.isError);
+  assert.deepEqual(opens, [subject]);
+  assert.ok(!(await client.listTools()).tools.some(({ name }) => name === 'report.open'));
+
+  const created = await tool('task.create', boot.token, {
+    title: 'Stop',
+    goal: 'Check guidance.',
+    checks: ['Checked.'],
+    requestId: 'task',
+  });
+  const task = created.body.result;
+  const marking = (value: any) =>
+    value.guidance.actions.find((step: any) => step.action === 'mark_failed');
+  assert.equal(marking(task).tool, 'task.mark_failed');
+  const legacy = await tool('task.get', boot.token, { taskId: task.id });
+  assert.deepEqual(marking(legacy.body.result).arguments, {
+    taskId: task.id,
+    expectedRevision: task.workflow.revision,
+  });
+  const modern = await client.callTool({
+    name: 'task.read',
+    arguments: { action: 'get', get: { taskId: task.id } },
+  });
+  assert.ok(!modern.isError);
+  const value = JSON.parse((modern.content as { text: string }[])[0]!.text);
+  assert.deepEqual(marking(value).arguments, {
+    action: 'mark_failed',
+    mark_failed: marking(task).arguments,
+  });
+  assert.equal(marking(value).tool, 'task.write');
 });

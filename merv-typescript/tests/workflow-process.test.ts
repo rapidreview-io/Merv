@@ -257,7 +257,7 @@ test('one derivation serves an experiment instance and a reflection instance', a
     assert.deepEqual(
       [
         ...new Set(
-          pinned.edges.filter((edge) => edge.tool === 'review.write').map((edge) => edge.from),
+          pinned.edges.filter((edge) => edge.tool === 'review.submit').map((edge) => edge.from),
         ),
       ].sort(),
       workflow === 'experiment' ? ['design_review', 'experiment_review'] : ['in_review'],

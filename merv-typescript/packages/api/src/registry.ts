@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
@@ -824,8 +825,9 @@ export class ToolRegistry implements Tools {
     return { entry, input: { action, [action]: input } };
   }
 
+  private readonly flatGuidance = new AsyncLocalStorage<boolean>();
   guidance<T>(caller: Caller, value: T): T {
-    return presented(this, caller, value);
+    return presented(this, caller, value, !!caller.session || this.flatGuidance.getStore());
   }
 
   identity(name: string, input: unknown): ToolIdentity | undefined {
@@ -999,7 +1001,11 @@ export class ToolRegistry implements Tools {
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
           const run = async () => {
             if (!prepared && !entry.remote) await this.scope.require(activeCaller, 'read');
-            return await entry.definition.handler(activeCaller, parsed);
+            // Nested reads retain the outer caller's vocabulary, including service-bound guidance.
+            return await this.flatGuidance.run(
+              this.flatGuidance.getStore() ?? (!!entry.alias || !identity.action),
+              () => entry.definition.handler(activeCaller, parsed),
+            );
           };
           const result = this.readScope && snapshot ? await this.readScope(run) : await run();
           rules?.returns?.(result);

@@ -668,7 +668,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean, research = false)
         states: lens ? ['reflecting'] : ['reflecting', 'synthesizing', 'in_review'],
         transitions: ['abandon'],
         suggested: false,
-        tool: 'reflection.end',
+        tool: 'reflection.write:end',
         instruction: lens
           ? 'A lens ends only with its wave.'
           : 'Abandon this wave when it cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it and new tasks and experiments may start again. Requires a specific reason. This is terminal.',

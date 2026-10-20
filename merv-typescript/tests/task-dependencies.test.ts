@@ -319,7 +319,7 @@ test('failed prerequisites recommend authorized explicit withdrawal; failures ne
       const blocked = await f.get(b);
       assert.equal(blocked.dependencies[0].failed, true);
       assert.equal(blocked.dependencies[0].settled, false);
-      assert.equal(blocked.guidance.nextAction?.tool, 'task.mark_failed');
+      assert.equal(blocked.guidance.nextAction?.tool, 'task.write:mark_failed');
       assert.equal(blocked.guidance.nextAction?.status, 'needs_input');
       assert.equal(blocked.workflow.state, 'in_progress');
       const beforePreflight = await snapshot(f.app, f.operator);

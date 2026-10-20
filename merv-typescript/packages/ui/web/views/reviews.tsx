@@ -462,6 +462,7 @@ function Controls({
   });
   if (readOnly()) return null;
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
+  // Polls from an open page may still name review.start/review.submit with flat arguments.
   const start = calling(guidance.data.actions, 'review.write:start');
   const submit = calling(guidance.data.actions, 'review.write:submit');
   // A claimed review answers `needs_input`: the verdict this desk exists to supply.

@@ -93,7 +93,7 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
         // Never the suggested move: ending is what you reach for when the work cannot
         // go on, and the engine offers it by name when a prerequisite has died.
         suggested: false,
-        tool: 'research.end',
+        tool: 'research.write:end',
         instruction:
           'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal. While the cycle is still defining or researching, research.replan reselects its work instead.',
         requiredInput: ['outcome', 'reason'],
@@ -116,7 +116,7 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
           ...(stage === 'reflecting' ? ['complete'] : []),
           ...(stage === 'consolidating' ? ['reinject'] : []),
         ],
-        tool: 'research.advance',
+        tool: 'research.write:advance',
         instruction: instructions[stage],
         arguments: (context: WorkflowCheckContext) => ({
           researchId: context.snapshot.id,

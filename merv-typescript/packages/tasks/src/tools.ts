@@ -18,6 +18,9 @@ export const taskToolsPlugin = {
   name: 'merv-task-tools',
   inject: ['tools', 'tasks'],
   apply(ctx: Context) {
+    // Guidance names each rule's tool as its caller calls it.
+    const guided = async (caller: Caller, task: Promise<object>) =>
+      ctx.tools.guidance(caller, await task);
     const definitions: ToolDefinition[] = [
       {
         name: 'task.checkpoint',
@@ -33,7 +36,7 @@ export const taskToolsPlugin = {
             requestId,
           })
           .strict(),
-        handler: (caller, input) => ctx.tasks.checkpoint(caller, input),
+        handler: (caller, input) => guided(caller, ctx.tasks.checkpoint(caller, input)),
       },
       {
         name: 'task.context',
@@ -41,7 +44,7 @@ export const taskToolsPlugin = {
         description:
           'Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.',
         inputSchema: z.object({ ...claim, requestId }).strict(),
-        handler: (caller, input) => ctx.tasks.context(caller, input),
+        handler: (caller, input) => guided(caller, ctx.tasks.context(caller, input)),
       },
       {
         name: 'task.submit_delivery',
@@ -71,13 +74,10 @@ export const taskToolsPlugin = {
             requestId,
           })
           .strict(),
-        handler: (caller, input) => ctx.tasks.submitDelivery(caller, input),
+        handler: (caller, input) => guided(caller, ctx.tasks.submitDelivery(caller, input)),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
-    // Guidance names each rule's tool as its caller calls it.
-    const guided = async (caller: Caller, task: Promise<object>) =>
-      ctx.tools.guidance(caller, await task);
     ctx.effect(() =>
       ctx.tools.noun('task.read', {
         tier: 'core',

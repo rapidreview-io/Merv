@@ -46,7 +46,7 @@ export function reviewActions<C extends ReviewActionContext>(owner: {
       name: owner.names.submit,
       states: [...owner.states],
       transitions: [...owner.transitions],
-      tool: 'review.submit',
+      tool: 'review.write:submit',
       instruction: owner.instructions.submit,
       requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
       arguments: async (context: C) => {
@@ -62,7 +62,7 @@ export function reviewActions<C extends ReviewActionContext>(owner: {
     {
       name: owner.names.start,
       states: [...owner.states],
-      tool: 'review.start',
+      tool: 'review.write:start',
       instruction: owner.instructions.start,
       arguments: async (context: C) => ({ reviewId: (await owner.current(context)).id }),
       check: async (context: C) => {

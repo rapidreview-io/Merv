@@ -119,7 +119,7 @@ export async function fixture(
       return project;
     },
   });
-  tools.register({
+  const removeTaskCreate = tools.register({
     name: 'task.create',
     description: 'Create task',
     inputSchema: z.object({}).strict(),
@@ -279,6 +279,7 @@ export async function fixture(
     return pi.complete(bound.token, completion(bound.input, tree));
   };
   return {
+    removeTaskCreate,
     state,
     scope,
     operator,

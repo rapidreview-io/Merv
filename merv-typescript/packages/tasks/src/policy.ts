@@ -218,7 +218,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
         name: 'mark_failed',
         states: ['in_progress', 'in_review'],
         transitions: ['mark_failed'],
-        tool: 'task.mark_failed',
+        tool: 'task.write:mark_failed',
         suggested: false,
         requiredInput: ['reason'],
         arguments: taskArguments,

@@ -14,10 +14,10 @@ export const reviewToolsPlugin = {
   apply(ctx: Context) {
     const reviews = ctx.reviews;
     // The owning domain's verdict rules and return routes travel with the review read or claimed.
-    const guided = async (caller: Caller, review: Promise<ReviewRequest>) => ({
-      ...(await review),
-      ...(await reviews.guide(caller, await review)),
-    });
+    const guided = async (caller: Caller, pending: Promise<ReviewRequest>) => {
+      const review = await pending;
+      return ctx.tools.guidance(caller, { ...review, ...(await reviews.guide(caller, review)) });
+    };
     ctx.effect(() =>
       ctx.tools.noun('review.read', {
         tier: 'core',

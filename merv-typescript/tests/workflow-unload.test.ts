@@ -119,6 +119,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     assert.equal(taskNames.length, 8);
     assert.ok(taskNames.includes('task.write'));
 
+    const nounTask = await call(client, 'task.read', { action: 'get', get: { taskId: task.id } });
     // Hold an admitted task response while Cordis suspends the engine's consumers.
     const taskGet = (await app.ctx.tools.list()).find(
       (tool) => tool.name === 'task.read',
@@ -181,7 +182,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
 
     release.resolve();
     const result = await bounded(pending, 'Admitted task response did not finish');
-    assert.deepEqual(result, task);
+    assert.deepEqual(result, nounTask);
     await bounded(unloading, 'Workflow provider did not finish disposal');
     assert.equal(provider.state, FiberState.DISPOSED);
     assert.equal(adapter.state, FiberState.PENDING);

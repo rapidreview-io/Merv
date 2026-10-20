@@ -160,7 +160,9 @@ async function fixture(t: TestContext) {
     requestId: `verdict-${++seq}`,
   });
   const action = async (caller: Caller, instanceId: string, tool: string) =>
-    (await workflows.evaluate(caller, instanceId)).actions.find((item) => item.tool === tool)!;
+    (await workflows.evaluate(caller, instanceId)).actions.find(
+      (item) => item.tool === tool.replace(/^review\./, 'review.write:'),
+    )!;
   const events = async (reviewId: string, type: string) =>
     (await app.ctx.state.events(project.id)).filter(
       (event) => event.subjectId === reviewId && event.type === type,

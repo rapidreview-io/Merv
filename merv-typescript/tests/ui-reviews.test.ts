@@ -573,3 +573,29 @@ test('a claim the reader may hand back is released on the desk, with a reason', 
   assert.equal(sent[0].reason, 'I cannot finish this review.');
   assert.equal(typeof sent[0].requestId, 'string');
 });
+
+test('the review desk accepts flat guidance from a legacy workflow poll', async (t) => {
+  t.after(async () => await unmount());
+  const guidance = desk('task', 'in_review');
+  const flat = {
+    ...guidance,
+    actions: guidance.actions.map((step) => ({
+      ...step,
+      tool: 'review.submit',
+      arguments: step.arguments.submit,
+    })),
+  };
+  serve('/tools/review.read:get', { body: { result: claimed } });
+  serve('/tools/workflow.status_and_next', { body: { result: flat } });
+  const submitted: Record<string, unknown>[] = [];
+  serve('/tools/review.write:submit', (_, body) => {
+    submitted.push(body);
+    return { body: { result: { id: claimed.id } } };
+  });
+  await mount(page());
+  await settle(10);
+  await reject();
+  await click('Submit verdict');
+  assert.equal(submitted[0]?.reviewId, claimed.id);
+  assert.equal(submitted[0]?.claimId, claimed.claimId);
+});

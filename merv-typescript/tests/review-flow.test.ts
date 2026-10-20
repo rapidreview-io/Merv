@@ -140,7 +140,19 @@ test('a task whose review rounds are used up is offered only what ends it, and i
 
   // A person may claim it by hand now, and is offered only what the engine takes.
   const hand = await f.issue('Hand reviewer', 'reviewer');
+  const pageGuidance = async () => {
+    const response = await f.tool('workflow.status_and_next', hand.token, { instanceId: task.id });
+    assert.equal(response.status, 200);
+    return response.body.result.actions as { tool: string; arguments: Record<string, unknown> }[];
+  };
+  // An already-open review page still uses these exact flat-name predicates.
+  const start = (await pageGuidance()).find((step) => step.tool === 'review.start');
+  assert.deepEqual(start?.arguments, { reviewId: task.reviewId });
   const claimed = await f.tool('review.start', hand.token, { reviewId: task.reviewId });
+  const submit = (await pageGuidance()).find((step) => step.tool === 'review.submit');
+  assert.equal(submit?.arguments.reviewId, task.reviewId);
+  assert.equal(submit?.arguments.claimId, claimed.body.result.claimId);
+  assert.ok(!('action' in submit!.arguments));
   assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
   assert.deepEqual(
     [claimed.body.result.verdicts, claimed.body.result.returns, claimed.body.result.limit],

@@ -266,7 +266,7 @@ export interface Tools {
    *  address `tool:action`. Undefined for an unknown name. */
   identity(name: string, input: unknown): ToolIdentity | undefined;
   /** Guidance as its caller calls it: each noun action it names by its address `tool:action` is
-   *  said as the retired name a leased session's policy grants, and as the noun to everyone else. */
+   *  said flat for sessions and legacy calls, and as the noun for noun calls. */
   guidance<T>(caller: Caller, value: T): T;
   /** `name` may be an address `tool:action` with the action's own flat arguments. */
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;

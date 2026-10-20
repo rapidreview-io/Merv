@@ -77,7 +77,11 @@ export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>>
   const words = WORDS.get(shell) ?? {
     working: new Set(shapes.flatMap((s) => s.states.filter((at) => !s.terminal.includes(at)))),
     gates: new Set(
-      shapes.flatMap((s) => s.edges.filter((e) => e.tool === 'review.write').map((e) => e.from)),
+      shapes.flatMap((s) =>
+        s.edges
+          .filter((e) => ['review.write', 'review.submit'].includes(e.tool ?? ''))
+          .map((e) => e.from),
+      ),
     ),
     said: new Map((shell.rows ?? []).flatMap((row) => Object.entries(row.states ?? {}))),
   };
@@ -172,6 +176,7 @@ export function dormantOwner(
 export function calling(steps: readonly Step[] | undefined, address: string): Step | undefined {
   const step = steps?.find((a) => `${a.tool}:${a.arguments.action}` === address);
   return (
-    step && { ...step, arguments: step.arguments[address.split(':')[1]!] as Step['arguments'] }
+    (step && { ...step, arguments: step.arguments[address.split(':')[1]!] as Step['arguments'] }) ??
+    steps?.find((a) => a.tool === address.replace(/\.(read|write):/, '.'))
   );
 }

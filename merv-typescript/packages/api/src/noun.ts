@@ -163,9 +163,15 @@ const ADDRESS = /\b[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*:[a-z][a-z0-9_]*\b/g;
 /**
  * Guidance as its caller calls it (Tools.guidance). A rule names a noun action by its address: a
  * leased session is told the retired name its frozen policy grants, with flat arguments, exactly
- * as before the nouns; everyone else the noun tool, with the action's arguments under its own name.
+ * as before the nouns. Legacy endpoints and UI reads keep that vocabulary too; noun calls use
+ * the noun tool, with the action’s arguments under its own name.
  */
-export function presented<T>(tools: Pick<Tools, 'identity'>, caller: Caller, value: T): T {
+export function presented<T>(
+  tools: Pick<Tools, 'identity'>,
+  caller: Caller,
+  value: T,
+  flat = !!caller.session,
+): T {
   const known = (address: string) => {
     const identity = tools.identity(address, {});
     return identity?.action ? identity : undefined;
@@ -173,7 +179,7 @@ export function presented<T>(tools: Pick<Tools, 'identity'>, caller: Caller, val
   const said = (address: string) => {
     const identity = known(address);
     if (!identity) return address;
-    return caller.session ? identity.as : `${identity.tool} ${identity.action}`;
+    return flat ? identity.as : `${identity.tool} ${identity.action}`;
   };
   const walk = (node: unknown): unknown => {
     if (typeof node === 'string') return node.replace(ADDRESS, said);
@@ -183,8 +189,8 @@ export function presented<T>(tools: Pick<Tools, 'identity'>, caller: Caller, val
     const object = Object.fromEntries(Object.entries(node).map(([key, item]) => [key, walk(item)]));
     const identity = typeof tool === 'string' ? known(tool) : undefined;
     if (!identity) return object;
-    object.tool = caller.session ? identity.as : identity.tool;
-    if (!caller.session && args && typeof args === 'object')
+    object.tool = flat ? identity.as : identity.tool;
+    if (!flat && args && typeof args === 'object')
       object.arguments = { action: identity.action, [identity.action!]: args };
     return object;
   };

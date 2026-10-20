@@ -28,6 +28,7 @@ export const reportsToolsPlugin = {
     register({
       name: 'report.open',
       tier: 'worker',
+      became: 'report.read', // Hidden from discovery; cached calls retain domain authorization.
       description: `Open the report draft for an experiment, creating it from the approved plan the first time. Returns the draft (Markdown source, revision, data files, locked sections, chart approvals, last final render) and the report format guide. The draft persists across submissions: edit it after a review asks for changes. ${SUBJECT}`,
       inputSchema: openSchema,
       handler: async (caller, input) => ({
@@ -40,28 +41,28 @@ export const reportsToolsPlugin = {
       tier: 'worker',
       description: `Edit the report draft at expectedRevision: replace section bodies by name (sections: [{name: "Result", content}]; name "title" sets the title), the front matter YAML (frontMatter), or the whole Markdown (source), and add or replace data files charts name (files: [{name: "x.csv", content}], content null removes one). Locked sections from the approved plan cannot change, except one that still holds only its [[write: …]] placeholder, which you write. Changing a chart's spec or data withdraws its approval. ${SUBJECT}`,
       inputSchema: writeSchema,
-      handler: async (caller, input) => await reports.write(caller, input),
+      handler: (caller, input) => reports.write(caller, input),
     });
     register({
       name: 'report.clear',
       tier: 'worker',
       description: `Start the report over: return the draft to the approved plan's prefill, removing every written section, data file and chart approval. ${SUBJECT}`,
       inputSchema: clearSchema,
-      handler: async (caller, input) => await reports.clear(caller, input),
+      handler: (caller, input) => reports.clear(caller, input),
     });
     register({
       name: 'report.approve_visual',
       tier: 'worker',
       description: `Approve one chart at expectedRevision once its image is right. Refused while the chart has blocking checks. The approval covers the chart's spec and data as they are now. ${SUBJECT}`,
       inputSchema: approveVisualSchema,
-      handler: async (caller, input) => await reports.approveVisual(caller, input),
+      handler: (caller, input) => reports.approveVisual(caller, input),
     });
     register({
       name: 'report.render',
       tier: 'worker',
       description: `Render the whole report. Without final it returns page images to check the page as a whole. With final: true (and a requestId) it requires no check errors and every chart approved, then stores the Markdown source, the PDF and page images as artifacts and returns their ids: submit sourceArtifactId as the report. ${SUBJECT}`,
       inputSchema: renderSchema,
-      handler: async (caller, input) => await reports.render(caller, input),
+      handler: (caller, input) => reports.render(caller, input),
       present: (result) => {
         const { images, ...rest } = result as RenderResult;
         return { content: [text(rest), ...images.map(png)] };

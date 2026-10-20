@@ -157,8 +157,8 @@ test('assembled Cordis application preserves current MCP task closure across two
       },
     );
     const guidance = await call(producer, 'workflow.status_and_next', { instanceId: task.id });
-    // As task.read get presents it to its caller.
-    const read = await call(producer, 'task.read', { action: 'get', get: { taskId: task.id } });
+    // Both legacy endpoints keep flat guidance for callers already using those names.
+    const read = await call(producer, 'task.get', { taskId: task.id });
     assert.deepEqual(guidance, read.guidance);
     assert.ok(guidance.nextAction);
     assert.equal(guidance.nextAction.tool, 'workflow.begin');
@@ -196,9 +196,8 @@ test('assembled Cordis application preserves current MCP task closure across two
       requestId: 'work-context',
     })) as { id: string; prompt: string; type: string };
     assert.match(workContext.prompt, /calculation remains/);
-    // The context holds the guidance as the service answers it; a worker is shown the same.
-    const raw = (await app.ctx.tasks.get(worker, task.id)).guidance;
-    assert.ok(workContext.prompt.includes(JSON.stringify(raw)));
+    // Context and legacy reads give the worker the same flat guidance.
+    assert.ok(workContext.prompt.includes(JSON.stringify(workGuidance)));
     assert.equal(workContext.type, 'task.work');
     const delivery = await call(producer, 'artifact.create', {
       title: 'Delivery',

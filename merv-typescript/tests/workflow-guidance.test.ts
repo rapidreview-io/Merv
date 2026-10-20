@@ -445,7 +445,7 @@ test('current task guidance follows leased delivery, independent review, revisio
     assert.notEqual(reviewer.worker.actorId, producer.worker.actorId);
     const claim = await app.ctx.reviews.get(source, pending.reviewId!);
     const decision = await app.ctx.workflows.evaluate(reviewer.worker, task.id);
-    assert.equal(decision.nextAction?.tool, 'review.submit');
+    assert.equal(decision.nextAction?.tool, 'review.write:submit');
     assert.equal(decision.nextAction?.arguments.claimId, claim.claimId);
     const reviewContext = await work.run(
       reviewer,

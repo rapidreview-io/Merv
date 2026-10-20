@@ -880,6 +880,13 @@ test('recovery guidance names each action by its address and says it as its call
     next: 'An administrator uses code.base.resume and a reason.',
     publication: { next: 'Clear it with code.publication.control; read code.status.' },
   });
+  // Concurrent reads of the same service retain their own endpoint vocabulary.
+  const [legacy, modern] = (await Promise.all([
+    tools.call('code.status', owner, {}),
+    tools.call('code.read', owner, { action: 'status' }),
+  ])) as { next: string }[];
+  assert.equal(legacy!.next, 'An administrator uses code.base.resume and a reason.');
+  assert.equal(modern!.next, 'An administrator uses code.write base_resume and a reason.');
   // A task's guidance carries the blockers Code published on it, said the same way.
   const tasks = { get: async () => ({ guidance: { blockers: [said] } }) };
   taskToolsPlugin.apply({ tools, tasks, effect: (fn: () => unknown) => fn() } as never);
@@ -887,9 +894,9 @@ test('recovery guidance names each action by its address and says it as its call
     guidance: {
       blockers: [
         {
-          next: 'An administrator uses code.write base_resume and a reason.',
+          next: 'An administrator uses code.base.resume and a reason.',
           publication: {
-            next: 'Clear it with code.write publication_control; read code.read status.',
+            next: 'Clear it with code.publication.control; read code.status.',
           },
         },
       ],
