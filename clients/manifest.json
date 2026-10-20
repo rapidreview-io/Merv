@@ -1,7 +1,12 @@
 {
   "name": "merv",
-  "version": "0.4.0",
-  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines. Skills on top of Merv's connector, which /connect installs.",
-  "connect": "https://YOUR-MERV-HOST/connect",
+  "version": "0.3.0",
+  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines, over Merv's MCP server.",
+  "mcp": {
+    "server": "merv",
+    "url": "https://YOUR-MERV-HOST/mcp",
+    "urlEnv": "MERV_URL",
+    "keyEnv": "MERV_KEY"
+  },
   "skills": ["research", "operations", "owners-agent"]
 }
