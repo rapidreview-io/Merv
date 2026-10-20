@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "merv": {
+      "type": "http",
+      "url": "${MERV_URL:-https://YOUR-MERV-HOST/mcp}",
+      "headers": { "Authorization": "Bearer ${MERV_KEY}" }
+    }
+  }
+}

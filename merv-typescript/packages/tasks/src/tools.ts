@@ -21,6 +21,7 @@ export const taskToolsPlugin = {
     const definitions = [
       {
         name: 'task.checkpoint',
+        agent: 'never' as const,
         description:
           'Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.',
         inputSchema: z
@@ -39,6 +40,7 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.context',
+        agent: 'never' as const,
         description:
           'Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.',
         inputSchema: z
@@ -109,6 +111,7 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.submit_delivery',
+        agent: 'never' as const,
         act: { title: 'Submit delivery' },
         description:
           'Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.',

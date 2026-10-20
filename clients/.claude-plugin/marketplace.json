@@ -1,0 +1,16 @@
+{
+  "name": "merv",
+  "owner": {
+    "name": "RapidReview"
+  },
+  "metadata": {
+    "description": "Merv's client plugin for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "merv",
+      "source": "./claude-code",
+      "version": "0.2.0"
+    }
+  ]
+}

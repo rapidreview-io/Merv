@@ -37,6 +37,7 @@ import {
 } from './profiles.js';
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
+import { drawRecord } from './record-look.js';
 import { describeScreen, renderScreen, screenRequest, type ScreenAnswer } from './screen.js';
 import type {
   Pi,
@@ -600,21 +601,12 @@ export class PiService implements Pi {
     );
     // A record that draws itself (a board) is looked at as drawn, without anyone's screen.
     const drawn = at?.record
-      ? await this.core.tools.picture(caller, at.record, at.focus, view).catch((error: unknown) => {
-          if (error instanceof MervError && error.status < 500) return error.message;
+      ? await drawRecord(this.core.tools, caller, at.record, at.focus, view).catch((error) => {
+          if (error instanceof MervError && error.status < 500) return { seen: error.message };
           throw error;
         })
       : undefined;
-    if (typeof drawn === 'string') return { seen: drawn };
-    if (drawn?.image)
-      return {
-        page: drawn.path,
-        seen: at?.record?.startsWith('art_')
-          ? 'Actual reference image. Viewport coordinates are source pixels; use region for readable details.'
-          : 'Actual Excalidraw board image. Coordinates in viewport are board units.',
-        image: drawn.image,
-        viewport: drawn.viewport,
-      };
+    if (drawn && 'seen' in drawn) return drawn;
     const answer = drawn ? undefined : await this.ask(caller, at ? { at } : {});
     if (answer?.missing) return { seen: answer.missing };
     const shot = drawn ?? answer?.shot;

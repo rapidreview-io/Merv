@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 99);
+    assert.equal(catalog.length, 84);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -77,16 +77,35 @@ test('assembled Cordis application preserves current MCP task closure across two
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     // Credentials are managed from Merv's own pages: an agent over MCP is not offered them.
+    // Nor what it cannot use: a leased worker's writes, a Pi responder's answer, retiring waves.
     for (const name of [
       'actor.credentials',
       'actor.issue_token',
       'actor.rotate_token',
       'actor.revoke_token',
+      ...['write', 'clear', 'render', 'review_visual', 'approve_visual'].map((v) => `report.${v}`),
+      ...['context', 'checkpoint', 'submit_delivery'].map((v) => `task.${v}`),
+      'session.question.resolve',
+      ...['create', 'list', 'get', 'lens', 'submit_lens', 'submit', 'end'].map(
+        (v) => `reflection.${v}`,
+      ),
     ])
       assert.ok(
         !catalog.some((tool) => tool.name === name),
         `${name} must not be offered to an agent`,
       );
+    for (const name of ['report.open', 'report.check', 'task.create', 'task.get', 'project.brief'])
+      assert.ok(
+        catalog.some((tool) => tool.name === name),
+        name,
+      );
+    // The brief is what Pi's turn is told: who, where, today, and the project's paper now.
+    const told = await call(producer, 'project.brief');
+    assert.deepEqual(told.actor, { id: p.actor.id, name: 'Producer', role: 'producer' });
+    assert.deepEqual(told.project, { id: credentials.project.id, name: 'Integration' });
+    assert.equal(told.today, new Date().toISOString().slice(0, 10));
+    assert.equal(told.context, await app.ctx.tools.context({ ...caller, actorId: p.actor.id }));
+    assert.ok(catalog.find((tool) => tool.name === 'project.brief')!.description!.length < 300);
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),
       [
@@ -151,19 +170,21 @@ test('assembled Cordis application preserves current MCP task closure across two
       instanceId: task.id,
     });
     assert.equal(workGuidance.nextAction.tool, 'task.submit_delivery');
-    await call(producer, 'task.checkpoint', {
+    // A worker's own writes, which a person's agent over MCP is not offered; Merv runs them here.
+    const worker = { ...caller, actorId: p.actor.id };
+    await app.ctx.tools.call('task.checkpoint', worker, {
       taskId: task.id,
       purpose: 'work',
       expectedRevision: 0,
       notes: 'Inputs are 2, 4, 6, 8; calculation remains.',
       requestId: 'checkpoint',
     });
-    const workContext = await call(producer, 'task.context', {
+    const workContext = (await app.ctx.tools.call('task.context', worker, {
       taskId: task.id,
       purpose: 'work',
       expectedRevision: 0,
       requestId: 'work-context',
-    });
+    })) as { id: string; prompt: string; type: string };
     assert.match(workContext.prompt, /calculation remains/);
     assert.ok(workContext.prompt.includes(JSON.stringify(workGuidance)));
     assert.equal(workContext.type, 'task.work');

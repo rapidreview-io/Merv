@@ -1,0 +1,18 @@
+{
+  "name": "merv",
+  "version": "0.2.0",
+  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines, over Merv's MCP server.",
+  "author": { "name": "RapidReview" },
+  "keywords": ["research", "ml", "mcp", "experiments"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Merv",
+    "shortDescription": "Research projects: experiments, reviews, files and machines",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "defaultPrompt": [
+      "Use Merv. Start with project.brief, then workflow.status_and_next."
+    ]
+  }
+}

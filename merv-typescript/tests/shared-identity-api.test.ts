@@ -464,7 +464,10 @@ test('actor credentials keep one project and cannot manage human membership or f
 
 test('JWT validation rejects untrusted claims and public configuration cannot be shadowed by mounts', async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await (await fetch(`${f.url}/auth/config`)).json(), { enabled: true });
+  assert.deepEqual(await (await fetch(`${f.url}/auth/config`)).json(), {
+    enabled: true,
+    mcpUrl: `${f.url}/mcp`,
+  });
   for (const prefix of ['/auth', '/account', '/projects'])
     assert.throws(() => f.server.mount(prefix, async () => {}), { code: 'mount_conflict' });
   for (const overrides of [

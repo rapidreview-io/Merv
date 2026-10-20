@@ -127,6 +127,8 @@ function rpcError(error: unknown) {
   });
 }
 
+/** The Settings › Keys page, where a person connects an agent. */
+const KEYS_PAGE = '/ui/settings/keys';
 /** The request's path without its query, which a log must never carry. */
 const pathOf = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').pathname;
 
@@ -255,7 +257,13 @@ export class ApiServer {
       '/auth',
       (req, _res, r) => {
         if (req.method !== 'GET' || r.url.pathname !== '/auth/config') throw unknownEndpoint();
-        return this.identity?.configuration() ?? { enabled: false };
+        // Agents reach /mcp at the public origin: the browser origin this server admits (the
+        // deployment's MERV_TS_PUBLIC_ORIGIN, which invitation links use too), else its address.
+        const origin = this.options.allowedOrigins?.find((o) => o !== 'null') ?? this.url;
+        return {
+          ...(this.identity?.configuration() ?? { enabled: false }),
+          mcpUrl: `${origin}/mcp`,
+        };
       },
       { public: true },
     );
@@ -292,7 +300,9 @@ export class ApiServer {
       const request = Promise.all([
         this.handle(req, res).catch((error: unknown) => {
           const { status, error: body } = errorBody(error);
-          if (!res.headersSent) json(res, status, { error: body });
+          // A refused agent is told where a person makes it a key.
+          const connect = status === 401 && pathOf(req) === '/mcp' && { connect: KEYS_PAGE };
+          if (!res.headersSent) json(res, status, { error: body, ...connect });
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
           logFailure(error, status, body.code, `${req.method} ${pathOf(req)}`);

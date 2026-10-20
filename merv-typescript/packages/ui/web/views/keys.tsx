@@ -14,7 +14,9 @@ import {
   type UserKey,
 } from '../api';
 import { signedInEmail } from '../auth';
+import { CodeBlock } from '../code-block';
 import {
+  CopyButton,
   EmptyState,
   Failure,
   Field,
@@ -25,6 +27,7 @@ import {
   Submit,
   cx,
 } from '../components';
+import { Segments } from '../list-filters';
 import { permits } from '@merv/scope/rules';
 import { useCurrent } from '../mutations';
 import { ThreeStates } from '../states';
@@ -38,6 +41,92 @@ const expiration = (value: string): string | null => {
     throw new Error('Choose an expiration in the future, or leave it empty for no expiration.');
   return date.toISOString();
 };
+
+/** Each client's one way to add Merv over HTTP with a bearer key, and where that text goes. */
+const snippets = (url: string, key: string): Record<Client, [string, string]> => {
+  const headers = { Authorization: `Bearer ${key}` };
+  return {
+    'Claude Code': [
+      'Terminal',
+      `claude mcp add --transport http merv ${url} --header "Authorization: Bearer ${key}"`,
+    ],
+    Codex: [
+      '~/.codex/config.toml',
+      `[mcp_servers.merv]\nurl = "${url}"\nhttp_headers = { "Authorization" = "Bearer ${key}" }`,
+    ],
+    Cursor: [
+      '.cursor/mcp.json',
+      JSON.stringify({ mcpServers: { merv: { url, headers } } }, null, 2),
+    ],
+    Other: ['JSON', JSON.stringify({ url, headers }, null, 2)],
+  };
+};
+type Client = 'Claude Code' | 'Codex' | 'Cursor' | 'Other';
+const CLIENTS = Object.keys(snippets('', '')).map((value) => ({
+  value: value as Client,
+  label: value,
+}));
+
+/** The MCP URL, a snippet per client, a key made for that client shown in it once, and a test. */
+function ConnectAgent({
+  secret,
+  busy,
+  make,
+  forget,
+}: {
+  secret?: IssuedUserKey & { client?: string };
+  busy: boolean;
+  make(client: Client): void;
+  forget(): void;
+}) {
+  const [url, setUrl] = useState(() => new URL('/mcp', location.href).href);
+  const [client, setClient] = useState<Client>('Claude Code');
+  const [tested, setTested] = useState<string>();
+  const current = useCurrent();
+  useEffect(() => {
+    void fetch('/auth/config', { credentials: 'omit', cache: 'no-store' })
+      .then((response) => response.json())
+      .then((config: { mcpUrl?: unknown }) => {
+        if (current() && typeof config?.mcpUrl === 'string') setUrl(config.mcpUrl);
+      })
+      .catch(() => undefined);
+  }, []);
+  const filled = secret?.client === client;
+  const [where, snippet] = snippets(url, filled ? secret.token : '<key>')[client];
+  const test = () =>
+    call<Actor>('actor.whoami').then(
+      (actor) => current() && setTested(`Connected as ${actor.name} · ${actor.role}`),
+      (error) => current() && setTested(message(error)),
+    );
+  return (
+    <section className="stack connect" aria-label="Connect your agent">
+      <h2 className="section-title">Connect your agent</h2>
+      <span className="cluster">
+        <span className="mono wrap">{url}</span>
+        <CopyButton text={url} label="Copy MCP URL" />
+      </span>
+      <Segments<Client> label="Client" options={CLIENTS} value={client} onChange={setClient} />
+      <div data-merv-secret={filled || undefined}>
+        <CodeBlock code={snippet} label={where} />
+      </div>
+      <div className="cluster">
+        {filled ? (
+          <button className="btn" onClick={forget}>
+            Hide and forget key
+          </button>
+        ) : (
+          <button className="btn" disabled={busy} onClick={() => make(client)}>
+            Make a key for {client}
+          </button>
+        )}
+        <button className="btn" onClick={() => void test()}>
+          Test
+        </button>
+        {tested && <span role="status">{tested}</span>}
+      </div>
+    </section>
+  );
+}
 
 /** Fleet needs an independent actor credential; account keys cannot serve as its source. */
 function FleetSourceCredential({ projectId }: { projectId: string }) {
@@ -189,7 +278,7 @@ export function KeysPanel({
   const [grantScope, setGrantScope] = useState<'project' | 'account'>('project');
   const [label, setLabel] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
-  const [secret, setSecret] = useState<IssuedUserKey>();
+  const [secret, setSecret] = useState<IssuedUserKey & { client?: string }>();
   const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState<string>();
   const [changeExpiry, setChangeExpiry] = useState(false);
@@ -234,7 +323,7 @@ export function KeysPanel({
   }, [issuer, subject]);
 
   const mutate = async (
-    run: () => Promise<IssuedUserKey | { revoked: true }>,
+    run: () => Promise<(IssuedUserKey & { client?: string }) | { revoked: true }>,
     done?: () => void,
   ) => {
     if (busy) return;
@@ -329,8 +418,25 @@ export function KeysPanel({
           }
         />
       )}
+      {initialProjectId && (
+        <ConnectAgent
+          secret={secret}
+          busy={busy}
+          forget={forgetSecret}
+          make={(client) =>
+            void mutate(async () => ({
+              ...(await keyClient.create({
+                projectId: initialProjectId,
+                grantScope: 'project',
+                label: client,
+              })),
+              client,
+            }))
+          }
+        />
+      )}
       {initialProjectId && <FleetSourceCredential projectId={initialProjectId} />}
-      {secret && (
+      {secret && !secret.client && (
         <section className="card stack creation" aria-label="New machine key">
           <h2 className="section-title">Copy this key now</h2>
           <textarea

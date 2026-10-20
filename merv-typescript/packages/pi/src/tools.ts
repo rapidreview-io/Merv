@@ -151,7 +151,9 @@ export const piToolsPlugin = {
         handler: (caller: Caller) => ctx.pi.stopMachine(caller),
       },
     ];
-    for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
+    // Pi's own and its page's: a person's agent over MCP can use none of them.
+    for (const definition of definitions)
+      ctx.effect(() => ctx.tools.register({ ...definition, agent: 'never' }));
   },
 };
 export default piToolsPlugin;

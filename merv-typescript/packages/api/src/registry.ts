@@ -56,7 +56,17 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
         },
       },
     },
-    annotations: { readOnlyHint: tool.readOnly ?? false, openWorldHint: tool.openWorld ?? false },
+    // What Pi's card does for a guarded call, a client's own permission prompt does from these.
+    annotations: {
+      ...(typeof tool.act?.title === 'string' && { title: tool.act.title }),
+      readOnlyHint: tool.readOnly ?? false,
+      ...(tool.conversation && tool.conversation !== 'never' && { destructiveHint: true }),
+      ...('properties' in schema &&
+        Object.hasOwn(schema.properties, 'requestId') && {
+          idempotentHint: true,
+        }),
+      openWorldHint: tool.openWorld ?? false,
+    },
   };
 }
 
@@ -127,11 +137,13 @@ export class ToolRegistry implements Tools {
     const readOnly = definition.readOnly === true;
     // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
     const worker = conversationProfile ? 'never' : definition.worker;
+    // A Pi profile's own tool is never a person's agent's either.
+    const agent = conversationProfile ? 'never' : definition.agent;
     return {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema, readOnly }),
-      tool: { name: definition.name, remote: false, conversation, readOnly, worker },
+      tool: { name: definition.name, remote: false, conversation, readOnly, worker, agent },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) =>
@@ -421,8 +433,10 @@ export class ToolRegistry implements Tools {
   }
   /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
+    const { tool } = entry;
     return (
-      !!entry.remote || (entry.tool.conversation !== 'never' && (!reader || entry.tool.readOnly))
+      !!entry.remote ||
+      (tool.conversation !== 'never' && tool.agent !== 'never' && (!reader || tool.readOnly))
     );
   }
 

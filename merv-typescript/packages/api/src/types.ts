@@ -28,6 +28,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  profile's tool (conversationProfile) is never listed either. Called by name it still answers
    *  as it would. */
   worker?: 'never';
+  /** 'never': never listed to a person's own agent connected over MCP, which cannot use it (a page's,
+   *  Pi's own, or a leased worker's); Pi and leased workers are unaffected. */
+  agent?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
   /** What the card of a proposed call says it does, in the product's words ('Submit verdict').
@@ -63,7 +66,7 @@ export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
 /** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`
  *  and never `readOnly`, whatever its server says. */
-export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'worker'> & {
+export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'worker' | 'agent'> & {
   remote: boolean;
   readOnly: boolean;
 };
@@ -149,7 +152,7 @@ export interface Api {
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
-   *  MCP, offered every native tool not marked `never` (a reader: its reads alone) plus the mounted
+   *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: its reads alone) plus the mounted
    *  tools its Access grants. That curates; it is no authority boundary (see POST /tools). */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
   /** Every registered tool, for trusted in-process code only: it takes no caller. */

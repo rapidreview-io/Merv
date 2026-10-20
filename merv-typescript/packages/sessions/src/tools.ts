@@ -179,6 +179,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.question.resolve',
+        agent: 'never' as const,
         description:
           'Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.',
         inputSchema: z

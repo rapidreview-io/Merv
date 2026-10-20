@@ -594,26 +594,19 @@ test('HTTP and MCP accept dependency input forms, reject extra keys and malforme
       assert.equal(badHttp.status, 400);
       assert.equal((await badHttp.json()).error.code, 'invalid_input');
     }
-    const blockedContext = await client.callTool({
-      name: 'task.context',
-      arguments: {
-        taskId: b.id,
-        purpose: 'work',
-        expectedRevision: 0,
-        requestId: 'transport-context',
-      },
-    });
-    assert.equal(blockedContext.isError, true);
-    assert.equal(parsed(blockedContext).error.code, 'dependencies_pending');
-    await f.verdict(await f.deliver(a), 'pass');
-    const task = await call('task.get', { taskId: b.id });
-    const guidance = await call('workflow.status_and_next', { instanceId: b.id });
-    const context = await call('task.context', {
+    // Work context is a worker's, which a person's agent over MCP is not offered.
+    const contextInput = {
       taskId: b.id,
       purpose: 'work',
       expectedRevision: 0,
       requestId: 'transport-context',
-    });
+    };
+    const blockedContext = await http('task.context', contextInput);
+    assert.equal((await blockedContext.json()).error.code, 'dependencies_pending');
+    await f.verdict(await f.deliver(a), 'pass');
+    const task = await call('task.get', { taskId: b.id });
+    const guidance = await call('workflow.status_and_next', { instanceId: b.id });
+    const context = (await (await http('task.context', contextInput)).json()).result;
     assert.deepEqual(task.guidance, guidance);
     assert.deepEqual(task.dependencies, guidance.dependencies);
     // Code may finish deriving the base between these reads without a workflow revision.

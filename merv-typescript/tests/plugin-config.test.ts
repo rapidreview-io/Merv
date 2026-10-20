@@ -207,7 +207,10 @@ test('API no-config defaults remain loopback and ephemeral with a working regist
       actorName: 'Operator',
     });
     assert.equal((await fetch(new URL('/health', url))).status, 200);
-    assert.deepEqual(await (await fetch(new URL('/auth/config', url))).json(), { enabled: false });
+    assert.deepEqual(await (await fetch(new URL('/auth/config', url))).json(), {
+      enabled: false,
+      mcpUrl: `${ctx.api.url}/mcp`,
+    });
     const response = await fetch(new URL('/tools', url), {
       headers: { authorization: `Bearer ${credentials.token}` },
     });
@@ -234,6 +237,11 @@ test('API accepts explicit zero port, byte limit and exact allowed origins witho
       (await fetch(ctx.api.url! + '/health', { headers: { origin: 'https://example.com' } }))
         .status,
       200,
+    );
+    // Agents are pointed at the public origin, never the listen address.
+    assert.equal(
+      (await (await fetch(ctx.api.url! + '/auth/config')).json()).mcpUrl,
+      'https://example.com/mcp',
     );
     assert.equal(
       (await fetch(ctx.api.url! + '/health', { headers: { origin: 'https://unlisted.example' } }))

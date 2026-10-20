@@ -6,6 +6,7 @@ import { questionResponder } from './questions.js';
 import { check } from '@merv/contracts';
 import { piConfig, type PiConfig } from './schema.js';
 import { PiService } from './service.js';
+import { recordLookTool } from './record-look.js';
 
 export { PiService } from './service.js';
 export type * from './types.js';
@@ -29,6 +30,7 @@ export const piPlugin = {
     ctx.effect(() => () => pi.close());
     await pi.initialize();
     ctx.provide('pi', pi);
+    ctx.effect(() => ctx.tools.register(recordLookTool(ctx.tools)));
     ctx.inject(['sessions'], (ctx) => {
       ctx.effect(() => ctx.sessions.messaging.registerResponder(questionResponder(pi, ctx.scope)));
     });

@@ -41,6 +41,32 @@ export const scopeToolsPlugin = {
       true,
     );
     register(
+      'project.brief',
+      "Read what Merv's own agent is told each turn: who you are (actor id, name, role), the project (id, name), today's date (UTC) and the project as it is now (its paper). Your first read in a project, and to re-orient.",
+      z.object({}).strict(),
+      async (c) => {
+        const [{ id, name, role }, project, context] = await Promise.all([
+          ctx.scope.require(c, 'read'),
+          ctx.scope.project(c),
+          ctx.tools.context(c),
+        ]);
+        const today = new Date().toISOString().slice(0, 10);
+        return {
+          actor: { id, name, role },
+          project: { id: project.id, name: project.name },
+          today,
+          context,
+        };
+      },
+      true,
+    );
+    // The registry's own guide names no tool, so the tool's plugin says where to begin.
+    ctx.effect(() =>
+      ctx.tools.contributeInstructions(
+        "Connected from outside Merv, make project.brief your first read in a project: who you are there, the project and its paper now (Merv's own agent is given it every turn).",
+      ),
+    );
+    register(
       'actor.whoami',
       'Read your authenticated actor identity and role.',
       z.object({}).strict(),
