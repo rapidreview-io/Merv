@@ -188,13 +188,14 @@ test('writes and reads kept from agents are refused and catchable; open-world re
     outside: 'ran',
     // A download link is any agent's to have; this fixture's storage signs none.
     download: 'download_unsupported: This storage provider does not support direct downloads',
-    page: 'script_tool_refused: test.page cannot be called from a script',
+    // Kept from every agent, it is refused by the caller's rules before the script's own check.
+    page: 'tool_forbidden: This tool is not offered to agents',
     script: 'script_tool_refused: script.tools cannot be called from a script',
     tools: ['object', 'function', 'undefined'],
   });
   assert.deepEqual(
     ran.calls.filter(({ ok }: any) => !ok).map(({ error }: any) => error),
-    ['script_tool_refused', 'download_unsupported', 'script_tool_refused', 'script_tool_refused'],
+    ['script_tool_refused', 'download_unsupported', 'tool_forbidden', 'script_tool_refused'],
   );
   // task.get is a read, so the task namespace is there; task.create is not in it.
   assert.equal(
