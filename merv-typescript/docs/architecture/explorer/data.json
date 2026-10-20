@@ -695,7 +695,9 @@
         "scope",
         "artifacts"
       ],
-      "optional": [],
+      "optional": [
+        "tools"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -2778,6 +2780,11 @@
       "optional": false
     },
     {
+      "from": "contextBuilder",
+      "to": "tools",
+      "optional": true
+    },
+    {
       "from": "customerExperiments",
       "to": "state",
       "optional": false
@@ -3887,7 +3894,7 @@
     "plugins": 83,
     "providers": 38,
     "adapters": 45,
-    "dependencies": 267
+    "dependencies": 268
   },
   "network": [
     {
