@@ -18,6 +18,8 @@ export const LIMITS = {
   returned: 32 << 10,
   logLine: 2048,
   logLines: 200,
+  /** Deeper JSON would overflow the stack of whatever serializes the answer next. */
+  depth: 64,
   /** The largest frame the child may send: a call's input escaped, or a result the child cut. */
   frame: 1 << 20,
 };
@@ -64,6 +66,20 @@ const ENDS = new Set([
 ]);
 const unavailable = () => new MervError('script_unavailable', 'Scripts are unavailable here', 503);
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+/** How deeply `text` (valid JSON) nests, read without recursion. */
+export function depth(text: string): number {
+  let [level, most, quoted] = [0, 0, false];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '\\') i++;
+      else if (c === '"') quoted = false;
+    } else if (c === '"') quoted = true;
+    else if (c === '[' || c === '{') most = Math.max(most, ++level);
+    else if (c === ']' || c === '}') level--;
+  }
+  return most;
+}
 /** Scripts holding a slot: running, or with host calls still out. */
 let running = 0;
 let hosting = 0;
@@ -91,6 +107,7 @@ export function parseCall(
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 0 || seen.has(id)) return;
   if (typeof name !== 'string' || name.length > 128) return;
   if (typeof input !== 'string' || Buffer.byteLength(input) > LIMITS.input) return;
+  if (depth(input) > LIMITS.depth) return;
   let parsed: unknown;
   try {
     parsed = JSON.parse(input);
@@ -128,9 +145,27 @@ export function shape(
   text?: string,
   whole = true,
 ): ScriptResult {
+  // The calls list is bounded like the rest: names cut, then the newest dropped to fit half.
+  let calls = head.calls.map((call) => ({ ...call, name: cut(call.name, 128) }));
+  let dropped = calls.some(({ name }, i) => name !== head.calls[i]!.name);
+  while (calls.length && bytes(calls) > LIMITS.returned / 2) {
+    calls = calls.slice(0, calls.length >> 1);
+    dropped = true;
+  }
+  head = { ...head, calls };
+  if (text !== undefined && whole && depth(text) > LIMITS.depth)
+    return {
+      ...head,
+      ok: false,
+      error: {
+        code: 'script_result_too_deep',
+        message: `The script's result nests deeper than ${LIMITS.depth} levels; flatten it.`,
+      },
+      logs: [],
+      truncated: true,
+    };
   let room = LIMITS.returned - bytes({ ...head, result: '', logs: [], truncated: true });
   const value = text !== undefined && whole ? (JSON.parse(text) as unknown) : undefined;
-  if (value !== undefined) text = JSON.stringify(value);
   if (text !== undefined && (!whole || Buffer.byteLength(text) > room))
     return { ...head, result: cut(text, room), logs: [], truncated: true };
   room -= text === undefined ? 0 : Buffer.byteLength(text);
@@ -139,7 +174,7 @@ export function shape(
     ...head,
     ...(value !== undefined && { result: value }),
     logs: kept,
-    ...(kept.length < logs.length && { truncated: true as const }),
+    ...((dropped || kept.length < logs.length) && { truncated: true as const }),
   };
 }
 
@@ -214,12 +249,27 @@ export async function runScript(
     done = true;
     kill();
     if (outcome instanceof MervError) return settle(outcome);
-    const failed = 'code' in outcome;
-    settle(
-      failed
-        ? shape({ ok: false, error: outcome, calls: [...calls] }, logs)
-        : shape({ ok: true, calls: [...calls] }, logs, outcome.result, outcome.whole),
-    );
+    try {
+      settle(
+        'code' in outcome
+          ? shape({ ok: false, error: outcome, calls: [...calls] }, logs)
+          : shape({ ok: true, calls: [...calls] }, logs, outcome.result, outcome.whole),
+      );
+    } catch {
+      settle(
+        shape(
+          {
+            ok: false,
+            error: {
+              code: 'script_error',
+              message: 'The script returned an answer that cannot be sent',
+            },
+            calls: [],
+          },
+          [],
+        ),
+      );
+    }
   };
   // Before the child is ready, anything else means it never ran the script.
   const forged = () =>

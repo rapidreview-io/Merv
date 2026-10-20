@@ -470,6 +470,30 @@ test('every answer is cut by UTF-8 bytes of its JSON, however the script ends', 
   assert.equal(called, 1);
 });
 
+test('a deeply nested result is refused, never re-serialized; the calls list stays bounded', async () => {
+  const host = async () => 1;
+  // V8's JSON.stringify overflows its stack near 5,000 levels; the bridge never reaches it.
+  const deep = await runScript(
+    'let v = []; for (let i = 0; i < 8000; i++) v = [v]; return v;',
+    5000,
+    [],
+    host,
+  );
+  assert.equal(deep.ok, false);
+  assert.equal(deep.error?.code, 'script_result_too_deep');
+  assert.equal(envelope(deep) <= LIMITS.returned, true);
+  // Fifty calls whose names widen past their characters still fit the answer, marked cut.
+  const names = await runScript(
+    "for (let i = 0; i < 50; i++) { try { await call('\\u0001'.repeat(120) + i, {}); } catch {} } return 1",
+    5000,
+    [],
+    host,
+  );
+  assert.ok(envelope(names) <= LIMITS.returned);
+  assert.equal(names.truncated, true);
+  assert.equal(names.result, 1);
+});
+
 test('a script call is judged on the tool registered when it runs', async (t) => {
   const { app, run } = await fixture(t);
   let wrote = false;
