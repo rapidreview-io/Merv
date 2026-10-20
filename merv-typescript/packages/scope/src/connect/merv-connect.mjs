@@ -71,12 +71,7 @@ function readFile(name) {
 }
 function readJson(name) {
   const text = readFile(name);
-  if (text === undefined) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
+  return text === undefined ? undefined : parse(text);
 }
 /** A temp file created exclusively at 0600 beside the target, then renamed over it. */
 function writeAtomic(dir, name, text) {
@@ -116,6 +111,14 @@ function createWhole(path, text) {
     fs.rmSync(temp, { force: true });
   }
 }
+/** JSON text's value, or undefined when it is not JSON. */
+const parse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
 /** A lock's holder, or `{ stale: true }` once it is dead, older than 120 s, or unreadable and old. */
 function lockState(path) {
   let text;
@@ -127,12 +130,7 @@ function lockState(path) {
     if (error.code === 'ENOENT') return undefined;
     throw error;
   }
-  let held;
-  try {
-    held = JSON.parse(text);
-  } catch {
-    held = undefined;
-  }
+  const held = parse(text);
   let alive = true;
   try {
     if (held?.pid) process.kill(held.pid, 0);
@@ -203,13 +201,7 @@ async function api(path, { method = 'GET', body, key, timeout = 30_000 } = {}) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  let value;
-  try {
-    value = await response.json();
-  } catch {
-    value = undefined;
-  }
-  return { status: response.status, value };
+  return { status: response.status, value: await response.json().catch(() => undefined) };
 }
 const refusalOf = ({ status, value }) => value?.error?.message ?? `Merv answered ${status}.`;
 
@@ -386,6 +378,14 @@ const onPath = (name) =>
 const run = (command, args) =>
   spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: 'pipe' });
 const entry = { type: 'stdio', command: SHIM, args: [] };
+/** What the client says of its SERVER_NAME registration, if it has one. */
+const registered = (client) => {
+  const got = run(client, ['mcp', 'get', SERVER_NAME]);
+  return got.status === 0 ? got.stdout : undefined;
+};
+const removeFromClaude = () => {
+  for (const scope of ['local', 'user']) run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+};
 /** Installer output reaches the agent's transcript: redacted, and never a client's settings. */
 const say = (message) => console.log(redact(message));
 /** The origin directory of the connector a registration runs, if it runs one. */
@@ -442,12 +442,10 @@ async function install() {
   let found = false;
   if (onPath('claude')) {
     found = true;
-    const got = run('claude', ['mcp', 'get', SERVER_NAME]);
-    const had = got.status === 0 ? got.stdout : undefined;
+    const had = registered('claude');
     if (!foreign('Claude Code', had)) {
       replacing('Claude Code', had);
-      for (const scope of ['local', 'user'])
-        run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+      removeFromClaude();
       const added = run('claude', [
         'mcp',
         'add-json',
@@ -469,8 +467,7 @@ async function install() {
   }
   if (onPath('codex')) {
     found = true;
-    const got = run('codex', ['mcp', 'get', SERVER_NAME]);
-    const had = got.status === 0 ? got.stdout : undefined;
+    const had = registered('codex');
     if (!foreign('Codex', had)) {
       const config = join(process.env.CODEX_HOME || join(HOME, '.codex'), 'config.toml');
       replacing('Codex', had, had !== undefined && !connectorOf(had) ? backup(config) : undefined);
@@ -500,13 +497,8 @@ async function install() {
 
 async function uninstall() {
   // Only this origin's registration: never another server's, nor one a person made by hand.
-  const ours = (client) => {
-    const got = onPath(client) && run(client, ['mcp', 'get', SERVER_NAME]);
-    return got?.status === 0 && connectorOf(got.stdout) === HOSTDIR;
-  };
-  if (ours('claude'))
-    for (const scope of ['local', 'user'])
-      run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+  const ours = (client) => onPath(client) && connectorOf(registered(client)) === HOSTDIR;
+  if (ours('claude')) removeFromClaude();
   if (ours('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
   await cursor((servers) => {
     if (servers[SERVER_NAME]?.command !== SHIM) return undefined;
@@ -592,14 +584,9 @@ async function forward(method, params, key) {
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
   });
   if (response.status === 401) return { unauthorized: true };
-  let body;
-  try {
-    body = (response.headers.get('content-type') ?? '').startsWith('application/json')
-      ? await response.json()
-      : undefined;
-  } catch {
-    body = undefined;
-  }
+  const body = (response.headers.get('content-type') ?? '').startsWith('application/json')
+    ? await response.json().catch(() => undefined)
+    : undefined;
   if (response.status !== 200) {
     if (body?.error?.message) return { refused: `${body.error.message} (${response.status})` };
     throw new Unreadable();
