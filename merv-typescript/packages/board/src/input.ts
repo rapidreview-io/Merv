@@ -149,7 +149,7 @@ export const opSchema = z.discriminatedUnion('op', [
       key,
       from: shape,
       to: shape,
-      label: text.optional(),
+      label: z.union([z.literal(''), text]).optional(),
       fontSize: z.number().finite().min(8).max(96).optional(),
     })
     .strict(),
