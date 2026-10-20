@@ -183,16 +183,17 @@ async function retired(tx: Transaction, result: ContextPackage): Promise<boolean
 
 /** The tool registry's presentation of guidance (Tools.guidance). */
 interface Guidance {
-  guidance<T>(caller: Caller, value: T): T;
+  guidance<T>(caller: Caller, value: T, flat?: boolean): T;
 }
 
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
   private closed = false;
   private said: Guidance['guidance'] = (_caller, value) => value;
-  /** Use the registry's caller vocabulary before budgeting and hashing a prompt. */
+  /** A context is its worker's, whoever reads it: its guidance names the tools a worker's policy
+   *  grants (flat), so a package and its hash never depend on the caller. */
   bindGuidance(tools: Guidance): () => void {
-    this.said = (caller, value) => tools.guidance(caller, value);
+    this.said = (caller, value) => tools.guidance(caller, value, true);
     return () => (this.said = (_caller, value) => value);
   }
   constructor(

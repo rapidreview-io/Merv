@@ -853,8 +853,8 @@ export class ToolRegistry implements Tools {
   }
 
   private readonly flatGuidance = new AsyncLocalStorage<boolean>();
-  guidance<T>(caller: Caller, value: T): T {
-    return presented(this, caller, value, !!caller.session || this.flatGuidance.getStore());
+  guidance<T>(caller: Caller, value: T, flat = false): T {
+    return presented(this, caller, value, flat || !!caller.session || this.flatGuidance.getStore());
   }
 
   identity(name: string, input: unknown): ToolIdentity | undefined {

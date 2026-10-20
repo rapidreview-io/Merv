@@ -298,8 +298,17 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   };
   const planArtifact = await attach('plan', 'plan.md', plan);
   const statement = await attach('feasibility', 'feasibility.json', feasibilityStatement());
-  // Guidance names the noun action an agent calls, with its arguments under the action's name.
-  const guided = await f.call(producer, 'workflow.status_and_next', { instanceId: e.id });
+  // The old name keeps its flat guidance; the noun read names the noun action an agent calls,
+  // with its arguments under the action's name.
+  const flat = await f.call(producer, 'workflow.status_and_next', { instanceId: e.id });
+  assert.equal(
+    flat.actions.find((item: { action: string }) => item.action === 'submit_design').tool,
+    'experiment.transition',
+  );
+  const guided = await f.call(producer, 'workflow.read', {
+    action: 'status',
+    status: { instanceId: e.id },
+  });
   const design = guided.actions.find((item: { action: string }) => item.action === 'submit_design');
   assert.equal(design.tool, 'experiment.write');
   assert.deepEqual(design.arguments.action, 'transition');

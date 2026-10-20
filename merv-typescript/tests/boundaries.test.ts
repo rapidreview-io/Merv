@@ -214,6 +214,8 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'sbxSnapshots',
     'tools',
   ],
+  // A worker's context says its guidance through whichever tool registry is loaded.
+  contextBuilder: ['tools'],
   experiments: ['sandboxEvidence', 'reports'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.
