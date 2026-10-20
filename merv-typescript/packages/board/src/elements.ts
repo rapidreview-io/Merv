@@ -887,7 +887,7 @@ export class Drawing {
               roughness: 0,
               roundness: null,
               points: drawn.map(([x, y]) => [x! - box.x, y! - box.y]),
-              strokeColor: paint(INKS, stroke.color ?? stroke.fill ?? 'black'),
+              strokeColor: paint(INKS, stroke.color ?? 'black'),
               backgroundColor: filled ? paint(PAINTS, stroke.fill!) : 'transparent',
               strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
               groupIds: [group],

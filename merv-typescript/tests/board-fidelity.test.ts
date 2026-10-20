@@ -142,3 +142,41 @@ test('dense reference arrow labels use the requested text size', () => {
   assert.equal(label.fontSize, 8);
   assert.equal(label.text, 'Linear/Angular Twist');
 });
+
+test('an empty arrow label from Pi creates an unlabeled bound arrow', () => {
+  const input = drawSchema.parse({
+    title: 'Empty label regression',
+    ops: [
+      { op: 'box', key: 'a', text: 'A', at: [0, 0] },
+      { op: 'box', key: 'b', text: 'B', at: [300, 0] },
+      { op: 'arrow', from: 'a', to: 'b', label: '' },
+    ],
+  });
+  const d = new Drawing([], true);
+  for (const op of input.ops) d.apply(op);
+  const edge = live(d).find((e) => e.type === 'arrow')!;
+  assert.equal(edge.startBinding?.elementId, d.created.a);
+  assert.equal(edge.endBinding?.elementId, d.created.b);
+  assert.equal(live(d).filter((e) => e.type === 'text').length, 2);
+});
+
+// White-filled mechanical parts must mask lines behind them without losing their outlines.
+test('sketch fill does not override default ink and explicit ink remains respected', () => {
+  const d = new Drawing([], true);
+  d.apply({
+    op: 'sketch',
+    size: 'native',
+    at: [0, 0],
+    strokes: [
+      { path: 'M0 0 H80 V40 H0 Z', fill: 'white' },
+      { path: 'M100 0 H180 V40 H100 Z', fill: '#abcdef' },
+      { path: 'M200 0 H280 V40 H200 Z', fill: 'white', color: '#aa2222' },
+    ],
+  });
+  const parts = live(d);
+  assert.equal(parts[0]!.strokeColor, '#1e1e1e');
+  assert.equal(parts[0]!.backgroundColor, '#ffffff');
+  assert.equal(parts[1]!.strokeColor, '#1e1e1e');
+  assert.equal(parts[1]!.backgroundColor, '#abcdef');
+  assert.equal(parts[2]!.strokeColor, '#aa2222');
+});
