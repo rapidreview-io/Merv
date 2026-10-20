@@ -1,6 +1,15 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isIP } from 'node:net';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
+import {
+  check,
+  MervError,
+  pathSegment,
+  ROLES,
+  type AgentLoginDirectory,
+  type Scope,
+} from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 import { projectSelection, unknownEndpoint, validated } from '@merv/api/errors';
 import type { IdentityProvider } from '@merv/identity/types';
@@ -9,6 +18,17 @@ import {
   ResendInvitationSender,
   type InvitationSender,
 } from './invitation-email.js';
+import {
+  agentLoginSchema,
+  codeMail,
+  connectAssets,
+  Deliveries,
+  noticeMail,
+  startInput,
+  verifyInput,
+  type AgentLoginConfig,
+} from './connect.js';
+import { ResendMailer, type Mail } from './mail.js';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -240,7 +260,130 @@ export function scopeRoutes(
   };
 }
 
-const Config = z.object({ invitations: invitationEmailSchema.optional() }).strict().default({});
+/** The client's address: the rightmost X-Forwarded-For entry, but only from the local proxy. */
+export function clientIp(req: IncomingMessage): string | null {
+  const remote = req.socket.remoteAddress ?? null;
+  const local = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  const forwarded = req.headers['x-forwarded-for'];
+  const last = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
+    .split(',')
+    .map((entry) => entry.trim())
+    .at(-1);
+  return local && last && isIP(last) ? last : remote;
+}
+
+function reply(res: ServerResponse, status: number, type: string, body: string): void {
+  res.writeHead(status, {
+    'content-type': type,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(body);
+}
+
+const tooMany = (code: string, seconds: number) =>
+  new MervError(
+    code,
+    code === 'login_capacity'
+      ? 'Merv is sending too many sign-in codes right now; try again later'
+      : 'Too many sign-in requests; try again later',
+    429,
+    { retryAfterSeconds: seconds },
+  );
+
+/**
+ * `/connect`, public: the page an agent reads, the installer, the connector, and the two sign-in
+ * calls. A code is mailed in the background after the reply, so a start answers the same for
+ * every address; drain() waits for the mail in flight.
+ */
+export function connectRoutes(
+  scope: Scope,
+  {
+    config: input,
+    directory,
+    mailer,
+  }: {
+    config: AgentLoginConfig;
+    directory: AgentLoginDirectory;
+    mailer: { send(mail: Mail): Promise<void> };
+  },
+): { handler: MountHandler; drain(): Promise<void> } {
+  const config = agentLoginSchema.parse(input);
+  const { limits } = config;
+  const storeLimits = { ...limits, keyDays: config.keyDays, retentionDays: config.retentionDays };
+  const { origin, page, installer, connector } = connectAssets(config);
+  const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting);
+  // In process: a restart forgets it. The verifier and per-login tries are the durable bound.
+  const verifies = new Map<string, number[]>();
+  const handler: MountHandler = async (req, res, r) => {
+    const path = r.url.pathname;
+    if (req.method === 'GET' && path === '/connect')
+      return reply(res, 200, 'text/plain; charset=utf-8', page);
+    if (req.method === 'GET' && path === '/connect/install.sh')
+      return reply(res, 200, 'text/plain; charset=utf-8', installer);
+    if (req.method === 'GET' && path === '/connect/merv-connect.mjs')
+      return reply(res, 200, 'text/javascript; charset=utf-8', connector);
+    const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
+    if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
+      throw unknownEndpoint();
+    const ip = clientIp(req);
+    try {
+      if (!verifyRoute) {
+        if (deliveries.full) throw tooMany('login_capacity', 60);
+        const body = await r.json(startInput, 4096);
+        const login = await scope.agentLogins.start({ ...body, ip }, storeLimits);
+        deliveries.push(() =>
+          scope.agentLogins.deliver(login, body.email, directory, (mail) =>
+            mailer.send(codeMail(mail, origin)),
+          ),
+        );
+        const { loginId, phrase, expiresAt } = login;
+        return reply(
+          res,
+          202,
+          'application/json; charset=utf-8',
+          JSON.stringify({ loginId, phrase, expiresAt, retryAfterSeconds: 60 }),
+        );
+      }
+      const now = Date.now();
+      for (const [address, stamps] of verifies)
+        if (!stamps.some((stamp) => now - stamp < 60_000)) verifies.delete(address);
+      const recent = (verifies.get(ip ?? '') ?? []).filter((stamp) => now - stamp < 60_000);
+      if (recent.length >= limits.verifyPerIpMinute) throw tooMany('login_rate_limited', 60);
+      verifies.set(ip ?? '', [...recent, now]);
+      const { code, verifier } = await r.json(verifyInput, 4096);
+      const digits = code.replace(/[\s-]/g, '');
+      const issued = await scope.agentLogins.verify(
+        verifyRoute[1]!,
+        { code: /^\d{8}$/.test(digits) ? digits : '', verifier },
+        storeLimits,
+        directory,
+        (notice) => mailer.send(noticeMail(notice, origin)),
+      );
+      return {
+        ...issued,
+        projects: issued.projects.map(({ id, name, role }) => ({ id, name, role })),
+      };
+    } catch (error) {
+      const wait = error instanceof MervError && error.status === 429 && error.details;
+      if (wait)
+        res.setHeader(
+          'retry-after',
+          String((wait as { retryAfterSeconds: number }).retryAfterSeconds),
+        );
+      throw error;
+    }
+  };
+  return { handler, drain: () => deliveries.drain() };
+}
+
+const Config = z
+  .object({
+    invitations: invitationEmailSchema.optional(),
+    agentLogin: agentLoginSchema.optional(),
+  })
+  .strict()
+  .default({});
 export const scopeApiPlugin = {
   name: 'merv-scope-api',
   Config,
@@ -254,6 +397,27 @@ export const scopeApiPlugin = {
     );
     ctx.effect(() => ctx.api.mount('/account', routes));
     ctx.effect(() => ctx.api.mount('/projects', routes));
+    const login = config.agentLogin;
+    if (login) {
+      const { findUserByEmail, directoryUser } = ctx.identity;
+      // Eligibility needs the directory's admin record: without it, agent sign-in stays off.
+      if (!findUserByEmail || !directoryUser)
+        throw new MervError(
+          'agent_login_unavailable',
+          'Agent sign-in needs identity.directoryAdmin with a service-role directory key',
+          503,
+        );
+      const connect = connectRoutes(ctx.scope, {
+        config: login,
+        directory: {
+          find: (email) => findUserByEmail.call(ctx.identity, email),
+          user: (subject) => directoryUser.call(ctx.identity, subject),
+        },
+        mailer: new ResendMailer(login.apiKeyEnv, login.from),
+      });
+      ctx.effect(() => ctx.api.mount('/connect', connect.handler, { public: true }));
+      ctx.effect(() => () => connect.drain());
+    }
   },
 };
 export default scopeApiPlugin;

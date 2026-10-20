@@ -741,4 +741,35 @@ test('invitation delivery is opt-in and renders credential names, never secret v
   });
   assert.ok(!readFileSync(output, 'utf8').includes('private-mail-fixture'));
   assert.ok(!readFileSync(output, 'utf8').includes('private-directory-fixture'));
+  assert.equal(plugin('scope-api').config.agentLogin, undefined);
+  assert.equal(plugin('identity').config.directoryAdmin, undefined);
+});
+
+test('agent sign-in is opt-in, needs the service key and a mail key, and asks for the admin API', (t) => {
+  const { run, plugin } = renderer(t);
+  const keys = {
+    SUPABASE_SERVICE_KEY: 'private-directory-fixture',
+    RESEND_API_KEY: 'private-mail-fixture',
+  };
+  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true' }).status, 0);
+  assert.notEqual(
+    run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'Merv' }).status,
+    0,
+  );
+  assert.equal(run({ MERV_AGENT_LOGIN: 'true', ...keys }).status, 0);
+  assert.deepEqual(plugin('scope-api').config, {
+    agentLogin: {
+      apiKeyEnv: 'RESEND_API_KEY',
+      from: 'Merv <login@rapidreview.io>',
+      publicOrigin: 'https://merv.example',
+      serverName: 'merv',
+    },
+  });
+  assert.equal(plugin('identity').config.directoryKeyEnv, 'SUPABASE_SERVICE_KEY');
+  assert.equal(plugin('identity').config.directoryAdmin, true);
+  assert.equal(
+    run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'merv-staging' }).status,
+    0,
+  );
+  assert.equal(plugin('scope-api').config.agentLogin.serverName, 'merv-staging');
 });

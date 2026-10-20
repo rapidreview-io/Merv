@@ -112,25 +112,40 @@ set('secrets', {
   huggingFaceEndpoint: `${origin('MERV_TS_PUBLIC_ORIGIN')}/hf`,
 });
 const projectInvitations = optIn('MERV_PROJECT_INVITATIONS');
-if (projectInvitations) {
+// Agent sign-in by emailed code (/connect). It needs the directory's admin API, so the service key
+// must be a service-role key: identity refuses to boot otherwise. Off until a staging check passes.
+const agentLogin = optIn('MERV_AGENT_LOGIN');
+const connectorName = process.env.MERV_CONNECTOR_NAME ?? 'merv';
+if (!/^[a-z][a-z0-9-]{0,31}$/.test(connectorName)) throw new Error('Invalid MERV_CONNECTOR_NAME');
+if (projectInvitations || agentLogin) {
   required('SUPABASE_SERVICE_KEY');
   const resendKeyEnv = process.env.MERV_INVITATION_RESEND_KEY_ENV
     ? envName('MERV_INVITATION_RESEND_KEY_ENV')
     : 'RESEND_API_KEY';
   required(resendKeyEnv);
+  const mail = (fromEnv, from) => ({
+    apiKeyEnv: resendKeyEnv,
+    from: process.env[fromEnv]?.trim() || from,
+    publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+  });
   set('scope-api', {
-    invitations: {
-      apiKeyEnv: resendKeyEnv,
-      from: process.env.MERV_INVITATION_FROM?.trim() || 'Merv <invites@rapidreview.io>',
-      publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
-    },
+    ...(projectInvitations && {
+      invitations: mail('MERV_INVITATION_FROM', 'Merv <invites@rapidreview.io>'),
+    }),
+    ...(agentLogin && {
+      agentLogin: {
+        ...mail('MERV_AGENT_LOGIN_FROM', 'Merv <login@rapidreview.io>'),
+        serverName: connectorName,
+      },
+    }),
   });
 }
 set('identity', {
   supabaseUrl: origin('SUPABASE_URL'),
   mode,
   publishableKeyEnv: 'SUPABASE_ANON_KEY',
-  ...(projectInvitations ? { directoryKeyEnv: 'SUPABASE_SERVICE_KEY' } : {}),
+  ...(projectInvitations || agentLogin ? { directoryKeyEnv: 'SUPABASE_SERVICE_KEY' } : {}),
+  ...(agentLogin ? { directoryAdmin: true } : {}),
   ...(mode === 'hs256' ? { secretEnv: 'SUPABASE_JWT_SECRET' } : {}),
 });
 set('api', {

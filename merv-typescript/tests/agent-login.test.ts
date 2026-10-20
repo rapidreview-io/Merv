@@ -12,6 +12,9 @@ import type {
   Principal,
 } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { connectServer } from './fixtures/agent-login.js';
+import { clientIp, scopeApiPlugin } from '@merv/scope/api';
+import { Context } from 'cordis';
 
 const issuer = 'https://identity.example/auth/v1';
 const ada = '11111111-1111-4111-8111-111111111111';
@@ -401,4 +404,291 @@ test('one key per connector install, ten per person, labelled, recorded, and fix
   await assert.rejects(f.principal(replaced.token), { code: 'unauthorized' });
   const after = (await keys()).find((value) => value.id === replaced.key.id)!;
   assert.equal(after.expiresAt, key.expiresAt, 'never renewed');
+});
+
+/** POSTs JSON to the server, from `ip` through the local proxy when given. */
+async function post(url: string, body: unknown, headers: Record<string, string> = {}) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+    redirect: 'error',
+  });
+  return {
+    status: response.status,
+    retryAfter: response.headers.get('retry-after'),
+    body: (await response.json()) as any,
+  };
+}
+const startBody = (
+  email: string,
+  verifier: string,
+  installId = '9d5c3a1e-5f0e-4b8c-9a39-4f1e2b7c6d01',
+) => ({
+  email,
+  client: { name: 'Codex', host: 'ada-mbp', installId },
+  verifierHash: verifierHash(verifier),
+});
+
+test('/connect serves the agent page, an installer that pins the connector, and the connector', async (t) => {
+  const f = await connectServer({ serverName: 'merv-staging' });
+  t.after(() => f.close());
+  const hostDir = new URL(f.url).host.replace(':', '_');
+  const page = await fetch(`${f.url}/connect`);
+  assert.equal(page.headers.get('content-type'), 'text/plain; charset=utf-8');
+  const text = await page.text();
+  assert.ok(text.includes(`curl -fsSL ${f.url}/connect/install.sh | sh`));
+  assert.ok(text.includes(`~/.merv/connect/${hostDir}/bin/merv-connect login`));
+  assert.ok(text.includes('"merv-staging"') && !text.includes('__MERV'));
+  const connector = await (await fetch(`${f.url}/connect/merv-connect.mjs`)).text();
+  assert.ok(connector.includes(f.url) && !connector.includes('__MERV'));
+  const installer = await (await fetch(`${f.url}/connect/install.sh`)).text();
+  assert.ok(installer.includes(`SHA='${createHash('sha256').update(connector).digest('hex')}'`));
+  assert.ok(
+    installer.includes(`HOSTDIR='${hostDir}'`) && installer.trimEnd().endsWith('main "$@"'),
+  );
+  assert.equal((await fetch(`${f.url}/connect/other`)).status, 404);
+});
+
+test('a start answers the same for every address; the code arrives only for an eligible account', async (t) => {
+  const f = await connectServer();
+  t.after(() => f.close());
+  const known = await post(`${f.url}/connect/login`, startBody('ada@lab.org', 'a'.repeat(43)));
+  const unknown = await post(`${f.url}/connect/login`, startBody('nobody@lab.org', 'b'.repeat(43)));
+  for (const answer of [known, unknown]) {
+    assert.equal(answer.status, 202);
+    assert.deepEqual(Object.keys(answer.body).sort(), [
+      'expiresAt',
+      'loginId',
+      'phrase',
+      'retryAfterSeconds',
+    ]);
+  }
+  const code = await f.codeFor('ada@lab.org');
+  assert.match(code!, /^\d{4}-\d{4}$/);
+  assert.equal(f.mails.length, 1);
+  const mail = f.mails[0]!;
+  assert.equal(mail.to, 'Ada@Lab.org');
+  assert.ok(mail.text.includes(`Request: ${known.body.phrase}`));
+  assert.ok(mail.text.includes('Signs in: Codex on ada-mbp'));
+  assert.equal(mail.idempotencyKey, `agent-login/${known.body.loginId}`);
+  // Every refusal of the challenge reads alike.
+  const wrong = await post(`${f.url}/connect/login/${known.body.loginId}/verify`, {
+    code: code === '0000-0000' ? '0000-0001' : '0000-0000',
+    verifier: 'a'.repeat(43),
+  });
+  const malformed = await post(`${f.url}/connect/login/nope/verify`, {
+    code: 'x',
+    verifier: 'a'.repeat(43),
+  });
+  assert.deepEqual(wrong, malformed);
+  assert.equal(wrong.status, 400);
+  assert.deepEqual(wrong.body, {
+    error: {
+      code: 'invalid_code',
+      message: 'That code does not match this sign-in. Check it, or run login again.',
+    },
+  });
+  const signedIn = await post(`${f.url}/connect/login/${known.body.loginId}/verify`, {
+    code: code!.replace('-', ' - '),
+    verifier: 'a'.repeat(43),
+  });
+  assert.equal(signedIn.status, 200);
+  assert.equal(signedIn.body.email, 'Ada@Lab.org');
+  assert.deepEqual(signedIn.body.projects, [
+    { id: f.ada.project!.id, name: 'Grokking', role: 'operator' },
+  ]);
+  assert.equal(signedIn.body.key.label, 'Codex on ada-mbp');
+  const notice = f.mails.at(-1)!;
+  assert.equal(notice.subject, 'New Merv agent sign-in: Codex on ada-mbp');
+  assert.ok(notice.text.includes(`${f.url}/ui/settings/keys`));
+  assert.ok(!JSON.stringify(f.mails).includes(signedIn.body.token));
+  // The key works over MCP with no project, and lists the person's projects.
+  const listed = await post(
+    `${f.url}/mcp`,
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'project.list', arguments: {} },
+    },
+    {
+      authorization: `Bearer ${signedIn.body.token}`,
+      accept: 'application/json, text/event-stream',
+    },
+  );
+  assert.equal(listed.status, 200);
+  assert.equal(JSON.parse(listed.body.result.content[0].text).projects[0].role, 'operator');
+});
+
+test('limits answer 429 with Retry-After, and an address is trusted only from the local proxy', async (t) => {
+  const f = await connectServer({ limits: { ipPerHour: 2, verifyPerIpMinute: 2 } });
+  t.after(() => f.close());
+  const from = (ip: string) => ({ 'x-forwarded-for': `10.0.0.1, ${ip}` });
+  for (const n of [1, 2])
+    assert.equal(
+      (
+        await post(
+          `${f.url}/connect/login`,
+          startBody(`p${n}@lab.org`, 'a'.repeat(43)),
+          from('198.51.100.1'),
+        )
+      ).status,
+      202,
+    );
+  const limited = await post(
+    `${f.url}/connect/login`,
+    startBody('p3@lab.org', 'a'.repeat(43)),
+    from('198.51.100.1'),
+  );
+  assert.equal(limited.status, 429);
+  assert.equal(limited.retryAfter, '3600');
+  assert.equal(limited.body.error.code, 'login_rate_limited');
+  // Another forwarded address is another bucket, since this socket is the loopback proxy.
+  assert.equal(
+    (
+      await post(
+        `${f.url}/connect/login`,
+        startBody('p4@lab.org', 'a'.repeat(43)),
+        from('198.51.100.2'),
+      )
+    ).status,
+    202,
+  );
+  // From any other socket, X-Forwarded-For is ignored.
+  const request = (remoteAddress: string) =>
+    ({ socket: { remoteAddress }, headers: { 'x-forwarded-for': '198.51.100.7' } }) as never;
+  assert.equal(clientIp(request('203.0.113.9')), '203.0.113.9');
+  assert.equal(clientIp(request('::1')), '198.51.100.7');
+  const verify = () =>
+    post(`${f.url}/connect/login/login_x/verify`, { code: '00000000', verifier: 'a'.repeat(43) });
+  assert.equal((await verify()).status, 400);
+  assert.equal((await verify()).status, 400);
+  const tooMany = await verify();
+  assert.equal(tooMany.status, 429);
+  assert.equal(tooMany.retryAfter, '60');
+  await f.drain();
+});
+
+test('a full delivery queue refuses new starts with login_capacity', async (t) => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const f = await connectServer({
+    limits: { queueConcurrency: 1, queueWaiting: 1 },
+    mailer: () => held,
+  });
+  t.after(async () => {
+    release();
+    await f.close();
+  });
+  const start = (n: number) =>
+    post(`${f.url}/connect/login`, startBody('ada@lab.org', 'a'.repeat(43)), {
+      'x-forwarded-for': `198.51.100.${n}`,
+    });
+  assert.equal((await start(1)).status, 202);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal((await start(2)).status, 202);
+  const full = await start(3);
+  assert.equal(full.status, 429);
+  assert.equal(full.body.error.code, 'login_capacity');
+});
+
+test('an email-code key cannot mint, rotate, reveal or revoke keys, nor manage members or secrets', async (t) => {
+  const f = await connectServer();
+  t.after(() => f.close());
+  const other = await f.person('22222222-2222-4222-8222-222222222222', 'bob@lab.org', 'Bob');
+  const started = await post(`${f.url}/connect/login`, startBody('ada@lab.org', 'a'.repeat(43)));
+  const signedIn = await post(`${f.url}/connect/login/${started.body.loginId}/verify`, {
+    code: await f.codeFor('ada@lab.org'),
+    verifier: 'a'.repeat(43),
+  });
+  const token = signedIn.body.token as string;
+  const projectId = f.ada.project!.id;
+  const as = async (path: string, method: string, body?: unknown) => {
+    const response = await fetch(`${f.url}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'x-merv-project-id': projectId,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return response.status;
+  };
+  const human = await f.scope.members.acceptVerifiedIdentity({
+    issuer: 'https://identity.example/auth/v1',
+    subject: f.ada.human.user.subject,
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const handMade = await f.scope.userKeys.create(human, { projectId, label: 'Laptop' });
+  assert.equal(await as('/account/keys', 'POST', { projectId }), 403);
+  assert.equal(await as('/account/keys', 'GET'), 403);
+  assert.equal(await as(`/account/keys/${handMade.key.id}/rotate`, 'POST', {}), 403);
+  assert.equal(await as(`/account/keys/${handMade.key.id}`, 'DELETE'), 403);
+  assert.equal(await as(`/account/keys/${signedIn.body.key.id}/rotate`, 'POST', {}), 403);
+  assert.equal(
+    await as(`/projects/${projectId}/members/${other.human.user.subject}`, 'PATCH', {
+      role: 'reader',
+    }),
+    403,
+  );
+  assert.equal(
+    await as(`/projects/${projectId}/members/${other.human.user.subject}`, 'DELETE'),
+    403,
+  );
+  assert.equal(
+    await as(`/projects/${projectId}/invitations`, 'POST', {
+      email: 'bob@lab.org',
+      role: 'reader',
+    }),
+    403,
+  );
+  assert.equal(await as('/secrets/huggingface', 'GET'), 403);
+  for (const [name, args] of [
+    ['actor.create', { name: 'x', role: 'operator' }],
+    ['actor.issue_token', { actorId: 'actor_x' }],
+    ['actor.rotate_token', { credentialId: 'cred_x' }],
+    ['actor.credentials', {}],
+  ] as const) {
+    const called = await post(
+      `${f.url}/mcp`,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name, arguments: { ...args, projectId } },
+      },
+      { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream' },
+    );
+    assert.equal(called.body.result.isError, true, name);
+    assert.match(called.body.result.content[0].text, /tool_forbidden/, name);
+  }
+  assert.equal(
+    (await f.scope.userKeys.keys(human)).find((key) => key.id === handMade.key.id)!.revokedAt,
+    null,
+  );
+});
+
+test('scope-api turns agent sign-in on only with the directory admin API and a mail key', async (t) => {
+  const ctx = new Context();
+  const mounted: string[] = [];
+  ctx.provide('scope', {} as never);
+  ctx.provide('api', {
+    mount: (prefix: string) => (mounted.push(prefix), () => undefined),
+  } as never);
+  ctx.provide('identity', { findUserByEmail: async () => null } as never);
+  t.after(() => ctx.fiber.dispose());
+  const config = {
+    agentLogin: {
+      apiKeyEnv: 'MERV_AGENT_LOGIN_TEST_KEY',
+      from: 'Merv <login@example.com>',
+      publicOrigin: 'https://merv.example',
+    },
+  };
+  await assert.rejects(
+    async () => await ctx.plugin(scopeApiPlugin, config as never),
+    /directoryAdmin|agent_login_unavailable|unavailable/,
+  );
+  assert.ok(!mounted.includes('/connect'));
 });

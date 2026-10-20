@@ -10,6 +10,13 @@ for (const path of ['runner/src/supervisor.mjs', 'scripts/src/sandbox.mjs']) {
   copyFileSync(new URL(`../packages/${path}`, import.meta.url), destination);
 }
 
+// The agent connector, its installer and page, which /connect stamps and serves.
+cpSync(
+  new URL('../packages/scope/src/connect/', import.meta.url),
+  new URL('../dist/packages/scope/src/connect/', import.meta.url),
+  { recursive: true },
+);
+
 // Keep the UI's relative bundle path the same for source and compiled plugins.
 // Backend-only builds remain supported; a production UI build runs build:ui first.
 const uiSource = new URL('../packages/ui/dist/', import.meta.url);
