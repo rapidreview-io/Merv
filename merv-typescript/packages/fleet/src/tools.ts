@@ -66,7 +66,7 @@ export const fleetToolsPlugin = {
     ctx.effect(function* () {
       yield ctx.tools.register({
         name: 'fleet',
-        act: { title: 'Retry on Fleet' },
+        act: { title: 'Fleet' },
         description:
           'The project’s Fleet allocations: the machines its workers run on.\nlist: open allocations and the 50 latest ended ones, with machine lifecycle status.\nget: one allocation by id; a requested shutdown is distinct from confirmed machine deletion.\ndrain: stop admission on id, keep the current assignment’s results, then release its machine (its source or a project administrator).\nhalt: fence id and request immediate machine deletion; in-flight work may be interrupted (its source or a project administrator).\nproject_limit: how many machines the project may run at once; machines sets it (a project administrator or their agent).\nworkflow_retry_status: why Fleet stopped renting for one workflow revision (instanceId, expectedRevision) after unclaimed machines.\nworkflow_retry: open one more two-attempt window for that revision (project administrator; reason, stable requestId).',
         inputSchema: input,
