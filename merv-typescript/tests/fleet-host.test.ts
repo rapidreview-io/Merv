@@ -153,15 +153,21 @@ test('Fleet recovers a lost create under its stable profile id and create key th
   const agent = (name: string, input: object) => tools.invoke(name, reader, input, true);
   assert.deepEqual((await agent('sandboxes.sandbox', { action: 'list' })).value, { sandboxes: [] });
   assert.equal(((await agent('fleet', {})).value as unknown[]).length, 1);
+  // For one release a retired name runs as the action it became, judged as that action.
+  assert.deepEqual((await agent('sandboxes.sandbox_list', {})).value, { sandboxes: [] });
+  assert.ok(!offered.some((name) => /^sandbox\.|^sandboxes\.\w+_/.test(name)));
   for (const [name, input] of [
     ['fleet', { action: 'halt', id: allocation.id }],
     ['sandboxes.sandbox', { action: 'delete', sandbox_id: 'sbx_none' }],
+    ['sandbox.release', { id: 'sbx_none' }],
+    ['sandboxes.sandbox_delete', { sandbox_id: 'sbx_none' }],
   ] as const)
     await assert.rejects(agent(name, input), { code: 'forbidden' });
   const [, script] = scriptTools(tools, { run: runScript });
   const ran = (await script!.handler(caller, {
     code: `
       const machines = await tools.sandboxes.sandbox({ action: 'list' });
+      await call('sandboxes.sandbox_list', {});
       const allocations = await call('fleet', { action: 'list' });
       try { await call('fleet', { action: 'halt', id: allocations[0].id }); } catch (e) {
         return [machines, allocations.length, e.message];

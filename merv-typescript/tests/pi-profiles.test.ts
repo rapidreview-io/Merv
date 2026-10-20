@@ -7,6 +7,8 @@ import type { PiProfile } from '../packages/pi/src/types.js';
 import { code, fixture, models } from './fixtures/pi.js';
 import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
 import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { CustomerService } from '../packages/customer-experiments/src/service.js';
+import { retired } from '../packages/sandboxes/src/host.js';
 
 const astraModels = models.map((model) =>
   model.id === 'gpt-6-astra' ? { ...model, effort: 'medium' as const } : model,
@@ -340,4 +342,97 @@ test('a role with a terminal is told so, and its model may call the terminal too
     'grep',
   ]);
   await f.pi.validateModel(grant);
+});
+
+test('a turn runs the retired tool names it was offered as the tools they became, healer v1 and v2 included', async (t) => {
+  const f = await fixture(t, { pi: { models: astraModels } });
+  const healers: PiProfile[] = [];
+  await new CustomerService(
+    {} as never,
+    {} as never,
+    {} as never,
+    { registerFileProvider: () => () => {} } as never,
+    { registerProfile: (healer: PiProfile) => (healers.push(healer), () => {}) } as never,
+    undefined,
+    () => undefined,
+    undefined,
+    { publicOrigin: 'https://merv.example', sponsor: { issuer: 'i', subject: 's' } } as never,
+  ).registerIntake({ register: () => () => {} } as never);
+  const bound = healers.filter((p) => p.id === 'customer-experiments-healer' && p.version < 3);
+  const retiredNames = bound[0]!.tools.filter((name) => name.startsWith('sandbox'));
+  assert.deepEqual(
+    bound.map(({ tools }) => tools.filter((name) => name.startsWith('sandbox'))),
+    [retiredNames, retiredNames],
+  );
+  // The tools they became, as Sandboxes registers them, and the table that runs the old names.
+  f.tools.register({
+    name: 'sandboxes.sandbox',
+    description: 'Machines',
+    inputSchema: z
+      .object({
+        action: z.enum(['list', 'get', 'providers', 'create', 'delete']).default('list'),
+        sandbox_id: z.string().optional(),
+      })
+      .strict(),
+    reads: ({ action }) => !['create', 'delete'].includes(action),
+    handler: (_caller, input) => ({ tool: 'sandbox', ...input }),
+  });
+  f.tools.register({
+    name: 'sandboxes.spend',
+    description: 'Spend',
+    readOnly: true,
+    inputSchema: z.object({ action: z.enum(['status', 'report']).default('status') }).strict(),
+    handler: (_caller, input) => ({ tool: 'spend', ...input }),
+  });
+  t.after(f.tools.alias(retired));
+  for (const healer of [undefined, ...bound]) {
+    // Its turn was offered the old tools before the release that retired them.
+    const old = retiredNames.map((name) =>
+      f.tools.register({
+        name,
+        description: name,
+        inputSchema: z.object({ id: z.string().optional() }).strict(),
+        handler: () => assert.fail('retired'),
+      }),
+    );
+    let conversation = await f.create();
+    if (healer) {
+      f.pi.registerProfile({ ...healer, context: async () => '' });
+      const request = `request_${healer.version}`;
+      conversation = await f.pi.createProfiled(f.operator, {
+        requestId: `healer-${request}`,
+        title: 'Healer',
+        profile: { id: healer.id, version: healer.version, requestId: request },
+      });
+    }
+    // One person's turns share their machine, which runs after the first.
+    const command = await f.send(conversation);
+    const token = await f.token(command.runtimeId);
+    await f.fleet.tick();
+    await f.fleet.tick();
+    const { work } = await f.pi.next(token, { workerId: 'worker_1' });
+    const turn = {
+      conversationId: conversation.id,
+      commandId: work!.command.id,
+      workerId: 'worker_1',
+    };
+    for (const unregister of old) await unregister();
+    await f.pi.begin(token, turn);
+    const call = (name: string, input: object) => f.pi.tool(token, { ...turn, name, input });
+    assert.deepEqual(await call('sandboxes.sandbox_list', {}), { tool: 'sandbox', action: 'list' });
+    assert.deepEqual(await call('sandboxes.providers_list', {}), {
+      tool: 'sandbox',
+      action: 'providers',
+    });
+    assert.deepEqual(await call('sandboxes.spend_status', {}), { tool: 'spend', action: 'status' });
+    // Its old arguments, renamed, and its own action whatever the input says.
+    assert.deepEqual(await call('sandbox.release', { id: 'sbx_1', action: 'create' }), {
+      tool: 'sandbox',
+      action: 'delete',
+      sandbox_id: 'sbx_1',
+    });
+    await f.pi.complete(token, f.completion(turn));
+  }
+  // A profile may name any tool the registry may, one without a dot included.
+  f.pi.registerProfile({ ...profile, id: 'fleet-role', tools: ['fleet'] });
 });

@@ -87,7 +87,7 @@ const releaseAckGraceMs = 120_000;
 const unclaimedRetryCooldownMs = 60_000;
 const unclaimedAttemptLimit = 2;
 const refusedRetryCooldownMs = 15 * 60_000;
-const retryInput = z
+export const retryInput = z
   .object({
     instanceId: z.string().min(1).max(200),
     expectedRevision: z.number().int().nonnegative(),

@@ -3,6 +3,7 @@ import { check, type Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
 import { present } from './running.js';
+import { retryInput } from './workflow.js';
 import { z } from 'zod';
 
 const id = z.string().min(1).max(200).optional();
@@ -21,10 +22,7 @@ const input = z
       .default('list'),
     id,
     machines: z.number().int().min(1).max(64).optional(),
-    instanceId: id,
-    expectedRevision: z.number().int().nonnegative().optional(),
-    reason: z.string().trim().min(8).max(500).optional(),
-    requestId: id,
+    ...retryInput.partial().shape,
   })
   .strict();
 type Input = z.output<typeof input>;
@@ -73,10 +71,10 @@ export const fleetToolsPlugin = {
         reads: ({ action }: Input) => ['list', 'get', 'workflow_retry_status'].includes(action),
         handler: (caller: Caller, parsed: Input) => run[parsed.action](caller, parsed),
       });
-      // The seven tools the 2026-10-20 consolidation merged answer where they went, for one release.
-      yield ctx.tools.rename((name) => {
+      // For one release the seven tools the 2026-10-20 consolidation merged run as their action.
+      yield ctx.tools.alias((name) => {
         const action = /^fleet\.(\w+)$/.exec(name)?.[1];
-        return !!action && Object.hasOwn(run, action) && `fleet with action=${action}`;
+        return action && Object.hasOwn(run, action) ? { tool: 'fleet', action } : undefined;
       });
     });
   },

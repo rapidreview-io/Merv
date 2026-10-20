@@ -13,7 +13,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { cleanText, clip, ellipsis, firstOf, itemTitle, quoted, visible } from './text.js';
-export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
+export { folded, idPattern, idSchema, oidPattern, oidSchema, toolNamePattern } from './schemas.js';
 export { byCodeUnit, ordered } from './order.js';
 export {
   allowedOrigin,

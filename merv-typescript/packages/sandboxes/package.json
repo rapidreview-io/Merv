@@ -13,6 +13,7 @@
     "@merv/api": "0.1.0",
     "@merv/ui": "0.1.0",
     "@sandboxes/composition": "0.1.0",
+    "@sandboxes/http": "0.1.0",
     "@sandboxes/merv-host": "0.1.0",
     "@sandboxes/pipelines": "0.1.0",
     "@sandboxes/storage": "0.1.0",

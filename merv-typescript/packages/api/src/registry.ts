@@ -1,5 +1,14 @@
 import type { View } from '@merv/contracts/board-view';
-import { ellipsis, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
+import {
+  ellipsis,
+  MervError,
+  plain,
+  record,
+  toolNamePattern,
+  type Caller,
+  type Data,
+  type Scope,
+} from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -13,6 +22,7 @@ import type {
   RegisteredTool,
   RemoteToolDefinition,
   ToolAdmission,
+  ToolAlias,
   ToolCatalog,
   ToolDescription,
   ToolInvocation,
@@ -89,7 +99,6 @@ interface CatalogState {
   owned: Set<Entry>;
 }
 const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
-const publishedNamePattern = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const namespace = '_';
 /** Identity, not provider: re-registering the same provider still retires calls it began. */
@@ -105,7 +114,7 @@ export class ToolRegistry implements Tools {
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
   private readonly callerRules = new Map<CallerKind, CallerRules>();
-  private readonly renames = new Set<(name: string) => string | false | undefined>();
+  private readonly aliases = new Set<(name: string) => ToolAlias | undefined>();
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
@@ -122,7 +131,7 @@ export class ToolRegistry implements Tools {
   }
 
   private prepare(definition: AnyToolDefinition, remote?: Remote): Entry {
-    if (!publishedNamePattern.test(definition.name))
+    if (!toolNamePattern.test(definition.name))
       throw new MervError('invalid_tool', `Invalid tool name: ${definition.name}`);
     if (typeof definition.handler !== 'function')
       throw new MervError('invalid_tool', 'Tool handler is required');
@@ -331,9 +340,34 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  rename(resolve: (name: string) => string | false | undefined): () => void {
-    this.renames.add(resolve);
-    return () => void this.renames.delete(resolve);
+  alias(resolve: (name: string) => ToolAlias | undefined): () => void {
+    this.aliases.add(resolve);
+    return () => void this.aliases.delete(resolve);
+  }
+
+  /** The entry a name runs: its own, else the tool a retired name became, listed to no one. */
+  private entry(name: string): Entry | undefined {
+    const own = this.entries.get(name);
+    if (own) return own;
+    for (const resolve of this.aliases) {
+      const alias = resolve(name);
+      const target = alias && this.entries.get(alias.tool);
+      if (!target || target.remote) continue;
+      const { action, args = {} } = alias;
+      const named = (key: string) => (Object.hasOwn(args, key) ? args[key]! : key);
+      const renamed = (input: unknown, fields = record(input)) =>
+        fields
+          ? { ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [named(k), v])), action }
+          : input;
+      // Its action decides whether it reads, so sessions, readers and scripts judge the old tool.
+      const readOnly = target.tool.readOnly || !!target.tool.reads?.({ action });
+      return {
+        ...target,
+        name,
+        tool: { ...target.tool, name, readOnly, reads: undefined },
+        parse: (input) => target.parse(renamed(input)),
+      };
+    }
   }
 
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void {
@@ -434,8 +468,9 @@ export class ToolRegistry implements Tools {
 
   /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
    *  would hold a reader connection for as long as that service takes to answer. */
-  private snapshotted(entry: Entry): boolean {
-    return entry.tool.readOnly && entry.description.annotations?.openWorldHint !== true;
+  private snapshotted({ remote, description }: Entry): boolean {
+    const hints = description.annotations;
+    return !remote && hints?.readOnlyHint === true && hints.openWorldHint !== true;
   }
   /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
@@ -515,12 +550,8 @@ export class ToolRegistry implements Tools {
     caller = structuredClone(caller);
     // Scope refuses a conversation that also carries another authority, at its read decision.
     const rules = this.rulesFor(caller);
-    const entry = this.entries.get(name);
-    if (!entry) {
-      const to = [...this.renames].map((resolve) => resolve(name)).find(Boolean);
-      const said = to ? `renamed: use ${to}` : `Unknown tool: ${ellipsis(name, 200)}`;
-      throw new MervError('unknown_tool', said, 404);
-    }
+    const entry = this.entry(name);
+    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !this.offered(entry, false))
@@ -531,31 +562,40 @@ export class ToolRegistry implements Tools {
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       const session = caller.session ? this.sessionPolicy() : undefined;
-      const prepared = await session?.provider.prepare(
-        caller,
-        name,
-        input as Data,
-        entry.tool.readOnly,
-      );
+      // A read of a tool that also writes is admitted as a read where the session's grants name
+      // the tool; its writes, and a tool no grant names, keep the grants exact.
+      const { reads } = entry.tool;
+      const read =
+        entry.tool.readOnly ||
+        (!!session &&
+          !!reads &&
+          (await this.fenced(session, session.provider.allowsTool(caller, name))) &&
+          (await Promise.resolve(input)
+            .then(entry.parse)
+            .then(reads, () => false)));
+      const prepared = await session?.provider.prepare(caller, name, input as Data, read);
       // Preparation may allocate a reservation. Its original provider releases it in finally,
       // even when a replacement now owns the slot.
       try {
         if (session) this.fence(session);
-        const parsed = await entry.parse(prepared ? prepared.input : input);
+        const given = prepared ? prepared.input : input;
+        const parsed = await entry.parse(given);
         admit?.(entry.tool, entry.description, parsed);
+        // A retired name's arguments are bound as its grant names them.
+        const bound = entry.name === entry.definition.name ? parsed : given;
         if (session && prepared)
           await this.fenced(
             session,
-            session.provider.validate(prepared.caller, name, parsed as Data),
+            session.provider.validate(prepared.caller, name, bound as Data),
           );
         let completed: ToolInvocation | undefined;
         // A call's Scope decision is made once, where its tool acts (founder, 2026-10-14): a
         // remote tool's is its grant check right before its handler, which Mounts relies on (a
         // session's also has its admission); a session's native tool's is its admission
         // (prepare); any other native tool's is made right before its handler, inside a read's
-        // snapshot so that it decides on the rows the read sees. An open-world read alone is
-        // decided again after its handler: a revocation while it waited on a service outside
-        // Merv withholds what it brought back (a signed link, an answer).
+        // snapshot so that it decides on the rows the read sees. A read outside a snapshot
+        // (open-world, or of a tool that also writes) is decided again after its handler: a
+        // revocation while it waited withholds what it brought back (a signed link, an answer).
         const dispatch = async (activeCaller: Caller) => {
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
@@ -566,7 +606,7 @@ export class ToolRegistry implements Tools {
           const result =
             this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
           rules?.returns?.(result);
-          if (entry.tool.readOnly && !this.snapshotted(entry))
+          if ((entry.tool.readOnly || entry.tool.reads?.(parsed)) && !this.snapshotted(entry))
             await this.scope.require(activeCaller, 'read');
           completed = entry.complete(result);
           return result;

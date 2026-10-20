@@ -57,6 +57,12 @@ export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'wor
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
 };
+/** A retired name: the tool it became, the action it is, and its old arguments' new names. */
+export interface ToolAlias {
+  tool: string;
+  action: string;
+  args?: Readonly<Record<string, string>>;
+}
 /** The callers one plugin issues: Pi's conversations, Sessions' managed runners and the admin's
  *  platform readers. */
 export type CallerKind = 'conversation' | 'managed' | 'platform';
@@ -167,8 +173,8 @@ export interface Tools {
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
   /** The rules for one kind of caller, from the plugin that issues it (409 when registered). */
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void;
-  /** Where retired tool names went ('fleet with action=halt'): a call by one is refused with it. */
-  rename(resolve: (name: string) => string | false | undefined): () => void;
+  /** Runs retired tool names, for one release, as the tool they became; none is listed. */
+  alias(resolve: (name: string) => ToolAlias | undefined): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
   /** Adds a part to the guide every main agent is given (MCP instructions, Pi's prompt). */

@@ -228,3 +228,43 @@ test('an open-world read is listed, admitted and checked again exactly as a read
     'remote.read',
   ]);
 });
+
+test('a read of a tool that also writes is checked again after its handler; its writes are not', async (t) => {
+  let active = true;
+  const scope = {
+    require: async () => {
+      if (!active) throw new MervError('forbidden', 'Project access denied', 403);
+      return {} as Actor;
+    },
+  };
+  const tools = new ToolRegistry(scope, undefined, (run) => run());
+  t.after(() => tools.close());
+  let entered = deferred();
+  let answer = deferred();
+  tools.register({
+    name: 'mixed.tool',
+    description: 'Lists, or drops',
+    inputSchema: z.object({ action: z.enum(['list', 'drop']) }).strict(),
+    reads: ({ action }) => action === 'list',
+    handler: async (_caller: Caller, { action }: { action: string }) => {
+      entered.resolve();
+      await answer.promise;
+      return { action };
+    },
+  });
+  const caller: Caller = { actorId: 'alice', projectId: 'project-a', credentialId: 'key-alice' };
+  // Revoked while each waits: the read's result is withheld, the committed write's returned.
+  for (const [action, settles] of [
+    ['list', (call: Promise<unknown>) => assert.rejects(call, { code: 'forbidden' })],
+    ['drop', async (call: Promise<unknown>) => assert.deepEqual(await call, { action: 'drop' })],
+  ] as const) {
+    active = true;
+    entered = deferred();
+    answer = deferred();
+    const settled = settles(tools.call('mixed.tool', caller, { action }));
+    await entered.promise;
+    active = false;
+    answer.resolve();
+    await settled;
+  }
+});

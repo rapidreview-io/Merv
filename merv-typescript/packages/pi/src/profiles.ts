@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, digest } from '@merv/contracts';
+import { check, digest, toolNamePattern } from '@merv/contracts';
 import { createInput, id } from './schema.js';
 
 import type { PiProfile, PiProfileBinding, PiStoredProfile } from './profile-types.js';
@@ -21,7 +21,7 @@ const profileDefinition = z
       })
       .strict(),
     instructions: z.string().trim().min(1).max(32_000),
-    tools: z.array(z.string().regex(/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*$/)).max(64),
+    tools: z.array(z.string().regex(toolNamePattern)).max(64),
     // Absent for a role without one, so earlier definitions keep their hash.
     shell: z.literal(true).optional(),
   })
