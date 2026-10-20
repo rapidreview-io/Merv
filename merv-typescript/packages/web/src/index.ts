@@ -250,7 +250,7 @@ export class WebService implements Web {
       503,
     );
     // An address is a request to whoever serves it, and anything the agent has read can be
-    // written into one; nobody presses Run on a conversation's read. So a conversation reads
+    // written into one, and nobody checks a conversation's read first. So a conversation reads
     // only what its own searches found: an address built from project text reaches nobody.
     const seen = caller.conversation && this.returned.get(caller.conversation.id);
     check(

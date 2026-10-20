@@ -169,7 +169,7 @@ export const runningPhrase = z.array(runningValue).max(16);
 export const runningAttention = z
   .object({
     says: runningPhrase.min(1),
-    /** 'An operator', 'The producer'. Printed under the sentence in the sidebar. */
+    /** 'A signed-in operator', 'The producer'. Printed under the sentence in the sidebar. */
     who: words(120).optional(),
     /**
      * The one way to the move, drawn as a link under the sentence in the sidebar's head:
