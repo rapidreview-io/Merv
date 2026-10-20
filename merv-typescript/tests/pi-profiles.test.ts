@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { intakeProfiles } from './fixtures/intake.js';
+import { PiProfiles } from '../packages/pi/src/profiles.js';
+import { webTools } from '../packages/web/src/tools.js';
 import test from 'node:test';
 import { z } from 'zod';
 import { MervError } from '@merv/contracts';
@@ -9,6 +13,10 @@ import { registerWorkerTools } from '../packages/customer-experiments/src/worker
 import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { CustomerService } from '../packages/customer-experiments/src/service.js';
 import { retired } from '../packages/sandboxes/src/host.js';
+
+const hashes: Record<string, string> = JSON.parse(
+  readFileSync(new URL('./fixtures/intake-profile-hashes.json', import.meta.url), 'utf8'),
+);
 
 const astraModels = models.map((model) =>
   model.id === 'gpt-6-astra' ? { ...model, effort: 'medium' as const } : model,
@@ -479,14 +487,12 @@ test('a turn runs the retired tool names it was offered, and a new turn of heale
   f.pi.registerProfile({ ...profile, id: 'fleet-role', tools: ['fleet'] });
 });
 
-test('intake v9 and healer v3 register addresses while all stored earlier profile hashes survive', async () => {
-  const { PiProfiles } = await import('../packages/pi/src/profiles.js');
-  const { intakeProfiles } = await import('./fixtures/intake.js');
-  const { readFileSync } = await import('node:fs');
-  // Captured from c06127657 before changing the service registrations.
-  const hashes = JSON.parse(
-    readFileSync(new URL('./fixtures/intake-profile-hashes.json', import.meta.url), 'utf8'),
-  );
+test('intake v9 and healer v4 register addresses while all stored earlier profile hashes survive', async () => {
+  // Every intake/healer version registered at c06127657, including its latest healer v3.
+  assert.deepEqual(Object.keys(hashes), [
+    ...Array.from({ length: 8 }, (_, i) => `customer-experiments-intake@${i + 1}`),
+    ...Array.from({ length: 3 }, (_, i) => `customer-experiments-healer@${i + 1}`),
+  ]);
   const registry = new PiProfiles();
   const { profiles } = await intakeProfiles();
   for (const profile of profiles) registry.register(profile);
@@ -507,7 +513,109 @@ test('intake v9 and healer v3 register addresses while all stored earlier profil
   assert.ok(intake.tools.includes('nisa.read:excerpts'));
   assert.ok(!intake.tools.includes('intake.write:propose'));
   const healer = registry.get(
-    registry.bind({ id: 'customer-experiments-healer', version: 3, requestId: 'r' }),
+    registry.bind({ id: 'customer-experiments-healer', version: 4, requestId: 'r' }),
   );
   assert.ok(healer.tools.includes('web.read:search'));
+});
+
+test('a base healer v3 binding loads after deployment and its frozen web tools still execute', async (t) => {
+  const f = await fixture(t, { pi: { models: astraModels } });
+  const { profiles } = await intakeProfiles();
+  const healer = profiles.find((p) => p.id === 'customer-experiments-healer' && p.version === 3)!;
+  // Recreate the base grants before freezing a turn. Pin the stored hash independently of
+  // today's registration, so changing v3 in place cannot silently update this test's binding.
+  const base = {
+    ...healer,
+    tools: healer.tools.map((name) =>
+      name === 'web.read:search'
+        ? 'web.search'
+        : name === 'web.read:extract'
+          ? 'web.extract'
+          : name,
+    ),
+    context: async () => 'Stored healer request',
+  };
+  const unregister = f.pi.registerProfile(base);
+  const web = webTools({
+    reads: true,
+    search: async (_caller, input) => ({ query: input.query, results: [], result_count: 0 }),
+    extract: async (_caller, input) => ({
+      url: input.url,
+      content: 'Provider documentation',
+      section: false,
+      status: 'success',
+    }),
+    close: () => {},
+  });
+  const old = Object.values(web.actions).map((action) =>
+    f.tools.register({
+      name: action.was![0]!,
+      description: action.description,
+      inputSchema: action.input,
+      readOnly: web.readOnly,
+      openWorld: action.openWorld,
+      handler: action.handler,
+    }),
+  );
+  const conversation = await f.pi.createProfiled(f.operator, {
+    requestId: 'base-healer-v3',
+    title: 'Stored healer',
+    profile: { id: healer.id, version: 3, requestId: 'request_base_v3' },
+  });
+  const stored = await f.state.read((sql) =>
+    sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_conversations WHERE id=?',
+      conversation.id,
+    ),
+  );
+  assert.equal(
+    JSON.parse(stored!.data_json).profile.definitionHash,
+    hashes['customer-experiments-healer@3'],
+  );
+  const frozen = await f.claimed(await f.send(conversation));
+  assert.deepEqual(frozen.work.tools.map(({ name }) => name).sort(), ['web.extract', 'web.search']);
+  await f.pi.begin(frozen.token, frozen.input);
+
+  // Deployment reloads the profiles and retires the flat web tools while the turn is working.
+  unregister();
+  for (const profile of profiles)
+    f.pi.registerProfile({ ...profile, context: async () => 'Stored healer request' });
+  for (const dispose of old) await dispose();
+  f.tools.noun(web.name, web);
+  assert.equal((await f.pi.prompt(f.operator, conversation.id)).instructions, base.instructions);
+  const call = (name: string, input: object) =>
+    f.pi.tool(frozen.token, { ...frozen.input, name, input });
+  assert.deepEqual(await call('web.search', { query: 'provider error' }), {
+    query: 'provider error',
+    results: [],
+    result_count: 0,
+  });
+  assert.deepEqual(await call('web.extract', { url: 'https://example.com/docs' }), {
+    url: 'https://example.com/docs',
+    content: 'Provider documentation',
+    section: false,
+    status: 'success',
+  });
+  await f.pi.complete(frozen.token, f.completion(frozen.input));
+
+  // The same stored binding can claim another turn with its grants translated to the noun.
+  const command = await f.send(conversation);
+  const { work } = await f.pi.next(frozen.token, { workerId: 'worker_1' });
+  assert.ok(work);
+  assert.equal(work.command.id, command.id);
+  assert.deepEqual(
+    work.tools.map(({ name }) => name),
+    ['web.read'],
+  );
+  const next = { ...frozen.input, commandId: command.id };
+  await f.pi.begin(frozen.token, next);
+  assert.deepEqual(
+    await f.pi.tool(frozen.token, {
+      ...next,
+      name: 'web.read',
+      input: { action: 'search', search: { query: 'provider error' } },
+    }),
+    { query: 'provider error', results: [], result_count: 0 },
+  );
+  await f.pi.complete(frozen.token, f.completion(next));
 });

@@ -99,7 +99,7 @@ test('a stalled external run gets a healer once Pi has stopped investigating', a
   assert.deepEqual(due.record.resumed, ['q_1']);
   assert.deepEqual(
     due.bound.map((p) => [p.id, p.version]),
-    [['customer-experiments-healer', 3]],
+    [['customer-experiments-healer', 4]],
   );
 
   const spent = harness({ askedMinutesAgo: 30 });
@@ -127,9 +127,9 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   const healers = profiles.filter((p) => p.id === 'customer-experiments-healer');
   assert.deepEqual(
     healers.map((p) => p.version),
-    [1, 2, 3],
+    [1, 2, 3, 4],
   );
-  const [first, second, current] = healers;
+  const [first, second, third, current] = healers;
   // Version 1 stays as its conversations were bound to it.
   assert.match(first!.instructions, /rent on Modal first, then Lambda/);
   assert.doesNotMatch(first!.instructions, /leave the question open/);
@@ -154,6 +154,10 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   assert.match(current!.instructions, /\[\[write: …\]\] placeholder is the worker's to write/);
   // Version 2 keeps the tools its conversations were bound to; version 3 names the 2026-10-20 ones.
   assert.deepEqual(second!.tools, first!.tools);
+  assert.ok(third!.tools.includes('web.search'));
+  assert.ok(third!.tools.includes('web.extract'));
+  assert.ok(current!.tools.includes('web.read:search'));
+  assert.ok(current!.tools.includes('web.read:extract'));
   assert.deepEqual(
     current!.tools.filter((tool) => tool.startsWith('sandbox')),
     ['sandboxes.sandbox', 'sandboxes.spend'],
@@ -165,7 +169,7 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   // It looks and releases with sandboxes.sandbox, and never rents.
   const authorize = (input: Record<string, unknown>) =>
     current!.authorizeTool!({
-      binding: { id: 'customer-experiments-healer', version: 3 },
+      binding: { id: 'customer-experiments-healer', version: 4 },
       caller: { projectId: 'p', actorId: 'a' },
       name: 'sandboxes.sandbox',
       input,

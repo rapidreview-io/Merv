@@ -159,7 +159,7 @@ const escalatingHealerInstructions = healerInstructions
 /** The healer by version; new heals use the last, earlier ones stay registered for their
  *  conversations. Profile 3 is profile 2 on the Sandboxes tools as the 2026-10-20 consolidation
  *  named them, of which it may look and release what is stuck (`healerActions`). */
-const healers = [
+const legacyHealers = [
   healerInstructions,
   escalatingHealerInstructions,
   escalatingHealerInstructions
@@ -169,7 +169,6 @@ const healers = [
     )
     .replace('sandboxes.sandbox_options by price', 'sandboxes.sandbox action=options by price'),
 ];
-const HEALER_VERSION = healers.length;
 const healerActions = ['list', 'get', 'providers', 'options', 'delete'];
 const healerSandboxes =
   'sandboxes.sandbox_list sandboxes.sandbox_get sandboxes.providers_list sandboxes.spend_status sandbox.release'.split(
@@ -206,6 +205,10 @@ const addressed = (text: string) =>
     /\b(?:customer_experiments|web|nisa)\.[a-z_]+\b/g,
     (name) => intakeAddresses[name] ?? name,
   );
+
+/** Healer v4 adopts web addresses; v1–3 retain their stored definitions. */
+const healers = [...legacyHealers, addressed(legacyHealers[2]!)];
+const HEALER_VERSION = healers.length;
 
 export class CustomerService {
   /** Who a call acts as; index.ts gives it the identity plugin while one is installed. */
@@ -777,14 +780,14 @@ export class CustomerService {
             id: 'customer-experiments-healer',
             version: 1 + index,
             model: { id: 'gpt-6-astra', effort: 'medium' },
-            instructions: index < 2 ? instructions : addressed(instructions),
+            instructions,
             tools: [
               'session.thread_messages',
               'session.message',
               ...(index < 2 ? healerSandboxes : ['sandboxes.sandbox', 'sandboxes.spend']),
               'report.open',
               'report.check',
-              ...(index < 2
+              ...(index < 3
                 ? ['web.search', 'web.extract']
                 : ['web.read:search', 'web.read:extract']),
             ],
