@@ -178,7 +178,8 @@ export interface AgentLoginDirectory {
   find(email: string): Promise<{ issuer: string; subject: string } | null>;
   user(subject: string): Promise<DirectoryUser | null>;
 }
-/** Deployment limits on agent sign-in; every count is of stored sign-in requests. */
+/** Deployment limits on agent sign-in, counted on stored sign-in requests: per email and address,
+ *  every start; the global caps, only codes reserved for delivery to an eligible person. */
 export interface AgentLoginLimits {
   emailPer15Minutes: number;
   emailPerDay: number;
@@ -232,10 +233,11 @@ export interface AgentLoginIssued {
 export interface ScopeAgentLogins {
   /** 429 (login_rate_limited, login_capacity) with details.retryAfterSeconds past a limit. */
   start(request: AgentLoginRequest, limits: AgentLoginLimits): Promise<AgentLoginStarted>;
-  /** Mails the code only to an eligible account; never throws, and says nothing either way. */
+  /** Mails the code only to an eligible account, within the caps; never throws or says either way. */
   deliver(
     login: AgentLoginStarted,
     email: string,
+    limits: AgentLoginLimits,
     directory: AgentLoginDirectory,
     send: (mail: AgentLoginCodeMail) => Promise<void>,
   ): Promise<void>;

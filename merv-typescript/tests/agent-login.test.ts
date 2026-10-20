@@ -87,6 +87,8 @@ async function fixture(t: TestContext) {
     {
       installId = '9d5c3a1e-5f0e-4b8c-9a39-4f1e2b7c6d01',
       ip = '203.0.113.7' as string | null,
+      with: given = limits,
+      hold = false,
     } = {},
   ) {
     const verifier = `verifier-${++verifiers}`.padEnd(43, 'v');
@@ -97,11 +99,13 @@ async function fixture(t: TestContext) {
         client: { name: 'Claude Code', host: 'ada-mbp', installId },
         verifierHash: verifierHash(verifier),
       },
-      limits,
+      given,
     );
-    await scope.agentLogins.deliver(login, email, directory, send);
+    if (!hold) await deliver(login, email, given);
     return { login, verifier };
   }
+  const deliver = (login: AgentLoginStarted, email = 'ada@lab.org', given = limits) =>
+    scope.agentLogins.deliver(login, email, given, directory, send);
   const verify = (login: AgentLoginStarted, verifier: string, code = login.code) =>
     scope.agentLogins.verify(login.loginId, { code, verifier }, limits, directory, notify);
   const principal = async (token: string): Promise<Principal> => ({
@@ -119,6 +123,7 @@ async function fixture(t: TestContext) {
     codes,
     notices,
     start,
+    deliver,
     verify,
     principal,
     failMail: (value: boolean) => {
@@ -308,7 +313,7 @@ test('a key whose notice cannot be sent is revoked before anyone holds it', asyn
   assert.notEqual(keys[0]!.revokedAt, null);
 });
 
-test('starts are capped per email, per address and in all, before any mail', async (t) => {
+test('starts are capped per email and per address, before any mail', async (t) => {
   const f = await fixture(t);
   for (let i = 0; i < 3; i++) await f.start('ada@lab.org', { ip: `198.51.100.${i}` });
   await assert.rejects(f.start('ada@lab.org', { ip: '198.51.100.9' }), (error: unknown) => {
@@ -321,28 +326,44 @@ test('starts are capped per email, per address and in all, before any mail', asy
   for (let i = 0; i < 10; i++) await f.start(`unknown${i}@lab.org`);
   await assert.rejects(f.start('another@lab.org'), { code: 'login_rate_limited' }, 'per address');
   await f.start('another@lab.org', { ip: null });
-  f.advance(15 * 60_000);
-  // Unknown addresses use the same global budget as real ones.
-  const tight = { ...limits, globalPerMinute: 2 };
-  const startWith = (email: string) =>
-    f.scope.agentLogins.start(
-      {
-        email,
-        ip: null,
-        client: { name: 'Codex', host: 'h', installId: '9d5c3a1e-5f0e-4b8c-9a39-4f1e2b7c6d02' },
-        verifierHash: verifierHash('v'.repeat(43)),
-      },
-      tight,
-    );
-  await startWith('ghost1@lab.org');
-  await startWith('ghost2@lab.org');
-  await assert.rejects(startWith('ada@lab.org'), { code: 'login_capacity', status: 429 });
   f.advance(24 * 60 * 60_000);
   for (let i = 0; i < 10; i++) {
     await f.start('ada@lab.org', { ip: null });
     f.advance(15 * 60_000);
   }
   await assert.rejects(f.start('ada@lab.org', { ip: null }), { code: 'login_rate_limited' });
+});
+
+test('the caps in all count codes sent, so a flood of unknown addresses spends none of them', async (t) => {
+  const f = await fixture(t);
+  const tight = { ...limits, globalPerMinute: 2, globalPerDay: 3 };
+  // Far more starts than either cap, from many addresses, for addresses nobody holds.
+  for (let i = 0; i < 40; i++)
+    await f.start(`ghost${i}@lab.org`, { ip: `198.51.100.${i % 8}`, with: tight });
+  const first = await f.start('ada@lab.org', { with: tight });
+  assert.equal(f.codes.length, 1);
+  // Two starts admitted before either is sent: reserving the send holds the cap exactly.
+  const held = [
+    await f.start('ada@lab.org', { with: tight, hold: true }),
+    await f.start('ada@lab.org', { with: tight, hold: true }),
+  ];
+  for (const { login } of held) await f.deliver(login, 'ada@lab.org', tight);
+  assert.equal(f.codes.length, 2);
+  await assert.rejects(f.start('ghost@lab.org', { with: tight }), {
+    code: 'login_capacity',
+    status: 429,
+    details: { retryAfterSeconds: 60 },
+  });
+  // Past the cap on sends, a code already sent still signs in.
+  assert.match((await f.verify(first.login, first.verifier)).token, /^mk_/);
+  f.advance(16 * 60_000);
+  await f.start('ada@lab.org', { with: tight });
+  assert.equal(f.codes.length, 3);
+  f.advance(16 * 60_000);
+  await assert.rejects(f.start('ada@lab.org', { with: tight }), {
+    code: 'login_capacity',
+    details: { retryAfterSeconds: 41_280 },
+  });
 });
 
 test('unsuccessful requests are pruned after 30 days; issuance evidence is kept', async (t) => {
@@ -643,8 +664,8 @@ test('limits answer 429 with Retry-After, and an address is trusted only from th
 /** A random address in an IPv6 /64. */
 const in64 = (prefix: string) =>
   `${prefix}:${Array.from({ length: 4 }, () => randomBytes(2).toString('hex')).join(':')}`;
-const randomPrefix = () =>
-  Array.from({ length: 4 }, () => randomBytes(2).toString('hex')).join(':');
+const randomGroup = () => randomBytes(2).toString('hex');
+const randomPrefix = () => Array.from({ length: 4 }, randomGroup).join(':');
 
 test('an IPv6 client counts by its /64, an IPv4 one by its address', () => {
   for (const [ip, bucket] of [
@@ -667,15 +688,14 @@ test('an IPv6 client counts by its /64, an IPv4 one by its address', () => {
   assert.equal(clientIp(request('127.0.0.1', '::FFFF:198.51.100.7')), '198.51.100.7');
 });
 
-test('verify admission is constant work a request: a table no larger than its admissions', () => {
+test('verify admission holds each /64 and each /48, with no cap on all callers', () => {
   let now = 0;
-  const gate = new Admission(5, 50, () => now);
-  const tally = (ips: string[]) => {
+  const tally = (gate: Admission, ips: string[]) => {
     const seen: Record<string, number> = {};
     for (const ip of ips) {
       let outcome = 'admitted';
       try {
-        gate.admit(addressBucket(ip));
+        gate.admit(ip);
       } catch (error) {
         outcome = (error as MervError).code;
       }
@@ -683,22 +703,36 @@ test('verify admission is constant work a request: a table no larger than its ad
     }
     return seen;
   };
+  const gate = new Admission(5, 20, () => now);
   // Rotating through one /64 is one caller.
   const one = Array.from({ length: 20_000 }, () => in64('2001:db8:aa:bb'));
-  assert.deepEqual(tally(one), { admitted: 5, login_rate_limited: 19_995 });
-  assert.equal(gate.size, 1);
-  // A /64 for every request meets the cap on all callers, and the table stops growing there.
+  assert.deepEqual(tally(gate, one), { admitted: 5, login_rate_limited: 19_995 });
+  assert.equal(gate.size, 2);
+  // A fresh /64 for every request inside one /48 is held by the /48.
+  const site = Array.from({ length: 20_000 }, () => in64(`2001:db8:cc:${randomGroup()}`));
+  assert.deepEqual(tally(gate, site), { admitted: 20, login_rate_limited: 19_980 });
+  assert.equal(gate.size, 23);
+  // A fresh /48 for every request is admitted: no cap on all callers to exhaust.
   const many = Array.from({ length: 20_000 }, () => in64(randomPrefix()));
-  assert.deepEqual(tally(many), { admitted: 45, login_capacity: 19_955 });
-  assert.equal(gate.size, 46);
+  assert.deepEqual(tally(gate, many), { admitted: 20_000 });
   // The next window starts empty.
   now += 60_000;
-  assert.deepEqual(tally(['198.51.100.7']), { admitted: 1 });
-  assert.equal(gate.size, 1);
+  assert.deepEqual(tally(gate, ['198.51.100.7']), { admitted: 1 });
+  assert.equal(gate.size, 2);
+  // At the ceiling on buckets, only a new bucket is refused.
+  const full = new Admission(5, 20, () => now, 10);
+  const known = ['198.51.100.7', '2001:db8:dd:1::1'];
+  const fill = [...known, ...Array.from({ length: 3 }, () => in64(randomPrefix()))];
+  assert.deepEqual(tally(full, fill), { admitted: 5 });
+  assert.equal(full.size, 10);
+  const fresh = [in64(randomPrefix()), '198.51.100.8', in64('2001:db8:dd:2')];
+  assert.deepEqual(tally(full, fresh), { login_rate_limited: 3 });
+  assert.deepEqual(tally(full, [...known, ...known]), { admitted: 4 });
+  assert.equal(full.size, 10);
 });
 
 test('rotating IPv6 addresses and random login ids cost one bounded lookup each, at most', async (t) => {
-  const f = await connectServer({ limits: { verifyPerIpMinute: 3, verifyPerMinute: 40 } });
+  const f = await connectServer({ limits: { verifyPerIpMinute: 3, verifyPerNetworkMinute: 10 } });
   t.after(() => f.close());
   // Every store read the verify route makes.
   let lookups = 0;
@@ -727,12 +761,22 @@ test('rotating IPv6 addresses and random login ids cost one bounded lookup each,
       const answer = await guess(ip);
       const key = answer.body.error.code;
       seen[key] = (seen[key] ?? 0) + 1;
+      if (answer.status === 429)
+        assert.match(answer.body.error.message, /too many sign-in attempts/i);
     }
     return seen;
   };
   const one = Array.from({ length: 150 }, () => in64('2001:db8:aa:bb'));
   assert.deepEqual(await statuses(one), { invalid_code: 3, login_rate_limited: 147 });
   assert.equal(lookups, 3);
+  // A fresh /64 each time inside the same /48 is held by the /48.
+  const site = Array.from({ length: 50 }, () => in64(`2001:db8:aa:${randomGroup()}`));
+  assert.deepEqual(await statuses(site), { invalid_code: 7, login_rate_limited: 43 });
+  assert.equal(lookups, 10);
+  // A fresh /48 each time is admitted, one lookup each, and spends no one else's attempts.
+  const many = Array.from({ length: 100 }, () => in64(randomPrefix()));
+  assert.deepEqual(await statuses(many), { invalid_code: 100 });
+  assert.equal(lookups, 110);
   // The person's own verify, from their own address, still passes.
   const signedIn = await post(
     `${f.url}/connect/login/${started.body.loginId}/verify`,
@@ -740,20 +784,15 @@ test('rotating IPv6 addresses and random login ids cost one bounded lookup each,
     from('198.51.100.9'),
   );
   assert.equal(signedIn.status, 200);
-  lookups = 0;
-  // A fresh /64 each time meets the cap on all callers: no more lookups than admissions.
-  const many = Array.from({ length: 100 }, () => in64(randomPrefix()));
-  assert.deepEqual(await statuses(many), { invalid_code: 36, login_capacity: 64 });
-  assert.equal(lookups, 36);
   // A malformed id is refused as a wrong code is, without a lookup.
-  f.setTime(Date.now() + 61_000);
+  lookups = 0;
   const malformed = await post(
     `${f.url}/connect/login/login_x/verify`,
     { code: '00000000', verifier: 'a'.repeat(43) },
     from('198.51.100.10'),
   );
   assert.equal(malformed.body.error.code, 'invalid_code');
-  assert.equal(lookups, 36);
+  assert.equal(lookups, 0);
 });
 
 test('a full delivery queue refuses new starts with login_capacity', async (t) => {

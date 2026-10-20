@@ -69,16 +69,15 @@ const verifierDigest = (verifier: string) =>
 const codeDigest = (id: string, code: string) => digest(`${id}:${code}`);
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
 const iso = (ms: number) => new Date(ms).toISOString();
+const untilTomorrow = (now: number) => Math.ceil((DAY - (now % DAY)) / 1000);
 /** 429 past a sign-in limit: `login_capacity` for Merv's own caps, else `login_rate_limited`. */
-export const tooMany = (code: 'login_capacity' | 'login_rate_limited', seconds: number) =>
-  new MervError(
-    code,
-    code === 'login_capacity'
-      ? 'Merv is sending too many sign-in codes right now; try again later'
-      : 'Too many sign-in requests; try again later',
-    429,
-    { retryAfterSeconds: seconds },
-  );
+export const tooMany = (
+  code: 'login_capacity' | 'login_rate_limited',
+  seconds: number,
+  message = code === 'login_capacity'
+    ? 'Merv is sending too many sign-in codes right now; try again later'
+    : 'Too many sign-in requests; try again later',
+) => new MervError(code, message, 429, { retryAfterSeconds: seconds });
 const invalid = () =>
   new MervError(
     'invalid_code',
@@ -97,8 +96,9 @@ const eligible = (user: DirectoryUser | null, emailHash: string): user is Direct
 
 /**
  * Agent sign-in by an emailed code. The stored rows are the only limits and the audit trail: each
- * start is counted as a row inside the writer transaction before any directory call or email, so
- * nothing in the background can exceed a cap that was not reserved.
+ * start is counted as a row against its email and address inside the writer transaction, before
+ * any directory call or email; the caps in all count only the rows a delivery reserved, checked
+ * again in the transaction that reserves, so no flood of other starts can spend them.
  */
 export class AgentLogins implements ScopeAgentLogins {
   constructor(
@@ -108,7 +108,8 @@ export class AgentLogins implements ScopeAgentLogins {
     private readonly keys: UserKeys,
   ) {}
 
-  /** Refuses a start past any limit, counting every stored request whatever its address. */
+  /** Refuses a start past a limit on its email or address, or once the caps in all are spent.
+   *  Each count reads an index range no longer than its own limit. */
   private async admit(
     sql: Sql,
     emailHash: string,
@@ -116,36 +117,44 @@ export class AgentLogins implements ScopeAgentLogins {
     now: number,
     limits: AgentLoginLimits,
   ): Promise<void> {
-    const today = now - (now % DAY);
+    const since = (column: string) =>
+      `(SELECT COUNT(*) FROM agent_logins WHERE ${column}=? AND created_at>=?)`;
     const counts = await sql.get<Record<string, string | number>>(
-      `SELECT
-         SUM(CASE WHEN email_hash=? AND created_at>=? THEN 1 ELSE 0 END) AS email_recent,
-         SUM(CASE WHEN email_hash=? AND created_at>=? THEN 1 ELSE 0 END) AS email_day,
-         SUM(CASE WHEN ip_hash=? AND created_at>=? THEN 1 ELSE 0 END) AS ip_hour,
-         SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS minute,
-         SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS day
-       FROM agent_logins WHERE created_at>=?`,
+      `SELECT ${since('email_hash')} AS email_recent, ${since('email_hash')} AS email_day,
+         ${since('ip_hash')} AS ip_hour`,
       emailHash,
       iso(now - 15 * MINUTE),
       emailHash,
-      iso(today),
+      iso(now - (now % DAY)),
       ipHash,
       iso(now - 60 * MINUTE),
-      iso(now - MINUTE),
-      iso(today),
-      iso(Math.min(today, now - 60 * MINUTE)),
     );
     const count = (name: string) => Number(counts?.[name] ?? 0);
-    const untilTomorrow = Math.ceil((today + DAY - now) / 1000);
-    const refusals: [boolean, 'login_capacity' | 'login_rate_limited', number][] = [
-      [count('minute') >= limits.globalPerMinute, 'login_capacity', 60],
-      [count('day') >= limits.globalPerDay, 'login_capacity', untilTomorrow],
-      [count('email_recent') >= limits.emailPer15Minutes, 'login_rate_limited', 15 * 60],
-      [count('email_day') >= limits.emailPerDay, 'login_rate_limited', untilTomorrow],
-      [count('ip_hour') >= limits.ipPerHour, 'login_rate_limited', 60 * 60],
+    const refusals: [boolean, number][] = [
+      [count('email_recent') >= limits.emailPer15Minutes, 15 * 60],
+      [count('email_day') >= limits.emailPerDay, untilTomorrow(now)],
+      [count('ip_hour') >= limits.ipPerHour, 60 * 60],
     ];
     const refused = refusals.find(([over]) => over);
-    if (refused) throw tooMany(refused[1], refused[2]);
+    if (refused) throw tooMany('login_rate_limited', refused[1]);
+    await this.capacity(sql, now, limits);
+  }
+
+  /** Refuses past the caps in all on codes sent: only rows reserved for an eligible person count,
+   *  and a partial index holds those alone. */
+  private async capacity(sql: Sql, now: number, limits: AgentLoginLimits): Promise<void> {
+    const today = now - (now % DAY);
+    const sent = await sql.get<Record<string, string | number>>(
+      `SELECT SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS minute,
+         SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) AS day
+       FROM agent_logins WHERE issuer IS NOT NULL AND created_at>=?`,
+      iso(now - MINUTE),
+      iso(today),
+      iso(Math.min(today, now - MINUTE)),
+    );
+    if (Number(sent?.minute ?? 0) >= limits.globalPerMinute) throw tooMany('login_capacity', 60);
+    if (Number(sent?.day ?? 0) >= limits.globalPerDay)
+      throw tooMany('login_capacity', untilTomorrow(now));
   }
 
   async start(request: AgentLoginRequest, limits: AgentLoginLimits): Promise<AgentLoginStarted> {
@@ -191,6 +200,7 @@ export class AgentLogins implements ScopeAgentLogins {
   async deliver(
     login: AgentLoginStarted,
     email: string,
+    limits: AgentLoginLimits,
     directory: AgentLoginDirectory,
     send: (mail: AgentLoginCodeMail) => Promise<void>,
   ): Promise<void> {
@@ -214,16 +224,19 @@ export class AgentLogins implements ScopeAgentLogins {
       const user = await directory.user(found.subject);
       if (!eligible(user, emailDigest(email))) return;
       stage = 'reserve';
-      const row = await this.state.transaction((tx) =>
-        tx.get<LoginRow>(
+      // Reserving counts against the caps in all; past them nothing is sent.
+      const row = await this.state.transaction(async (tx) => {
+        const now = this.clock();
+        await this.capacity(tx, now, limits);
+        return tx.get<LoginRow>(
           `UPDATE agent_logins SET issuer=?,subject=? WHERE id=? AND status='pending'
              AND issuer IS NULL AND sent_at IS NULL AND expires_at>? RETURNING *`,
           found.issuer,
           found.subject,
           login.loginId,
-          iso(this.clock()),
-        ),
-      );
+          iso(now),
+        );
+      });
       if (!row) return;
       stage = 'send';
       await send({

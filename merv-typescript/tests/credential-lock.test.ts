@@ -95,7 +95,13 @@ async function fixture(t: TestContext) {
       },
       agentLimits,
     );
-    await scope.agentLogins.deliver(started, 'alice@lab.org', directory, async () => {});
+    await scope.agentLogins.deliver(
+      started,
+      'alice@lab.org',
+      agentLimits,
+      directory,
+      async () => {},
+    );
     const verify = (code = started.code) =>
       scope.agentLogins.verify(
         started.loginId,

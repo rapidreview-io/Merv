@@ -315,7 +315,7 @@ export function connectRoutes(
   const { origin, page, installer, connector } = connectAssets(config);
   const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting);
   const proxies = proxyList(config.trustedProxies);
-  const verifies = new Admission(limits.verifyPerIpMinute, limits.verifyPerMinute, clock);
+  const verifies = new Admission(limits.verifyPerIpMinute, limits.verifyPerNetworkMinute, clock);
   const handler: MountHandler = async (req, res, r) => {
     const path = r.url.pathname;
     if (req.method === 'GET' && path === '/connect')
@@ -327,7 +327,7 @@ export function connectRoutes(
     const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
     if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
       throw unknownEndpoint();
-    // An IPv6 client counts by its /64, here and in the stored per-address start limit.
+    // An IPv6 client counts by its /64 for a start, and by its /64 and its /48 for a verify.
     const address = clientIp(req, proxies);
     const ip = address && addressBucket(address);
     try {
@@ -336,7 +336,7 @@ export function connectRoutes(
         const body = await r.json(startInput, 4096);
         const login = await scope.agentLogins.start({ ...body, ip }, storeLimits);
         deliveries.push(() =>
-          scope.agentLogins.deliver(login, body.email, directory, (mail) =>
+          scope.agentLogins.deliver(login, body.email, storeLimits, directory, (mail) =>
             mailer.send(codeMail(mail, origin)),
           ),
         );
@@ -349,7 +349,7 @@ export function connectRoutes(
         );
       }
       // Before the body is read or the store is asked: an unknown id costs this and one lookup.
-      verifies.admit(ip ?? '');
+      verifies.admit(address);
       const { code, verifier } = await r.json(verifyInput, 4096);
       const digits = code.replace(/[\s-]/g, '');
       const issued = await scope.agentLogins.verify(

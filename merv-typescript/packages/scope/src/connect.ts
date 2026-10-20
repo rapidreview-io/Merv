@@ -57,8 +57,9 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
         globalPerDay: count(500),
         triesPerLogin: count(5),
         keysPerPerson: count(10),
+        // Per IPv4 address or IPv6 /64, and per IPv4 address or IPv6 /48: no cap on all callers.
         verifyPerIpMinute: count(30),
-        verifyPerMinute: count(300),
+        verifyPerNetworkMinute: count(120),
         queueConcurrency: count(4),
         queueWaiting: count(100),
       })
@@ -199,9 +200,9 @@ export class Deliveries {
   }
 }
 
-/** Where an address counts: itself for IPv4, its /64 for IPv6, since one subscriber holds a whole
- *  /64 and could otherwise rotate through it. */
-export function addressBucket(ip: string | null): string {
+/** Where an address counts: itself for IPv4; for IPv6 its /64, since one subscriber holds a whole
+ *  /64 and could otherwise rotate through it, or its /48, the most a site is usually given. */
+export function addressBucket(ip: string | null, bits: 48 | 64 = 64): string {
   if (!ip || !isIPv6(ip)) return ip ?? '';
   const groups = (part: string | undefined) =>
     part ? part.split(':').flatMap((group) => (group.includes('.') ? ['0', '0'] : [group])) : [];
@@ -213,42 +214,51 @@ export function addressBucket(ip: string | null): string {
       ? front
       : [...front, ...Array(8 - front.length - back.length).fill('0'), ...back];
   return `${all
-    .slice(0, 4)
+    .slice(0, bits / 16)
     .map((group) => parseInt(group, 16).toString(16))
-    .join(':')}::/64`;
+    .join(':')}::/${bits}`;
 }
 
 /**
- * Admission in fixed one-minute windows, per address bucket and in all, in constant time: a window
- * holds at most `overall` entries (only an admission adds one), and a new window drops the old
- * table whole. In process: a restart forgets it, and the per-login tries stay the durable bound.
+ * Verify admission in fixed one-minute windows, constant work a request: per address (an IPv4
+ * address or IPv6 /64) and per network (an IPv4 address or IPv6 /48), with no cap on all callers,
+ * so no network can spend another's attempts. A window holds at most `ceiling` buckets: past it
+ * only a new bucket is refused, and a new window drops the tables whole. In process: a restart
+ * forgets it, and the per-login tries stay the durable bound.
  */
 export class Admission {
   private start = -Infinity;
-  private total = 0;
   private counts = new Map<string, number>();
   constructor(
-    private readonly perBucket: number,
-    private readonly overall: number,
+    private readonly perAddress: number,
+    private readonly perNetwork: number,
     private readonly clock: () => number = Date.now,
+    private readonly ceiling = 100_000,
   ) {}
   /** The number of buckets this window holds. */
   get size(): number {
     return this.counts.size;
   }
-  /** Counts one request from `bucket`, or throws 429 past either limit. */
-  admit(bucket: string): void {
+  /** Counts one request from `ip`, or throws 429 past its address's or its network's limit. */
+  admit(ip: string | null): void {
     const now = this.clock();
     if (now - this.start >= 60_000) {
       this.start = now;
-      this.total = 0;
       this.counts = new Map();
     }
-    const used = this.counts.get(bucket) ?? 0;
-    const wait = Math.ceil((this.start + 60_000 - now) / 1000);
-    if (used >= this.perBucket) throw tooMany('login_rate_limited', wait);
-    if (this.total >= this.overall) throw tooMany('login_capacity', wait);
-    this.counts.set(bucket, used + 1);
-    this.total++;
+    const buckets = [addressBucket(ip), `${addressBucket(ip, 48)} network`];
+    const [address = 0, network = 0] = buckets.map((bucket) => this.counts.get(bucket) ?? 0);
+    const fresh = Number(!address) + Number(!network);
+    if (
+      address >= this.perAddress ||
+      network >= this.perNetwork ||
+      this.size + fresh > this.ceiling
+    )
+      throw tooMany(
+        'login_rate_limited',
+        Math.ceil((this.start + 60_000 - now) / 1000),
+        'Too many sign-in attempts; wait a minute and try again',
+      );
+    this.counts.set(buckets[0]!, address + 1).set(buckets[1]!, network + 1);
   }
 }
