@@ -55,7 +55,8 @@ export async function homeRead(
   await read('project', () => tools.call('project.get', caller, {}));
   const people = ['id', 'name', 'role', 'kind', 'active', 'sessionId'];
   await read('actors', () => tools.call('actor.list', caller, {}), people);
-  await read('workflows', async () => (gates ? gates(caller) : null));
+  // A blocker's next move names actions by address, said as this caller calls them.
+  await read('workflows', async () => (gates ? tools.guidance(caller, await gates(caller)) : null));
   for (const { id, home: part } of rows)
     if (part)
       await read(

@@ -241,6 +241,8 @@ export const styled = () => {
 };
 /** What a person reads on the page, which is what every assertion here is about. */
 export const text = (): string => host?.textContent ?? '';
+/** A rule's address `tool:action`, which guidance names and no page may show as it is. */
+export const ADDRESS = /\b[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*:[a-z][a-z0-9_]*\b/;
 export async function click(label: string): Promise<void> {
   const control = [...(host?.querySelectorAll('button') ?? [])].find((button) =>
     (button.textContent ?? '').includes(label),

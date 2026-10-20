@@ -3,6 +3,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/sessions/types';
 import type {} from './types.js';
 import type {} from '@merv/code/service';
+import type {} from '@merv/api/types';
 import { z } from 'zod';
 import { SandboxCheckRunner } from './checks.js';
 import { CodeService } from './service.js';
@@ -37,6 +38,9 @@ export const codePlugin = {
           ctx.effect(() => service.bindChecks(new SandboxCheckRunner(ctx)));
         },
       );
+      ctx.inject(['tools'], (ctx) => {
+        ctx.effect(() => service.bindGuidance(ctx.tools));
+      });
       // New projects initialize automatically; old unbound projects initialize on new work.
       yield await ctx.domainEvents.subscribe({
         id: 'code.projects.v1',

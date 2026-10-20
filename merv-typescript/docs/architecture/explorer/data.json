@@ -748,7 +748,8 @@
         "sbxPipelines",
         "sbxRegistry",
         "sbxJobs",
-        "sbxSnapshots"
+        "sbxSnapshots",
+        "tools"
       ],
       "kind": "service",
       "runtime": "server",
@@ -3493,6 +3494,11 @@
       "optional": true
     },
     {
+      "from": "codeWork",
+      "to": "tools",
+      "optional": true
+    },
+    {
       "from": "merv-code-work-api",
       "to": "codeWork",
       "optional": false
@@ -4627,7 +4633,7 @@
     "plugins": 83,
     "providers": 38,
     "adapters": 45,
-    "dependencies": 266
+    "dependencies": 267
   },
   "network": [
     {

@@ -7,6 +7,8 @@ import { Context } from 'cordis';
 import { CodeService } from '@merv/code-work/service';
 import type { CodeCapture } from '@merv/code-work/types';
 import codeUiPlugin from '@merv/code-work/ui';
+import { codeToolsPlugin } from '@merv/code-work/tools';
+import { ToolRegistry } from '@merv/api/registry';
 import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-work/running';
 import { personMove } from '@merv/code-work/blockers';
 import { CodeRepositories } from '@merv/code/store/repository';
@@ -248,6 +250,11 @@ async function fixture(t: TestContext) {
     return await code.syncPublications(f.admin);
   };
   const unbind = f.bindCode(code);
+  // Code's tools on a registry of their own, which says each read's guidance to its caller.
+  const tools = new ToolRegistry(f.scope);
+  codeToolsPlugin.apply({ codeWork: code, tools, effect: (fn: () => unknown) => fn() } as never);
+  const unsaid = code.bindGuidance(tools);
+  f.beforeClose.push(async () => unsaid());
   f.beforeClose.push(async () => {
     unbind();
     await code.close();
@@ -281,6 +288,7 @@ async function fixture(t: TestContext) {
   return {
     ...f,
     code,
+    ui,
     bare,
     root0,
     feature,
@@ -359,6 +367,15 @@ test('done work whose pull request waits for a merge is held on the board in the
   assert.equal(blocker.code, 'code_publication_pending');
   const move = personMove(blocker)!;
   assert.equal(move.sentence, 'Waiting on a person to merge the pull request');
+  // Its next move names the merge by its address, which no read says as it is: the unit a
+  // record page draws and the Git page's row say it as a person calls it.
+  const address = /\b[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*:[a-z][a-z0-9_]*\b/;
+  assert.match(blocker.next!, /code\.write:publication_merge/);
+  const record = await f.code.unit(f.admin, work.id);
+  assert.match(record.publication!.blockers[0]!.next!, /with code\.write publication_merge\./);
+  const row = JSON.stringify(await f.ui.read(f.admin, 'code'));
+  assert.ok(row.includes('code.write publication_merge'), row);
+  assert.doesNotMatch(row, address);
 
   // The mark is the Code page's sentence and who ends the wait. The way to the merge is
   // offered to a project administrator (or their agent) alone; an operator machine actor and a

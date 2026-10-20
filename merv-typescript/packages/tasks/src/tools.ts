@@ -98,7 +98,7 @@ export const taskToolsPlugin = {
         readOnly: true,
         handler: async (caller: Caller, input: { taskId: string; checkpointId?: string }) =>
           input.checkpointId === undefined
-            ? await ctx.tasks.get(caller, input.taskId)
+            ? ctx.tools.guidance(caller, await ctx.tasks.get(caller, input.taskId))
             : await ctx.tasks.savedCheckpoint(caller, input.taskId, input.checkpointId),
       },
       {

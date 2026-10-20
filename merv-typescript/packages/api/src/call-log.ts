@@ -34,7 +34,9 @@ const permanent = (error: unknown) =>
  * with its outcome, append-only beside session_tool_calls: no arguments, no results. Rows are
  * written in batches from the plugin's own timer, never inside a call's transaction or snapshot,
  * one flush at a time: a row leaves the queue once it is written, or once PostgreSQL refuses it
- * alone for good, which drops it and counts it.
+ * alone for good, which drops it and counts it. It is telemetry, and accepted as such: rows
+ * logged within the last flush interval before shutdown may be lost, since the last flush is one
+ * attempt that a failure or a killed process ends, and a call that ends after it is not logged.
  */
 export class AgentCallLog {
   private pending: AgentToolCall[] = [];

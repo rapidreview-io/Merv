@@ -33,11 +33,15 @@ import { openState } from './fixtures/state.js';
 import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { assessment, ownReviews } from './fixtures/review-verdict.js';
-import './ui-render.js';
+import { ToolRegistry } from '@merv/api/registry';
+import { codeToolsPlugin } from '@merv/code-work/tools';
+import { ADDRESS, mount, text, unmount } from './ui-render.js';
 
+const { createElement } = await import('react');
+const { MemoryRouter } = await import('react-router-dom');
 // components.tsx first: it and list-filters.tsx import each other through a view.
 await import('../packages/ui/web/components.js');
-const { needsYou } = await import('../packages/ui/web/views/needs-you.js');
+const { NeedsYou, needsYou } = await import('../packages/ui/web/views/needs-you.js');
 
 const ASK = 'Submit the chore for review';
 
@@ -549,7 +553,8 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
     code: 'code_base_pending',
     status: 409,
     message: 'main is not in the repository',
-    next: 'An administrator binds or imports main.',
+    // Code's own words: its next move names the action by its address.
+    next: 'An administrator imports it, or prepares the linked GitHub repository with code.write:repository_prepare.',
   };
   await state.transaction(
     async (tx) =>
@@ -587,11 +592,15 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
     },
     needs: { name: 'title', owner: 'ownerId' },
   });
+  // Code's tools are registered, so an address in guidance is said as its caller calls it.
+  const registered = new ToolRegistry(scope);
+  codeToolsPlugin.apply({ tools: registered, effect: (fn: () => unknown) => fn() } as never);
   const tools = {
     call: async (name: string, caller: Caller) => {
       check(name === 'review.list', 'tool_not_found', name, 404);
       return await reviews.list(caller);
     },
+    guidance: <T>(caller: Caller, value: T) => registered.guidance(caller, value),
   };
   const read = async (caller: Caller) =>
     (await homeRead(
@@ -626,6 +635,22 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
     ].sort(),
   );
   assert.deepEqual(said, before(rows, home, operator, { submit: ASK }));
+  // Home draws Code's instruction in the person's form, and never its address.
+  t.after(unmount);
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(NeedsYou as any, {
+        rows,
+        lines,
+        load: { loading: false, error: undefined, data: home, loadedAt: undefined },
+      }),
+    ),
+  );
+  assert.ok(text().includes('code.write repository_prepare'), text());
+  assert.doesNotMatch(text(), ADDRESS);
   // Code's move is an administrator's: for anyone else the record is held, and not their move.
   const viewer = { id: reader.actorId, role: 'reader' };
   const theirs = await read(reader);

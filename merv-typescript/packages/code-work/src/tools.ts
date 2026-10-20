@@ -145,9 +145,7 @@ const reads = (ctx: Context): NounActions => ({
     input: z.object({}).strict(),
     output: outputs.status,
     was: ['code.status'],
-    // Its recovery guidance names each action by its address, said as this caller calls it.
-    handler: async (caller: Caller) =>
-      ctx.tools.guidance(caller, await ctx.codeWork.status(caller)),
+    handler: async (caller: Caller) => await ctx.codeWork.status(caller),
   },
   unit: {
     description:

@@ -15,7 +15,7 @@ import type {
 import type { CodePublication } from '@merv/code-work/models';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import { ADDRESS, click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -51,6 +51,12 @@ const { actionsOf } = await import('../packages/code-work/src/bases.js');
 const { publicationBlockers, withStanding } =
   await import('../packages/code-work/src/unit-store.js');
 const { publicationState } = await import('../packages/code-work/src/publications.js');
+// Code's guidance names actions by address; the server says it as a person calls it.
+const { ToolRegistry } = await import('@merv/api/registry');
+const { codeToolsPlugin } = await import('@merv/code-work/tools');
+const registered = new ToolRegistry({ require: async () => ({}) } as never);
+codeToolsPlugin.apply({ tools: registered, effect: (fn: () => unknown) => fn() } as never);
+const sent = <T>(value: T) => registered.guidance({ projectId: 'p', actorId: 'a' }, value);
 
 const row = {
   id: 'code',
@@ -344,7 +350,7 @@ const unit = (
 ): CodeUnit =>
   withStanding({
     publication: publication
-      ? { ...publication, blockers: publicationBlockers(publication) }
+      ? { ...publication, blockers: sent(publicationBlockers(publication)) }
       : null,
     unitId: id,
     workflow: 'task',
@@ -2301,6 +2307,61 @@ test('a unit’s own publication carries the blocker Code publishes about it', (
   assert.equal(first?.blocker.code, 'code_quarantined');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assert.equal(firstPersonMove([held('code_base_wait')] as any), null);
+});
+
+/** A unit whose base is quarantined, its blocker as Code words it and the server sends it. */
+const spent = (id: string) =>
+  unit(id, {
+    baseStatus: {
+      status: 'blocked',
+      blockers: sent([
+        {
+          key: 'merge',
+          code: 'code_quarantined',
+          status: 409,
+          message: `This unit uses quarantined base b-${id}.`,
+          next: 'An administrator creates corrective work and replans the waiters, or, for a quarantine verified to be a false alarm, uses code.write:base_release.',
+          related: [],
+        },
+      ]),
+    },
+  });
+
+test('a record’s Code section folds the instruction in a person’s words, never an address', async (t) => {
+  t.after(unmount);
+  for (const [held, said] of [
+    [spent('u11'), 'code.write base_release'],
+    [
+      unit('u12', { baseStatus: null, publication: { state: 'disabled' } }),
+      'code.write publication_control',
+    ],
+  ] as const) {
+    await mount(
+      createElement(
+        MemoryRouter,
+        { initialEntries: [`/tasks/${held.unitId}`] },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        createElement(UnitCode as any, { unit: held, named: () => undefined, manages: true }),
+      ),
+    );
+    const fold = document.querySelector('details.ov-said')?.textContent ?? '';
+    assert.ok(fold.includes(said), fold);
+    assert.doesNotMatch(text(), ADDRESS);
+    await unmount();
+  }
+});
+
+test('the Git page’s unit card says Code’s instruction in a person’s words, never an address', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.read', {
+    body: { result: { commands: commands(), status: status([...units(), spent('u11')], bases()) } },
+  });
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/code/github', connected());
+  await mount(page([row], { at: '/code/unit/u11' }));
+  const fold = document.querySelector('details.ov-said')?.textContent ?? '';
+  assert.ok(fold.includes('code.write base_release'), text().slice(0, 400));
+  assert.doesNotMatch(text(), ADDRESS);
 });
 
 test('a record’s Code section leads with the move, and folds the agent’s instruction', async (t) => {

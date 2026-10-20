@@ -204,7 +204,16 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   pi: ['sessions'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeWork: ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
+  // Its reads say their guidance through whichever tool registry is loaded.
+  codeWork: [
+    'sbxMerv',
+    'sbxObjects',
+    'sbxPipelines',
+    'sbxRegistry',
+    'sbxJobs',
+    'sbxSnapshots',
+    'tools',
+  ],
   experiments: ['sandboxEvidence', 'reports'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.

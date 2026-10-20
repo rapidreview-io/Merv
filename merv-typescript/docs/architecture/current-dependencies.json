@@ -10,8 +10,8 @@
   "apiEntries": 46,
   "serverPlugins": 82,
   "machinePlugins": 1,
-  "directDependencyCount": 266,
-  "optionalDependencyCount": 20,
+  "directDependencyCount": 267,
+  "optionalDependencyCount": 21,
   "directConsumers": {
     "api": 12,
     "artifacts": 14,
@@ -46,7 +46,7 @@
     "sessions": 10,
     "state": 27,
     "tasks": 4,
-    "tools": 28,
+    "tools": 29,
     "ui": 17,
     "web": 1,
     "workflows": 12,
@@ -257,7 +257,8 @@
         "sbxPipelines",
         "sbxRegistry",
         "sbxJobs",
-        "sbxSnapshots"
+        "sbxSnapshots",
+        "tools"
       ],
       "kind": "service",
       "runtime": "server",

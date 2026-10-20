@@ -860,15 +860,39 @@ test('a profile naming a retired name is listed that name, its texts read as the
 
 test('recovery guidance names each action by its address and says it as its caller calls it', async () => {
   const tools = new ToolRegistry(scope as never);
-  const said = { next: 'An administrator uses code.write:base_resume and a reason.' };
-  const codeWork = new Proxy({}, { get: () => async () => said });
+  const said = {
+    next: 'An administrator uses code.write:base_resume and a reason.',
+    publication: { next: 'Clear it with code.write:publication_control; read code.read:status.' },
+  };
+  // Code's reads say their guidance through the registry it is bound to (CodeService.said).
+  const codeWork = new Proxy(
+    {},
+    { get: () => async (caller: Caller) => tools.guidance(caller, said) },
+  );
   codeToolsPlugin.apply({ codeWork, tools, effect: (fn: () => unknown) => fn() } as never);
   tools.registerSessionPolicy(sessionPolicy(['code.status']).policy);
   assert.deepEqual(await tools.call('code.read', owner, { action: 'status' }), {
     next: 'An administrator uses code.write base_resume and a reason.',
+    publication: { next: 'Clear it with code.write publication_control; read code.read status.' },
   });
   // A leased worker is told the retired name its frozen policy grants.
   assert.deepEqual(await tools.call('code.status', worker, {}), {
     next: 'An administrator uses code.base.resume and a reason.',
+    publication: { next: 'Clear it with code.publication.control; read code.status.' },
+  });
+  // A task's guidance carries the blockers Code published on it, said the same way.
+  const tasks = { get: async () => ({ guidance: { blockers: [said] } }) };
+  taskToolsPlugin.apply({ tools, tasks, effect: (fn: () => unknown) => fn() } as never);
+  assert.deepEqual(await tools.call('task.get', owner, { taskId: 't' }), {
+    guidance: {
+      blockers: [
+        {
+          next: 'An administrator uses code.write base_resume and a reason.',
+          publication: {
+            next: 'Clear it with code.write publication_control; read code.read status.',
+          },
+        },
+      ],
+    },
   });
 });

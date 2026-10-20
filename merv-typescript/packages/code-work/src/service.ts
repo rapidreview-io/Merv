@@ -33,6 +33,11 @@ import { acceptance, pin, unitColumns, type UnitRow } from './unit-store.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
 
+/** The tool registry's presentation of guidance (Tools.guidance). */
+interface Guidance {
+  guidance<T>(caller: Caller, value: T): T;
+}
+
 export type { CodeStoreOptions };
 
 /**
@@ -281,6 +286,13 @@ export class CodeService implements Code {
       if (bases.checks === checks) bases.checks = undefined;
     };
   }
+  /** Code's guidance names each action by its address (units.ts); every read that carries it
+   *  says it as its caller calls it (Tools.guidance) once the tool registry is bound. */
+  private said: Guidance['guidance'] = (_caller, value) => value;
+  bindGuidance(tools: Guidance): () => void {
+    this.said = (caller, value) => tools.guidance(caller, value);
+    return () => (this.said = (_caller, value) => value);
+  }
   bindServiceTasks(provider: ResolutionWorkCreator): () => void {
     this.unitStore.resolutionTasks = provider;
     // The startup pass did everything else; only a conflict needs the provider it lacked.
@@ -391,7 +403,8 @@ export class CodeService implements Code {
     await this.utility.declareManaged(tx, projectId);
     this.store.wake();
   }
-  unit: Code['unit'] = (...args) => this.unitStore.records.unit(...args);
+  unit: Code['unit'] = async (caller, ...args) =>
+    this.said(caller, await this.unitStore.records.unit(caller, ...args));
   /**
    * What a merge of accepted work says it merges: the tasks and experiments whose accepted
    * commits are its members, by their names, which never change, so a repeat makes the same
@@ -517,7 +530,7 @@ export class CodeService implements Code {
       : {};
     const technical = await this.store.describe(caller.projectId);
     const configuredCheck = await this.state.read((sql) => projectCheck(sql, caller.projectId));
-    return {
+    return this.said(caller, {
       ...status,
       ...publication,
       bases: await this.state.read((sql) => this.baseStore.records(sql, caller.projectId)),
@@ -525,7 +538,7 @@ export class CodeService implements Code {
       ...technical,
       store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
       mirror: await this.mirrorStore.describe(caller.projectId),
-    };
+    });
   }
   importRepository = async (caller: Caller, input: unknown) => {
     await this.administered(caller);
