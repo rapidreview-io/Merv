@@ -83,18 +83,23 @@ export function depth(text: string): number {
 /** Scripts holding a slot: running, or with host calls still out. */
 let running = 0;
 let hosting = 0;
-const waiting: (() => void)[] = [];
-/** Runs `fn` within LIMITS.hostCalls, queued in order beyond it. */
-async function hostSlot(fn: () => Promise<void>) {
+const waiting: { owner: object; go: (run: boolean) => void }[] = [];
+/** Runs `fn` within LIMITS.hostCalls, queued in order beyond it; a queued call whose script
+ *  ended (dropQueued) never runs and holds nothing. */
+async function hostSlot(owner: object, fn: () => Promise<void>) {
   if (hosting < LIMITS.hostCalls) hosting++;
-  else await new Promise<void>((resolve) => waiting.push(resolve));
+  else if (!(await new Promise<boolean>((go) => waiting.push({ owner, go })))) return;
   try {
     await fn();
   } finally {
     const next = waiting.shift();
-    if (next) next();
+    if (next) next.go(true);
     else hosting--;
   }
+}
+function dropQueued(owner: object) {
+  for (let i = waiting.length - 1; i >= 0; i--)
+    if (waiting[i]!.owner === owner) waiting.splice(i, 1)[0]!.go(false);
 }
 
 /** One call message from the child, or undefined for anything a sandbox would not send. */
@@ -166,6 +171,8 @@ export function shape(
     };
   let room = LIMITS.returned - bytes({ ...head, result: '', logs: [], truncated: true });
   const value = text !== undefined && whole ? (JSON.parse(text) as unknown) : undefined;
+  // Measured as it will be sent, not as the script wrote it (the depth check makes this safe).
+  if (value !== undefined) text = JSON.stringify(value);
   if (text !== undefined && (!whole || Buffer.byteLength(text) > room))
     return { ...head, result: cut(text, room), logs: [], truncated: true };
   room -= text === undefined ? 0 : Buffer.byteLength(text);
@@ -239,6 +246,7 @@ export async function runScript(
   const seen = new Set<number>();
   const queue: (() => Promise<void>)[] = [];
   const out = new Set<Promise<void>>();
+  const owner = {};
   let active = 0;
   let settle!: (result: ScriptResult | MervError) => void;
   const ended = new Promise<ScriptResult | MervError>((resolve) => (settle = resolve));
@@ -281,7 +289,7 @@ export async function runScript(
   const pump = () => {
     while (!done && active < LIMITS.inFlight && queue.length) {
       active++;
-      const settled = hostSlot(queue.shift()!).finally(() => {
+      const settled = hostSlot(owner, queue.shift()!).finally(() => {
         active--;
         pump();
       });
@@ -405,6 +413,7 @@ export async function runScript(
     clearTimeout(timer);
     kill();
     // Calls already started keep the slot until they settle; queued ones never start.
+    dropQueued(owner);
     void Promise.allSettled(out).then(() => running--);
   }
 }

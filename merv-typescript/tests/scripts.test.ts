@@ -494,6 +494,27 @@ test('a deeply nested result is refused, never re-serialized; the calls list sta
   assert.equal(names.result, 1);
 });
 
+test('an answer is measured as sent, and calls queued when a script ends hold nothing', async () => {
+  // A script that makes its own JSON.stringify print short numbers still gets the limit.
+  const forged = await runScript(
+    "JSON.stringify = () => '[' + Array(6000).fill('1e20').join(',') + ']'; return Array(6000).fill(1e20)",
+    5000,
+    [],
+    async () => 1,
+  );
+  assert.ok(envelope(forged) <= LIMITS.returned);
+  assert.equal(forged.truncated, true);
+  // Two scripts leave eight host calls hanging; two more end with their calls still queued.
+  const releases: (() => void)[] = [];
+  const hang = () => new Promise<unknown>((resolve) => releases.push(() => resolve(1)));
+  const leave = "for (let i = 0; i < 4; i++) call('h', {}); await 0; return 1";
+  for (let i = 0; i < 4; i++) assert.equal((await runScript(leave, 5000, [], hang)).ok, true);
+  // Queued calls dropped with their scripts: a fifth script still gets a slot.
+  assert.equal((await runScript('return 1', 5000, [], hang)).result, 1);
+  releases.forEach((release) => release());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
 test('a script call is judged on the tool registered when it runs', async (t) => {
   const { app, run } = await fixture(t);
   let wrote = false;
