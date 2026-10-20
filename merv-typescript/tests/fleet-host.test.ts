@@ -15,6 +15,9 @@ import { releaseId } from '@sandboxes/runtimes';
 import { validateRuntimeRelease } from '@sandboxes/kernel/settings';
 import { MachineViews } from '@sandboxes/merv-host';
 import { FleetService, type FleetAllocation } from '@merv/fleet';
+import { fleetToolsPlugin } from '@merv/fleet/tools';
+import { runScript } from '../packages/scripts/src/bridge.js';
+import { scriptTools } from '../packages/scripts/src/tools.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -77,27 +80,35 @@ test('Fleet recovers a lost create under its stable profile id and create key th
     else process.env.MERV_TEST_FLEET_VAULT_KEY = previousKey;
   });
   await fiber.await();
-  // Seven Sandboxes tools: readOnly where every action reads, SSH certificates out of conversations.
+  // Seven Sandboxes tools: readOnly where every action reads, reads where some do, SSH certificates
+  // out of conversations.
   assert.deepEqual(
     (await tools.list()).flatMap((tool) =>
       'readOnly' in tool && tool.name.startsWith('sandboxes.')
-        ? [[tool.name.slice(10), tool.readOnly, tool.conversation ?? null]]
+        ? [
+            [
+              tool.name.slice(10),
+              tool.readOnly,
+              tool.reads?.({ action: 'list' }),
+              tool.conversation,
+            ],
+          ]
         : [],
     ),
     [
-      ['access', false, 'never'],
-      ['job', false, null],
-      ['sandbox', false, null],
-      ['snapshot', false, null],
-      ['spend', true, null],
-      ['storage', false, null],
-      ['workflow', false, null],
+      ['access', false, undefined, 'never'],
+      ['job', false, true, undefined],
+      ['sandbox', false, true, undefined],
+      ['snapshot', false, undefined, undefined],
+      ['spend', true, undefined, undefined],
+      ['storage', false, true, undefined],
+      ['workflow', false, true, undefined],
     ],
   );
   // Each reaches an agent conversation as the relay accepts it.
   for (const tool of await tools.list())
     if (tool.name.startsWith('sandboxes.') && 'handler' in tool && tool.conversation !== 'never')
-      assert.ok(piTool(describeTool(tool), tool.conversation), tool.name);
+      assert.ok(piTool(describeTool(tool)), tool.name);
   const link = async (namespace: string, projectId: string) => {
     const ns = await ctx.sbxAccounts.ensureNativeNamespace(namespace);
     await ctx.sbxDb.transaction(async (tx) => {
@@ -129,6 +140,38 @@ test('Fleet recovers a lost create under its stable profile id and create key th
     requestId: 'lost',
     owner: { kind: 'workflow', id: 'work' },
   });
+  // A reader's agent is offered the tools whose other actions write, runs their reads and is
+  // refused their writes; a script runs only their reads.
+  ctx.provide('fleet', fleet);
+  await ctx.plugin(fleetToolsPlugin);
+  const issued = await scope.credentials.issueActor(caller, { name: 'Reader', role: 'reader' });
+  const reader = { ...caller, actorId: issued.actor.id, credentialId: issued.credential.id };
+  const offered = (await tools.describe(reader, true)).map(({ name }) => name);
+  for (const name of ['fleet', 'sandboxes.sandbox', 'sandboxes.job', 'sandboxes.storage'])
+    assert.ok(offered.includes(name), name);
+  assert.ok(!offered.includes('sandboxes.snapshot'));
+  const agent = (name: string, input: object) => tools.invoke(name, reader, input, true);
+  assert.deepEqual((await agent('sandboxes.sandbox', { action: 'list' })).value, { sandboxes: [] });
+  assert.equal(((await agent('fleet', {})).value as unknown[]).length, 1);
+  for (const [name, input] of [
+    ['fleet', { action: 'halt', id: allocation.id }],
+    ['sandboxes.sandbox', { action: 'delete', sandbox_id: 'sbx_none' }],
+  ] as const)
+    await assert.rejects(agent(name, input), { code: 'forbidden' });
+  const [, script] = scriptTools(tools, { run: runScript });
+  const ran = (await script!.handler(caller, {
+    code: `
+      const machines = await tools.sandboxes.sandbox({ action: 'list' });
+      const allocations = await call('fleet', { action: 'list' });
+      try { await call('fleet', { action: 'halt', id: allocations[0].id }); } catch (e) {
+        return [machines, allocations.length, e.message];
+      }`,
+  })) as { result: unknown };
+  assert.deepEqual(ran.result, [
+    { sandboxes: [] },
+    1,
+    'script_tool_refused: fleet cannot be called from a script',
+  ]);
   const profileId = `srp_${sha(['fake', 'tiny:east', profile.releaseId, 600, 300])}`;
   assert.equal(allocation.profileId, profileId);
   const renter = await scope.serviceActor('fleet', rental.project.id);

@@ -535,7 +535,27 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
   );
   const { all, admin } = await sources(f);
   const someone = await f.scope.credentials.issueActor(admin, { name: 'Someone', role: 'reader' });
-  const reads = ['actor.credentials', 'probe.leaky', 'probe.read', 'project.get', 'shell.run'];
+  // A tool whose other actions write is offered for its reads (`reads`), to a reader as well.
+  t.after(
+    f.tools.register({
+      name: 'probe.mixed',
+      description: 'Read or write',
+      inputSchema: z.object({ action: z.enum(['read', 'write']) }).strict(),
+      reads: ({ action }) => action === 'read',
+      handler: async (caller: Caller, { action }: { action: 'read' | 'write' }) => {
+        await f.scope.require(caller, action);
+        return { ran: action };
+      },
+    }),
+  );
+  const reads = [
+    'actor.credentials',
+    'probe.leaky',
+    'probe.mixed',
+    'probe.read',
+    'project.get',
+    'shell.run',
+  ];
   const writes = ['probe.admin', 'probe.review', 'probe.write'];
   for (const { kind, role, caller } of all) {
     const label = `${kind} ${role}`;
@@ -562,6 +582,13 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
         assert.equal((via as { error: { code: string } }).error.code, 'forbidden', label);
       assert.equal(runs[name] ?? 0, before + (direct ? 2 : 0), `${label} ${name}`);
     }
+    assert.deepEqual(await agent('probe.mixed', { action: 'read' }), { ran: 'read' });
+    if (role === 'reader')
+      assert.equal(
+        ((await agent('probe.mixed', { action: 'write' })) as { error: { code: string } }).error
+          .code,
+        'forbidden',
+      );
     assert.equal((await f.pi.snapshot(caller, input.conversationId)).commands[0].status, 'working');
     assert.equal(
       ((await agent('probe.leaky')) as { error: { code: string } }).error.code,

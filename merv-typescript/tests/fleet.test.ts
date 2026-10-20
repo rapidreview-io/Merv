@@ -712,7 +712,12 @@ test('Fleet tools answer with the redacted view, never the source, person or lau
   assert.deepEqual(await fleet({ action: 'get', id: allocation.id }), view);
   assert.deepEqual(await fleet({}), [view]);
   await assert.rejects(fleet({ action: 'get' }), { code: 'invalid_input' });
-  await assert.rejects(fleet({ action: 'list', id: allocation.id }), { code: 'invalid_input' });
+  assert.deepEqual(
+    ['list', 'get', 'drain', 'workflow_retry_status'].map((action) =>
+      definition.reads?.({ action }),
+    ),
+    [true, true, false, true],
+  );
   await assert.rejects(tools.call('fleet.list', f.caller, {}), {
     code: 'unknown_tool',
     message: 'renamed: use fleet with action=list',

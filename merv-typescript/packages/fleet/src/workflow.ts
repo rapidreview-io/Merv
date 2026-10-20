@@ -967,9 +967,7 @@ export const fleetWorkflowPlugin = {
     };
     ctx.effect(() => {
       ctx.fleet.retries = adapter;
-      return () => {
-        if (ctx.fleet.retries === adapter) ctx.fleet.retries = undefined;
-      };
+      return () => void (ctx.fleet.retries === adapter && (ctx.fleet.retries = undefined));
     });
     ctx.effect(() =>
       ctx.tools.register({

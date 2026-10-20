@@ -16,6 +16,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  admitted as any read and decided again before its result leaves. It must not write; a
    *  database read opens its own. */
   openWorld?: boolean;
+  /** For a tool whose other actions write: whether this parsed input only reads. Its reads are
+   *  offered to a reader's agent (its writes refused by their own checks) and run from scripts. */
+  reads?(input: z.infer<S>): boolean;
   /** 'never': offered to no person's agent conversation (only a leased worker or Merv's pages run
    *  it); what it reads would reach the model provider. Omitted: the agent runs it as its person,
    *  as any agent of theirs does (founder, 2026-10-20: an agent is never asked for approval). */
@@ -52,6 +55,7 @@ export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
 export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'worker' | 'agent'> & {
   remote: boolean;
   readOnly: boolean;
+  reads?: ToolDefinition['reads'];
 };
 /** The callers one plugin issues: Pi's conversations, Sessions' managed runners and the admin's
  *  platform readers. */
@@ -140,7 +144,7 @@ export interface Api {
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
-   *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: its reads alone) plus the mounted
+   *  MCP, offered every native tool not marked `never` or `agent: 'never'` (a reader: those that read) plus the mounted
    *  tools its Access grants. That curates; it is no authority boundary (see POST /tools).
    *  projectless: no caller and no mounted tool, which only a project's grant lists. */
   describe(

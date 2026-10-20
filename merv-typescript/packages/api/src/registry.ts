@@ -134,7 +134,7 @@ export class ToolRegistry implements Tools {
     // Schema changes require a new registration, keeping validation paired with its catalog.
     // Conversation policy and whether it only reads (which a session may call, as may a platform
     // reader) are likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversation, conversationProfile } = definition;
+    const { inputSchema, conversation, conversationProfile, reads } = definition;
     const readOnly = definition.readOnly === true;
     // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
     const worker = conversationProfile ? 'never' : definition.worker;
@@ -144,7 +144,7 @@ export class ToolRegistry implements Tools {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema, readOnly }),
-      tool: { name: definition.name, remote: false, conversation, readOnly, worker, agent },
+      tool: { name: definition.name, remote: false, conversation, readOnly, worker, agent, reads },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) =>
@@ -440,9 +440,10 @@ export class ToolRegistry implements Tools {
   /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
     const { tool } = entry;
+    const reads = tool.readOnly || !!tool.reads;
     return (
       !!entry.remote ||
-      (tool.conversation !== 'never' && tool.agent !== 'never' && (!reader || tool.readOnly))
+      (tool.conversation !== 'never' && tool.agent !== 'never' && (!reader || reads))
     );
   }
 

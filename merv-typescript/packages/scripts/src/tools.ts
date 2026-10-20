@@ -13,17 +13,19 @@ import type { ScriptHost } from './bridge.js';
 import type { Scripts } from './index.js';
 import { declaration } from './declare.js';
 
-type Judged = Pick<RegisteredTool, 'name' | 'remote' | 'readOnly' | 'conversation'>;
-/** Whether a script may call this tool at all: any read its caller could make one call at a
- *  time, open-world reads included (they keep their own budgets), but none kept from every
- *  agent conversation. A mounted tool's hints are its server's word. */
+type Judged = Pick<RegisteredTool, 'name' | 'remote' | 'readOnly' | 'conversation' | 'reads'>;
+/** Whether a script may call this tool at all, or with this input: any read its caller could
+ *  make one call at a time, open-world reads included (they keep their own budgets), but none
+ *  kept from every agent conversation. A mounted tool's hints are its server's word. */
 function scriptable(
   tool: Judged,
   { annotations: hints = {} }: Pick<ToolDescription, 'annotations'>,
+  input?: unknown,
 ) {
   if (tool.name.startsWith('script.')) return false;
   if (tool.remote) return hints.readOnlyHint === true && hints.destructiveHint !== true;
-  return tool.readOnly && tool.conversation !== 'never';
+  const reads = tool.reads && (input === undefined || tool.reads(input));
+  return (tool.readOnly || !!reads) && tool.conversation !== 'never';
 }
 
 /** What this caller is offered, each with whether a script may call it as registered now. */
@@ -44,8 +46,8 @@ async function offered(tools: Tools, caller: Caller) {
 }
 
 /** Decided by the registry on the registration that runs the call. */
-const admit: ToolAdmission = (tool, description) => {
-  if (!scriptable(tool, description))
+const admit: ToolAdmission = (tool, description, input) => {
+  if (!scriptable(tool, description, input))
     throw new MervError('script_tool_refused', `${tool.name} cannot be called from a script`, 403);
 };
 

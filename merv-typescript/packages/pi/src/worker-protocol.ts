@@ -224,6 +224,8 @@ export class PiWorkerProtocol {
           'kind' in tool ? undefined : tool.conversationProfile,
         ]),
       );
+      // A reader is offered what reads, and any tool some of whose actions do (`reads`).
+      const reading = new Set(registered.flatMap((t) => ('kind' in t || !t.reads ? [] : [t.name])));
       // Every native tool but Pi's own and those it has its own form of (piOffers), run as the
       // person: Scope applies their live role.
       const described = (await this.core.tools.describe(caller))
@@ -234,7 +236,8 @@ export class PiWorkerProtocol {
         .filter(({ name }) => !profile || profile.tools.includes(name))
         .flatMap((description) => {
           const tool = piTool(description);
-          return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
+          const reads = tool?.readOnly || reading.has(description.name);
+          return tool && (actor!.role !== 'reader' || reads) ? [tool] : [];
         });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
       const previous = await this.told(conversation, command, actor!.role);

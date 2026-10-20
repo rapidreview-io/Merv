@@ -25,7 +25,8 @@ script's `error.code` is `script_syntax`, `script_error`, `script_timeout`, `scr
 `script_call_limit`. `script_busy` (429) and `script_unavailable` (503) refuse the call itself.
 
 A tool is scriptable when it is listed to this caller, registered `readOnly` (open-world reads
-included: they keep their own budgets), not kept from conversations (`never`), and not
+included: they keep their own budgets) or with `reads` (then only a call whose input it says
+reads, such as `sandboxes.sandbox` or `fleet` with action=list), not kept from conversations (`never`), and not
 `script.*`; a mounted tool needs
 `readOnlyHint` and no destructive hint. Discovery only shapes `tools`: each call is
 `invoke(name, caller, input, true, admit)` with the script's own caller, and the registry runs
