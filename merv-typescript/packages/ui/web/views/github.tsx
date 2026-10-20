@@ -9,7 +9,9 @@ import { GitHubPreparation } from './github-prepare';
 
 const idOf = (repo: GitHubRepository) => `${repo.installationId}:${repo.id}`;
 
-export function GitHubConnection() {
+/** `connects`: the page is the signed-in person's, the only one who mints the owner's GitHub
+ *  credential; their key's page manages the connection but never connects it. */
+export function GitHubConnection({ connects = false }: { connects?: boolean }) {
   const epoch = useScopeVersion();
   const [status, setStatus] = useState<GitHubStatus>();
   const [repositories, setRepositories] = useState<GitHubRepository[]>();
@@ -182,7 +184,7 @@ export function GitHubConnection() {
                         ? 'Reconnect to restore access.'
                         : 'Bring your code into Merv.'}
                     </p>
-                    {status.canManage && (
+                    {status.canManage && connects && (
                       <button className="btn github-primary" disabled={busy} onClick={connect}>
                         {status.status === 'disconnected' ? 'Connect GitHub' : 'Reconnect GitHub'}
                       </button>
@@ -305,7 +307,7 @@ export function GitHubConnection() {
                       Manage access on GitHub <Icon name="external" size={14} />
                     </a>
                   )}
-                  {!needsConnection && (
+                  {!needsConnection && connects && (
                     <button className="btn" disabled={busy} onClick={connect}>
                       Reconnect GitHub
                     </button>

@@ -351,9 +351,10 @@ function Keys() {
  */
 export function Integrations({ shell }: ViewProps) {
   const code = shell.rows.some((row) => row.view.kind === 'code');
+  const { account } = useSession();
   return (
     <div className="page-stage stack stack--lg">
-      {code && <GitHubConnection />}
+      {code && <GitHubConnection connects={account.kind === 'user'} />}
       {!code && <EmptyState kind="settings" icon="link" title="No integrations" />}
     </div>
   );
