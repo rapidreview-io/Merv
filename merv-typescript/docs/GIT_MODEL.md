@@ -18,7 +18,7 @@ This release deploys the automatic-base, shared-repository and merge work togeth
 - **Transport and recovery.** Bundles travel in parts of at most 4 MiB because HTTP requests buffer bodies and time out after 30 seconds. Completion is asynchronous and idempotent. Every transfer/ref move is journaled through receiving, admitting, objects durable and refs applied to completion/failure; the expected ref update is retained before execution. A crash retries that exact update or reports a conflicting ref. Imports use operator bundles (`merv code-import`) or the linked GitHub ref, with the same admission checks. No tool accepts a server path. Larger histories arrive incrementally.
 - **Writers and handoff.** A producer lease reserves the next writer generation. Attach or the first upload activates it; the session's close, whatever its reason, ends it at the last admitted commit, letting only an upload already in flight finish within the grace. Asking for a manifest only reads. Stale fences cannot advance a head, and an admitted upload prevents a successor generation. A new valid upload supersedes only still-receiving uploads. `code.unit.fence` provides operator recovery. The driver downloads the canonical head to resume and the exact submitted commit to review. `preparation_deferred` backs off a temporary preparation wait without launch-failure accounting.
 - **Shared bases.** `code_bases` holds one immutable plan per set of accepted commits, keyed by sorted full ids with a retained member-list comparison. The planner reuses contained sets, choosing the largest contribution and breaking ties by key. Each merge has two inputs; quarantined records are excluded. Code runs bounded `merge-tree --write-tree` and `commit-tree` outside transactions with fixed settings, identity and time. Epochs, two-minute deadlines and at most five admitted infrastructure attempts fence late results. Create-only base refs precede write-once sealing; containment reuses the descendant.
-- **Resolution and review.** A conflict creates one service-owned `task@6`, transactionally linked to its base and attached as a system prerequisite to every waiter. System edges contribute no code and do not fail waiters. Its producer actor has no credential or review eligibility; project writers gain no operator authority by leasing it. One branch retains all rounds and existing review/checkpoint feedback. Failure, abandonment or the `review_rounds` budget suspends it; a signed-in human administrator extends the limit to resume. The `code.v2` pending-merge protocol retains both frozen inputs, checkpoint and first merge; only this producer policy grants `code.merge`. Admission verifies parent lineage, acceptance checks retained proof transactionally, and the base worker independently verifies Git before sealing.
+- **Resolution and review.** A conflict creates one service-owned `task@6`, transactionally linked to its base and attached as a system prerequisite to every waiter. System edges contribute no code and do not fail waiters. Its producer actor has no credential or review eligibility; project writers gain no operator authority by leasing it. One branch retains all rounds and existing review/checkpoint feedback. Failure, abandonment or the `review_rounds` budget suspends it; a project administrator or their agent extends the limit to resume. The `code.v2` pending-merge protocol retains both frozen inputs, checkpoint and first merge; only this producer policy grants `code.merge`. Admission verifies parent lineage, acceptance checks retained proof transactionally, and the base worker independently verifies Git before sealing.
 - **Independence.** Code walks member acceptances and intermediate resolutions, obtaining producing actors and directing authorities from Sessions. Reviews pins their canonical exclusion certificate once, and Code rechecks resolution provenance at acceptance. Version-5 consolidation certificates additionally require recomputation at claim and submission. A later contributor to the same commit invalidates stale provenance. Ordinary and pinned reviews remain readable with Code unloaded.
 - **Service admission and controls.** Sessions reserves capacity and checks dispatch plus project/root budgets before a merge executes. Settlement charges wall time once to the project and in full to each root frozen at plan creation; a lost execution is charged its deadline duration. Admission waits consume no infrastructure, launch or review attempts. `code.base.retry`, `suspend`, `resume`, `cancel` and `quarantine` use one transactional path with fingerprinted receipts and administrator checks. Quarantine follows inputs, pins and acceptances, fences affected writers and stops their mirror publication. Resolved results are never replaced.
 - **Mirroring.** Work, accepted and resolved-base refs publish asynchronously through the same journal. Work refs fast-forward; accepted/base refs are create-only. Only the server receives a per-operation installation token, revoked after use. Mirroring needs a linked repository and enabled write automation; divergence is visible in `code.status` and requires operator acknowledgment. Mirror lag never gates a lease, acceptance or base. `code_projects.mode` remains `local`; main is named through `code.local.bind`, without a `refs/merv/main` ref.
@@ -466,7 +466,7 @@ The new flow is:
 reviewed consolidation
 → sealed proposal
 → immutable proposal branch and PR
-→ explicit human merge request
+→ explicit administrator merge request
 → GitHub merge commit
 → verified publication receipt
 ```
@@ -479,10 +479,10 @@ Before merging, Code:
 
 1. Reads current main and verifies it is contained in the reviewed head.
 2. Verifies proposal/head identity, approval status, other required checks, and available enforcement evidence.
-3. Rechecks human admin authority, binding, review, and intent inside the committing transaction.
+3. Rechecks administrator authority, binding, review, and intent inside the committing transaction.
 4. Calls the existing synchronous merge endpoint with `sha=reviewedHead`, `merge_method=merge`.
 
-The existing human-only route and transaction rechecks are retained. [publications.ts:395](../packages/code/src/publications.ts:395), [publications.ts:453](../packages/code/src/publications.ts:453)
+The existing administrator-only route and transaction rechecks are retained. [publications.ts:395](../packages/code/src/publications.ts:395), [publications.ts:453](../packages/code/src/publications.ts:453)
 
 **Safety argument and verification limit**
 
@@ -701,7 +701,7 @@ Repository rebinding changes the opaque Code-side identity a hosted project is b
 13. Review targets immutable submissions, never moving branches.
 14. Contributors and their directing authorities cannot approve retained work.
 15. Runners receive no GitHub credentials.
-16. Main changes only through human-authorized publication of reviewed work — a consolidation or a declared unit; connected publication preserves the reviewed tree. Since 2026-10-11, where no GitHub is linked, also by the server landing accepted work, by compare-and-swap only.
+16. Main changes only through admin-authorized publication of reviewed work — a consolidation or a declared unit; connected publication preserves the reviewed tree. Since 2026-10-11, where no GitHub is linked, also by the server landing accepted work, by compare-and-swap only.
 17. Transient preparation waits consume neither launch-failure limits nor review rounds.
 18. Quarantine blocks ordinary acceptance/use/publication and propagates to dependent results.
 19. Same request ID and fingerprint replays; changed input conflicts.
