@@ -502,7 +502,7 @@ test('HTTP and MCP expose strict task.mark_failed input, canonical guidance and 
         requestInit: { headers: { Authorization: `Bearer ${f.producer.token}` } },
       }),
     );
-    assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'task.mark_failed'));
+    assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'task.write'));
     const task = await f.create(),
       input = failureInput(task);
     const parsed = (result: Awaited<ReturnType<Client['callTool']>>) =>

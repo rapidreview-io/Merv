@@ -20,7 +20,7 @@ export const taskUiPlugin = {
         states: TASK_STATES,
         view: { kind: 'tasks' },
         home: {
-          tool: 'task.list',
+          list: async (caller) => await tasks.list(caller),
           keep: [
             'id',
             'title',

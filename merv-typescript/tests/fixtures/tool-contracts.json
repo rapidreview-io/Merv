@@ -273,10 +273,22 @@
     "code.files": {
       "input": {},
       "owner": {
-        "ok": ["commit", "entries", "kind", "path", "ref"]
+        "ok": [
+          "commit",
+          "entries",
+          "kind",
+          "path",
+          "ref"
+        ]
       },
       "reader": {
-        "ok": ["commit", "entries", "kind", "path", "ref"]
+        "ok": [
+          "commit",
+          "entries",
+          "kind",
+          "path",
+          "ref"
+        ]
       }
     },
     "code.log": {
@@ -284,10 +296,18 @@
         "limit": 5
       },
       "owner": {
-        "ok": ["commit", "commits", "ref"]
+        "ok": [
+          "commit",
+          "commits",
+          "ref"
+        ]
       },
       "reader": {
-        "ok": ["commit", "commits", "ref"]
+        "ok": [
+          "commit",
+          "commits",
+          "ref"
+        ]
       }
     },
     "code.status": {
@@ -535,7 +555,12 @@
         "requestId": "configure"
       },
       "owner": {
-        "ok": ["check", "denyGlobs", "format", "secretExemptGlobs"]
+        "ok": [
+          "check",
+          "denyGlobs",
+          "format",
+          "secretExemptGlobs"
+        ]
       },
       "reader": {
         "status": 403,
@@ -824,10 +849,14 @@
     "board.read": {
       "input": {},
       "owner": {
-        "ok": ["boards"]
+        "ok": [
+          "boards"
+        ]
       },
       "reader": {
-        "ok": ["boards"]
+        "ok": [
+          "boards"
+        ]
       }
     },
     "board.read#get": {
@@ -835,10 +864,20 @@
         "board": "$board"
       },
       "owner": {
-        "ok": ["arrows", "board", "frames", "shapes"]
+        "ok": [
+          "arrows",
+          "board",
+          "frames",
+          "shapes"
+        ]
       },
       "reader": {
-        "ok": ["arrows", "board", "frames", "shapes"]
+        "ok": [
+          "arrows",
+          "board",
+          "frames",
+          "shapes"
+        ]
       }
     },
     "board.look": {
@@ -846,10 +885,22 @@
         "board": "$board"
       },
       "owner": {
-        "ok": ["height", "image", "path", "viewport", "width"]
+        "ok": [
+          "height",
+          "image",
+          "path",
+          "viewport",
+          "width"
+        ]
       },
       "reader": {
-        "ok": ["height", "image", "path", "viewport", "width"]
+        "ok": [
+          "height",
+          "image",
+          "path",
+          "viewport",
+          "width"
+        ]
       }
     },
     "board.draw": {
@@ -863,7 +914,206 @@
         ]
       },
       "owner": {
-        "ok": ["board", "changed", "created"]
+        "ok": [
+          "board",
+          "changed",
+          "created"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "task.create": {
+      "input": {
+        "title": "Capture",
+        "goal": "Capture the contracts.",
+        "checks": [
+          "It is captured."
+        ],
+        "requestId": "task-create"
+      },
+      "owner": {
+        "ok": [
+          "acceptanceChecks",
+          "briefId",
+          "checks",
+          "composed",
+          "contextInputs",
+          "createdAt",
+          "deliveryAssessmentId",
+          "deliveryConfirmations",
+          "deliveryIds",
+          "dependencies",
+          "dependents",
+          "evidenceVersion",
+          "failed",
+          "failure",
+          "goal",
+          "guidance",
+          "id",
+          "producerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "title",
+          "type",
+          "typeVersion",
+          "workStarts",
+          "workflow",
+          "workspace"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "task.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": [
+            "acceptanceChecks",
+            "briefId",
+            "checks",
+            "composed",
+            "contextInputs",
+            "createdAt",
+            "deliveryAssessmentId",
+            "deliveryConfirmations",
+            "deliveryIds",
+            "dependencies",
+            "dependents",
+            "evidenceVersion",
+            "failed",
+            "failure",
+            "goal",
+            "id",
+            "producerId",
+            "projectId",
+            "reviewId",
+            "settled",
+            "title",
+            "type",
+            "typeVersion",
+            "workStarts",
+            "workflow",
+            "workspace"
+          ]
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": [
+            "acceptanceChecks",
+            "briefId",
+            "checks",
+            "composed",
+            "contextInputs",
+            "createdAt",
+            "deliveryAssessmentId",
+            "deliveryConfirmations",
+            "deliveryIds",
+            "dependencies",
+            "dependents",
+            "evidenceVersion",
+            "failed",
+            "failure",
+            "goal",
+            "id",
+            "producerId",
+            "projectId",
+            "reviewId",
+            "settled",
+            "title",
+            "type",
+            "typeVersion",
+            "workStarts",
+            "workflow",
+            "workspace"
+          ]
+        }
+      }
+    },
+    "task.get": {
+      "input": {
+        "taskId": "$task"
+      },
+      "owner": {
+        "ok": [
+          "acceptanceChecks",
+          "briefId",
+          "checks",
+          "composed",
+          "contextInputs",
+          "createdAt",
+          "deliveryAssessmentId",
+          "deliveryConfirmations",
+          "deliveryIds",
+          "dependencies",
+          "dependents",
+          "evidenceVersion",
+          "failed",
+          "failure",
+          "goal",
+          "guidance",
+          "id",
+          "producerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "title",
+          "type",
+          "typeVersion",
+          "workStarts",
+          "workflow",
+          "workspace"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "acceptanceChecks",
+          "briefId",
+          "checks",
+          "composed",
+          "contextInputs",
+          "createdAt",
+          "deliveryAssessmentId",
+          "deliveryConfirmations",
+          "deliveryIds",
+          "dependencies",
+          "dependents",
+          "evidenceVersion",
+          "failed",
+          "failure",
+          "goal",
+          "guidance",
+          "id",
+          "producerId",
+          "projectId",
+          "reviewId",
+          "settled",
+          "title",
+          "type",
+          "typeVersion",
+          "workStarts",
+          "workflow",
+          "workspace"
+        ]
+      }
+    },
+    "task.mark_failed": {
+      "input": {
+        "taskId": "$task",
+        "expectedRevision": 999,
+        "reason": "Capture",
+        "requestId": "task-fail"
+      },
+      "owner": {
+        "status": 409,
+        "error": "revision_conflict"
       },
       "reader": {
         "status": 403,

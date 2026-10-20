@@ -14,6 +14,7 @@ function registered(plugin: { apply(ctx: Context): void }) {
         tools.set(tool.name, tool);
         return async () => {};
       },
+      noun: () => async () => {},
       contributeInstructions: () => () => {},
     },
   } as unknown as Context);

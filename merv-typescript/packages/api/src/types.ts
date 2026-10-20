@@ -29,6 +29,8 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   readOnly?: boolean;
   /** The action calls a service outside Merv (see ToolDefinition.openWorld). */
   openWorld?: boolean;
+  /** Its retired names' MCP title, as ToolDefinition.act. */
+  act?: { title: string };
   /** The retired names that ran this action. Each stays callable by name as a hidden alias
    *  (Tools.alias) with this action's flat input and its own description. */
   was?: string[];

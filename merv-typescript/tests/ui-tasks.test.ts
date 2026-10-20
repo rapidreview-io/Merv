@@ -427,7 +427,7 @@ test('a form that has locked its fields locks the records chosen in them too', a
 test('a new cycle names its prerequisites by picking them, and the tool is sent their ids', async (t) => {
   t.after(async () => await unmount());
   const listed = (id: string, state: string) => ({ id, workflow: { state } });
-  serve('/tools/task.list', {
+  serve('/tools/task.read:list', {
     body: {
       result: [
         { ...listed('wf_sweep', 'in_progress'), title: 'Sweep weight decay' },
@@ -956,7 +956,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
 
 test('a new cycle started beside an ended one follows it', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/task.list', { body: { result: [] } });
+  serve('/tools/task.read:list', { body: { result: [] } });
   serve('/tools/experiment.read:list', { body: { result: [] } });
   let sent: Record<string, unknown> | undefined;
   serve('/tools/research.create', (_call, body) => {

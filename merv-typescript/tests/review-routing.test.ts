@@ -503,7 +503,7 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
     release = resolve;
   });
   const tool = (await f.app.ctx.tools.list()).find(
-    (tool) => tool.name === 'task.get',
+    (tool) => tool.name === 'task.read',
   ) as ToolDefinition;
   const original = tool.handler;
   tool.handler = async (caller, input) => {
@@ -512,13 +512,13 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
     await held;
     return result;
   };
-  const pending = fetch(`${f.app.ctx.api.url}/tools/task.get`, {
+  const pending = fetch(`${f.app.ctx.api.url}/tools/task.read`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${f.reviewerSourceToken}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ taskId: task.id }),
+    body: JSON.stringify({ action: 'get', get: { taskId: task.id } }),
   });
   let unloading: Promise<void> | undefined,
     complete = false;
@@ -529,12 +529,12 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
     });
     const deadline = Date.now() + 3000;
     while (
-      (await f.app.ctx.tools.list()).some((tool) => tool.name === 'task.get') &&
+      (await f.app.ctx.tools.list()).some((tool) => tool.name === 'task.read') &&
       Date.now() < deadline
     )
       await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(
-      (await f.app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),
+      (await f.app.ctx.tools.list()).some((tool) => tool.name === 'task.read'),
       false,
     );
     assert.equal(complete, false, 'The admitted task response still holds the drain open');

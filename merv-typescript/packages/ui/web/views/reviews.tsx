@@ -451,7 +451,7 @@ function Controls({
     onSuccess: () => {
       onDone();
       guidance.reload();
-      refreshTools('ui.home', 'review.list', 'task.list', 'experiment.read:list');
+      refreshTools('ui.home', 'review.list', 'task.read:list', 'experiment.read:list');
     },
   });
   if (readOnly()) return null;
@@ -631,7 +631,7 @@ function Desk({
     validate: (value) => !!value && typeof value.id === 'string',
     onSuccess: () => {
       onDone();
-      refreshTools('ui.home', 'review.list', 'task.list', 'experiment.read:list');
+      refreshTools('ui.home', 'review.list', 'task.read:list', 'experiment.read:list');
     },
   });
   const drafts = review.criteria.map((_, index) => values[index + 1] ?? BLANK);

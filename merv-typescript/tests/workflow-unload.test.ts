@@ -116,12 +116,12 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     const taskNames = toolsBefore.filter(
       (name) => name.startsWith('task.') || name.startsWith('workflow.'),
     );
-    assert.equal(taskNames.length, 10);
-    assert.ok(taskNames.includes('task.mark_failed'));
+    assert.equal(taskNames.length, 8);
+    assert.ok(taskNames.includes('task.write'));
 
     // Hold an admitted task response while Cordis suspends the engine's consumers.
     const taskGet = (await app.ctx.tools.list()).find(
-      (tool) => tool.name === 'task.get',
+      (tool) => tool.name === 'task.read',
     ) as ToolDefinition;
     const originalHandler = taskGet.handler;
     taskGet.handler = async (actor, input) => {
@@ -130,7 +130,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       await release.promise;
       return result;
     };
-    pending = call(client, 'task.get', { taskId: task.id });
+    pending = call(client, 'task.read', { action: 'get', get: { taskId: task.id } });
     void pending.catch(() => undefined);
     await bounded(entered.promise, 'Task handler was not admitted');
     let disposed = false;
@@ -139,7 +139,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     });
     void unloading.catch(() => undefined);
     await until(
-      async () => !(await app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),
+      async () => !(await app.ctx.tools.list()).some((tool) => tool.name === 'task.read'),
       'Task registration was not withdrawn',
     );
     assert.equal(disposed, false, 'Provider must retain the admitted task call');
@@ -193,7 +193,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       'Existing task adapter did not reactivate',
     );
     await until(
-      async () => (await app.ctx.tools.list()).some((tool) => tool.name === 'task.get'),
+      async () => (await app.ctx.tools.list()).some((tool) => tool.name === 'task.read'),
       'Task tools did not reactivate',
     );
     const restored = (await client.listTools()).tools.map((tool) => tool.name).sort();

@@ -24,7 +24,7 @@ call. Each tool's description is its contract; this skill is the order to use th
    action, blockers, references, revision, and `limits` (review rounds used and left at each
    gate). The guidance it returns is how the server says what it expects: follow it.
 4. Read more as needed: `project.records` indexes every task and experiment, `experiment.read` (get)
-   reads one experiment whole, `task.get` one task, `paper.read` the paper, and
+   reads one experiment whole, `task.read` (get) one task, `paper.read` the paper, and
    `project.references` resolves ids to labels, states and revisions.
 
 Never guess an id, a name or a number you could read.
@@ -69,10 +69,10 @@ reason. It cannot be undone.
 
 ## Tasks
 
-`task.create` pins a goal and numbered checks, with optional `dependsOn`. A Fleet worker
+`task.write` (create) pins a goal and numbered checks, with optional `dependsOn`. A Fleet worker
 produces the task and an independent reviewer passes it. Direct the goal and checks, then leave
 production to the worker: do not start work context, save checkpoints or submit deliveries
-yourself. `task.get` returns Merv's guidance for a task.
+yourself. `task.read` (get) returns Merv's guidance for a task.
 
 ## Files
 

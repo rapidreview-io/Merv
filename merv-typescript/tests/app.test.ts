@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 55);
+    assert.equal(catalog.length, 53);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -94,7 +94,7 @@ test('assembled Cordis application preserves current MCP task closure across two
         !catalog.some((tool) => tool.name === name),
         `${name} must not be offered to an agent`,
       );
-    for (const name of ['report.open', 'report.check', 'task.create', 'task.get', 'project.brief'])
+    for (const name of ['report.open', 'report.check', 'task.write', 'task.read', 'project.brief'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         name,
@@ -149,7 +149,9 @@ test('assembled Cordis application preserves current MCP task closure across two
       },
     );
     const guidance = await call(producer, 'workflow.status_and_next', { instanceId: task.id });
-    assert.deepEqual(guidance, task.guidance);
+    // As task.read get presents it to its caller.
+    const read = await call(producer, 'task.read', { action: 'get', get: { taskId: task.id } });
+    assert.deepEqual(guidance, read.guidance);
     assert.ok(guidance.nextAction);
     assert.equal(guidance.nextAction.tool, 'workflow.begin');
     assert.equal(guidance.nextAction.status, 'ready');
@@ -186,7 +188,9 @@ test('assembled Cordis application preserves current MCP task closure across two
       requestId: 'work-context',
     })) as { id: string; prompt: string; type: string };
     assert.match(workContext.prompt, /calculation remains/);
-    assert.ok(workContext.prompt.includes(JSON.stringify(workGuidance)));
+    // The context holds the guidance as the service answers it; a worker is shown the same.
+    const raw = (await app.ctx.tasks.get(worker, task.id)).guidance;
+    assert.ok(workContext.prompt.includes(JSON.stringify(raw)));
     assert.equal(workContext.type, 'task.work');
     const delivery = await call(producer, 'artifact.create', {
       title: 'Delivery',
@@ -373,11 +377,15 @@ test('a tool is titled in the words of the plugin that owns it', async () => {
       ['research.advance', 'Start next step'],
       ['review.start', 'Claim review'],
       ['review.submit', 'Submit verdict'],
-      ['task.mark_failed', 'Mark task failed'],
-    ])
-      assert.equal((tools.get(name) as ToolDefinition).act?.title, title, name);
+      ['task.write:mark_failed', 'Mark task failed'],
+    ]) {
+      // A noun action carries its own title, which its retired name is listed with.
+      const [tool, action] = name!.split(':');
+      const definition = tools.get(tool!) as ToolDefinition;
+      assert.equal((action ? definition.actions![action] : definition)?.act?.title, title, name);
+    }
     // A tool whose owner names no act is said in its own words.
-    assert.equal((tools.get('task.create') as ToolDefinition).act, undefined);
+    assert.equal((tools.get('task.write') as ToolDefinition).actions!.create!.act, undefined);
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -442,7 +450,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
       researchGuide,
       toolsGuide,
       'leave production to a Fleet worker',
-      'task.get returns',
+      'task.read get returns',
       'paper.write patch (kind problem)',
       'change the Problem to change it',
       'session.find with',

@@ -138,7 +138,7 @@ test('the default configuration switches Feed off and leaves the API and task pr
     });
     const { tools } = (await response.json()) as { tools: { name: string }[] };
     assert.equal(response.status, 200);
-    assert.ok(tools.some((tool) => tool.name === 'task.create'));
+    assert.ok(tools.some((tool) => tool.name === 'task.write'));
     assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
     for (const id of ['feed', 'feed-tools'])
       assert.equal(app.status().find((entry) => entry.id === id)?.state, 'disabled');

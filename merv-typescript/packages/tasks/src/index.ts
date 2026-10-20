@@ -450,10 +450,12 @@ export class TaskService implements Tasks {
           await visibleCheckpoints(
             this,
             caller,
-            taskId,
-            saved.purpose,
-            row.review_id,
-            workflow.revision,
+            {
+              taskId,
+              purpose: saved.purpose,
+              reviewId: row.review_id,
+              revision: workflow.revision,
+            },
             tx,
           )
         ).find((checkpoint) => checkpoint.id === checkpointId);

@@ -75,9 +75,11 @@ const retired = {
     'artifact.upload_resume',
     'artifact.upload_complete',
   ],
+  task: ['task.list', 'task.get', 'task.create', 'task.mark_failed'],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
+const all = Object.values(retired).flat();
 /** Retired with no executable path: they answer tool_renamed. */
 const removed = ['code.local.bind', 'code.repository.rebind'];
 const nouns = [
@@ -88,6 +90,8 @@ const nouns = [
   'board.write',
   'paper.write',
   'artifact.write',
+  'task.read',
+  'task.write',
 ];
 
 /** A result's key shape, as the contract was captured. */
@@ -116,12 +120,21 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   const experiment = created.body.result;
   const drawn = await tool('board.write:draw', boot.token, { title: 'Seed', ops: [] });
   const seed = await app.ctx.artifacts.create(owner, { title: 'Seed', content: 'seed' });
+  const task = (
+    await tool('task.create', boot.token, {
+      title: 'Setup',
+      goal: 'Set up.',
+      checks: ['Set.'],
+      requestId: 'setup',
+    })
+  ).body.result;
   const input = (name: string) =>
     JSON.parse(
       JSON.stringify(captured.contracts[name]!.input)
         .replaceAll('$experiment', experiment.id)
         .replaceAll('$board', drawn.body.result.board.id)
-        .replaceAll('$artifact', seed.id),
+        .replaceAll('$artifact', seed.id)
+        .replaceAll('$task', task.id),
     ) as Record<string, unknown>;
   const page = async (name: string, token: string, body = input(name)): Promise<Outcome> => {
     const { status, body: answer } = await tool(name.split('#')[0]!, token, body);
@@ -143,7 +156,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     return result.isError ? { error: value.error.code as string } : { ok: shape(value) };
   };
 
-  for (const name of [...Object.values(retired).flat(), ...kept]) {
+  for (const name of [...all, ...kept]) {
     const contract = captured.contracts[name]!;
     assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
     assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
@@ -180,8 +193,27 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   });
   assert.equal(changed.body.error.code, 'request_conflict');
 
+  // A task's guidance names the noun for the owner; mark_failed runs alike in both forms.
+  const read = await tool('task.read', boot.token, { action: 'get', get: { taskId: task.id } });
+  const marking = read.body.result.guidance.actions.find(
+    (action: { action: string }) => action.action === 'mark_failed',
+  );
+  assert.deepEqual([marking.tool, marking.arguments.action], ['task.write', 'mark_failed']);
+  const fail = {
+    taskId: task.id,
+    expectedRevision: read.body.result.workflow.revision,
+    reason: 'Parity',
+    requestId: 'parity',
+  };
+  const failed = await tool('task.write', boot.token, { action: 'mark_failed', mark_failed: fail });
+  assert.equal(failed.status, 200);
+  assert.deepEqual(
+    (await tool('task.mark_failed', boot.token, fail)).body.result,
+    failed.body.result,
+  );
+
   // What an agent is listed: the base listing with the retired names traded for the nouns.
-  const gone = new Set([...Object.values(retired).flat(), ...removed]);
+  const gone = new Set([...all, ...removed]);
   const traded = (base: string[]) =>
     [...base.filter((name) => !gone.has(name)), ...nouns].sort((a, b) => a.localeCompare(b));
   const listed = (await client.listTools()).tools.map(({ name }) => name);
@@ -214,7 +246,14 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
   const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];
-  reads.push('experiment.list', 'experiment.get_state', 'experiment.exhibit', 'board.look');
+  reads.push(
+    'experiment.list',
+    'experiment.get_state',
+    'experiment.exhibit',
+    'board.look',
+    'task.list',
+    'task.get',
+  );
   for (const name of [...reads, 'artifact.get', 'artifact.list', ...kept]) {
     const outcome = await app.ctx.tools.invoke(name.split('#')[0]!, worker, input(name), true).then(
       ({ value }) => ({ ok: shape(value) }),

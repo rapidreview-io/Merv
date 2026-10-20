@@ -137,10 +137,7 @@ export async function acquireLease(
   const type = contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, purpose);
   const checkpoints = await checkpointRows(
     caller,
-    snapshot.id,
-    purpose,
-    row.review_id,
-    snapshot.revision,
+    { taskId: snapshot.id, purpose, reviewId: row.review_id, revision: snapshot.revision },
     tx,
   );
   const ids = [
@@ -281,14 +278,19 @@ export async function producerOrAdmin(
     await ctx.scope.require(caller, 'admin', tx);
 }
 
+/** A task's checkpoints for one purpose; a review's of its own round only. */
+interface Checkpoints {
+  taskId: string;
+  purpose: 'work' | 'review';
+  reviewId: string | null;
+  revision: number;
+}
 export async function checkpointRows(
   caller: Caller,
-  taskId: string,
-  purpose: 'work' | 'review',
-  reviewId: string | null,
-  revision: number,
+  { taskId, purpose, reviewId, revision }: Checkpoints,
   tx: Transaction,
-  actorId?: string,
+  /** Only the caller's own. */
+  own = false,
 ): Promise<TaskCheckpoint[]> {
   return (
     await tx.all<{ checkpoint: string }>(
@@ -299,8 +301,8 @@ export async function checkpointRows(
       purpose,
       reviewId,
       revision,
-      actorId ?? null,
-      actorId ?? null,
+      own ? caller.actorId : null,
+      own ? caller.actorId : null,
     )
   )
     .map((row) => JSON.parse(row.checkpoint) as TaskCheckpoint)
@@ -314,23 +316,12 @@ export async function checkpointRows(
 export async function visibleCheckpoints(
   ctx: TasksContext,
   caller: Caller,
-  taskId: string,
-  purpose: 'work' | 'review',
-  reviewId: string | null,
-  revision: number,
+  of: Checkpoints,
   tx: Transaction,
 ): Promise<TaskCheckpoint[]> {
-  const checkpoints = await checkpointRows(
-    caller,
-    taskId,
-    purpose,
-    reviewId,
-    revision,
-    tx,
-    caller.session ? caller.actorId : undefined,
-  );
+  const checkpoints = await checkpointRows(caller, of, tx, !!caller.session);
   if (!caller.session) return checkpoints;
-  const lease = await currentLease(ctx, caller, taskId, revision, tx);
+  const lease = await currentLease(ctx, caller, of.taskId, of.revision, tx);
   const frozen = lease.details.checkpoints;
   const frozenIds = new Set(frozen.map((checkpoint) => checkpoint.id));
   const allowed = new Set(await leaseArtifactIds(ctx, caller, lease, tx));

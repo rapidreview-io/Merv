@@ -190,7 +190,7 @@ interface Listed {
  * the ones this page is made of, and the same two reads it has already made.
  */
 function useWorkPicks(): { options: Pickable[]; loading: boolean } {
-  const tasks = useTool<(Listed & { title: string })[]>('task.list');
+  const tasks = useTool<(Listed & { title: string })[]>('task.read:list');
   const experiments = useTool<(Listed & { name: string })[]>('experiment.read:list');
   const pick = (kind: string, item: Listed, name: string): Pickable => ({
     id: item.id,

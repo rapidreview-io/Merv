@@ -263,6 +263,14 @@ export async function createTask(
   });
 }
 
+/** Agent conversations direct tasks; a worker submits the delivery. */
+const producerOnly = (caller: Caller) =>
+  check(
+    !caller.conversation,
+    'conversation_task_producer_forbidden',
+    'Agent conversations direct tasks; a worker must submit the delivery',
+    403,
+  );
 /** With a proposed delivery, answers the commit and confirmations it checked, for reuse. */
 export async function checkDelivery(
   ctx: TasksContext,
@@ -274,12 +282,7 @@ export async function checkDelivery(
     }
   | undefined
 > {
-  check(
-    !caller.conversation,
-    'conversation_task_producer_forbidden',
-    'Agent conversations direct tasks; a worker must submit the delivery',
-    403,
-  );
+  producerOnly(caller);
   await ctx.scope.require(caller, 'write', tx);
   const row = await ctx.row(tx, caller, current.id);
   check(
@@ -580,12 +583,7 @@ export async function submitDelivery(
 ): Promise<Task> {
   caller = structuredClone(caller);
   input = plain<TaskDelivery>(input);
-  check(
-    !caller.conversation,
-    'conversation_task_producer_forbidden',
-    'Agent conversations direct tasks; a worker must submit the delivery',
-    403,
-  );
+  producerOnly(caller);
   return await taskCommand(
     ctx,
     caller,

@@ -70,14 +70,14 @@ test('script.tools searches, names and sums up only what this agent may use', as
   );
   assert.ok(found.tools.length <= 8);
   const named = await mcp('script.tools', {
-    names: ['artifact.read', 'task.create', 'test.hidden'],
+    names: ['artifact.read', 'task.write', 'test.hidden'],
   });
   assert.deepEqual(
     named.tools.map(({ name, scriptable }: any) => [name, scriptable]),
     [
       // Open-world (its storage I/O holds no snapshot), so never a script's.
       ['artifact.read', true],
-      ['task.create', false],
+      ['task.write', false],
     ],
   );
   const read = named.tools[0].declaration as string;

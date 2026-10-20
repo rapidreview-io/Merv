@@ -314,10 +314,7 @@ export async function contextInputs(
   const checkpoints = await visibleCheckpoints(
     ctx,
     caller,
-    task.id,
-    purpose,
-    task.reviewId,
-    task.workflow.revision,
+    { taskId: task.id, purpose, reviewId: task.reviewId, revision: task.workflow.revision },
     tx,
   );
   if (checkpoints.length) {

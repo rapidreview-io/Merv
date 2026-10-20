@@ -520,6 +520,7 @@ export class ToolRegistry implements Tools {
         inputSchema: nested.input,
         readOnly,
         ...(nested.openWorld && { openWorld: true }),
+        ...(nested.act && { act: nested.act }),
         handler: definition.handler,
       });
     } else {
