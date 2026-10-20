@@ -19,7 +19,6 @@ export const reflectionToolsPlugin = {
     const definitions = [
       {
         name: 'reflection.create',
-        conversation: 'propose' as const,
         description:
           'Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.',
         inputSchema: z
@@ -81,7 +80,6 @@ export const reflectionToolsPlugin = {
       },
       {
         name: 'reflection.end',
-        conversation: 'propose' as const,
         description:
           'Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.',
         inputSchema: z

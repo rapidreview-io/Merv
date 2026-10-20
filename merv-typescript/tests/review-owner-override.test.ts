@@ -553,7 +553,7 @@ test('the database admits an excluded reviewer only on an owner override, and re
   );
 });
 
-test('the owner’s agent decides as owner: Reviews takes the override from their key’s and their own conversation', async (t) => {
+test('the owner’s agent decides as owner, from their key’s conversation or their own', async (t) => {
   const f = await piFixture(t);
   const artifacts = await createService(
     new ArtifactStore(f.state, f.scope, new DiskBlobs(mkdtempSync(join(tmpdir(), 'merv-owner-')))),
@@ -608,7 +608,7 @@ test('the owner’s agent decides as owner: Reviews takes the override from thei
     true,
   );
   await f.pi.complete(keyed.token, f.completion(keyed.input));
-  const { token, work, input } = await f.begun(owner);
+  const { token, input } = await f.begun(owner);
   assert.equal(
     (
       (await f.pi.tool(token, {
@@ -619,18 +619,12 @@ test('the owner’s agent decides as owner: Reviews takes the override from thei
     ).overridable,
     true,
   );
-  // Reviews takes the override from the person's own conversation, as from the person.
-  const conversation: Caller = {
-    actorId: owner.actorId,
-    projectId: project.id,
-    conversation: {
-      id: input.conversationId,
-      commandId: input.commandId,
-      runtimeId: work.command.runtimeId,
-      epoch: work.command.epoch,
-    },
-  };
-  const started = await reviews.start(conversation, review.id, undefined, true);
+  // The agent's own call decides as owner, as the person's would.
+  const started = (await f.pi.tool(token, {
+    ...input,
+    name: 'review.start',
+    input: { reviewId: review.id, override: true },
+  })) as ReviewRequest;
   assert.deepEqual(
     [started.status, started.reviewerId, started.override],
     ['started', owner.actorId, true],

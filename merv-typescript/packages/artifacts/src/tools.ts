@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type { ToolAct } from '@merv/api/types';
+import type {} from '@merv/api/types';
 import {
   check,
   isAgentCaller,
@@ -92,9 +92,8 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
-      conversation?: 'never' | ((input: z.infer<S>) => 'secret' | 'propose' | undefined),
+      conversation?: 'never',
       openWorld = false,
-      act?: ToolAct,
     ) =>
       ctx.effect(() =>
         ctx.tools.register({
@@ -105,7 +104,6 @@ export const artifactToolsPlugin = {
           readOnly,
           conversation,
           openWorld,
-          act,
         }),
       );
     register(
@@ -135,8 +133,6 @@ export const artifactToolsPlugin = {
         })
         .strict(),
       async (c, i) => await ctx.artifacts.uploadBegin(c, i),
-      false,
-      () => 'secret',
     );
     register(
       'artifact.upload_resume',
@@ -149,8 +145,6 @@ export const artifactToolsPlugin = {
         })
         .strict(),
       async (c, i) => await ctx.artifacts.uploadResume(c, i.uploadId),
-      false,
-      () => 'secret',
     );
     register(
       'artifact.upload_complete',
@@ -162,8 +156,6 @@ export const artifactToolsPlugin = {
           'upload_pending',
           pendingHint,
         ),
-      false,
-      () => 'propose',
     );
     register(
       'artifact.get',
@@ -272,14 +264,12 @@ export const artifactToolsPlugin = {
         return { ...read, artifact: brief(read.artifact) };
       },
       true,
-      // In a Pi conversation a signed URL is shown only to the person; a leased worker may
-      // request its own URL to download and inspect an artifact in its workspace.
-      (i) => (i.mode === 'download' ? 'secret' : undefined),
-      // Open world: download's storage I/O (signing, the download mirror) and a stored read's
-      // fetch wait holding no reader snapshot, since artifacts runs each database read in a
-      // short transaction.
+      // Any agent may fetch a signed URL for any project file, as it may read it (founder,
+      // 2026-10-20). Open world: download's storage I/O (signing, the download mirror) and a
+      // stored read's fetch wait holding no reader snapshot, since artifacts runs each database
+      // read in a short transaction.
+      undefined,
       true,
-      { title: ({ mode }) => (mode === 'download' ? 'Download file' : 'Read file'), says: 'mode' },
     );
     register(
       'artifact.list',

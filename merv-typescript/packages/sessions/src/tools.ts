@@ -49,7 +49,6 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'usage.set_budget',
-        conversation: 'propose',
         description:
           'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure. Give maxWallMinutes or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a token budget trusts unverified self-reports and is judged only while every session in its scope that was activated reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.',
         inputSchema: budgetSchema,
@@ -71,7 +70,6 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.release_hold',
-        conversation: 'propose',
         description:
           'Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.',
         inputSchema: releaseHoldSchema,
@@ -85,13 +83,8 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.dispatch',
-        act: {
-          title: ({ enabled }) => (enabled === false ? 'Pause dispatch' : 'Start dispatch'),
-          says: 'enabled',
-        },
         description:
           "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its admin, billed in Settings → Members), whoever changed either.",
-        conversation: 'propose',
         inputSchema: dispatchSchema,
         handler: async (
           caller: Caller,
@@ -102,10 +95,8 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.halt',
-        act: { title: ({ sessionId }) => (sessionId ? 'Halt lease' : 'Halt all leases') },
         description:
           'Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.',
-        conversation: 'propose',
         inputSchema: haltSchema,
         handler: async (caller: Caller, input: { sessionId?: string; reason?: string }) =>
           await sessions.dispatch.halt(caller, input),

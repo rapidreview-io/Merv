@@ -9,7 +9,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
 import { describeTool, isRemoteTool } from '../packages/api/src/registry.js';
-import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { fit } from '../packages/pi/src/fit.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
@@ -355,40 +354,20 @@ test('a paper too long to show the agent whole reads on section by section', asy
     rmSync(directory, { recursive: true, force: true });
   }
 });
-test('a call an agent proposes is titled in the words of the plugin that owns its tool', async () => {
+test('a tool is titled in the words of the plugin that owns it', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   const app = await createApp({ directory, api: true, port: 0 });
   try {
     const tools = new Map((await app.ctx.tools.list()).map((tool) => [tool.name, tool]));
-    const act = (name: string, input: Record<string, unknown> = {}) => {
-      const declared = (tools.get(name) as ToolDefinition).act!;
-      const title = typeof declared.title === 'string' ? declared.title : declared.title(input);
-      return declared.says ? [title, declared.says] : [title];
-    };
-    const titles: [string, Record<string, unknown>, string[]][] = [
-      ['session.dispatch', { enabled: false, ownMachines: true }, ['Pause dispatch', 'enabled']],
-      ['session.dispatch', { enabled: true }, ['Start dispatch', 'enabled']],
-      ['session.halt', { sessionId: 'session_1' }, ['Halt lease']],
-      ['session.halt', {}, ['Halt all leases']],
-      ['research.advance', { researchId: 'research_1' }, ['Start next step']],
-      ['review.start', {}, ['Claim review']],
-      ['review.submit', {}, ['Submit verdict']],
-      ['task.submit_delivery', {}, ['Submit delivery']],
-      ['task.mark_failed', {}, ['Mark task failed']],
-      ['experiment.transition', { transition: 'abandon' }, ['Abandon experiment', 'transition']],
-      [
-        'experiment.transition',
-        { transition: 'mark_failed' },
-        ['Mark experiment failed', 'transition'],
-      ],
-      ['experiment.transition', { transition: 'submit_design' }, ['Submit design', 'transition']],
-      ['code.publication.control', { action: 'clear' }, ['Clear publication', 'action']],
-      ['code.local.bind', {}, ['Bind repository']],
-      ['artifact.read', {}, ['Read file', 'mode']],
-      ['artifact.read', { mode: 'download' }, ['Download file', 'mode']],
-    ];
-    for (const [name, input, said] of titles) assert.deepEqual(act(name, input), said, name);
-    // A tool whose owner names no act is said in its own words, on the page.
+    for (const [name, title] of [
+      ['research.advance', 'Start next step'],
+      ['review.start', 'Claim review'],
+      ['review.submit', 'Submit verdict'],
+      ['task.mark_failed', 'Mark task failed'],
+      ['code.local.bind', 'Bind repository'],
+    ])
+      assert.equal((tools.get(name) as ToolDefinition).act?.title, title, name);
+    // A tool whose owner names no act is said in its own words.
     assert.equal((tools.get('task.create') as ToolDefinition).act, undefined);
   } finally {
     await app.stop();
@@ -490,30 +469,6 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         offered.some((tool) => tool.name === name),
         name,
       );
-    // Whatever fails work, claims or decides a review, starts or ends a reflection wave, or
-    // moves or ends a cycle is proposed, by every tool that reaches it; so is every base control
-    // but a pause, since each spends merges and machines and release lifts a quarantine.
-    for (const name of [
-      ...['retry', 'resume', 'cancel', 'quarantine', 'release', 'repair'].map(
-        (v) => `code.base.${v}`,
-      ),
-      'task.mark_failed',
-      'review.start',
-      'review.submit',
-      'reflection.create',
-      'reflection.end',
-      'research.advance',
-      'research.end',
-    ])
-      for (const verdict of ['pass', 'needs_changes', 'fail'])
-        assert.equal(
-          conversationUse(
-            offered.find((tool) => tool.name === name)!,
-            { verdict },
-          ),
-          'propose',
-          `${name} ${verdict}`,
-        );
     // MCP clients working with a person get the same guide.
     const credentials = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Guide',

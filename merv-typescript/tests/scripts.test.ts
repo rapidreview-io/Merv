@@ -147,7 +147,7 @@ test('a script makes parallel reads and returns its result, logs and calls', asy
   assert.equal(other.result, 'invalid_input: A script works in its own project only');
 });
 
-test('writes and secret reads are refused and catchable; open-world reads run', async (t) => {
+test('writes and secret reads are refused and catchable; open-world reads and download links run', async (t) => {
   const { app, mcp, run } = await fixture(t);
   t.after(
     app.ctx.tools.register({
@@ -189,7 +189,8 @@ test('writes and secret reads are refused and catchable; open-world reads run', 
   assert.deepEqual(ran.result, {
     write: 'script_tool_refused: task.create cannot be called from a script',
     outside: 'ran',
-    download: 'script_tool_refused: artifact.read cannot be called so from a script',
+    // A download link is any agent's to have; this fixture's storage signs none.
+    download: 'download_unsupported: This storage provider does not support direct downloads',
     link: 'script_tool_refused: test.guarded cannot be called so from a script',
     own: 'script_tool_refused: test.guarded cannot be called so from a script',
     value: 'value',
@@ -198,7 +199,7 @@ test('writes and secret reads are refused and catchable; open-world reads run', 
   });
   assert.deepEqual(
     ran.calls.filter(({ ok }: any) => !ok).map(({ error }: any) => error),
-    Array(5).fill('script_tool_refused'),
+    ['script_tool_refused', 'download_unsupported', ...Array(3).fill('script_tool_refused')],
   );
   // task.get is a read, so the task namespace is there; task.create is not in it.
   assert.equal(

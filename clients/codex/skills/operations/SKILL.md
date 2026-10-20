@@ -6,8 +6,7 @@ description: Operate a Merv project. Read what is running and what stopped movin
 # Operating a Merv project
 
 Merv dispatches ready work to agent sessions on machines. This skill is how to see that
-machinery and steer it. Read first; every control below changes what runs, so get the person's
-yes before using one unless they asked for exactly that.
+machinery and steer it. Read first; every control below changes what runs.
 
 ## Read before acting
 

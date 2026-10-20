@@ -4,6 +4,9 @@
  * key, a leased worker they delegated, and their Pi conversation are each refused at every handler.
  */
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
@@ -11,6 +14,8 @@ import { z } from 'zod';
 import {
   createService,
   MervError,
+  sha256Hex,
+  type ArtifactUploadStatus,
   type Caller,
   type Principal,
   type SessionToolPolicy,
@@ -27,7 +32,9 @@ import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { secretsRoutes } from '../packages/secrets/src/api.js';
 import type { Secrets } from '../packages/secrets/src/types.js';
 import { adminRoutes } from './fixtures/admin.js';
-import { openState } from './fixtures/state.js';
+import { createApp } from './fixtures/app.js';
+import { s3Blobs, send } from './fixtures/s3-blobs.js';
+import { openState, stateConfig } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const refused = (code: string, status: number) => (error: unknown) =>
@@ -278,4 +285,58 @@ test('credentials stay the signed-in person’s: a key, a worker session and a P
     f.tools.call('probe.leaky', f.agents.conversation, {}),
     refused('tool_result_secret', 403),
   );
+});
+
+test('the ruling’s allowance: a person’s conversation is given signed upload and download links', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'merv-credential-lock-'));
+  const s3 = await s3Blobs(t);
+  const app = await createApp({
+    directory,
+    config: {
+      plugins: [
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
+        { id: 'scope', name: '@merv/scope' },
+        s3.entry,
+        { id: 'artifacts', name: '@merv/artifacts' },
+        { id: 'tools', name: '@merv/api/tools-plugin' },
+        { id: 'artifact-tools', name: '@merv/artifacts/tools' },
+      ],
+    },
+  });
+  t.after(async () => {
+    await app.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const { scope, tools } = app.ctx;
+  const alice = await scope.members.acceptVerifiedIdentity({
+    issuer,
+    subject: 'alice',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const project = await scope.members.createProject(alice, { name: 'Files', requestId: 'files' });
+  const source = await scope.delegationSource(await scope.caller(alice, project.id));
+  scope.registerConversationAuthority({ require: async () => source });
+  t.after(tools.registerCallerRules('conversation', conversationRules));
+  const conversation: Caller = {
+    actorId: source.actorId,
+    projectId: project.id,
+    conversation: { id: 'conversation_files', epoch: 1, commandId: 'turn', runtimeId: 'runtime' },
+  };
+  const bytes = Buffer.from('id,value\n1,2\n');
+  const plan = (await tools.call('artifact.upload_begin', conversation, {
+    title: 'Rows.csv',
+    size: bytes.length,
+    sha256: sha256Hex(bytes),
+    mediaType: 'text/csv',
+  })) as ArtifactUploadStatus;
+  assert.match(plan.parts[0]!.url, /^http/);
+  assert.equal((await send(plan, bytes)).ok, true);
+  const stored = (await tools.call('artifact.upload_complete', conversation, {
+    uploadId: plan.uploadId,
+  })) as { id: string };
+  const { download } = (await tools.call('artifact.read', conversation, {
+    artifactId: stored.id,
+    mode: 'download',
+  })) as { download: { url: string } };
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), bytes);
 });

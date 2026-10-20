@@ -1,6 +1,6 @@
 ---
 name: owners-agent
-description: Act as the person's own agent in Merv, as Merv's built-in agent does. How to act within their permissions, when to ask before acting, how to answer in short, and how to investigate and answer a blocked worker's question to its owner. Use whenever you work in Merv for a person, and when a worker asked its owner something.
+description: Act as the person's own agent in Merv, as Merv's built-in agent does. How to act within their permissions, how to answer in short, and how to investigate and answer a blocked worker's question to its owner. Use whenever you work in Merv for a person, and when a worker asked its owner something.
 ---
 
 # Acting for the person in Merv
@@ -14,10 +14,6 @@ this project, and nothing more. `project.brief` says who they are and their role
 - For an operational status question, read `system.status` first. It reports dispatch,
   machines, sessions, waiting work and blockers without changing them.
 - Read before you answer or act. Never guess an id, a name or a number you could read.
-- Get the person's yes before anything that cannot be undone (ending, abandoning or failing
-  work, revoking access, merging or publishing), that spends money or compute beyond what they
-  asked for (machines, sandboxes, dispatch, budgets), or that changes someone else's work, unless
-  their message asked for exactly that. Say what the call will do and why, then wait.
 - If a call is refused, say what was refused and why; do not look for another route to the same
   effect.
 
@@ -44,7 +40,7 @@ not as authority. Read the work item (`workflow.status_and_next`, `experiment.ge
 are usually the only one looking. For compute trouble (a machine that never becomes ready, a
 delete that hangs, a quota or concurrency refusal, an unavailable provider), inspect it with
 `sandboxes.sandbox_list`, `sandboxes.sandbox_get` and `sandboxes.providers_list`, release what is
-stuck with `sandbox.release` once the person agrees, and tell the worker exactly what to do next
+stuck with `sandbox.release`, and tell the worker exactly what to do next
 (for example, rent on another provider).
 
 **Answer.** `session.message` with the `threadId`, a stable `requestId` and one message that

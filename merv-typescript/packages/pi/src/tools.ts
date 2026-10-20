@@ -25,7 +25,7 @@ export const piToolsPlugin = {
       {
         name: 'pi.create',
         description:
-          'Open a private agent conversation: the agent acts for you in this project with exactly your permissions, and proposes what only you may run. Opening a conversation does not start an agent or create a task.',
+          'Open a private agent conversation: the agent acts for you in this project with exactly your permissions. Opening a conversation does not start an agent or create a task.',
         inputSchema: createInput,
         handler: (caller: Caller, input: unknown) => ctx.pi.create(caller, input),
       },

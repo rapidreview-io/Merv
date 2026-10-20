@@ -2,7 +2,6 @@ import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {
-  Experiment,
   ExperimentAttach,
   ExperimentCreate,
   ExperimentExhibit,
@@ -90,34 +89,11 @@ export const experimentsToolsPlugin = {
       },
       {
         name: 'experiment.transition',
-        act: {
-          title: ({ transition }: Record<string, unknown>) =>
-            ({
-              submit_design: 'Submit design',
-              submit_results: 'Submit results',
-              retry_running: 'Retry running',
-              abandon: 'Abandon experiment',
-              mark_failed: 'Mark experiment failed',
-            })[String(transition)] ?? 'Move experiment',
-          says: 'transition',
-        },
         description:
           'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals the evidence attached with experiment.attach and queues independent review atomically, so submit_design and submit_results take no evidence argument; reviewers alone apply their verdict through review.submit. submit_results comes only from the leased worker session that ran the attempt. retry_running, for an infrastructure interruption, preserves the approved plan and attempt and requires the interruption’s reason in evidence.reason, as terminal closure requires a specific reason there. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
         inputSchema: experimentTransitionSchema,
-        // Ending an experiment cannot be undone: the person does it.
-        conversation: (input: ExperimentTransition) =>
-          ['abandon', 'mark_failed'].includes(input.transition) ? 'propose' : undefined,
         handler: async (caller: Caller, input: ExperimentTransition) =>
           await experiments.transition(caller, input),
-        receipt: (experiment: Experiment) => ({
-          summary: {
-            id: experiment.id,
-            state: experiment.workflow.state,
-            revision: experiment.workflow.revision,
-            reviewId: experiment.reviewId,
-          },
-          reread: ['experiment.get_state', 'workflow.status_and_next'],
-        }),
       },
       {
         name: 'experiment.exhibit',

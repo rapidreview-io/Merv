@@ -5,7 +5,6 @@ import type {
   TaskContext,
   TaskCheckpointInput,
 } from './types.js';
-import type { Task } from './models.js';
 import { MAX_ARTIFACT_IDS, visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
@@ -112,7 +111,6 @@ export const taskToolsPlugin = {
       {
         name: 'task.submit_delivery',
         agent: 'never' as const,
-        act: { title: 'Submit delivery' },
         description:
           'Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.',
         inputSchema: z
@@ -140,20 +138,10 @@ export const taskToolsPlugin = {
           .strict(),
         handler: async (caller: Caller, input: TaskDelivery) =>
           await ctx.tasks.submitDelivery(caller, input),
-        receipt: (task: Task) => ({
-          summary: {
-            id: task.id,
-            state: task.workflow.state,
-            revision: task.workflow.revision,
-            reviewId: task.reviewId,
-          },
-          reread: ['task.get', 'workflow.status_and_next'],
-        }),
       },
       {
         name: 'task.mark_failed',
         act: { title: 'Mark task failed' },
-        conversation: 'propose' as const,
         description:
           'Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a project administrator (or their agent) resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
         inputSchema: z
@@ -166,10 +154,6 @@ export const taskToolsPlugin = {
           .strict(),
         handler: async (caller: Caller, input: TaskMarkFailed) =>
           await ctx.tasks.markFailed(caller, input),
-        receipt: (task: Task) => ({
-          summary: { id: task.id, state: task.workflow.state, revision: task.workflow.revision },
-          reread: ['task.get', 'workflow.status_and_next'],
-        }),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
