@@ -186,6 +186,8 @@ const capabilities: Record<string, readonly string[]> = {
   payments: ['api'],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
+  // Agents' scripts, each in a sandboxed child; its tools adapter makes their calls.
+  scripts: [],
   // Literature retrieval and account-backed research require fresh caller scope checks.
   nisa: ['scope'],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
@@ -1062,6 +1064,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'research',
       'reviews',
       'scope',
+      'scripts',
       'sessions',
       'tasks',
       'web',

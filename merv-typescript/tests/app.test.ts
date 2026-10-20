@@ -13,6 +13,7 @@ import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { fit } from '../packages/pi/src/fit.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
+import { piOffers } from '../packages/pi/src/worker-protocol.js';
 import { fetchesContent } from '../packages/fleet/src/model-requests.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
@@ -54,7 +55,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 84);
+    assert.equal(catalog.length, 86);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -421,7 +422,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
   try {
     const offered = (await app.ctx.tools.list()).filter(
       (tool): tool is ToolDefinition =>
-        !isRemoteTool(tool) && tool.conversation !== 'never' && !tool.name.startsWith('pi.'),
+        !isRemoteTool(tool) && tool.conversation !== 'never' && piOffers(tool.name),
     );
     // A tool the relay would refuse is dropped from every turn: none may be.
     assert.deepEqual(
@@ -482,7 +483,9 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     assert.equal(named.split('Never write a dollar cap').length, 2);
     const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);
     assert.ok(names.length > 10);
-    for (const name of names)
+    // Only what the guide tells agents connected from outside Merv (project.brief first) names
+    // a tool Pi has its own form of (its turn context), and that line is not Pi's to follow.
+    for (const name of names.filter(piOffers))
       assert.ok(
         offered.some((tool) => tool.name === name),
         name,

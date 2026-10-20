@@ -60,6 +60,13 @@ type Taken = {
 /** The routes a host's worker calls: /next, /begin, /tool, /progress, /complete and /fail. */
 /** The most tools one turn is offered: the model API's and the worker's limit. */
 export const MAX_TOOLS = 128;
+/** Every tool but Pi's own and those Pi has its own forms of: its turn context is its brief, it
+ *  looks with screen.look, and its own SDK will give it code mode. */
+export const piOffers = (name: string) =>
+  !name.startsWith('pi.') &&
+  !name.startsWith('script.') &&
+  name !== 'project.brief' &&
+  name !== 'record.look';
 /** Tools other agents use through Merv that a conversation is not offered unless its profile
  *  names them. */
 const WORKER_ONLY = new Set([
@@ -224,10 +231,11 @@ export class PiWorkerProtocol {
       const uses = new Map(
         registered.map((tool) => [tool.name, 'kind' in tool ? undefined : tool.conversation]),
       );
-      // Every native tool but Pi's own, run as the person: Scope applies their live role, and
-      // each tool's own registration says what only the person may run.
+      // Every native tool but Pi's own and those it has its own form of (piOffers), run as the
+      // person: Scope applies their live role, and each tool's registration says what only the
+      // person may run.
       const described = (await this.core.tools.describe(caller))
-        .filter(({ name }) => !name.startsWith('pi.'))
+        .filter(({ name }) => piOffers(name))
         // Writing and rendering a report is its executing worker's job, not the chat's.
         .filter(({ name }) => profile?.tools.includes(name) || !WORKER_ONLY.has(name))
         .filter(({ name }) => !profileTools.get(name) || profileTools.get(name) === profile?.id)

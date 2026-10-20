@@ -1,16 +1,16 @@
 {
-  "snapshot": "2026-10-19",
+  "snapshot": "2026-10-20",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 81,
-  "serviceProviders": 37,
-  "toolAdapters": 19,
+  "pluginCount": 83,
+  "serviceProviders": 38,
+  "toolAdapters": 20,
   "uiAdapters": 16,
   "apiAdapters": 5,
-  "defaultEntries": 57,
-  "apiEntries": 44,
-  "serverPlugins": 80,
+  "defaultEntries": 59,
+  "apiEntries": 46,
+  "serverPlugins": 82,
   "machinePlugins": 1,
-  "directDependencyCount": 263,
+  "directDependencyCount": 265,
   "optionalDependencyCount": 19,
   "directConsumers": {
     "api": 12,
@@ -41,11 +41,12 @@
     "sandboxEvidence": 3,
     "sandboxesPeople": 1,
     "scope": 32,
+    "scripts": 1,
     "secrets": 2,
     "sessions": 10,
     "state": 26,
     "tasks": 4,
-    "tools": 27,
+    "tools": 28,
     "ui": 17,
     "web": 1,
     "workflows": 12,
@@ -1035,6 +1036,31 @@
       "provides": [],
       "requires": [
         "scope",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-scripts",
+      "source": "packages/scripts/src/index.ts",
+      "provides": [
+        "scripts"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-scripts-tools",
+      "source": "packages/scripts/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "scripts",
         "tools"
       ],
       "optional": [],

@@ -4,7 +4,7 @@
       "id": "front",
       "label": "Front door",
       "caption": "HTTP, MCP & the browser",
-      "members": ["api", "tools", "ui"],
+      "members": ["api", "tools", "ui", "scripts"],
       "description": "API accepts requests, Tools controls the callable catalog, and UI hosts the browser. Small adapters connect these registries to the domain plugins."
     },
     {
@@ -210,6 +210,10 @@
     "board": {
       "label": "Board",
       "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins."
+    },
+    "scripts": {
+      "label": "Scripts",
+      "purpose": "Runs an outside agent's short JavaScript program in QuickJS, compiled to WebAssembly, in a child process with no environment and no file reads but its own modules. Its only way out is a tool call, which its tools adapter makes as the agent: reads that stay inside Merv. It has no injected Cordis dependencies."
     }
   },
   "hierarchy": {
@@ -235,7 +239,7 @@
         "id": "capabilities",
         "label": "Shared platform capabilities",
         "purpose": "Reusable objects, repositories, callable operations and workflow state.",
-        "members": ["artifacts", "code", "tools", "workflows"]
+        "members": ["artifacts", "code", "tools", "workflows", "scripts"]
       },
       {
         "id": "execution",

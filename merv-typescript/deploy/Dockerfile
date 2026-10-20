@@ -35,5 +35,8 @@ RUN ln -s dist/packages packages
 RUN groupadd --gid 10001 merv && useradd --uid 10001 --gid 10001 --create-home merv
 RUN node --import tsx --input-type=module -e "await import('@sandboxes/merv-host'); const m = await import('@sandboxes/ssh'); if (!m.patchApplied()) process.exit(1)"
 USER 10001:10001
+# script.run's sandbox runs under Node's permission model from these files; a Node or a layout it
+# cannot start in fails the build here, not every script with script_unavailable.
+RUN node --import tsx --input-type=module -e "const { runScript } = await import('@merv/scripts/bridge'); const r = await runScript('return 1', 5000, [], async () => null); if (r.result !== 1) process.exit(1)"
 EXPOSE 3081
 ENTRYPOINT ["/bin/sh", "/app/deploy/entrypoint.sh"]

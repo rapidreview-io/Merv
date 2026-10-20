@@ -209,6 +209,14 @@
       "name": "@merv/api/tools-plugin"
     },
     {
+      "id": "scripts-tools",
+      "name": "@merv/scripts/tools"
+    },
+    {
+      "id": "scripts",
+      "name": "@merv/scripts"
+    },
+    {
       "id": "sessions",
       "name": "@merv/sessions"
     },

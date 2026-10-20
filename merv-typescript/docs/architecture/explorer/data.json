@@ -34,7 +34,8 @@
           "artifacts",
           "code",
           "tools",
-          "workflows"
+          "workflows",
+          "scripts"
         ]
       },
       {
@@ -153,6 +154,7 @@
           "merv-research-tools",
           "merv-review-tools",
           "merv-scope-tools",
+          "merv-scripts-tools",
           "merv-sessions-tools",
           "merv-task-tools",
           "merv-web-tools",
@@ -199,7 +201,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-19",
+  "snapshot": "2026-10-20",
   "groups": [
     {
       "id": "front",
@@ -208,7 +210,8 @@
       "members": [
         "api",
         "tools",
-        "ui"
+        "ui",
+        "scripts"
       ],
       "description": "API accepts requests, Tools controls the callable catalog, and UI hosts the browser. Small adapters connect these registries to the domain plugins."
     },
@@ -2748,6 +2751,65 @@
       ]
     },
     {
+      "plugin": "merv-scripts",
+      "source": "packages/scripts/src/index.ts",
+      "provides": [
+        "scripts"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "scripts",
+      "group": "front",
+      "owner": "scripts",
+      "label": "Scripts",
+      "purpose": "Runs an outside agent's short JavaScript program in QuickJS, compiled to WebAssembly, in a child process with no environment and no file reads but its own modules. Its only way out is a tool call, which its tools adapter makes as the agent: reads that stay inside Merv. It has no injected Cordis dependencies.",
+      "exposedTools": [
+        {
+          "name": "script.run",
+          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.get({}); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+          "readOnly": true
+        },
+        {
+          "name": "script.tools",
+          "description": "Find the Merv tools a script.run program can call, each with a TypeScript declaration of its input. Pass query to search names and descriptions, names for exactly those tools, or neither for each namespace with its count and scriptable tools. A tool marked scriptable false cannot be called from a script.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-scripts-tools",
+      "source": "packages/scripts/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "scripts",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-scripts-tools",
+      "group": "front",
+      "owner": "scripts",
+      "label": "Scripts · tools adapter",
+      "purpose": "Connects Scripts to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "script.run",
+          "description": "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.get({}); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+          "readOnly": true
+        },
+        {
+          "name": "script.tools",
+          "description": "Find the Merv tools a script.run program can call, each with a TypeScript declaration of its input. Pass query to search names and descriptions, names for exactly those tools, or neither for each namespace with its count and scriptable tools. A tool marked scriptable false cannot be called from a script.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
       "plugin": "merv-secrets",
       "source": "packages/secrets/src/index.ts",
       "provides": [
@@ -4606,6 +4668,16 @@
       "optional": false
     },
     {
+      "from": "merv-scripts-tools",
+      "to": "scripts",
+      "optional": false
+    },
+    {
+      "from": "merv-scripts-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
       "from": "secrets",
       "to": "state",
       "optional": false
@@ -4807,10 +4879,10 @@
     }
   ],
   "counts": {
-    "plugins": 81,
-    "providers": 37,
-    "adapters": 44,
-    "dependencies": 263
+    "plugins": 83,
+    "providers": 38,
+    "adapters": 45,
+    "dependencies": 265
   },
   "network": [
     {

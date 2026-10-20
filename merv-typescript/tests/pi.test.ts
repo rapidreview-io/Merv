@@ -75,15 +75,22 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
 
 test("a turn is offered every native tool the person may use but Pi's own", async (t) => {
   const f = await fixture(t);
-  f.tools.register({
-    name: 'pi.send',
-    description: 'Send a message',
-    inputSchema: z.object({}).strict(),
-    handler: () => null,
-  });
+  // Pi's own, and those Pi has its own forms of: its turn context, screen.look, its SDK's code mode.
+  const own = ['pi.send', 'script.run', 'script.tools', 'project.brief', 'record.look'];
+  for (const name of own)
+    f.tools.register({
+      name,
+      description: 'Read something',
+      inputSchema: z.object({}).strict(),
+      readOnly: true,
+      handler: () => null,
+    });
   const offered = (await f.begun(f.operator)).work.tools.map(({ name }) => name);
   assert.ok(offered.includes('project.get'));
-  assert.ok(!offered.includes('pi.send'));
+  assert.deepEqual(
+    own.filter((name) => offered.includes(name)),
+    [],
+  );
   assert.ok(!offered.some((name) => name.startsWith('_')), 'a mounted tool is never offered');
 });
 

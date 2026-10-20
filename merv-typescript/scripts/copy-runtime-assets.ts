@@ -2,11 +2,13 @@ import { copyFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The supervisor is plain ESM so it runs without tsx or inherited process preloads.
-const source = new URL('../packages/runner/src/supervisor.mjs', import.meta.url);
-const destination = new URL('../dist/packages/runner/src/supervisor.mjs', import.meta.url);
-mkdirSync(dirname(fileURLToPath(destination)), { recursive: true });
-copyFileSync(source, destination);
+// The runner's supervisor and the scripts sandbox are plain ESM, so they run without tsx or
+// inherited process preloads.
+for (const path of ['runner/src/supervisor.mjs', 'scripts/src/sandbox.mjs']) {
+  const destination = new URL(`../dist/packages/${path}`, import.meta.url);
+  mkdirSync(dirname(fileURLToPath(destination)), { recursive: true });
+  copyFileSync(new URL(`../packages/${path}`, import.meta.url), destination);
+}
 
 // Keep the UI's relative bundle path the same for source and compiled plugins.
 // Backend-only builds remain supported; a production UI build runs build:ui first.

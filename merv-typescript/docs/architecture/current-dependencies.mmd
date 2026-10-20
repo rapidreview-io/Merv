@@ -62,6 +62,8 @@ flowchart BT
     scope["scope"]
     merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
+    scripts["scripts"]
+    merv_scripts_tools["merv-scripts-tools"]
     secrets["secrets"]
     merv_secrets_api["merv-secrets-api"]
     sessions["sessions"]
@@ -307,6 +309,8 @@ flowchart BT
   merv_scope_api --> identity
   merv_scope_tools --> scope
   merv_scope_tools --> tools
+  merv_scripts_tools --> scripts
+  merv_scripts_tools --> tools
   secrets --> state
   merv_secrets_api --> secrets
   merv_secrets_api --> api
