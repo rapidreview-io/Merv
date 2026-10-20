@@ -181,9 +181,20 @@ async function retired(tx: Transaction, result: ContextPackage): Promise<boolean
   );
 }
 
+/** The tool registry's presentation of guidance (Tools.guidance). */
+interface Guidance {
+  guidance<T>(caller: Caller, value: T): T;
+}
+
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
   private closed = false;
+  private said: Guidance['guidance'] = (_caller, value) => value;
+  /** Use the registry's caller vocabulary before budgeting and hashing a prompt. */
+  bindGuidance(tools: Guidance): () => void {
+    this.said = (caller, value) => tools.guidance(caller, value);
+    return () => (this.said = (_caller, value) => value);
+  }
   constructor(
     private state: State,
     private scope: Scope,
@@ -320,12 +331,25 @@ export class RecipeContextBuilder implements ContextBuilder {
             'invalid_context',
             'Context preview needs a subject and structured inputs',
           );
+          // Inline guidance may already be serialized in a frozen assignment. Present it for
+          // this worker before rendering; artifact bytes and retrieval refs keep their contracts.
+          for (const section of Object.values(parsed.data.inputs))
+            for (const item of section.items) {
+              if ('text' in item.body) item.body.text = this.said(caller, item.body.text);
+              if (item.note) item.note = this.said(caller, item.note);
+            }
           return {
             request: parsed.data,
             artifacts: await resolve(this.artifacts, caller, parsed.data, tx),
           };
         });
-        const result = await renderItems(definition, hash, caller, request, artifacts);
+        const result = await renderItems(
+          this.said(caller, definition),
+          hash,
+          caller,
+          request,
+          artifacts,
+        );
         rendered.set(result, result.hash);
         return result;
       },
@@ -406,6 +430,9 @@ export const contextBuilderPlugin = {
         new RecipeContextBuilder(ctx.state, ctx.scope, ctx.artifacts),
       );
       yield () => builder.close();
+      ctx.inject(['tools'], (ctx) => {
+        ctx.effect(() => builder.bindGuidance(ctx.tools));
+      });
       yield ctx.provide('contextBuilder', builder);
     });
   },

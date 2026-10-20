@@ -191,6 +191,8 @@ test('assembled Cordis application preserves current MCP task closure across two
     assert.match(workContext.prompt, /calculation remains/);
     // Context and legacy reads give the worker the same flat guidance.
     assert.ok(workContext.prompt.includes(JSON.stringify(workGuidance)));
+    assert.doesNotMatch(workContext.prompt, /\b[a-z_]+\.[a-z_]+:[a-z_]+\b/);
+    assert.deepEqual(await storedContext(app.ctx.state, workContext.id), workContext);
     assert.equal(workContext.type, 'task.work');
     const delivery = await call(producer, 'artifact.create', {
       title: 'Delivery',
