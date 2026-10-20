@@ -84,7 +84,7 @@ test('a thread is read in words: the role alone for a stranger, files to open, n
   serve('/tools/ui.shell', {
     body: { result: { rows: [{ id: 'reviews', path: '/reviews', view: { kind: 'reviews' } }] } },
   });
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: {
       result: [
         {

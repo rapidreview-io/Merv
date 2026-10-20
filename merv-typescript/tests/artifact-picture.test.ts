@@ -19,6 +19,7 @@ test('image reference lookup authorizes first, reads full bounded binary, and pa
     effect: (f: any) => f(),
     tools: {
       register: () => () => {},
+      noun: () => () => {},
       contributeInstructions: () => () => {},
       contributePicture: (_p: any, f: any) => {
         drawer = f;

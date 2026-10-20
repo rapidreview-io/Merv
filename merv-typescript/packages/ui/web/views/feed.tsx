@@ -147,7 +147,7 @@ function Entry({
 export function FeedView({ shell }: ViewProps) {
   const home = useHome();
   const listed = useTool<Artifact[]>(
-    shell.rows.some((row) => row.view.kind === 'artifacts') ? 'artifact.list' : null,
+    shell.rows.some((row) => row.view.kind === 'artifacts') ? 'artifact.read:list' : null,
   );
   const names = useMemo(
     () => recordNames(listed.data, home.data, shell.rows),

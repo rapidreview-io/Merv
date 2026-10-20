@@ -81,10 +81,10 @@ test('script.tools searches, names and sums up only what this agent may use', as
     ],
   );
   const read = named.tools[0].declaration as string;
-  assert.match(read, /^\/\*\* Read immutable artifact content: .{0,280}… \*\/\n/);
+  assert.match(read, /^\/\*\* Read project files: .{0,280}… \*\/\n/);
   assert.match(
     read,
-    /tools\.artifact\.read\(input: \{ artifactId: string; mode\?: "download"; fileName\?: string; fileNames\?: string\[\]; offset\?: number; length\?: number \}\): Promise<unknown>$/,
+    /tools\.artifact\.read\(input: \{ action: "content"; content: \{ artifactId: string; fileName\?: string; offset\?: number; length\?: number \} \}\): Promise<unknown>\n/,
   );
   const summary = await mcp('script.tools');
   const project = summary.namespaces.find(({ namespace }: any) => namespace === 'project');

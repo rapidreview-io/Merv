@@ -168,11 +168,11 @@ export function UploadControl({ available }: { available: boolean }) {
       if (file.size <= MAX_FILE) {
         const input = await fileInput(file);
         if (!current()) return;
-        await call('artifact.create', input);
+        await call('artifact.write:create', input);
       } else {
         let plan: UploadPlan;
         if (pending.current?.file === file) {
-          plan = await call<UploadPlan>('artifact.upload_resume', {
+          plan = await call<UploadPlan>('artifact.write:upload_resume', {
             uploadId: pending.current.uploadId,
           });
         } else {
@@ -181,7 +181,7 @@ export function UploadControl({ available }: { available: boolean }) {
             if (current()) setFraction(value * 0.1);
           });
           if (!current()) return;
-          plan = await call<UploadPlan>('artifact.upload_begin', {
+          plan = await call<UploadPlan>('artifact.write:upload_begin', {
             ...named(file),
             size: file.size,
             sha256,
@@ -199,11 +199,11 @@ export function UploadControl({ available }: { available: boolean }) {
         }
         if (!current()) return;
         setNote('Verifying');
-        await call('artifact.upload_complete', { uploadId: plan.uploadId });
+        await call('artifact.write:upload_complete', { uploadId: plan.uploadId });
       }
       if (!current()) return;
       pending.current = undefined;
-      refreshTools('artifact.list');
+      refreshTools('artifact.read:list');
       setNote('Uploaded');
       done.current = setTimeout(() => setFile(undefined), 2500);
     } catch (error) {
@@ -381,7 +381,7 @@ function FileFinder({ open, setOpen }: { open: boolean; setOpen(open: boolean): 
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
   const box = useRef<HTMLDivElement>(null);
-  const list = useTool<Artifact[]>(open ? 'artifact.list' : null, { limit: FILE_PAGE });
+  const list = useTool<Artifact[]>(open ? 'artifact.read:list' : null, { limit: FILE_PAGE });
   const search = query.trim().toLowerCase();
   const files = (list.data ?? [])
     .filter((file) => file.title.toLowerCase().includes(search))
@@ -475,11 +475,10 @@ function useDownload(artifactId: string, fileName?: string) {
     setError(undefined);
     setDownload(undefined);
     try {
-      const result = await call<{ download: { url: string; expiresAt: string } }>('artifact.read', {
-        artifactId,
-        mode: 'download',
-        ...(fileName === undefined ? {} : { fileName }),
-      });
+      const result = await call<{ download: { url: string; expiresAt: string } }>(
+        'artifact.read:download',
+        { artifactId, ...(fileName === undefined ? {} : { fileName }) },
+      );
       if (current() && Date.parse(result.download.expiresAt) > Date.now())
         setDownload(result.download);
     } catch (failure) {
@@ -979,7 +978,7 @@ function FileBody({ artifactId, metadata, named, embedded }: FileProps) {
   const [source, setSource] = useState(false);
   const [finding, setFinding] = useState(false);
   const [unread, setUnread] = useState(false);
-  const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
+  const meta = useTool<Artifact>(metadata ? null : 'artifact.read:get', { artifactId });
   const markUnread = useCallback(() => setUnread(true), []);
   const artifact = metadata ?? meta.data;
   if (!artifact) {
@@ -1140,11 +1139,11 @@ const FILE_PAGE = 200;
 function ArtifactList() {
   // Up to the thousand the tool holds at most; while a longer page loads, the rows shown stay.
   const [limit, setLimit] = useState(FILE_PAGE);
-  const read = useTool<Artifact[]>('artifact.list', { limit }, { every: 10000 });
+  const read = useTool<Artifact[]>('artifact.read:list', { limit }, { every: 10000 });
   const held = useRef(read.data);
   held.current = read.data ?? held.current;
   const list = { ...read, data: held.current, loading: read.loading && !held.current };
-  const storage = useTool<{ available: boolean }>('artifact.storage_status', {});
+  const storage = useTool<{ available: boolean }>('artifact.read:storage', {});
   const nameOf = useActorNames();
   const { actor } = useSession();
   const filter = useListFilter(list.data, {
@@ -1190,7 +1189,7 @@ function ArtifactList() {
 
 function ArtifactDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
-  const meta = useTool<Artifact>('artifact.get', { artifactId: id });
+  const meta = useTool<Artifact>('artifact.read:get', { artifactId: id });
   if (!meta.data) return <PageLoad {...meta} back={{ to: row.path, label: row.label }} />;
   return (
     <div className="page-stage">

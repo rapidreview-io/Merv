@@ -223,7 +223,7 @@ async function sidebar(sent: unknown, full = true, role = 'operator', address = 
     },
   });
   serve('/sessions/threads/thr_rev/conversation', { body: { threadId: 'thr_rev', visits: [] } });
-  serve('/tools/artifact.get', (_, input) => ({
+  serve('/tools/artifact.read:get', (_, input) => ({
     body: { result: artifact(String(input.artifactId)) },
   }));
   serve('/tools/artifact.read', (_, input) => {

@@ -1064,7 +1064,7 @@ export function Ruled<T>({
  * its name.
  */
 export const useArtifacts = () => {
-  const list = useTool<Artifact[]>('artifact.list');
+  const list = useTool<Artifact[]>('artifact.read:list');
   return new Map((list.data ?? []).map((item) => [item.id, item]));
 };
 

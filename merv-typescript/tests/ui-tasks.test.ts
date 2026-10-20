@@ -105,7 +105,9 @@ const all = (selector: string) => [...document.querySelectorAll(selector)];
 
 test('before a delivery a row is the check alone, and a brief somebody wrote is open to read', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/artifact.list', { body: { result: [file(BRIEF, 'Brief: reproduce grokking')] } });
+  serve('/tools/artifact.read:list', {
+    body: { result: [file(BRIEF, 'Brief: reproduce grokking')] },
+  });
   serve('/tools/artifact.read', {
     body: {
       result: { artifact: file(BRIEF, 'Brief'), encoding: 'utf8', content: '# Goal\nShow it.' },
@@ -139,7 +141,7 @@ test('the brief the server composed stays shut: the page has already said all of
   t.after(async () => await unmount());
   // A file of its own: the list another test left in the api's memory does not name it.
   const composed = 'art_00000000000000000000000000000009';
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: { result: [file(composed, 'Task brief: Reproduce grokking')] },
   });
   // Tasks says it composed the brief; the page does not read that from the title.
@@ -154,7 +156,7 @@ test('the brief the server composed stays shut: the page has already said all of
 
 test('a reviewed task says each check once, with the claim, the finding and the file they cite', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: {
       result: [
         file(BRIEF, 'Brief: reproduce grokking'),

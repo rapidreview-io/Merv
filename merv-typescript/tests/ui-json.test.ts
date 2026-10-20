@@ -293,7 +293,7 @@ test('failed partial captures disclose their status while retained files stay do
   assert.match(text(), /Capture failed · partial outputs/);
   assert.match(text(), /Output limit reached/);
   assert.match(text(), /1 retained file/);
-  serve('/tools/artifact.read', {
+  serve('/tools/artifact.read:download', {
     body: {
       result: {
         download: {

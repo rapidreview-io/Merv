@@ -1117,7 +1117,7 @@ test('a file older than the newest page is still named where it is cited', async
     title: `Newer ${at}`,
   }));
   // The tool's first page holds as many as were asked for, newest first.
-  serve('/tools/artifact.list', (_, sent) => ({
+  serve('/tools/artifact.read:list', (_, sent) => ({
     body: {
       result: [...newer, { id: old, title: 'Brief: the first sweep' }].slice(
         0,

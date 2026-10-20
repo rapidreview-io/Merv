@@ -64,6 +64,8 @@ function admitCall(
   // the one asked, and the only read a session cannot otherwise express.
   if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(original, 'instanceId'))
     return { tool, input: original };
+  // A read in noun form ({action, [action]: {…}}) is admitted as given: grants bind flat input.
+  if (read && typeof original.action === 'string') return { tool, input: original };
   try {
     return admitDispatch(execution, tool, original);
   } catch (error) {

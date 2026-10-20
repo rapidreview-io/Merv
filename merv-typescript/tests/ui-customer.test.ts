@@ -925,7 +925,7 @@ test('a paid experiment mounts the app’s own Agents and Artifacts tabs, signed
     },
   });
   serve('/sessions/threads/thr_run/conversation', { body: { visits: [], before: null } });
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: {
       result: [
         {

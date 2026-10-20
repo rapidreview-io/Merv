@@ -45,7 +45,7 @@ States: planned, design_review, running, experiment_review, then completed.
    `dependsOn` names tasks only: an order between two experiments is a task between them. At
    most seven experiments may be active at once.
 2. **Plan (planned).** Write a Markdown plan of about one screen, store it with
-   `artifact.create`, and attach it with `experiment.write` (attach, role `plan`, the current
+   `artifact.write` (create), and attach it with `experiment.write` (attach, role `plan`, the current
    `attemptIndex` and `expectedRevision`). When the experiment carries a feasibility format,
    also attach a JSON feasibility statement as role `feasibility`; its shape is in
    the attach action's description, and a statement showing a shortfall cannot be submitted.
@@ -76,12 +76,12 @@ yourself. `task.get` returns Merv's guidance for a task.
 
 ## Files
 
-- `artifact.create` stores a finished file given inline (at most 2 MB; utf8 for text, base64
-  for binary). It returns the artifact id other records reference.
-- For a file on disk, `artifact.upload_begin` with its exact byte count and SHA-256, PUT the file
-  to the signed URL it returns, then `artifact.upload_complete`. Do not base64 a large file into
-  artifact.create.
-- `artifact.get` reads metadata, `artifact.read` reads content, `artifact.list` lists files.
+- `artifact.write` (create) stores a finished file given inline (at most 2 MB; utf8 for text,
+  base64 for binary). It returns the artifact id other records reference.
+- For a file on disk, `artifact.write` (upload_begin) with its exact byte count and SHA-256, PUT
+  the file to the signed URL it returns, then `artifact.write` (upload_complete). Do not base64 a
+  large file into create.
+- `artifact.read` reads files: list, get (metadata), content and download.
 - `record.look` shows a JPEG, PNG or WebP image artifact as an image. `board.read` with action
   `get` says what a board's shapes say, and with `look` shows the board as an image.
 

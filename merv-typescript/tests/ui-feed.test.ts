@@ -44,7 +44,7 @@ function fixtures() {
       },
     },
   });
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: {
       result: [
         { id: FILE, title: 'curve.csv', mediaType: 'text/csv', size: 10, createdAt: at(-1) },

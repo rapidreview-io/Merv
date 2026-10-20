@@ -80,7 +80,7 @@ function boot(held: ReturnType<typeof workspace>, role = 'operator') {
         : held,
     },
   }));
-  serve('/tools/artifact.list', { body: { result: [] } });
+  serve('/tools/artifact.read:list', { body: { result: [] } });
   serve('/tools/actor.list', { body: { result: [actor] } });
 }
 const open = async () => {
@@ -234,7 +234,7 @@ test('a citation’s retained files are chosen by name, and the tool is sent art
     updatedBy: 'actor_1',
   };
   boot({ ...held, citations: [cited] as never[] });
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: { result: [file(CURVE, 'Learning curve'), file(TABLE, 'Accuracy table')] },
   });
   let sent: Record<string, unknown> | undefined;
@@ -402,7 +402,7 @@ test('the paper names its sources and reviews through their owners, and reads no
   serve('/tools/actor.list', {
     body: { result: [{ ...actor }, { id: 'actor_r', name: 'Ada', role: 'reviewer' }] },
   });
-  serve('/tools/artifact.list', { body: { result: [] } });
+  serve('/tools/artifact.read:list', { body: { result: [] } });
   serve('/tools/paper.read', (_count, input) => ({
     body: { result: input.history ? [] : workspace },
   }));

@@ -143,11 +143,11 @@ async function uploading(
 test('Files sends one whole file with its signed checksum headers before completing', async (t) => {
   const f = await uploading(t, [200]);
   const calls: [string, Record<string, unknown>][] = [];
-  serve('/tools/artifact.upload_begin', (_count, input) => {
+  serve('/tools/artifact.write:upload_begin', (_count, input) => {
     calls.push(['begin', input]);
     return { body: { result: f.plan() } };
   });
-  serve('/tools/artifact.upload_complete', (_count, input) => {
+  serve('/tools/artifact.write:upload_complete', (_count, input) => {
     calls.push(['complete', input]);
     assert.equal(f.puts.length, 1);
     return { body: { result: { id: 'art_file' } } };
@@ -181,21 +181,21 @@ test('Files does not complete an upload under a project selected during the stor
     sent.resolve();
   });
   t.after(() => setProject(null));
-  serve('/tools/artifact.upload_begin', { body: { result: f.plan() } });
-  serve('/tools/artifact.upload_complete', { body: { result: { id: 'art_file' } } });
+  serve('/tools/artifact.write:upload_begin', { body: { result: f.plan() } });
+  serve('/tools/artifact.write:upload_complete', { body: { result: { id: 'art_file' } } });
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, 'files', { value: [f.file] });
   await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
   await sent.promise;
   await settle();
-  assert.deepEqual(requests, ['POST /tools/artifact.upload_begin']);
+  assert.deepEqual(requests, ['POST /tools/artifact.write:upload_begin']);
   assert.equal(f.puts.length, 1);
   assert.equal(f.closed(), 0);
 });
 
 test('Files stops the storage PUT of an upload its page left', async (t) => {
   const f = await uploading(t, ['held']);
-  serve('/tools/artifact.upload_begin', { body: { result: f.plan() } });
+  serve('/tools/artifact.write:upload_begin', { body: { result: f.plan() } });
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, 'files', { value: [f.file] });
   await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
@@ -210,15 +210,15 @@ test('Files resumes a failed PUT with the same upload and fresh signed URL', asy
   let begins = 0;
   const resumed: unknown[] = [];
   let completed = 0;
-  serve('/tools/artifact.upload_begin', () => {
+  serve('/tools/artifact.write:upload_begin', () => {
     begins++;
     return { body: { result: f.plan() } };
   });
-  serve('/tools/artifact.upload_resume', (_count, input) => {
+  serve('/tools/artifact.write:upload_resume', (_count, input) => {
     resumed.push(input);
     return { body: { result: f.plan('https://storage.example/fresh-signature') } };
   });
-  serve('/tools/artifact.upload_complete', () => {
+  serve('/tools/artifact.write:upload_complete', () => {
     completed++;
     return { body: { result: { id: 'art_file' } } };
   });
@@ -240,10 +240,10 @@ test('Files resumes a failed PUT with the same upload and fresh signed URL', asy
 
 test('Files completes an already stored file without a PUT', async (t) => {
   const f = await uploading(t, []);
-  serve('/tools/artifact.upload_begin', {
+  serve('/tools/artifact.write:upload_begin', {
     body: { result: { ...f.plan(), parts: [], completedParts: [1] } },
   });
-  serve('/tools/artifact.upload_complete', { body: { result: { id: 'art_file' } } });
+  serve('/tools/artifact.write:upload_complete', { body: { result: { id: 'art_file' } } });
   await f.submit();
   assert.deepEqual(f.puts, []);
   assert.equal(f.closed(), 1);
@@ -252,12 +252,12 @@ test('Files completes an already stored file without a PUT', async (t) => {
 test('Files follows a conditional PUT refusal with server verification and retries a failed completion', async (t) => {
   const f = await uploading(t, [412]);
   let completions = 0;
-  serve('/tools/artifact.upload_begin', { body: { result: f.plan() } });
-  serve('/tools/artifact.upload_resume', (_count, input) => {
+  serve('/tools/artifact.write:upload_begin', { body: { result: f.plan() } });
+  serve('/tools/artifact.write:upload_resume', (_count, input) => {
     assert.deepEqual(input, { uploadId: 'aup_file' });
     return { body: { result: { ...f.plan(), parts: [], completedParts: [1] } } };
   });
-  serve('/tools/artifact.upload_complete', () =>
+  serve('/tools/artifact.write:upload_complete', () =>
     ++completions === 1
       ? { status: 409, body: { error: { code: 'upload_pending', message: 'Not yet verified' } } }
       : { body: { result: { id: 'art_file' } } },
@@ -284,7 +284,7 @@ async function choose(t: TestContext, available: boolean, file: File) {
 
 test('Files sends a small file without project storage and says so once it is stored', async (t) => {
   const created: unknown[] = [];
-  serve('/tools/artifact.create', (_count, input) => {
+  serve('/tools/artifact.write:create', (_count, input) => {
     created.push(input);
     return { body: { result: { id: 'art_small' } } };
   });
@@ -342,7 +342,7 @@ test('Files keeps the rows it shows while older files load', async (t) => {
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/artifact.storage_status', { body: { result: { available: false } } });
+  serve('/tools/artifact.read:storage', { body: { result: { available: false } } });
   const files = Array.from({ length: 400 }, (_, at) => ({
     id: `art_${String(at).padStart(32, '0')}`,
     projectId: project.id,
@@ -353,7 +353,7 @@ test('Files keeps the rows it shows while older files load', async (t) => {
     title: `File ${at}`,
     mediaType: 'text/plain',
   }));
-  serve('/tools/artifact.list', (_, sent) => ({
+  serve('/tools/artifact.read:list', (_, sent) => ({
     body: { result: files.slice(0, Number(sent.limit)) },
   }));
   // The older page is still on its way when the page is next drawn.

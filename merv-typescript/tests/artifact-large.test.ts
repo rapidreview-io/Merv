@@ -68,10 +68,10 @@ const file = (bytes: Buffer, requestId?: string) => ({
 test('an upload is one signed PUT of exactly the declared bytes, and a stored file needs none', async (t) => {
   const f = await largeApp(t);
   // A file already on disk goes up this way, not pasted or base64-encoded into artifact.create.
-  const create = (await f.app.ctx.tools.describe()).find((tool) => tool.name === 'artifact.create');
+  const write = (await f.app.ctx.tools.describe()).find((tool) => tool.name === 'artifact.write');
   assert.match(
-    create!.description!,
-    /For a file already on disk, do not cat or base64 it into content: artifact\.upload_begin stores it/,
+    JSON.stringify(write!.inputSchema),
+    /For a file already on disk, do not cat or base64 it into content: artifact\.write upload_begin stores it/,
   );
   assert.deepEqual(await f.app.ctx.tools.call('artifact.storage_status', f.owner, {}), {
     available: true,

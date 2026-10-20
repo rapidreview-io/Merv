@@ -841,6 +841,19 @@ test('a tool call that committed answers its result when recording its finish fa
   assert.deepEqual(finished, ['succeeded']);
 });
 
+test('a read in noun form is admitted as given, and a flat read is still bound', async (t) => {
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const caller = await f.sessions.authenticate(token);
+  // One artifact in the assignment fills a flat read's artifactId; a noun-form read names its own.
+  const flat = await f.sessions.invocations.prepare(caller, 'artifact.read', {}, true);
+  assert.deepEqual(flat.input, { artifactId: 'frozen-artifact' });
+  const noun = { action: 'content', content: { artifactId: 'other-artifact' } };
+  const given = await f.sessions.invocations.prepare(caller, 'artifact.read', noun, true);
+  assert.deepEqual(given.input, noun);
+  for (const prepared of [flat, given]) await f.sessions.invocations.cancel(prepared);
+});
+
 test('frozen references survive reload, a prepared generation does not, and cancellation removes invocation authority', async (t) => {
   const f = await fixture(t),
     { token } = await f.offer();

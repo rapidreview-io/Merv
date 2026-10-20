@@ -157,7 +157,7 @@ function Latest({
   const filesPath = pathOf(rows, 'artifacts');
   const paperPath = pathOf(rows, 'paper');
   const files = useTool<Artifact[]>(
-    filesPath ? 'artifact.list' : null,
+    filesPath ? 'artifact.read:list' : null,
     { limit: FILES },
     { every: 30_000 },
   );

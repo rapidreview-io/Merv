@@ -66,6 +66,15 @@ const retired = {
   ],
   board: ['board.look', 'board.draw'],
   paper: ['paper.patch', 'paper.cite'],
+  artifact: [
+    'artifact.create',
+    'artifact.get',
+    'artifact.list',
+    'artifact.storage_status',
+    'artifact.upload_begin',
+    'artifact.upload_resume',
+    'artifact.upload_complete',
+  ],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -78,6 +87,7 @@ const nouns = [
   'experiment.write',
   'board.write',
   'paper.write',
+  'artifact.write',
 ];
 
 /** A result's key shape, as the contract was captured. */
@@ -105,11 +115,13 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   });
   const experiment = created.body.result;
   const drawn = await tool('board.write:draw', boot.token, { title: 'Seed', ops: [] });
+  const seed = await app.ctx.artifacts.create(owner, { title: 'Seed', content: 'seed' });
   const input = (name: string) =>
     JSON.parse(
       JSON.stringify(captured.contracts[name]!.input)
         .replaceAll('$experiment', experiment.id)
-        .replaceAll('$board', drawn.body.result.board.id),
+        .replaceAll('$board', drawn.body.result.board.id)
+        .replaceAll('$artifact', seed.id),
     ) as Record<string, unknown>;
   const page = async (name: string, token: string, body = input(name)): Promise<Outcome> => {
     const { status, body: answer } = await tool(name.split('#')[0]!, token, body);
@@ -142,6 +154,11 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
       `${name} over MCP`,
     );
   }
+  // A kept flat name reads its old flat input as the action it routes to.
+  assert.deepEqual(
+    (await tool('artifact.read', boot.token, { artifactId: seed.id })).body,
+    (await tool('artifact.read:content', boot.token, { artifactId: seed.id })).body,
+  );
   for (const name of removed) {
     const refused = await tool(name, boot.token, input(name));
     assert.deepEqual([refused.status, refused.body.error.code], [404, 'tool_renamed'], name);
@@ -197,11 +214,8 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
   const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];
-  for (const name of [
-    ...reads,
-    ...['experiment.list', 'experiment.get_state', 'experiment.exhibit', 'board.look'],
-    ...kept,
-  ]) {
+  reads.push('experiment.list', 'experiment.get_state', 'experiment.exhibit', 'board.look');
+  for (const name of [...reads, 'artifact.get', 'artifact.list', ...kept]) {
     const outcome = await app.ctx.tools.invoke(name.split('#')[0]!, worker, input(name), true).then(
       ({ value }) => ({ ok: shape(value) }),
       (error: { status: number; code: string }) => ({ status: error.status, error: error.code }),
@@ -214,11 +228,28 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.match(shown.get('code.status')!, /^Read retained bases/);
   // A kept flat name is listed to a worker as it was, with its old flat schema; an agent is
   // listed it with actions.
-  const schema = async (caller: Caller) =>
-    (await app.ctx.tools.describe(caller, true)).find(({ name }) => name === 'paper.read')!
-      .inputSchema.properties!;
-  assert.ok((await schema(worker)).kind && !(await schema(worker)).action);
-  assert.ok((await schema(owner)).action && !(await schema(owner)).kind);
+  const schema = async (caller: Caller, of = 'paper.read') =>
+    Object.keys(
+      (await app.ctx.tools.describe(caller, true)).find(({ name }) => name === of)!.inputSchema
+        .properties!,
+    );
+  assert.deepEqual(
+    await schema(worker),
+    'kind history outline section revision offset length'.split(' '),
+  );
+  const order = 'artifactId mode fileName fileNames offset length'.split(' ');
+  assert.deepEqual(await schema(worker, 'artifact.read'), order);
+  assert.ok((await schema(owner)).includes('action') && !(await schema(owner)).includes('kind'));
+  // A false flag, as models send one, is the flag left out.
+  const paper = await app.ctx.tools.invoke('paper.read', worker, { history: false }, true);
+  assert.ok('documents' in (paper.value as object));
+  const content = await app.ctx.tools.invoke(
+    'artifact.read',
+    worker,
+    { artifactId: seed.id },
+    true,
+  );
+  assert.equal((content.value as { content: string }).content, 'seed');
   assert.match(shown.get('code.unit.get')!, /waits for code\.unit\.fence/);
   // A kept name is shown its old flat input and text.
   assert.match(shown.get('board.read')!, /^Read the project's whiteboards\. Without board/);

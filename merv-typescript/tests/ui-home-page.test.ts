@@ -150,7 +150,7 @@ function boot() {
   serve('/tools/actor.list', { body: { result: home.actors } });
   serve('/tools/ui.home', { body: { result: home } });
   serve('/tools/ui.running', { body: { result: board() } });
-  serve('/tools/artifact.list', {
+  serve('/tools/artifact.read:list', {
     body: {
       result: [{ id: 'art_1', title: 'loss-curve.png', mediaType: 'image/png', createdAt: ago(2) }],
     },
@@ -202,7 +202,7 @@ test('Latest says the home read failed, rather than loading for ever, when nothi
   serve('/tools/ui.home', down);
   serve('/tools/ui.running', down);
   serve('/tools/paper.read', down);
-  serve('/tools/artifact.list', { body: { result: [] } });
+  serve('/tools/artifact.read:list', { body: { result: [] } });
   await open();
   const latest = part('Latest');
   assert.equal(
@@ -281,7 +281,7 @@ test('Home says where the project stands, what needs you, who is at work and wha
     'pass· Ada',
   ]);
   assert.ok(latest.querySelector('.crit-word--pass'));
-  assert.ok(requests.includes('POST /tools/artifact.list'));
+  assert.ok(requests.includes('POST /tools/artifact.read:list'));
 
   // The rail: Home leads, with Work after it.
   const rail = [...document.querySelectorAll('.sidebar .rail-nav a')].slice(0, 2);

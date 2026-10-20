@@ -920,6 +920,136 @@
         "status": 403,
         "error": "forbidden"
       }
+    },
+    "artifact.create": {
+      "input": {
+        "title": "Notes",
+        "content": "hello",
+        "requestId": "create-art"
+      },
+      "owner": {
+        "ok": ["createdAt", "createdBy", "hash", "id", "mediaType", "projectId", "size", "title"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "artifact.get": {
+      "input": {
+        "artifactId": "$artifact"
+      },
+      "owner": {
+        "ok": [
+          "createdAt",
+          "createdBy",
+          "downloadAvailable",
+          "hash",
+          "id",
+          "mediaType",
+          "projectId",
+          "size",
+          "title"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "createdAt",
+          "createdBy",
+          "downloadAvailable",
+          "hash",
+          "id",
+          "mediaType",
+          "projectId",
+          "size",
+          "title"
+        ]
+      }
+    },
+    "artifact.list": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": [
+            "createdAt",
+            "createdBy",
+            "downloadAvailable",
+            "hash",
+            "id",
+            "mediaType",
+            "projectId",
+            "size",
+            "title"
+          ]
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": [
+            "createdAt",
+            "createdBy",
+            "downloadAvailable",
+            "hash",
+            "id",
+            "mediaType",
+            "projectId",
+            "size",
+            "title"
+          ]
+        }
+      }
+    },
+    "artifact.storage_status": {
+      "input": {},
+      "owner": {
+        "ok": ["available"]
+      },
+      "reader": {
+        "ok": ["available"]
+      }
+    },
+    "artifact.upload_begin": {
+      "input": {
+        "title": "Big",
+        "size": 5,
+        "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "mediaType": "text/plain",
+        "requestId": "begin"
+      },
+      "owner": {
+        "status": 503,
+        "error": "storage_unavailable"
+      },
+      "reader": {
+        "status": 503,
+        "error": "storage_unavailable"
+      }
+    },
+    "artifact.upload_resume": {
+      "input": {
+        "uploadId": "upload_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "artifact.upload_complete": {
+      "input": {
+        "uploadId": "upload_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
     }
   }
 }

@@ -14,6 +14,8 @@ import {
 import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { ArtifactStore } from '@merv/artifacts';
 import { artifactToolsPlugin } from '@merv/artifacts/tools';
+import type { NounDefinition } from '@merv/api/types';
+import { noun } from '../packages/api/src/noun.js';
 import { DiskBlobs } from '@merv/blobs';
 import type { z } from 'zod';
 import { ProjectScope } from '@merv/scope';
@@ -396,8 +398,11 @@ test('artifact.read reads a member inline or links members, naming the collectio
     `${caller.projectId}:model-ref`,
     ...['model-ref', 'stored-ref', 'log-ref'].map((r) => `${caller.projectId}:${r}`),
   ]);
+  // A download takes no range: the flat tool ignored one.
+  assert.deepEqual(await read({ mode: 'download', fileName: long, offset: 0, length: 10 }), one);
+  // fileNames are download's alone: content takes no such field.
+  await assert.rejects(read({ fileNames: ['run-a/metrics.json'] }), { code: 'invalid_input' });
   for (const input of [
-    { fileNames: ['run-a/metrics.json'] },
     { mode: 'download', fileName: long, fileNames: [long] },
     { mode: 'download', fileNames: [long, long] },
   ])
@@ -459,6 +464,13 @@ function toolsOver(artifacts: object) {
     artifacts,
     tools: {
       register: (tool: { name: string }) => void tools.set(tool.name, tool as never),
+      // Each retired name runs its action with its own flat input, as the registry's alias does.
+      noun: (name: string, definition: NounDefinition) => {
+        tools.set(name, noun(name, definition) as never);
+        for (const action of Object.values(definition.actions))
+          for (const was of action.was ?? [])
+            tools.set(was, { handler: action.handler, inputSchema: action.input });
+      },
       contributeInstructions: () => () => {},
       contributePicture: () => () => {},
     },
