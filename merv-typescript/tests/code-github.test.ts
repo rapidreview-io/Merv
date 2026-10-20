@@ -282,7 +282,7 @@ test('flow is bound to browser, initiating human and project, with expiry and re
   await assert.rejects(f.service.finish(f.caller, newer.cookie), { code: 'github_conflict' });
 });
 
-test('credentials cannot cross Merv user/project boundaries; machine and reader authority cannot administer', async (t) => {
+test('credentials cannot cross Merv user/project boundaries; the owner’s agent administers, a machine and a reader cannot', async (t) => {
   const f = await foundation(t);
   await f.connect();
   const otherStatus = await f.service.status(f.otherCaller);
@@ -291,24 +291,43 @@ test('credentials cannot cross Merv user/project boundaries; machine and reader 
   const second = await f.scope.caller(f.principal, f.second.id);
   assert.equal((await f.service.status(second)).status, 'disconnected');
   await assert.rejects(f.service.repositories(second), { code: 'github_owner' });
+  // The owner's key is their agent: it manages the connection, and never connects one.
   const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
-  const machine = await f.scope.caller({
+  const agent = await f.scope.caller({
     kind: 'key',
     key: await f.scope.userKeys.authenticate(issued.token),
   });
+  assert.equal((await f.service.status(agent)).canBrowse, true);
+  assert.deepEqual(
+    (await f.service.repositories(agent)).map((repository) => repository.fullName),
+    ['test-owner/private-research'],
+  );
+  for (const action of [
+    () => f.service.begin(agent, { expectedRevision: 1 }),
+    () => f.service.finish(agent, 'cookie'),
+  ])
+    await assert.rejects(action(), { code: 'github_human_required' });
+  // An operator machine actor is nobody's agent.
+  const robot = await f.scope.credentials.issueActor(f.caller, { name: 'Robot', role: 'operator' });
+  const machine = {
+    projectId: f.project.id,
+    actorId: robot.actor.id,
+    credentialId: robot.credential.id,
+  };
   for (const action of [
     () => f.service.begin(machine, { expectedRevision: 1 }),
     () => f.service.repositories(machine),
     () => f.service.disconnect(machine, { expectedRevision: 1 }),
   ])
     await assert.rejects(action(), { code: 'github_human_required' });
+  assert.equal((await f.service.disconnect(agent, { expectedRevision: 1 })).status, 'disconnected');
   await f.scope.members.changeMemberRole(f.principal, f.project.id, {
     subject: 'other',
     role: 'reader',
   });
   const reader = await f.scope.caller(f.other, f.project.id);
   assert.equal((await f.service.status(reader)).canManage, false);
-  await assert.rejects(f.service.disconnect(reader, { expectedRevision: 1 }), {
+  await assert.rejects(f.service.disconnect(reader, { expectedRevision: 2 }), {
     code: 'forbidden',
   });
 });

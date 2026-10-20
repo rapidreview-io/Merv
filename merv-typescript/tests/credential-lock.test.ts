@@ -222,9 +222,8 @@ test('credentials stay the signed-in person’s: a key, a worker session and a P
     assert.notEqual(error.code, 'github_human_required');
     return true;
   });
-  // A worker is no administrator at all; her key and her conversation are not her.
   for (const [kind, caller] of agents) {
-    const refusal = refused(kind === 'session' ? 'forbidden' : 'github_human_required', 403);
+    const refusal = refused('github_human_required', 403);
     await assert.rejects(github.begin(caller, { expectedRevision: 0 }), refusal, kind);
     await assert.rejects(github.finish(caller, 'unknown'), refusal, kind);
   }

@@ -70,6 +70,30 @@ test('automation is explicit, owner-bound and independent of ordinary token refr
   assert.equal(await f.github.automation(f.reviewer, 'read', binding, async () => true), true);
 });
 
+test('the owner’s agent enables automation with their key, and automation acts for the owner', async (t) => {
+  const f = await githubFixture(t);
+  const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
+  const key = {
+    ...(await f.scope.caller({
+      kind: 'key',
+      key: await f.scope.userKeys.authenticate(issued.token),
+    })),
+    projectId: f.project.id,
+  };
+  assert.equal((await f.github.status(key)).canManage, true);
+  await f.github.configureAutomation(key, {
+    expectedRevision: (await f.github.status(key)).revision,
+    mode: 'write',
+    baseBranch: 'main',
+  });
+  // Stored as the person behind the key, which every later use of automation accepts.
+  const [row] = await f.state.read((sql) =>
+    sql.all<{ owner_source: string }>('SELECT owner_source FROM code_github'),
+  );
+  assert.equal(JSON.parse(row!.owner_source).kind, 'human');
+  assert.equal(await f.github.automation(f.reviewer, 'write', undefined, async () => true), true);
+});
+
 async function reconnect(github: CodeGitHubService, caller: Caller) {
   const before = await github.status(caller);
   const begin = await github.begin(caller, { expectedRevision: before.revision });

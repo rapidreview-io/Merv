@@ -7,7 +7,8 @@ import {
   type Scope,
   type Transaction,
   type DelegationSource,
-  isDirectHuman,
+  isAdministrator,
+  requireAdministrator,
   requireHuman,
 } from '@merv/contracts';
 import {
@@ -85,7 +86,14 @@ interface Flow {
   phase: string;
   payload: string;
 }
-const owner = (caller: Caller) => JSON.stringify([caller.human!.issuer, caller.human!.subject]);
+const owner = (user: { issuer: string; subject: string }) =>
+  JSON.stringify([user.issuer, user.subject]);
+/** Connecting GitHub mints the owner's OAuth credential: the signed-in person alone, never
+ *  their key, their agent or a worker. */
+const connecting: (caller: Caller) => asserts caller is Caller & {
+  human: NonNullable<Caller['human']>;
+} = (caller) =>
+  requireHuman(caller, 'github_human_required', 'Sign in with your Merv account to connect GitHub');
 const timestamp = () => new Date().toISOString();
 const empty = (projectId: string): Connection => ({
   project_id: projectId,
@@ -151,16 +159,22 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     this.#client?.close();
     await Promise.allSettled([...this.#pending]);
   }
-  private async authorize(caller: Caller, tx: Transaction, admin = false) {
+  private async authorize(caller: Caller, tx: Transaction) {
     this.live();
-    const actor = await this.scope.require(caller, admin ? 'admin' : 'read', tx);
+    const actor = await this.scope.require(caller, 'read', tx);
     this.live();
-    if (admin)
-      requireHuman(
-        caller,
-        'github_human_required',
-        'Sign in with your Merv account to manage GitHub',
-      );
+    return actor;
+  }
+  /** A project administrator or their agent (their key, their Pi conversation) manages GitHub. */
+  private async admin(caller: Caller, tx: Transaction) {
+    this.live();
+    const actor = await this.scope.require(caller, 'admin', tx);
+    this.live();
+    requireAdministrator(
+      actor,
+      'github_human_required',
+      'Only a project administrator or their agent manages GitHub',
+    );
     return actor;
   }
   private async row(sql: Sql, projectId: string) {
@@ -200,7 +214,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   private async describe(caller: Caller, tx: Transaction): Promise<GitHubStatus> {
     const actor = await this.authorize(caller, tx);
     const row = await this.row(tx, caller.projectId);
-    const canManage = actor.role === 'operator' && isDirectHuman(caller);
+    const canManage = isAdministrator(actor);
     return {
       configured: !!this.#client,
       revision: row.revision,
@@ -214,7 +228,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       user: row.user_json ? JSON.parse(row.user_json) : null,
       repository: row.repository_json ? JSON.parse(row.repository_json) : null,
       canManage,
-      canBrowse: canManage && row.owner === owner(caller) && !!row.credentials,
+      canBrowse: canManage && row.owner === owner(actor.user) && !!row.credentials,
       installUrl: canManage ? (this.#client?.installUrl ?? null) : null,
       automationConfigured: this.#client?.automationConfigured ?? false,
       automation: row.automation,
@@ -232,27 +246,28 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   }
   begin(caller: Caller, value: { expectedRevision: number }) {
     return this.run(caller, async (caller) => {
+      connecting(caller);
       const input = parseCodeInput(githubRevisionSchema, value);
       const client = this.client(),
         id = randomSecret(),
         browser = randomSecret(),
         verifier = randomSecret();
       await this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, true);
+        await this.admin(caller, tx);
         await this.ensure(tx, caller.projectId);
         this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
         await tx.run(
           'DELETE FROM code_github_flows WHERE expires_at<=? OR (project_id=? AND owner=?)',
           timestamp(),
           caller.projectId,
-          owner(caller),
+          owner(caller.human),
         );
         await tx.run(
           `INSERT INTO code_github_flows(id,project_id,owner,revision,browser_hash,expires_at,phase,payload)
           VALUES (?,?,?,?,?,?,'pending',?)`,
           id,
           caller.projectId,
-          owner(caller),
+          owner(caller.human),
           input.expectedRevision,
           hashSecret(browser),
           new Date(Date.now() + 600_000).toISOString(),
@@ -313,12 +328,13 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   }
   finish(caller: Caller, cookie: string) {
     return this.run(caller, async (caller) => {
+      connecting(caller);
       const client = this.client();
       const flow = await this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, true);
+        await this.admin(caller, tx);
         const f = await this.flow(tx, cookie);
         check(
-          f.project_id === caller.projectId && f.owner === owner(caller),
+          f.project_id === caller.projectId && f.owner === owner(caller.human),
           'github_flow_owner',
           'Return to the Merv account and project that started this connection',
           403,
@@ -356,7 +372,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       try {
         const user = await client.user(tokens.accessToken);
         return await this.replacing(async (tx) => {
-          await this.authorize(caller, tx, true);
+          await this.admin(caller, tx);
           const f = await this.flow(tx, cookie);
           check(f.phase === 'exchanging', 'github_flow', 'GitHub connection was replaced', 409);
           const current = await this.row(tx, caller.projectId);
@@ -364,13 +380,13 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           // Reauthorizing the same identities replaces credentials, not project settings.
           // Keep the revision fence; every later operation still checks live permissions.
           const sameOwner =
-            current.owner === owner(caller) &&
+            current.owner === owner(caller.human) &&
             current.user_json !== null &&
             JSON.parse(current.user_json).id === user.id;
           const result = await tx.run(
             `UPDATE code_github SET revision=revision+1,owner=?,user_json=?,repository_json=?,owner_source=?,automation=?,base_branch=?,
           token_version=token_version+1,credentials=?,refresh_id=NULL,refresh_until=NULL WHERE project_id=? AND revision=?`,
-            owner(caller),
+            owner(caller.human),
             JSON.stringify(user),
             sameOwner ? current.repository_json : null,
             sameOwner ? current.owner_source : null,
@@ -397,15 +413,35 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     });
   }
   private async authority(caller: Caller, tx: Transaction, row: Connection, access: Access) {
-    await this.authorize(caller, tx, access === 'owner');
     if (access === 'owner')
       check(
-        row.owner === owner(caller),
+        row.owner === owner((await this.admin(caller, tx)).user),
         'github_owner',
         'Connect your GitHub account to manage repositories for this project',
         403,
       );
-    else await this.delegated(caller.projectId, row, access, tx);
+    else {
+      await this.authorize(caller, tx);
+      await this.delegated(caller.projectId, row, access, tx);
+    }
+  }
+  /** The person automation acts for: the caller's own source, or the person behind a key (or
+   *  their conversation on it), held by that key's membership. */
+  private async automationSource(
+    caller: Caller,
+    user: { issuer: string; subject: string },
+    tx: Transaction,
+  ) {
+    const source = await this.scope.delegationSource(caller, tx);
+    return source.kind === 'key'
+      ? {
+          kind: 'human' as const,
+          actorId: source.actorId,
+          projectId: source.projectId,
+          ...user,
+          membershipId: source.membershipId,
+        }
+      : source;
   }
   /** Automation acts for the human who turned it on, while they still administer the project. */
   private async delegated(
@@ -678,7 +714,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         });
       }
       return this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, true);
+        const actor = await this.admin(caller, tx);
         const row = await this.row(tx, caller.projectId);
         this.revision(row, input.expectedRevision);
         // Any project operator may disable automation; only the connection owner may enable it.
@@ -687,7 +723,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         const source =
           input.mode === 'off'
             ? null
-            : JSON.stringify(await this.scope.delegationSource(caller, tx));
+            : JSON.stringify(await this.automationSource(caller, actor.user, tx));
         await tx.run(
           'UPDATE code_github SET automation=?,base_branch=?,owner_source=?,revision=revision+1 WHERE project_id=?',
           input.mode,
@@ -842,7 +878,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         });
       }
       return this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, true);
+        await this.admin(caller, tx);
         await this.ensure(tx, caller.projectId);
         this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
         if (observed) await this.unchanged(caller, tx, observed);
@@ -869,7 +905,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     return this.run(caller, (caller) => {
       const input = parseCodeInput(githubRevisionSchema, value);
       return this.replacing(async (tx) => {
-        await this.authorize(caller, tx, true);
+        await this.admin(caller, tx);
         await this.ensure(tx, caller.projectId);
         const row = await this.row(tx, caller.projectId);
         this.revision(row, input.expectedRevision);
