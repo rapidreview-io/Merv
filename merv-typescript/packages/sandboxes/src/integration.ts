@@ -1,6 +1,5 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import type {} from '@merv/api/types';
 import { SandboxRuns, sandboxRunMigrations } from './sandbox-runs.js';
 import { SandboxEvidence } from './sandbox-evidence.js';
 import { SandboxComputeWaits } from './compute-waits.js';
@@ -22,28 +21,11 @@ const Config = z
   .strict()
   .default({});
 
-/** The Sandboxes tools the 2026-10-20 consolidation retired, which answer where they went for one
- *  release: `sandboxes.job_status` is `sandboxes.job with action=status`. */
-const moved: Record<string, string> = {
-  'sandbox.extend': 'sandboxes.sandbox_renew',
-  'sandbox.release': 'sandboxes.sandbox_delete',
-  'sandboxes.providers_list': 'sandboxes.sandbox_providers',
-  'sandboxes.usage_report': 'sandboxes.spend_report',
-};
-export const retired = (name: string) => {
-  const [, tool, action] =
-    /^(sandboxes\.(?:sandbox|job|storage|workflow|access|spend))_([a-z]+)$/.exec(
-      moved[name] ?? name,
-    ) ?? [];
-  return !!tool && `${tool} with action=${action}`;
-};
-
 export const sandboxIntegrationPlugin = {
   name: 'merv-sandbox-integration',
   inject: [
     'state',
     'scope',
-    'tools',
     'workflows',
     'domainEvents',
     'sessions',
@@ -98,7 +80,6 @@ export const sandboxIntegrationPlugin = {
         await runs.close();
         await evidence.close();
       };
-      yield ctx.tools.rename(retired);
       yield ctx.sessions.registerLaunchConnections((session) => runs.launchConnections(session));
       // Where a waiting visit's jobs and workflows stand, which Sessions asks (session.await_compute).
       yield ctx.sessions.computeWaits.register(

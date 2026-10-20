@@ -28,6 +28,8 @@ const record: UiRecordSpec = {
   standing: { verdict: 'status', clause: 'attention', clock: 'updatedAt' },
   act: fleetActions.map(({ intents, ...action }) => ({
     ...action,
+    tool: 'fleet',
+    args: { action: action.id },
     when: { field: 'intent', in: intents },
   })),
   details: [

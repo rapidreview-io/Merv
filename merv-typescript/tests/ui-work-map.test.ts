@@ -1287,7 +1287,7 @@ test('a control the owner did not send is not drawn, and one it sent is its own 
   const extend = button('Extend lease')!;
   assert.ok(!extend.classList.contains('btn--primary'), 'only a start wears the accent');
   await press(extend);
-  assert.deepEqual(sent, [{ action: 'renew', sandbox_id: 'sbx_h100', lease_seconds: 7200 }]);
+  assert.deepEqual(sent, [{ action: 'renew', sandbox_id: 'sbx_h100', extend_seconds: 3600 }]);
   // The table is the ruled list, so it stacks by the sidebar's own width.
   assert.ok($('#running-panel [role="table"][aria-label="Jobs"]'));
   assert.equal($('#running-panel table'), null);

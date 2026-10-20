@@ -95,7 +95,6 @@ const retryInput = z
     requestId: z.string().min(1).max(200),
   })
   .strict();
-type RetryInput = z.infer<typeof retryInput>;
 type RetryGrant = {
   id: number;
   project_id: string;
@@ -538,7 +537,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     if (!targets.length) return [];
     return await this.retryState(caller, targets);
   }
-  async retry(caller: Caller, raw: RetryInput) {
+  async retry(caller: Caller, raw: unknown) {
     const parsed = retryInput.safeParse(raw);
     check(parsed.success, 'invalid_retry', 'Retry needs an exact revision, reason and requestId');
     const input = parsed.data;

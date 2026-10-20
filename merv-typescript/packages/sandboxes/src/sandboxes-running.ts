@@ -180,19 +180,13 @@ export function sandboxesRunning(ctx: Context): RunningContribution {
         });
       const actions: RunningAction[] = [];
       if (!absorbed && !checkMachine(m)) {
-        if (m.state === 'ready' && m.lease_expires_at)
+        if (m.state === 'ready')
           actions.push({
             label: 'Extend lease',
             verb: 'extend',
             tool: 'sandboxes.sandbox',
-            // Renew sets the lease from now: an hour more than is left.
-            input: {
-              action: 'renew',
-              sandbox_id: m.id,
-              lease_seconds:
-                Math.max(0, Math.round((Date.parse(m.lease_expires_at) - Date.now()) / 1000)) +
-                3600,
-            },
+            // Adds an hour to what is left, read by the service: each press adds, and it never shortens.
+            input: { action: 'renew', sandbox_id: m.id, extend_seconds: 3600 },
             allowed,
           });
         if (leased(m))

@@ -25,13 +25,11 @@ import type { Fleet, FleetAllocation, FleetIntent, FleetPhase } from './types.js
  */
 
 /** What a machine can be told, on its page and in its Running sidebar alike, under the intents
- *  listed: finish what it runs, or stop at once. */
+ *  listed: finish what it runs, or stop at once. Each id is its fleet tool action. */
 export const fleetActions: {
   id: string;
   label: string;
   verb: 'release' | 'halt';
-  tool: 'fleet';
-  args: { action: 'drain' | 'halt' };
   intents: FleetIntent[];
   guard?: { title: string; consequence: string };
 }[] = [
@@ -39,16 +37,12 @@ export const fleetActions: {
     id: 'drain',
     label: 'Finish and release',
     verb: 'release',
-    tool: 'fleet',
-    args: { action: 'drain' },
     intents: ['run'],
   },
   {
     id: 'halt',
     label: 'Stop now',
     verb: 'halt',
-    tool: 'fleet',
-    args: { action: 'halt' },
     intents: ['run', 'drain'],
     guard: {
       title: 'Stop this agent?',
@@ -202,11 +196,11 @@ export function fleetPanel(
       ? []
       : fleetActions
           .filter(({ intents }) => intents.includes(a.intent))
-          .map(({ label, verb, tool, args, guard }) => ({
+          .map(({ id, label, verb, guard }) => ({
             label,
             verb,
-            tool,
-            input: { ...args, id: a.id },
+            tool: 'fleet',
+            input: { action: id, id: a.id },
             allowed,
             ...(guard && { guard }),
           }));

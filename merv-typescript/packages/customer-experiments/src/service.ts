@@ -156,29 +156,25 @@ const escalatingHealerInstructions = healerInstructions
     'or report the limitation in its results and submit them.',
     "or report the limitation in its results and submit them. When neither is possible because Merv itself is broken (a Merv tool refuses what its own instructions require, so the results cannot be finished or submitted), do not answer: leave the question open. An open question holds the run without spending anything and shows as waiting for its owner on Merv's Needs you list, where an operator repairs Merv and answers the worker. Never answer only to tell the worker to wait, to retry the same failure, or to end its visit with a blocked handoff.",
   );
-/** Healer profile 3: profile 2 on the Sandboxes tools as the 2026-10-20 consolidation named them. */
-const actionHealerInstructions = escalatingHealerInstructions
-  .replace(
-    'inspect machines with sandboxes.sandbox_list and sandboxes.sandbox_get, providers with sandboxes.providers_list and spend with sandboxes.spend_status, and release stuck machines with sandbox.release',
-    'inspect machines, providers and offers with sandboxes.sandbox (action list, get, providers or options) and spend with sandboxes.spend, and release stuck machines with sandboxes.sandbox action=delete',
-  )
-  .replace(
-    'from sandboxes.sandbox_options by price',
-    'from sandboxes.sandbox action=options by price',
-  );
-/** The healer version new heals use; earlier ones stay registered for their conversations. */
-const HEALER_VERSION = 3;
-const healerTools = ['session.thread_messages', 'session.message'];
-const healerReports = ['report.open', 'report.check', 'web.search', 'web.extract'];
-const healerSandboxes = [
-  'sandboxes.sandbox_list',
-  'sandboxes.sandbox_get',
-  'sandboxes.providers_list',
-  'sandboxes.spend_status',
-  'sandbox.release',
+/** The healer by version; new heals use the last, earlier ones stay registered for their
+ *  conversations. Profile 3 is profile 2 on the Sandboxes tools as the 2026-10-20 consolidation
+ *  named them, of which it may look and release what is stuck (`healerActions`). */
+const healers = [
+  healerInstructions,
+  escalatingHealerInstructions,
+  escalatingHealerInstructions
+    .replace(
+      'inspect machines with sandboxes.sandbox_list and sandboxes.sandbox_get, providers with sandboxes.providers_list and spend with sandboxes.spend_status, and release stuck machines with sandbox.release',
+      'inspect machines, providers and offers with sandboxes.sandbox (action list, get, providers or options) and spend with sandboxes.spend, and release stuck machines with sandboxes.sandbox action=delete',
+    )
+    .replace('sandboxes.sandbox_options by price', 'sandboxes.sandbox action=options by price'),
 ];
-/** What the healer may do with sandboxes.sandbox: look, and release what is stuck. */
+const HEALER_VERSION = healers.length;
 const healerActions = ['list', 'get', 'providers', 'options', 'delete'];
+const healerSandboxes =
+  'sandboxes.sandbox_list sandboxes.sandbox_get sandboxes.providers_list sandboxes.spend_status sandbox.release'.split(
+    ' ',
+  );
 
 /** Intake profile 8: profile 7, whose verified success criteria are the person's, not Merv's
  *  process. They head the report's Constraints. */
@@ -789,46 +785,47 @@ export class CustomerService {
             ...scoped,
           }),
       ),
-      ...(
-        [
-          [healerInstructions, healerSandboxes],
-          [escalatingHealerInstructions, healerSandboxes],
-          [actionHealerInstructions, ['sandboxes.sandbox', 'sandboxes.spend']],
-        ] as const
-      ).map(
-        ([instructions, sandboxes], index) =>
-          () =>
-            this.pi.registerProfile({
-              id: 'customer-experiments-healer',
-              version: 1 + index,
-              model: { id: 'gpt-6-astra', effort: 'medium' },
-              instructions,
-              tools: [...healerTools, ...sandboxes, ...healerReports],
-              context: snapshot,
-              // Threads are its request's run's only; machines and reports live in the request's own
-              // isolated project, which is all its caller can reach.
-              authorizeTool: async ({ binding, caller, name, input }) => {
-                if (name === 'sandboxes.sandbox')
-                  check(
-                    healerActions.includes(String(input.action ?? 'list')),
-                    'forbidden',
-                    'The healer only inspects machines and releases stuck ones',
-                    403,
-                  );
-                if (!name.startsWith('session.')) return;
-                const record = await this.store.get(binding.requestId);
-                check(record.projectId === caller.projectId, 'forbidden', 'Not this request', 403);
+      ...healers.map(
+        (instructions, index) => () =>
+          this.pi.registerProfile({
+            id: 'customer-experiments-healer',
+            version: 1 + index,
+            model: { id: 'gpt-6-astra', effort: 'medium' },
+            instructions,
+            tools: [
+              'session.thread_messages',
+              'session.message',
+              ...(index < 2 ? healerSandboxes : ['sandboxes.sandbox', 'sandboxes.spend']),
+              'report.open',
+              'report.check',
+              'web.search',
+              'web.extract',
+            ],
+            context: snapshot,
+            // Threads are its request's run's only; machines and reports live in the request's own
+            // isolated project, which is all its caller can reach.
+            authorizeTool: async ({ binding, caller, name, input }) => {
+              if (name === 'sandboxes.sandbox')
                 check(
-                  await this.domain.sessions.messaging.threadAsked(
-                    String(input.threadId ?? ''),
-                    record.experimentId ?? '',
-                  ),
+                  healerActions.includes(String(input.action ?? 'list')),
                   'forbidden',
-                  "The healer may only reach its run's worker thread",
+                  'The healer only inspects machines and releases stuck ones',
                   403,
                 );
-              },
-            }),
+              if (!name.startsWith('session.')) return;
+              const record = await this.store.get(binding.requestId);
+              check(record.projectId === caller.projectId, 'forbidden', 'Not this request', 403);
+              check(
+                await this.domain.sessions.messaging.threadAsked(
+                  String(input.threadId ?? ''),
+                  record.experimentId ?? '',
+                ),
+                'forbidden',
+                "The healer may only reach its run's worker thread",
+                403,
+              );
+            },
+          }),
       ),
       () =>
         tools.register({

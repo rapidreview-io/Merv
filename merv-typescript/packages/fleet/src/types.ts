@@ -261,18 +261,14 @@ export interface ModelRelayHandle {
   readonly handle: MountHandler;
   close(): void;
 }
-/** One more window for one exact workflow revision that unclaimed machines exhausted. */
-export type FleetRetryInput = Record<'instanceId' | 'reason' | 'requestId', string> & {
-  expectedRevision: number;
-};
 export interface Fleet {
   /** The workflow owner's retries while it is loaded (the fleet tool's workflow_retry actions). */
   retries?: {
     retryStatus(
       caller: Caller,
-      targets: Omit<FleetRetryInput, 'reason' | 'requestId'>[],
+      targets: { instanceId: string; expectedRevision: number }[],
     ): Promise<unknown[]>;
-    retry(caller: Caller, input: FleetRetryInput): Promise<unknown>;
+    retry(caller: Caller, input: unknown): Promise<unknown>;
   };
   /** The longest Fleet rents a machine for (allocationTimeoutSeconds); a longer request gets this. */
   readonly allocationSeconds: number;

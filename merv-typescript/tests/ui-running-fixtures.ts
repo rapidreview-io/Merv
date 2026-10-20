@@ -509,7 +509,7 @@ export function sandboxPanel(now = Date.now(), withRelease = true): RunningPanel
         label: 'Extend lease',
         verb: 'extend',
         tool: 'sandboxes.sandbox',
-        input: { action: 'renew', sandbox_id: 'sbx_h100', lease_seconds: 7200 },
+        input: { action: 'renew', sandbox_id: 'sbx_h100', extend_seconds: 3600 },
         allowed: true,
       },
       ...(withRelease

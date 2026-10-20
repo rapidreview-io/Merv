@@ -2443,7 +2443,6 @@
       "requires": [
         "state",
         "scope",
-        "tools",
         "workflows",
         "domainEvents",
         "sessions",
@@ -4440,11 +4439,6 @@
     },
     {
       "from": "sandboxEvidence",
-      "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "sandboxEvidence",
       "to": "workflows",
       "optional": false
     },
@@ -4838,7 +4832,7 @@
     "plugins": 83,
     "providers": 38,
     "adapters": 45,
-    "dependencies": 266
+    "dependencies": 265
   },
   "network": [
     {
