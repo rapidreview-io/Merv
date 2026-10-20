@@ -72,7 +72,7 @@ export interface CodePublication {
   lastError: string | null;
   /**
    * The sealed publication envelope of an accepted unit, so the pull request, the approval
-   * status and the human-only merge have one thing to check. The reviewed head and tree are
+   * status and the administrator's merge have one thing to check. The reviewed head and tree are
    * not repeated here: this row already carries them, and it is immutable.
    */
   approval?: {
