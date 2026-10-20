@@ -1,0 +1,515 @@
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFile, spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { connectServer, issuer } from './fixtures/agent-login.js';
+
+type Server = Awaited<ReturnType<typeof connectServer>>;
+
+async function server(t: TestContext, options: Parameters<typeof connectServer>[0] = {}) {
+  const f = await connectServer(options);
+  t.after(() => f.close());
+  return f;
+}
+
+/** An HTTP server on loopback whose handler a test writes; it records every request. */
+async function listen(
+  t: TestContext,
+  handle: (req: IncomingMessage, res: ServerResponse, body: string) => Promise<void> | void,
+) {
+  const requests: { method: string; url: string; body: string }[] = [];
+  const http = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = Buffer.concat(chunks).toString();
+    requests.push({ method: req.method!, url: req.url!, body });
+    await handle(req, res, body);
+  });
+  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    http.closeAllConnections();
+    return new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  return { url: `http://127.0.0.1:${(http.address() as AddressInfo).port}`, requests };
+}
+
+/** A proxy in front of Merv that lets a test act while one matching request is held. */
+async function proxy(
+  t: TestContext,
+  target: string,
+  hold: { match?: RegExp; then?: () => Promise<void> | void } = {},
+) {
+  return await listen(t, async (req, res, body) => {
+    if (hold.match?.test(req.url!) && hold.then) {
+      const then = hold.then;
+      hold.then = undefined;
+      await then();
+    }
+    const headers: Record<string, string> = {};
+    for (const name of ['authorization', 'content-type', 'accept', 'mcp-protocol-version'])
+      if (typeof req.headers[name] === 'string') headers[name] = req.headers[name] as string;
+    const upstream = await fetch(`${target}${req.url}`, {
+      method: req.method,
+      headers,
+      ...(req.method === 'GET' ? {} : { body }),
+      redirect: 'manual',
+    });
+    const type = upstream.headers.get('content-type');
+    res.writeHead(upstream.status, type ? { 'content-type': type } : {});
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+  });
+}
+
+/** The connector `f` serves, placed for a fresh HOME as install.sh places it, speaking to `origin`
+ *  (Merv itself unless a test puts something in between). */
+async function connector(t: TestContext, f: Server, origin = f.url) {
+  const home = mkdtempSync(join(tmpdir(), 'merv-connect-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const source = (await (await fetch(`${f.url}/connect/merv-connect.mjs`)).text()).replaceAll(
+    f.url,
+    origin,
+  );
+  const dir = join(home, '.merv', 'connect', new URL(origin).host.replace(':', '_'));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = join(dir, 'merv-connect.mjs');
+  writeFileSync(file, source, { mode: 0o600 });
+  const env = { HOME: home, PATH: process.env.PATH!, MERV_CONNECT_TIMEOUT_MS: '3000' };
+  const cli = (...args: string[]) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>((resolve) =>
+      execFile(process.execPath, [file, ...args], { env }, (error, stdout, stderr) =>
+        resolve({ code: error ? Number(error.code ?? 1) : 0, stdout, stderr }),
+      ),
+    );
+  const stdio = () => {
+    const child = spawn(process.execPath, [file], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const waiting = new Map<number, (message: any) => void>();
+    const lines: string[] = [];
+    const notifications: any[] = [];
+    let buffer = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let at = buffer.indexOf('\n'); at >= 0; at = buffer.indexOf('\n')) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        lines.push(line);
+        const message = JSON.parse(line);
+        const resolve = waiting.get(message.id);
+        if (resolve) {
+          waiting.delete(message.id);
+          resolve(message);
+        } else notifications.push(message);
+      }
+    });
+    let id = 0;
+    const request = (method: string, params: unknown = {}) =>
+      new Promise<any>((resolve) => {
+        waiting.set(++id, resolve);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+      });
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    t.after(() => child.kill());
+    return {
+      request,
+      call: async (name: string, args: unknown = {}) =>
+        (await request('tools/call', { name, arguments: args })).result,
+      lines,
+      notifications,
+      close: async () => {
+        child.stdin.end();
+        return await exited;
+      },
+    };
+  };
+  const read = (name: string) => JSON.parse(readFileSync(join(dir, name), 'utf8'));
+  return { home, dir, file, cli, stdio, read, has: (name: string) => existsSync(join(dir, name)) };
+}
+
+/** Signs the connector in through its command line with the code Merv mailed. */
+async function signIn(f: Server, c: Awaited<ReturnType<typeof connector>>, client = 'Codex') {
+  const started = await c.cli('login', 'ada@lab.org', '--client', client);
+  assert.equal(started.code, 0, started.stderr);
+  const done = await c.cli('login', '--code', (await f.codeFor('ada@lab.org'))!);
+  assert.equal(done.code, 0, done.stderr);
+  return { started, done };
+}
+
+const human = (f: Server) =>
+  f.scope.members.acceptVerifiedIdentity({
+    issuer,
+    subject: f.ada.human.user.subject,
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+const liveKeys = async (f: Server) =>
+  (await f.scope.userKeys.keys(await human(f))).filter((key) => key.revokedAt === null);
+
+/** A key straight from /connect, as another process on this machine would get one. */
+async function anotherKey(f: Server) {
+  const verifier = randomBytes(32).toString('base64url');
+  const started = await fetch(`${f.url}/connect/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'ada@lab.org',
+      client: { name: 'Cursor', host: 'other', installId: '9d5c3a1e-5f0e-4b8c-9a39-4f1e2b7c6d99' },
+      verifierHash: createHash('sha256').update(verifier).digest('base64url'),
+    }),
+  }).then((response) => response.json() as Promise<{ loginId: string }>);
+  const issued = await fetch(`${f.url}/connect/login/${started.loginId}/verify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: await f.codeFor('ada@lab.org'), verifier }),
+  }).then((response) => response.json() as Promise<any>);
+  return {
+    version: 1,
+    origin: f.url,
+    email: issued.email,
+    keyId: issued.key.id,
+    token: issued.token,
+    label: issued.key.label,
+    expiresAt: issued.key.expiresAt,
+    issuedAt: new Date().toISOString(),
+  };
+}
+const revoke = (f: Server, token: string) =>
+  fetch(`${f.url}/account/key`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+test('the command line signs in by emailed code and never prints the key', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const { started, done } = await signIn(f, c);
+  const phrase = /Request: ([a-z]+ [a-z]+)\./.exec(started.stdout)![1]!;
+  const mail = f.mails.find((sent) => sent.subject.includes('sign-in code'))!;
+  assert.ok(mail.text.includes(`Request: ${phrase}`) && mail.text.includes('Signs in: Codex on'));
+  assert.match(
+    done.stdout,
+    /^Signed in as Ada@Lab\.org \(Codex on .+\)\. Projects: Grokking \(operator\)\. Key expires \d{4}-\d{2}-\d{2}\.\n$/,
+  );
+  const credentials = c.read('credentials.json');
+  assert.equal(statSync(join(c.dir, 'credentials.json')).mode & 0o777, 0o600);
+  assert.equal(statSync(c.dir).mode & 0o777, 0o700);
+  assert.equal(c.has('pending.json'), false);
+  const status = await c.cli('status');
+  assert.ok(status.stdout.includes(`Key expires ${credentials.expiresAt.slice(0, 10)}`));
+  assert.ok(status.stdout.includes('Grokking (operator)'));
+  const again = await c.cli('login', 'ada@lab.org');
+  assert.equal(again.code, 1);
+  assert.match(again.stderr, /Already signed in as Ada@Lab\.org.*merv-connect logout/);
+  for (const output of [started, done, status, again])
+    assert.ok(!`${output.stdout}${output.stderr}`.includes('mk_'));
+  assert.match(
+    (await c.cli('logout')).stdout,
+    /Signed out of Merv; the key for Codex on .+ is revoked\./,
+  );
+  assert.equal(c.has('credentials.json'), false);
+  assert.equal((await revoke(f, credentials.token)).status, 401);
+});
+
+test('the stdio server answers initialize offline, then forwards to Merv once signed in', async (t) => {
+  const f = await server(t);
+  const offline = await connector(t, f, 'http://127.0.0.1:9');
+  const lonely = offline.stdio();
+  const init = await lonely.request('initialize', {
+    protocolVersion: '2025-11-25',
+    clientInfo: { name: 'claude-code', version: '2' },
+    capabilities: {},
+  });
+  assert.equal(init.result.protocolVersion, '2025-11-25');
+  assert.deepEqual(init.result.capabilities, { tools: { listChanged: true } });
+  assert.deepEqual(init.result.serverInfo.name, 'merv');
+  assert.match(init.result.instructions, /connector\.login/);
+  assert.deepEqual(
+    (await lonely.request('tools/list')).result.tools.map((tool: { name: string }) => tool.name),
+    ['connector.status', 'connector.login'],
+  );
+  assert.equal(
+    (await lonely.request('initialize', { protocolVersion: '1999-01-01' })).result.protocolVersion,
+    '2025-06-18',
+  );
+  await lonely.close();
+
+  const c = await connector(t, f);
+  await signIn(f, c, 'Claude Code');
+  const agent = c.stdio();
+  await agent.request('initialize', {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client' },
+  });
+  const names = (await agent.request('tools/list')).result.tools.map(
+    (tool: { name: string }) => tool.name,
+  );
+  assert.deepEqual(names.slice(0, 3), ['connector.status', 'connector.login', 'project.list']);
+  assert.ok(names.includes('project.brief') && !names.includes('connector.logout'));
+  assert.ok(
+    c.read('tools.json').tools.some((tool: { name: string }) => tool.name === 'project.list'),
+  );
+  const projects = JSON.parse((await agent.call('project.list')).content[0].text).projects;
+  assert.deepEqual(projects, [{ ...f.ada.project, role: 'operator' }]);
+  const brief = await agent.call('project.brief', { projectId: f.ada.project!.id });
+  assert.equal(JSON.parse(brief.content[0].text).project.name, 'Grokking');
+  const status = await agent.call('connector.status');
+  assert.equal(status.structuredContent.signedIn, true);
+  assert.equal(status.structuredContent.email, 'Ada@Lab.org');
+  const refused = await agent.call('connector.login', { email: 'ada@lab.org' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /Already signed in as Ada@Lab\.org/);
+  assert.ok(!agent.lines.join('\n').includes('mk_'));
+});
+
+test('connector.login signs in from the agent, and Merv tools then work without a restart', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const agent = c.stdio();
+  await agent.request('initialize', { clientInfo: { name: 'claude-code' } });
+  const notSignedIn = await agent.call('project.list');
+  assert.equal(notSignedIn.isError, true);
+  assert.match(notSignedIn.content[0].text, /^Not signed in to Merv on this machine/);
+  const started = await agent.call('connector.login', { email: 'ada@lab.org' });
+  assert.match(
+    started.content[0].text,
+    /^Code sent if this is a Merv account\. Request: [a-z]+ [a-z]+\./,
+  );
+  const done = await agent.call('connector.login', { code: await f.codeFor('ada@lab.org') });
+  assert.match(done.content[0].text, /^Signed in as Ada@Lab\.org \(Claude Code on /);
+  assert.ok(
+    agent.notifications.some((message) => message.method === 'notifications/tools/list_changed'),
+  );
+  assert.equal((await agent.call('project.list')).isError, undefined);
+  assert.equal((await agent.call('connector.login', { email: 'a@b.c', code: '1' })).isError, true);
+});
+
+test('Merv answers only in its pinned shape; redirects are refused and a slow call is never replayed', async (t) => {
+  const f = await server(t);
+  let answer: (res: ServerResponse, id: unknown) => void = () => undefined;
+  const target = await listen(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  const stub = await listen(t, (req, res, body) => {
+    if (req.url !== '/mcp') return void res.writeHead(404).end();
+    answer(res, JSON.parse(body).id);
+  });
+  const c = await connector(t, f, stub.url);
+  const token = `mk_${'Z'.repeat(43)}`;
+  writeFileSync(
+    join(c.dir, 'credentials.json'),
+    JSON.stringify({
+      version: 1,
+      origin: stub.url,
+      email: 'ada@lab.org',
+      keyId: 'key_stub',
+      token,
+      label: 'Codex on h',
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }),
+    { mode: 0o600 },
+  );
+  const agent = c.stdio();
+  const understood = /does not understand/;
+  const cases: ((res: ServerResponse, id: unknown) => void)[] = [
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('event: message\ndata: {}\n\n');
+    },
+    (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: 'someone-else', result: {} }));
+    },
+    (res) => res.writeHead(202).end(),
+    (res, id) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify([{ jsonrpc: '2.0', id, result: {} }]));
+    },
+  ];
+  for (const respond of cases) {
+    answer = respond;
+    const result = await agent.call('project.list');
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, understood);
+  }
+  answer = (res) => res.writeHead(307, { location: `${target.url}/mcp` }).end();
+  const redirected = await agent.call('project.list');
+  assert.equal(redirected.isError, true);
+  assert.equal(target.requests.length, 0, 'the redirect target receives nothing');
+  const before = stub.requests.length;
+  answer = () => undefined; // never answers
+  const slow = await agent.call('workflow.status_and_next', { projectId: 'p' });
+  assert.equal(slow.isError, true);
+  assert.match(slow.content[0].text, /may still have taken effect; check before repeating it/);
+  assert.equal(stub.requests.length, before + 1, 'exactly one request');
+  // Redaction: a key in any model-visible field, the current token among them, never leaves.
+  const leak = `mk_${'q'.repeat(43)}`;
+  answer = (res, id) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: `found ${leak} and ${token}` }],
+          structuredContent: { nested: [{ key: leak }] },
+          _meta: { note: token },
+        },
+      }),
+    );
+  };
+  const redacted = await agent.call('project.list');
+  assert.equal(redacted.content[0].text, 'found [redacted] and [redacted]');
+  assert.deepEqual(redacted.structuredContent, { nested: [{ key: '[redacted]' }] });
+  answer = (res, id) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32602, message: leak, data: { leak } },
+      }),
+    );
+  };
+  const failed = await agent.request('tools/call', { name: 'project.list', arguments: {} });
+  assert.deepEqual(failed.error, {
+    code: -32602,
+    message: '[redacted]',
+    data: { leak: '[redacted]' },
+  });
+  assert.ok(!agent.lines.join('\n').includes('mk_'));
+});
+
+test('two completions serialize, and one whose request was replaced revokes its own key', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  await c.cli('login', 'ada@lab.org', '--client', 'Codex');
+  const code = (await f.codeFor('ada@lab.org'))!;
+  const [first, second] = await Promise.all([
+    c.cli('login', '--code', code),
+    c.cli('login', '--code', code),
+  ]);
+  assert.deepEqual([first.code, second.code].sort(), [0, 1]);
+  assert.match(`${first.stderr}${second.stderr}`, /No sign-in is waiting/);
+  assert.deepEqual(
+    (await liveKeys(f)).map((key) => key.id),
+    [c.read('credentials.json').keyId],
+  );
+  assert.match((await c.cli('logout')).stdout, /revoked/);
+
+  // A completion lands after another sign-in took the request over (as a stale-lock takeover can).
+  let held: Awaited<ReturnType<typeof connector>>;
+  const hold = {
+    match: /\/verify$/,
+    then: () => {
+      const pending = held.read('pending.json');
+      writeFileSync(
+        join(held.dir, 'pending.json'),
+        JSON.stringify({ ...pending, generation: 'replaced' }),
+        { mode: 0o600 },
+      );
+    },
+  };
+  const between = await proxy(t, f.url, hold);
+  held = await connector(t, f, between.url);
+  await held.cli('login', 'ada@lab.org');
+  const late = await held.cli('login', '--code', (await f.codeFor('ada@lab.org'))!);
+  assert.equal(late.code, 1);
+  assert.match(late.stderr, /Another sign-in replaced this one\./);
+  assert.equal(held.has('credentials.json'), false);
+  assert.deepEqual(await liveKeys(f), [], 'the late key was revoked by the connector');
+});
+
+test('a 401 for an old key never removes a newer one another process stored', async (t) => {
+  const f = await server(t);
+  let c: Awaited<ReturnType<typeof connector>>;
+  const hold: { match?: RegExp; then?: () => Promise<void> | void } = {};
+  const between = await proxy(t, f.url, hold);
+  c = await connector(t, f, between.url);
+  await signIn(f, c);
+  const agent = c.stdio();
+  await agent.request('initialize', {});
+  await agent.request('tools/list');
+  const old = c.read('credentials.json');
+  const newer = { ...(await anotherKey(f)), origin: between.url };
+  assert.equal((await revoke(f, old.token)).status, 200);
+  hold.match = /^\/mcp$/;
+  hold.then = () =>
+    writeFileSync(join(c.dir, 'credentials.json'), JSON.stringify(newer), { mode: 0o600 });
+  const listed = await agent.call('project.list');
+  assert.equal(listed.isError, undefined, JSON.stringify(listed));
+  assert.equal(c.read('credentials.json').keyId, newer.keyId);
+  // The newer key itself revoked: now the call says so, and the file goes.
+  assert.equal((await revoke(f, newer.token)).status, 200);
+  const refused = await agent.call('project.list');
+  assert.match(refused.content[0].text, /^Not signed in to Merv on this machine/);
+  assert.equal(c.has('credentials.json'), false);
+  const cached = (await agent.request('tools/list')).result.tools.map(
+    (tool: { name: string }) => tool.name,
+  );
+  assert.ok(cached.includes('project.list'), 'tools/list serves the cache');
+});
+
+test('logout racing a completion ends signed out with the key revoked, or signed in with it live', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  await c.cli('login', 'ada@lab.org');
+  const code = (await f.codeFor('ada@lab.org'))!;
+  await Promise.all([c.cli('login', '--code', code), c.cli('logout')]);
+  const live = await liveKeys(f);
+  if (c.has('credentials.json'))
+    assert.deepEqual(
+      live.map((key) => key.id),
+      [c.read('credentials.json').keyId],
+    );
+  else assert.deepEqual(live, []);
+  // A lock left by a dead process is taken over.
+  writeFileSync(join(c.dir, 'lock'), JSON.stringify({ pid: 2 ** 22 - 7, at: Date.now() }));
+  const started = Date.now();
+  assert.equal((await c.cli('logout')).code, 0);
+  assert.ok(Date.now() - started < 10_000);
+});
+
+test('a symlinked credential file or connector directory is refused', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const elsewhere = mkdtempSync(join(tmpdir(), 'merv-elsewhere-'));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  writeFileSync(join(elsewhere, 'credentials.json'), '{}', { mode: 0o600 });
+  symlinkSync(join(elsewhere, 'credentials.json'), join(c.dir, 'credentials.json'));
+  const status = await c.cli('status');
+  assert.equal(status.code, 1);
+  assert.match(status.stderr, /Refusing .*credentials\.json: it is a symlink\./);
+  rmSync(join(c.dir, 'credentials.json'));
+  const moved = join(elsewhere, 'moved');
+  renameSync(c.dir, moved);
+  symlinkSync(moved, c.dir);
+  const login = await execFileStatus(
+    process.execPath,
+    [join(moved, 'merv-connect.mjs'), 'login', 'ada@lab.org'],
+    c.home,
+  );
+  assert.equal(login.code, 1);
+  assert.match(login.stderr, /Refusing .*: it is a symlink\./);
+  assert.equal(f.mails.length, 0);
+});
+
+function execFileStatus(file: string, args: string[], home: string) {
+  return new Promise<{ code: number; stderr: string }>((resolve) =>
+    execFile(file, args, { env: { HOME: home, PATH: process.env.PATH! } }, (error, _out, stderr) =>
+      resolve({ code: error ? 1 : 0, stderr }),
+    ),
+  );
+}

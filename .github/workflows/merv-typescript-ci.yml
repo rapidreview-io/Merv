@@ -153,6 +153,11 @@ jobs:
             npx playwright-core install --with-deps chromium-headless-shell
           fi
 
+      # Agent sign-in end to end: the served installer, the connector and an emailed code.
+      - name: Connect an agent end to end
+        if: matrix.shard == 1
+        run: npm run test:connect
+
       # Runs this shard's files exactly as npm test runs them all (scripts/test-shard.mjs).
       - name: Run test shard ${{ matrix.shard }} of 4
         run: |
