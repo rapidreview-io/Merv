@@ -69,7 +69,6 @@ function start({ code, names, timeoutMs, stack, calls, logLines, input: inputByt
     const result = runtime.executePendingJobs();
     if (result.error) finish({ type: 'done', ok: false, error: failure(result.error) });
   };
-  // A refused call's error: the message 'code: message', and its code.
   const refusal = (code, message) => {
     const error = vm.newError(message);
     const handle = vm.newString(code);

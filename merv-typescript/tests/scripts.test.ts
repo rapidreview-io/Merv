@@ -75,7 +75,6 @@ test('script.tools searches, names and sums up only what this agent may use', as
   assert.deepEqual(
     named.tools.map(({ name, scriptable }: any) => [name, scriptable]),
     [
-      // Open-world (its storage I/O holds no snapshot), so never a script's.
       ['artifact.read', true],
       ['task.write', false],
     ],

@@ -8,7 +8,6 @@ import type {
   ToolDescription,
   Tools,
 } from '@merv/api/types';
-import type { ScriptHost } from './bridge.js';
 import type { Scripts } from './index.js';
 import { declaration } from './declare.js';
 
@@ -50,8 +49,6 @@ const admit: ToolAdmission = (tool, description, input) => {
     throw new MervError('script_tool_refused', `${tool.name} cannot be called from a script`, 403);
 };
 
-/** A tool's answer as a script sees it: a mounted tool's structured content, else its text as
- *  JSON, else its text. */
 function answer({ format, value }: { format: string; value: unknown }): unknown {
   if (format !== 'mcp') return value;
   const result = value as {
@@ -70,21 +67,6 @@ function answer({ format, value }: { format: string; value: unknown }): unknown 
   } catch {
     return text;
   }
-}
-
-/** Each call is the caller's own: invoke applies every rule one call from this agent meets. */
-function host(tools: Tools, caller: Caller): ScriptHost {
-  return async (name, input) => {
-    // A native tool's project is its caller's, as over /mcp; a mounted tool's arguments are its own.
-    // The registry reserves names starting with _ for mounted tools.
-    if (!name.startsWith('_')) {
-      const { projectId, ...rest } = input;
-      if (projectId !== undefined && projectId !== caller.projectId)
-        throw new MervError('invalid_input', 'A script works in its own project only');
-      input = rest;
-    }
-    return answer(await tools.invoke(name, caller, input, true, admit));
-  };
 }
 
 const toolsInput = z
@@ -108,7 +90,6 @@ const words = (text = '') =>
       .filter(Boolean),
   );
 
-/** What a script may call, ranked for a query, exactly as named, or summed up by namespace. */
 async function find(
   tools: Tools,
   caller: Caller,
@@ -205,13 +186,24 @@ export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
           return !!tool && scriptable(tool, {});
         }),
       ];
-      return await scripts.run(code, timeoutMs, names, host(tools, caller));
+      // Each call is the caller's own: invoke applies every rule one call from this agent meets.
+      return await scripts.run(code, timeoutMs, names, async (name, input) => {
+        // A native tool's project is its caller's, as over /mcp; a mounted tool's arguments are
+        // its own. The registry reserves names starting with _ for mounted tools.
+        if (!name.startsWith('_')) {
+          const { projectId, ...rest } = input;
+          if (projectId !== undefined && projectId !== caller.projectId)
+            throw new MervError('invalid_input', 'A script works in its own project only');
+          input = rest;
+        }
+        return answer(await tools.invoke(name, caller, input, true, admit));
+      });
     },
   };
   return [list, run];
 }
 
-export const scriptsToolsPlugin = {
+export default {
   name: 'merv-scripts-tools',
   inject: ['scripts', 'tools'],
   apply(ctx: Context) {
@@ -219,4 +211,3 @@ export const scriptsToolsPlugin = {
       ctx.effect(() => ctx.tools.register(tool));
   },
 };
-export default scriptsToolsPlugin;

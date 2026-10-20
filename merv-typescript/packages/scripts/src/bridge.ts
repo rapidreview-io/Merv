@@ -248,8 +248,6 @@ export async function runScript(
   const seen = new Set<number>();
   const queue: (() => Promise<void>)[] = [];
   const out = new Set<Promise<void>>();
-  const owner = {};
-  let active = 0;
   let settle!: (result: ScriptResult | MervError) => void;
   const ended = new Promise<ScriptResult | MervError>((resolve) => (settle = resolve));
   let done = false;
@@ -259,27 +257,11 @@ export async function runScript(
     done = true;
     kill();
     if (outcome instanceof MervError) return settle(outcome);
-    try {
-      settle(
-        'code' in outcome
-          ? shape({ ok: false, error: outcome, calls: [...calls] }, logs)
-          : shape({ ok: true, calls: [...calls] }, logs, outcome.result, outcome.whole),
-      );
-    } catch {
-      settle(
-        shape(
-          {
-            ok: false,
-            error: {
-              code: 'script_error',
-              message: 'The script returned an answer that cannot be sent',
-            },
-            calls: [],
-          },
-          [],
-        ),
-      );
-    }
+    settle(
+      'code' in outcome
+        ? shape({ ok: false, error: outcome, calls: [...calls] }, logs)
+        : shape({ ok: true, calls: [...calls] }, logs, outcome.result, outcome.whole),
+    );
   };
   // Before the child is ready, anything else means it never ran the script.
   const forged = () =>
@@ -289,10 +271,9 @@ export async function runScript(
         : unavailable(),
     );
   const pump = () => {
-    while (!done && active < LIMITS.inFlight && queue.length) {
-      active++;
-      const settled = hostSlot(owner, queue.shift()!).finally(() => {
-        active--;
+    while (!done && out.size < LIMITS.inFlight && queue.length) {
+      const settled = hostSlot(queue, queue.shift()!).finally(() => {
+        out.delete(settled);
         pump();
       });
       out.add(settled);
@@ -415,7 +396,7 @@ export async function runScript(
     clearTimeout(timer);
     kill();
     // Calls already started keep the slot until they settle; queued ones never start.
-    dropQueued(owner);
+    dropQueued(queue);
     void Promise.allSettled(out).then(() => running--);
   }
 }
