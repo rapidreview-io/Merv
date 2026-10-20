@@ -1,9 +1,6 @@
 #!/usr/bin/env node
-// Merv's agent connector for one Merv server, served and stamped by that server at /connect.
-// Plain ESM with no dependencies, Node 18 or later. With no arguments it is a stdio MCP server that
-// forwards tools/list and tools/call to Merv with this machine's key; with arguments it is the
-// command line that signs the machine in by an emailed code (`login`), shows (`status`), signs
-// out (`logout`), and registers itself with Claude Code, Codex and Cursor (`install`).
+// Merv's agent connector, stamped by one Merv server at /connect: a dependency-free stdio MCP
+// server forwarding to it, and the command line that signs in, out and registers with clients.
 //
 // The key lives in ~/.merv/connect/<host>/credentials.json (0600). It is never printed, never in a
 // tool result, and never in this program's output: every line it prints, on either stream, passes
@@ -23,9 +20,6 @@ const VERSION = '__MERV_VERSION__';
 let token; // the key in use, for redaction
 let verifier; // a pending sign-in's verifier, for redaction
 
-// ---- Output: a backstop over everything that leaves, not a defence. ----
-
-/** A value with every key and verifier taken out, from property names as well as values. */
 function redact(value) {
   if (typeof value === 'string') {
     let text = value.replace(/mk_[A-Za-z0-9_-]{43}/g, '[redacted]');
@@ -59,7 +53,6 @@ if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && loopback))
 const HOSTDIR = origin.host.replace(/[[\]]/g, '').replaceAll(':', '_');
 if (!/^[a-z0-9._-]+$/.test(HOSTDIR)) fail('This connector was stamped with an invalid origin.');
 
-// Every path comes from the home directory: clients pass MCP servers little environment.
 const HOME = homedir();
 const MERV = join(HOME, '.merv');
 const CONNECT = join(MERV, 'connect');
@@ -67,18 +60,14 @@ const DIR = join(CONNECT, HOSTDIR);
 const BIN = join(DIR, 'bin');
 const SHIM = join(BIN, 'merv-connect');
 const KEYS_PAGE = `${ORIGIN}/ui/settings/keys`;
-/** Under Codex's 60 s tool timeout; tests may shorten it. */
 const TIMEOUT = Math.min(
   50_000,
   Math.max(1, Number(process.env.MERV_CONNECT_TIMEOUT_MS) || 50_000),
 );
 const uid = process.getuid?.();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const sha256 = (text) => createHash('sha256').update(text).digest('base64url');
 
 class Refusal extends Error {}
-
-// ---- Files: per origin, 0600 in 0700 directories no one else can write, never through a link. ----
 
 /** Refuses what another user placed or can change: a link, the wrong kind, not this person's (HOME
  *  may be root's), or open to others beyond `mask`. */
@@ -103,8 +92,8 @@ function ensureDir(dirs = [MERV, CONNECT, DIR]) {
   }
 }
 /** A file's text through one descriptor, opened without following a link and checked there as
- *  this person's own regular file closed to others beyond `mask`; undefined when absent. */
-function readPrivate(path, mask = 0o077) {
+ *  this person's own regular file closed to others; undefined when absent. */
+function readPrivate(path) {
   let fd;
   try {
     fd = fs.openSync(
@@ -118,7 +107,7 @@ function readPrivate(path, mask = 0o077) {
     throw error;
   }
   try {
-    check(path, fs.fstatSync(fd), 'file', mask);
+    check(path, fs.fstatSync(fd), 'file', 0o077);
     return fs.readFileSync(fd, 'utf8');
   } finally {
     fs.closeSync(fd);
@@ -135,12 +124,7 @@ function readJson(name) {
 /** A temp file created exclusively beside the target, then renamed over it. */
 function writeAtomic(dir, name, text, mode = 0o600) {
   const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
-  const fd = fs.openSync(temp, 'wx', mode);
-  try {
-    fs.writeFileSync(fd, text);
-  } finally {
-    fs.closeSync(fd);
-  }
+  fs.writeFileSync(temp, text, { flag: 'wx', mode });
   fs.renameSync(temp, join(dir, name));
 }
 const writeJson = (name, value) => {
@@ -169,7 +153,6 @@ function createWhole(path, text) {
     fs.rmSync(temp, { force: true });
   }
 }
-/** JSON text's value, or undefined when it is not JSON. */
 const parse = (text) => {
   try {
     return JSON.parse(text);
@@ -260,7 +243,6 @@ async function api(path, { method = 'GET', body, key, timeout = 30_000 } = {}) {
 }
 const refusalOf = ({ status, value }) => value?.error?.message ?? `Merv answered ${status}.`;
 
-/** The stored credential, unless it has expired here. */
 function credential() {
   const stored = readJson('credentials.json');
   if (!stored || typeof stored.token !== 'string' || stored.origin !== ORIGIN) return undefined;
@@ -288,8 +270,6 @@ async function liveCredential() {
   return answer.status === 401 ? dropKey(stored.keyId) : stored;
 }
 
-// ---- Sign-in by emailed code, shared by the command line and connector.login. ----
-
 const clientNames = [
   [/claude/i, 'Claude Code'],
   [/codex/i, 'Codex'],
@@ -310,7 +290,6 @@ const host = () =>
     .replace(/[^\p{L}\p{N}_-]/gu, '')
     .slice(0, 64) || 'this-machine';
 const NOT_HERE = 'Not signed in to Merv on this machine.';
-/** What the command line and connector.status say, and a completed sign-in. */
 const statusLine = (value) =>
   value.signedIn
     ? `Signed in as ${value.email} (${value.label}). Projects: ${
@@ -320,7 +299,6 @@ const statusLine = (value) =>
 const already = (stored) =>
   `Already signed in as ${stored.email} (${stored.label}). To switch accounts, the person runs \`merv-connect logout\` in a terminal first.`;
 
-/** Starts a sign-in and says what happens next: `next` is how the code comes back. */
 async function startLogin(email, client, next) {
   return await withLock(async () => {
     const stored = await liveCredential();
@@ -331,7 +309,7 @@ async function startLogin(email, client, next) {
       body: {
         email,
         client: { name: clientLabel(client), host: host(), installId: installId() },
-        verifierHash: sha256(secret),
+        verifierHash: createHash('sha256').update(secret).digest('base64url'),
       },
     });
     if (answer.status !== 202) {
@@ -339,15 +317,7 @@ async function startLogin(email, client, next) {
       throw new Refusal(`${refusalOf(answer)}${wait}`);
     }
     const { loginId, phrase, expiresAt } = answer.value;
-    writeJson('pending.json', {
-      version: 1,
-      generation: randomUUID(),
-      loginId,
-      verifier: secret,
-      email,
-      phrase,
-      expiresAt,
-    });
+    writeJson('pending.json', { generation: randomUUID(), loginId, verifier: secret, expiresAt });
     return `Code sent if ${email} is a Merv account in a project. Request: ${phrase}. Tell the person to check that the email shows the same words, then ${next}.`;
   });
 }
@@ -370,25 +340,18 @@ async function finishLogin(code) {
       await api('/account/key', { method: 'DELETE', key: issued.token }).catch(() => undefined);
       throw new Refusal('Another sign-in replaced this one.');
     }
+    const { email, projects, key } = issued;
     writeJson('credentials.json', {
-      version: 1,
       origin: ORIGIN,
-      email: issued.email,
-      keyId: issued.key.id,
+      email,
+      keyId: key.id,
       token: issued.token,
-      label: issued.key.label,
-      expiresAt: issued.key.expiresAt,
-      issuedAt: new Date().toISOString(),
+      label: key.label,
+      expiresAt: key.expiresAt,
     });
     remove('pending.json');
     verifier = undefined;
-    return statusLine({
-      signedIn: true,
-      email: issued.email,
-      label: issued.key.label,
-      expiresAt: issued.key.expiresAt,
-      projects: issued.projects,
-    });
+    return statusLine({ signedIn: true, email, projects, ...key });
   });
 }
 
@@ -427,8 +390,6 @@ async function logout() {
   });
 }
 
-// ---- Client registration. ----
-
 const onPath = (name) =>
   (process.env.PATH ?? '').split(delimiter).some((dir) => {
     try {
@@ -441,7 +402,6 @@ const onPath = (name) =>
 const run = (command, args) =>
   spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: 'pipe' });
 const entry = { type: 'stdio', command: SHIM, args: [] };
-/** What the client says of its SERVER_NAME registration, if it has one. */
 const registered = (client) => {
   const got = run(client, ['mcp', 'get', SERVER_NAME]);
   return got.status === 0 ? got.stdout : undefined;
@@ -449,7 +409,6 @@ const registered = (client) => {
 const removeFromClaude = () => {
   for (const scope of ['local', 'user']) run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
 };
-/** The origin directory of the connector a registration runs, if it runs one. */
 const connectorOf = (settings) =>
   /\.merv\/connect\/([^/\s"']+)\/bin\/merv-connect/.exec(settings ?? '')?.[1];
 /** Another Merv server's connector under this name is that server's: left alone. */
@@ -467,7 +426,6 @@ const replacing = (client, settings, copy) =>
   say(
     `${client}: replacing an earlier "${SERVER_NAME}"${copy ? ` (previous config saved as ${copy})` : ''}. Its settings are not shown, since they may hold a key. If it used a Merv key, revoke that key on the Keys page once nothing needs it: ${KEYS_PAGE}`,
   );
-/** A private copy of a client's config before it is changed. */
 function backup(file) {
   if (!fs.lstatSync(file, { throwIfNoEntry: false })?.isFile()) return undefined;
   const copy = `${file}.bak-${Date.now()}`;
@@ -579,8 +537,6 @@ async function uninstall() {
   say(`Removed "${SERVER_NAME}" from the installed clients.`);
   say(await logout());
 }
-
-// ---- The stdio MCP server. ----
 
 const INSTRUCTIONS = `Merv is this person's research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Call project.list, then pass projectId on every call; start with project.read brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.
 If a Merv tool says not signed in, ask the person for their Merv email and call connector.login with {email}; when they tell you the code, call connector.login with {code}.`;
@@ -790,8 +746,6 @@ function serve() {
   process.stdin.on('end', () => process.exit(0));
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 }
-
-// ---- Command line. ----
 
 const USAGE = `Usage: merv-connect [login <email> [--client <name>] | login --code <code> | status | logout | install | uninstall]
 With no arguments, merv-connect is the "${SERVER_NAME}" MCP server for ${ORIGIN}.`;

@@ -20,8 +20,6 @@ import type { UserKeys } from './user-keys.js';
 export interface LoginRow {
   id: string;
   email_hash: string;
-  ip_hash: string | null;
-  net_hash: string | null;
   install_id: string;
   client: string;
   host: string;
@@ -30,13 +28,9 @@ export interface LoginRow {
   code_hash: string;
   issuer: string | null;
   subject: string | null;
-  created_at: string;
   expires_at: string;
-  /** When a delivery reserved this code's send: what the caps in all count. Cleared if the send fails. */
-  sent_at: string | null;
   failures: number;
   status: 'pending' | 'used' | 'locked';
-  key_id: string | null;
 }
 
 /** The request words: two of these, which only help a person match an email to a request. */

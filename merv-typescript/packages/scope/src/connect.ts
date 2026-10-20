@@ -9,8 +9,6 @@ import { emailHtml, mailSchema, origin, type Mail } from './mail.js';
 
 const count = (fallback: number, max = 1_000_000) =>
   z.number().int().positive().max(max).default(fallback);
-const loopback = (hostname: string) => ['127.0.0.1', '[::1]', 'localhost'].includes(hostname);
-/** An address range, as `address/bits`. */
 const cidr = z.string().refine((value) => {
   const [address = '', bits = '', extra] = value.split('/');
   const family = isIP(address);
@@ -21,7 +19,6 @@ const cidr = z.string().refine((value) => {
     Number(bits) <= (family === 4 ? 32 : 128)
   );
 }, 'Expected an address range such as 172.18.0.1/32');
-/** Agent sign-in by an emailed code (`/connect`), in the scope-api adapter's configuration. */
 export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .extend({
     // The origin stamped into the page, installer and connector: https, or http on loopback.
@@ -88,9 +85,7 @@ export const verifyInput = z.object({ code: z.string().max(32), verifier: digest
 const source = (name: string) =>
   readFileSync(new URL(`./connect/${name}`, import.meta.url), 'utf8');
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
-const day = (iso: string) => iso.slice(0, 10);
 
-/** The code email: the code, the request words, and what signs in. */
 export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
   const code = `${mail.code.slice(0, 4)}-${mail.code.slice(4)}`;
   const keys = `${origin}/ui/settings/keys`;
@@ -110,14 +105,13 @@ export function codeMail(mail: AgentLoginCodeMail, origin: string): Mail {
   };
 }
 
-/** The notice every new agent key sends to its person. */
 export function noticeMail(notice: AgentLoginNotice, origin: string): Mail {
   const keys = `${origin}/ui/settings/keys`;
   const when = `${notice.at.slice(0, 10)} ${notice.at.slice(11, 16)} UTC`;
   const lines = [
     `Agent: ${notice.label} (request "${notice.phrase}")`,
     `When: ${when}`,
-    `Key expires: ${day(notice.expiresAt)}. It works in every project with your roles, for every agent on that machine.`,
+    `Key expires: ${notice.expiresAt.slice(0, 10)}. It works in every project with your roles, for every agent on that machine.`,
   ];
   return {
     to: notice.to,
@@ -132,8 +126,6 @@ ${lines.map((line) => `<p style="margin:0 0 4px;font-size:14px;line-height:1.5">
   };
 }
 
-/** The page, installer and connector `/connect` serves, stamped with this deployment's origin
- *  and server name; the installer carries the connector's digest. */
 export function connectAssets(config: z.output<typeof agentLoginSchema>) {
   const { origin, host } = new URL(config.publicOrigin);
   const stamp = (text: string) =>
@@ -151,7 +143,6 @@ export function connectAssets(config: z.output<typeof agentLoginSchema>) {
   };
 }
 
-/** The ranges `trustedProxies` names, to check a socket's address against. */
 export function proxyList(ranges: readonly string[]): BlockList {
   const list = new BlockList();
   for (const range of ranges) {
@@ -172,7 +163,6 @@ export class Deliveries {
     private readonly capacity: number,
     private readonly clock: () => number = Date.now,
   ) {}
-  /** Holds `job` until a slot frees, or until `until` (ms) passes and it is no use. */
   push(until: number, job: () => Promise<void>): void {
     if (this.waiting.length >= this.capacity) this.waiting.shift();
     this.waiting.push({ until, job });
@@ -189,7 +179,6 @@ export class Deliveries {
       this.running.add(run);
     }
   }
-  /** Waits for every job, those still waiting included. */
   async drain(): Promise<void> {
     while (this.running.size) await Promise.allSettled([...this.running]);
   }
@@ -239,11 +228,9 @@ export class Admission {
     private readonly clock: () => number = Date.now,
     private readonly ceiling = 100_000,
   ) {}
-  /** The number of buckets this window tracks. */
   get size(): number {
     return this.counts.size;
   }
-  /** Counts one request from `ip`, or throws 429 past its address's or its network's limit. */
   admit(ip: string | null): void {
     const now = this.clock();
     if (now - this.start >= 60_000) {
