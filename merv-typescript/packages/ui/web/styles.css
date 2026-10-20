@@ -2290,7 +2290,7 @@ html[data-theme='dark'] .code-body [style] {
   text-decoration: var(--shiki-dark-text-decoration);
 }
 /* A terminal's sixteen colours are the app's own inks, so they read on either ground. */
-:is(.code-body, .nb-output, .pi-returned) {
+:is(.code-body, .nb-output) {
   --ansi-0: var(--faint);
   --ansi-1: var(--refutes);
   --ansi-2: var(--supports);
@@ -5315,76 +5315,6 @@ html:has(.pi-page) body {
   content: '';
   flex: 1;
   border-top: 1px solid var(--line);
-}
-/* A call the agent proposed: the act it performs, its input as facts, and Run; once it ran, how
-   it came out where Run stood. */
-.pi-proposal {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.pi-proposal-act {
-  font-weight: 600;
-}
-.pi-proposal .kv {
-  grid-template-columns: fit-content(10em) minmax(0, 1fr);
-  row-gap: 2px;
-  font-size: var(--text-sm);
-}
-/* A long fact is its own fold: shut, its first two lines; open, all of it. */
-.pi-fact-long > summary {
-  display: flex;
-  align-items: flex-start;
-}
-.pi-fact-long > summary > .caret {
-  margin-top: 4px;
-}
-.pi-fact-long:not([open]) > summary > span {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.pi-returned {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.pi-refused {
-  color: var(--refutes);
-}
-/* The folds a card and a receipt open, in the key's quiet ink until they are opened: a summary
-   a target tall that gives the height back to the line it stands on. */
-:is(.pi-fact-tree, .pi-receipt-line > details) > summary {
-  display: inline-flex;
-  align-items: center;
-  padding-block: calc((var(--hit) - 20px) / 2);
-  margin-block: calc((20px - var(--hit)) / 2);
-  font-size: var(--text-sm);
-  color: var(--faint);
-}
-:is(.pi-fact-tree, .pi-receipt-line > details) > summary:hover,
-:is(.pi-fact-tree, .pi-receipt-line > details)[open] > summary {
-  color: var(--text);
-}
-/* How a call the person ran came out: one quiet line, in its card or on the agent's side, never a
-   bubble of the person's, with its result unfolding under it. */
-.pi-receipt {
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.pi-receipt-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: var(--space-2);
-}
-.pi-receipt-act {
-  color: var(--text);
 }
 /* Under a turn that ended early, after whatever it had written. */
 .pi-ended {

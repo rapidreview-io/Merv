@@ -14,10 +14,9 @@ import { currentToken, projectSelection, useScopeVersion } from '../api';
 import { Ago, relativeTime } from '../components';
 import { Icon } from '../icons';
 import { MarkdownPieces, useRecordNames } from '../markdown';
-import type { PiConversation, PiInterruption, PiProposal } from '@merv/pi/models';
+import type { PiConversation, PiInterruption } from '@merv/pi/models';
 import type { ViewProps } from './index';
-import { receiptOf } from './pi-proposal';
-import { changed, Context, Machine, Model, Outcome, Proposal, Seconds } from './pi-cards';
+import { changed, Context, Machine, Model, Seconds } from './pi-cards';
 import { useMenu } from '../record-picker';
 import { useConversation, type Conversation } from './pi-conversation';
 import { useVoice, VoicePanel, type Voice } from './pi-voice';
@@ -178,8 +177,8 @@ export function Standing({ pi, dot }: { pi: Conversation; dot?: boolean }) {
 
 /** The conversation's turns, drawn alike on the page and in the dock. */
 export function Transcript({ pi }: { pi: Conversation }) {
-  const { snapshot, host, proposing, localResults, active, busy, running, visible } = pi;
-  const { unavailable, selected, blocked, run, following, follow } = pi;
+  const { snapshot, host, active, visible } = pi;
+  const { unavailable, selected, blocked, following, follow } = pi;
   // Drawn afresh, on the page or in the dock, it opens at its latest words.
   useLayoutEffect(() => {
     following.current = true;
@@ -203,11 +202,6 @@ export function Transcript({ pi }: { pi: Conversation }) {
       added.disconnect();
     };
   }, [pi.transcript, follow]);
-  // Whether a call's card is drawn: the latest calls the agent proposed stay under their turn
-  // until it proposes again, and a full result held here stays in its card while the
-  // conversation is open.
-  const carded = (proposal: PiProposal) =>
-    !!proposing?.proposals?.some(({ id }) => id === proposal.id) || proposal.id in localResults;
   return (
     <div
       className="pi-messages"
@@ -225,41 +219,21 @@ export function Transcript({ pi }: { pi: Conversation }) {
     >
       {snapshot?.commands.flatMap((item, at, all) => [
         changed(all, at, host, snapshot.models),
-        ...item.messages.map((message, index) => {
-          // What Run told the agent, where the turn's first message is that.
-          const receipt = index === 0 && receiptOf(all, at);
-          return receipt ? (
-            !carded(receipt) && <Outcome key={`${item.id}-${index}`} named proposal={receipt} />
-          ) : (
-            <article
-              className={`pi-message pi-message--${message.role}`}
-              key={`${item.id}-${index}`}
-            >
-              <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
-              {message.role === 'user' ? (
-                <div className="pi-message-text">{message.text}</div>
-              ) : (
-                <MarkdownPieces source={message.text} />
-              )}
-            </article>
-          );
-        }),
+        ...item.messages.map((message, index) => (
+          <article className={`pi-message pi-message--${message.role}`} key={`${item.id}-${index}`}>
+            <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
+            {message.role === 'user' ? (
+              <div className="pi-message-text">{message.text}</div>
+            ) : (
+              <MarkdownPieces source={message.text} />
+            )}
+          </article>
+        )),
         item.status === 'interrupted' && (
           <p className="pi-ended" key={`${item.id}-ended`}>
             {(item.error && STOPPED[item.error]) ?? 'The agent stopped. Ask again.'}
           </p>
         ),
-        ...(item.proposals ?? [])
-          .filter(carded)
-          .map((proposal) => (
-            <Proposal
-              key={proposal.id}
-              proposal={proposal}
-              result={localResults[proposal.id]}
-              disabled={active || busy || !!running}
-              run={() => void run(item.id, proposal)}
-            />
-          )),
       ])}
       {visible && (visible.text || visible.progress) && (
         <article className="pi-message pi-message--assistant pi-message--transient">

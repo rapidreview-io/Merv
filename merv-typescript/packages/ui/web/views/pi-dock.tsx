@@ -50,13 +50,7 @@ export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   // drawn, once nothing the person began is under way: no turn, no question or call on its way,
   // no machine being started, and no question half written in the window.
   const underway =
-    !pi ||
-    speaking ||
-    pi.active ||
-    pi.busy ||
-    !!pi.running ||
-    pi.warming.current ||
-    (drawn && !!pi.draft.trim());
+    !pi || speaking || pi.active || pi.busy || pi.warming.current || (drawn && !!pi.draft.trim());
   const at = !here && pi?.snapshot && !underway ? releasedAt(pi.snapshot, pi.skew.current) : null;
   useEffect(() => {
     if (at === null || !end) return;

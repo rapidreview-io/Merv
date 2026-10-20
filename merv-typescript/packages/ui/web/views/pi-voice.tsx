@@ -64,14 +64,7 @@ export function sayable(markdown: string): string {
 /** What GPT-Live is told when Pi's turn for a request ends. */
 function resultOf(command: PiCommand): string {
   const answer = [...command.messages].reverse().find((m) => m.role === 'assistant')?.text ?? '';
-  const waiting = (command.proposals ?? []).filter((p) => !p.ran);
   const parts = [answer ? sayable(answer) : ''];
-  if (waiting.length)
-    parts.push(
-      `Needs the person's approval: ${waiting
-        .map((p) => p.act?.title ?? p.name)
-        .join('; ')}. They can tap Run on screen.`,
-    );
   if (command.status === 'interrupted')
     parts.push(`Pi stopped before it finished (${command.error ?? 'interrupted'}).`);
   return parts.filter(Boolean).join(' ') || 'Pi finished without saying anything.';

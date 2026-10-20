@@ -4,7 +4,7 @@ import { ApiError, call } from '../api';
 import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
 import { toolTransport, type PiTransport } from './pi-transport';
-import type { PiConversation, PiEvent, PiHostView, PiProposal, PiSnapshot } from '@merv/pi/models';
+import type { PiConversation, PiEvent, PiHostView, PiSnapshot } from '@merv/pi/models';
 
 type PiDelta = PiEvent & { streamId: string };
 const isDelta = (value: object): value is PiDelta =>
@@ -75,9 +75,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
   const [draft, setDraft] = useState('');
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
-  // The proposal running now, and full results held here alone, for the person.
-  const [running, setRunning] = useState<string | null>(null);
-  const [localResults, setLocalResults] = useState<Record<string, string>>({});
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
@@ -85,8 +82,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
   /** The conversation whose first snapshot has been read, which is when its stream opens. */
   const [streaming, setStreaming] = useState<string | null>(null);
   const pending = useRef<{ id: string; text: string } | null>(null);
-  // The calls whose outcome this page has told the agent, or is telling it now.
-  const telling = useRef(new Set<string>());
   // The latest model pick on its way, which a send in that conversation waits for.
   const picking = useRef<{ id: string; done: Promise<boolean> } | null>(null);
   // The composer and the transcript drawn now, on the page or in the dock: never both at once.
@@ -250,10 +245,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
     (item) => item.id === snapshot.conversation.activeCommandId,
   );
   const latest = snapshot?.commands.at(-1);
-  // Proposed calls are drawn only where the transport can run them.
-  const proposing = transport.run
-    ? snapshot?.commands.filter((item) => item.proposals?.length).at(-1)
-    : undefined;
   const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
   const active = inFlight(status);
   const blocked = refused || snapshot?.available === false;
@@ -368,74 +359,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
       }
     }
   };
-  /** Tells the agent how a call the person ran came out, as their message, once: that message's
-   * turn is named for the call, so telling it again starts nothing. Words that could not be sent
-   * wait in the composer, ahead of anything typed there, for the person to send. */
-  const tell = async (proposalId: string, told: string) => {
-    if (telling.current.has(proposalId)) return;
-    telling.current.add(proposalId);
-    const id = selection.current;
-    if (await send(told, `told_${proposalId}`)) return;
-    if (valid() && selection.current === id)
-      setDraft((value) => (value.trim() ? `${told}\n\n${value}` : told));
-    else telling.current.delete(proposalId);
-  };
-  // An outcome the agent was never told, because Run's answer was lost or the call came out
-  // after the page stopped waiting, is told as soon as the conversation shows it; one this page
-  // left in the composer is the person's to send.
-  useEffect(() => {
-    if (!snapshot || active || busy || running || blocked) return;
-    const untold = proposing?.proposals?.find(({ id, ran }) => {
-      const told = ran?.told?.trim();
-      return (
-        told &&
-        !telling.current.has(id) &&
-        !snapshot.commands.some(
-          (turn) => turn.id === `told_${id}` || turn.messages[0]?.text.includes(told),
-        )
-      );
-    });
-    if (untold) void tell(untold.id, untold.ran!.told!);
-  }, [snapshot, active, busy, running, blocked]);
-  /** Runs a proposed call as the person, then tells the agent what happened (tell). A run Pi
-   * itself refuses ran nothing, and tells the agent nothing; one whose answer was lost may have
-   * run, and what Pi kept of it says, now or once it comes out. */
-  const run = async (commandId: string, proposal: PiProposal) => {
-    if (!transport.run || !selected || running || busy || active) return;
-    setRunning(proposal.id);
-    setError('');
-    let told: string | undefined;
-    try {
-      // The server writes what the agent is told, a refusal too; a result it is not told whole
-      // is shown here.
-      const ran = await transport.run({ id: selected, commandId, proposalId: proposal.id });
-      if (!ran.whole)
-        setLocalResults((value) => ({
-          ...value,
-          [proposal.id]: JSON.stringify(ran.result, null, 2) ?? 'null',
-        }));
-      told = ran.told;
-    } catch (cause) {
-      const kept =
-        cause instanceof ApiError && cause.status >= 400 && cause.status < 500
-          ? null
-          : await transport.snapshot(selected).catch(() => null);
-      if (kept) replace(kept);
-      told = kept?.commands
-        .find(({ id }) => id === commandId)
-        ?.proposals?.find(({ id }) => id === proposal.id)?.ran?.told;
-      if (told === undefined) {
-        if (valid()) setError(said(cause, 'Could not run it.'));
-        return;
-      }
-    } finally {
-      if (valid()) setRunning(null);
-    }
-    if (!valid() || selection.current !== selected) return;
-    // What this run returned is told now, whatever the page told of the call before.
-    telling.current.delete(proposal.id);
-    await tell(proposal.id, told);
-  };
   /** The picker answers with the machine as it now stands, the same in every conversation here. */
   const machine = async (
     tool: 'pi.machine.set' | 'pi.machine.stop',
@@ -496,8 +419,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
     setDraft,
     listed,
     busy,
-    running,
-    localResults,
     error,
     streamError,
     unavailable,
@@ -508,7 +429,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
     following,
     pinnedAt,
     skew,
-    proposing,
     active,
     blocked,
     visible,
@@ -519,7 +439,6 @@ export function useConversation(transport: PiTransport = toolTransport) {
     warmUp,
     create,
     send,
-    run,
     machine,
     pickModel,
     stop,

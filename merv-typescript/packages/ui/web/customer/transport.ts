@@ -8,8 +8,8 @@ const isSnapshot = (value: unknown): value is PiSnapshot =>
 /**
  * The request's intake conversation, as its customer reaches it: the same Pi conversation, read,
  * sent, stopped and streamed through the request's chat routes with the customer's credentials
- * (customer/api.ts). There is one conversation and nothing to create or run, so the page
- * draws neither a conversation list, a machine nor a proposed call.
+ * (customer/api.ts). There is one conversation and nothing to create, so the page draws
+ * neither a conversation list nor a machine.
  */
 export function customerTransport(): PiTransport {
   const snapshot = () => customerRequest<PiSnapshot>('/chat');
