@@ -239,9 +239,13 @@ test('one derivation serves an experiment instance and a reflection instance', a
       'edges',
       'dependencies',
     ]);
-    const pinned = f.app.ctx.workflows
-      .catalog()
-      .find((item) => item.name === graph.workflow && item.version === graph.version)!;
+    // As the catalog tool presents it to the same caller as the process read.
+    const catalog = (await f.app.ctx.tools.call('workflow.catalog', f.owner, {})) as ReturnType<
+      typeof f.app.ctx.workflows.catalog
+    >;
+    const pinned = catalog.find(
+      (item) => item.name === graph.workflow && item.version === graph.version,
+    )!;
     assert.deepEqual(graph.nodes.map((item) => item.state).sort(), [...pinned.states].sort());
     assert.equal(graph.nodes[0].state, pinned.initial);
     assert.deepEqual(

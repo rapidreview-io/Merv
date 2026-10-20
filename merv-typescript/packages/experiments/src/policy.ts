@@ -428,7 +428,7 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
     name,
     states,
     transitions: [name],
-    tool: 'experiment.transition',
+    tool: 'experiment.write:transition',
     instruction,
     requiresDependencies,
     // Ending or retrying takes a reason under evidence; the guidance says so before the call.

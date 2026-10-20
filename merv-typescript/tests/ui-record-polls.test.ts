@@ -185,7 +185,7 @@ test('a running experiment reads its exhibit again only when its evidence change
     },
   }));
   serve('/tools/review.list', { body: { result: [] } });
-  serve('/tools/experiment.exhibit', {
+  serve('/tools/experiment.read:exhibit', {
     body: {
       result: {
         experimentId: 'wf_1',
@@ -200,13 +200,13 @@ test('a running experiment reads its exhibit again only when its evidence change
     },
   });
   await open('/experiments/wf_1', ExperimentsView);
-  assert.equal(reads('/tools/experiment.exhibit'), 1);
+  assert.equal(reads('/tools/experiment.read:exhibit'), 1);
   await settle(8_600);
   assert.equal(reads('/tools/ui.read'), 2);
-  assert.equal(reads('/tools/experiment.exhibit'), 1, 'the same evidence, the same exhibit');
+  assert.equal(reads('/tools/experiment.read:exhibit'), 1, 'the same evidence, the same exhibit');
   await settle(8_600);
   assert.equal(reads('/tools/ui.read'), 3);
-  assert.equal(reads('/tools/experiment.exhibit'), 2, 'new evidence, a new exhibit');
+  assert.equal(reads('/tools/experiment.read:exhibit'), 2, 'new evidence, a new exhibit');
 });
 
 const ended = {

@@ -229,38 +229,54 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   const catalog = (await producer.listTools()).tools;
   const descriptions = catalog.filter((tool) => tool.name.startsWith('experiment.'));
   assert.deepEqual(descriptions.map((tool) => tool.name).sort(), [
-    'experiment.attach',
-    'experiment.create',
-    'experiment.exhibit',
-    'experiment.get_state',
-    'experiment.list',
-    'experiment.transition',
+    'experiment.read',
+    'experiment.write',
   ]);
+  // One action's object of a noun tool, as an agent is shown it.
+  const action = (tool: string, name: string) =>
+    descriptions.find((item) => item.name === tool)!.inputSchema.properties![name] as {
+      description: string;
+      properties: Record<string, { description: string }>;
+    };
+  // A call of one action, as an agent makes it; a leased worker keeps the retired names its
+  // published policy grants, and calls those.
+  let leased = false;
+  const retired: Record<string, string> = {
+    'experiment.write:attach': 'experiment.attach',
+    'experiment.write:transition': 'experiment.transition',
+    'experiment.read:exhibit': 'experiment.exhibit',
+  };
+  const act = (client: Client, address: string, args: Record<string, unknown> = {}) => {
+    const [tool, name] = address.split(':') as [string, string];
+    return leased
+      ? f.call(client, retired[address]!, args)
+      : f.call(client, tool, { action: name, [name]: args });
+  };
   assert.deepEqual(
     catalog.filter((tool) => tool.name.endsWith('.graph')).map((tool) => tool.name),
     [],
     'no tool authors or reads an agent-written graph',
   );
   assert.equal(
-    descriptions.find((tool) => tool.name === 'experiment.get_state')?.annotations?.readOnlyHint,
+    descriptions.find((tool) => tool.name === 'experiment.read')?.annotations?.readOnlyHint,
     true,
   );
   // A successor is told it may attach what a cut visit to the step retained.
   assert.match(
-    descriptions.find((tool) => tool.name === 'experiment.attach')!.description!,
+    action('experiment.write', 'attach').description,
     /as a worker, evidence any earlier visit to this step at the same revision created/,
   );
   // The exhibit's description names the fields its preview has, and no content field.
-  const exhibitTool = descriptions.find((tool) => tool.name === 'experiment.exhibit')!;
+  const exhibitTool = action('experiment.read', 'exhibit');
   for (const field of ['bytes', 'willPin', 'resultFiles', 'under exhibit', 'omitted'])
-    assert.ok(exhibitTool.description!.includes(field), field);
-  assert.doesNotMatch(exhibitTool.description!, /content/);
+    assert.ok(exhibitTool.description.includes(field), field);
+  assert.doesNotMatch(exhibitTool.description, /content/);
   const create = {
     name: 'held-out-comparison',
     intent: 'A improves held-out accuracy over B.',
     requestId: 'experiment',
   };
-  let e = await f.call(producer, 'experiment.create', create);
+  let e = await act(producer, 'experiment.write:create', create);
   const original = structuredClone(e);
   const attach = async (role: string, path: string, content: string, resultFormat?: string) => {
     const artifact = await f.call(producer, 'artifact.create', {
@@ -268,7 +284,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
       content,
       mediaType: path.endsWith('.json') ? 'application/json' : 'text/markdown',
     });
-    await f.call(producer, 'experiment.attach', {
+    await act(producer, 'experiment.write:attach', {
       experimentId: e.id,
       artifactId: artifact.id,
       role,
@@ -282,21 +298,29 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   };
   const planArtifact = await attach('plan', 'plan.md', plan);
   const statement = await attach('feasibility', 'feasibility.json', feasibilityStatement());
+  // Guidance names the noun action an agent calls, with its arguments under the action's name.
+  const guided = await f.call(producer, 'workflow.status_and_next', { instanceId: e.id });
+  const design = guided.actions.find((item: { action: string }) => item.action === 'submit_design');
+  assert.equal(design.tool, 'experiment.write');
+  assert.deepEqual(design.arguments.action, 'transition');
+  assert.equal(design.arguments.transition.transition, 'submit_design');
   // The schema an agent sees says a submission takes no evidence, and the refusal says what to
   // do: every producer once passed a summary there and some stopped at the refusal.
-  const transitionTool = descriptions.find((tool) => tool.name === 'experiment.transition')!;
   assert.match(
-    (transitionTool.inputSchema.properties!.evidence as { description: string }).description,
+    action('experiment.write', 'transition').properties.evidence!.description,
     /Omit it for submit_design and submit_results/,
   );
   const refused = await producer.callTool({
-    name: 'experiment.transition',
+    name: 'experiment.write',
     arguments: {
-      experimentId: e.id,
-      transition: 'submit_design',
-      expectedRevision: e.workflow.revision,
-      requestId: 'design',
-      evidence: { detail: 'A summary of the design.' },
+      action: 'transition',
+      transition: {
+        experimentId: e.id,
+        transition: 'submit_design',
+        expectedRevision: e.workflow.revision,
+        requestId: 'design',
+        evidence: { detail: 'A summary of the design.' },
+      },
     },
   });
   assert.equal(refused.isError, true);
@@ -304,7 +328,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     (refused.content as { text: string }[])[0].text,
     /Omit evidence for submit_design and submit_results and call again with the same requestId; nothing was submitted/,
   );
-  e = await f.call(producer, 'experiment.transition', {
+  e = await act(producer, 'experiment.write:transition', {
     experimentId: e.id,
     transition: 'submit_design',
     expectedRevision: e.workflow.revision,
@@ -326,6 +350,9 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   await assert.rejects(async () => await old.list(f.source), { status: 503 });
   assert.equal((await f.http('task.list')).status, 200);
   await f.app.setEnabled('experiments', true);
+  assert.deepEqual(await act(producer, 'experiment.read:get', { experimentId: e.id }), e);
+  assert.deepEqual(await act(producer, 'experiment.write:create', create), original);
+  // A retired name still runs its action for one release, as it ran.
   assert.deepEqual(await f.call(producer, 'experiment.get_state', { experimentId: e.id }), e);
   assert.deepEqual(await f.call(producer, 'experiment.create', create), original);
   const grade = async (requestId: string) => {
@@ -400,6 +427,16 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   });
   const held = await f.work.attach(session);
   producer = await f.connect(secret);
+  leased = true;
+  // The worker is listed the retired names, never the nouns, and is guided by them, flat.
+  const listed = (await producer.listTools()).tools.map(({ name }) => name);
+  assert.ok(listed.includes('experiment.attach') && !listed.includes('experiment.write'));
+  const told = await f.call(producer, 'workflow.status_and_next', { instanceId: e.id });
+  const toSubmit = told.actions.find(
+    (item: { action: string }) => item.action === 'submit_results',
+  );
+  assert.equal(toSubmit.tool, 'experiment.transition');
+  assert.equal(toSubmit.arguments.transition, 'submit_results');
   await attach(
     'result',
     'results.json',
@@ -410,7 +447,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     }),
     'json',
   );
-  const preview = await f.call(producer, 'experiment.exhibit', { experimentId: e.id });
+  const preview = await act(producer, 'experiment.read:exhibit', { experimentId: e.id });
   assert.equal(preview.willPin, true);
   assert.ok(preview.startedAt);
   // An agent is shown the exhibit's files by id, and a small exhibit itself, never its escaped bytes.
@@ -425,7 +462,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     'report.md',
     `# Report\n\n## Summary\nA exceeds B on the fixed held-out fixture.\n\n## Results\nA: 80/100 = 80%; B: 75/100 = 75%; difference 5 percentage points. See ${preview.path} for retained source counts.\n\n## Deviations from plan\nNone; both methods use every held-out example and the same denominator.\n\n## Conclusion\nThe controlled fixture supports a five-percentage-point advantage without establishing generalization beyond this fixed test set.\n`,
   );
-  e = await f.call(producer, 'experiment.transition', {
+  e = await act(producer, 'experiment.write:transition', {
     experimentId: e.id,
     transition: 'submit_results',
     expectedRevision: e.workflow.revision,

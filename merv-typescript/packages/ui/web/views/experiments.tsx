@@ -94,9 +94,12 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
   // The exhibit is worked out from the attempt's results, parsing each: it is read again only
   // when the evidence the record lists has changed, not on every poll of the record.
-  const exhibit = useTool<ExperimentExhibit>(state === 'running' ? 'experiment.exhibit' : null, {
-    experimentId: id,
-  });
+  const exhibit = useTool<ExperimentExhibit>(
+    state === 'running' ? 'experiment.read:exhibit' : null,
+    {
+      experimentId: id,
+    },
+  );
   const currentEvidence = (record.data?.experiment.evidence ?? []).filter(
     (item) => item.current && item.attemptIndex === record.data!.experiment.attempt.index,
   );

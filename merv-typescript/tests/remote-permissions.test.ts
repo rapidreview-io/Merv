@@ -87,19 +87,19 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   };
   const readerMcp = await connect(reader.token),
     otherMcp = await connect(b.token);
-  assert.equal((await httpList(reader.token)).body.tools.length, 100);
+  assert.equal((await httpList(reader.token)).body.tools.length, 96);
   // Over MCP a reader's agent is offered its reads alone, as a reader's Pi conversation is.
-  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await readerMcp.listTools()).tools.length, 36);
   assert.equal(
     (await httpList(producer.token)).body.tools.filter((tool: { name: string }) =>
       tool.name.startsWith('_'),
     )[0].name,
     '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 66);
+  assert.equal((await otherMcp.listTools()).tools.length, 62);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
-    99,
+    95,
     'Operator role is not a remote grant',
   );
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 200);
@@ -134,8 +134,8 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     403,
   );
   app.ctx.scope.toolPolicy.replace([]);
-  assert.equal((await readerMcp.listTools()).tools.length, 37);
-  assert.equal((await httpList(reader.token)).body.tools.length, 99);
+  assert.equal((await readerMcp.listTools()).tools.length, 35);
+  assert.equal((await httpList(reader.token)).body.tools.length, 95);
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 403);
   assert.equal(
     (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
@@ -143,7 +143,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   );
   assert.equal(admitted.length, count);
   app.ctx.scope.toolPolicy.replace([grant]);
-  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await readerMcp.listTools()).tools.length, 36);
   await app.ctx.scope.credentials.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());

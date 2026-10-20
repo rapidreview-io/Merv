@@ -191,7 +191,7 @@ interface Listed {
  */
 function useWorkPicks(): { options: Pickable[]; loading: boolean } {
   const tasks = useTool<(Listed & { title: string })[]>('task.list');
-  const experiments = useTool<(Listed & { name: string })[]>('experiment.list');
+  const experiments = useTool<(Listed & { name: string })[]>('experiment.read:list');
   const pick = (kind: string, item: Listed, name: string): Pickable => ({
     id: item.id,
     name,

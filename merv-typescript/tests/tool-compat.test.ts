@@ -56,10 +56,18 @@ const retired = {
     'code.publication.merge',
     'code.publication.control',
   ],
+  experiment: [
+    'experiment.list',
+    'experiment.get_state',
+    'experiment.exhibit',
+    'experiment.create',
+    'experiment.attach',
+    'experiment.transition',
+  ],
 };
 /** Retired with no executable path: they answer tool_renamed. */
 const removed = ['code.local.bind', 'code.repository.rebind'];
-const nouns = ['code.read', 'code.write'];
+const nouns = ['code.read', 'code.write', 'experiment.read', 'experiment.write'];
 
 /** A result's key shape, as the contract was captured. */
 const shape = (value: unknown): unknown =>
@@ -107,7 +115,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     return result.isError ? { error: value.error.code as string } : { ok: shape(value) };
   };
 
-  for (const name of retired.code) {
+  for (const name of [...retired.code, ...retired.experiment]) {
     const contract = captured.contracts[name]!;
     assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
     assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
@@ -140,7 +148,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.equal(changed.body.error.code, 'request_conflict');
 
   // What an agent is listed: the base listing with the retired names traded for the nouns.
-  const gone = new Set([...retired.code, ...removed]);
+  const gone = new Set([...retired.code, ...retired.experiment, ...removed]);
   const traded = (base: string[]) =>
     [...base.filter((name) => !gone.has(name)), ...nouns].sort((a, b) => a.localeCompare(b));
   const listed = (await client.listTools()).tools.map(({ name }) => name);
@@ -172,7 +180,8 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     captured.listings.worker,
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
-  for (const name of ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation']) {
+  const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];
+  for (const name of [...reads, 'experiment.list', 'experiment.get_state', 'experiment.exhibit']) {
     const outcome = await app.ctx.tools.invoke(name, worker, input(name), true).then(
       ({ value }) => ({ ok: shape(value) }),
       (error: { status: number; code: string }) => ({ status: error.status, error: error.code }),

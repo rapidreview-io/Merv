@@ -23,7 +23,7 @@ call. Each tool's description is its contract; this skill is the order to use th
 3. `workflow.status_and_next` with an `instanceId` (a work item's id): its gate, your next
    action, blockers, references, revision, and `limits` (review rounds used and left at each
    gate). The guidance it returns is how the server says what it expects: follow it.
-4. Read more as needed: `project.records` indexes every task and experiment, `experiment.get_state`
+4. Read more as needed: `project.records` indexes every task and experiment, `experiment.read` (get)
    reads one experiment whole, `task.get` one task, `paper.read` the paper, and
    `project.references` resolves ids to labels, states and revisions.
 
@@ -41,16 +41,17 @@ creating work that relies on the change.
 
 States: planned, design_review, running, experiment_review, then completed.
 
-1. **Create.** `experiment.create` with an immutable name, intent and optional details.
+1. **Create.** `experiment.write` (create) with an immutable name, intent and optional details.
    `dependsOn` names tasks only: an order between two experiments is a task between them. At
    most seven experiments may be active at once.
 2. **Plan (planned).** Write a Markdown plan of about one screen, store it with
-   `artifact.create`, and attach it with `experiment.attach` (role `plan`, the current
+   `artifact.create`, and attach it with `experiment.write` (attach, role `plan`, the current
    `attemptIndex` and `expectedRevision`). When the experiment carries a feasibility format,
    also attach a JSON feasibility statement as role `feasibility`; its shape is in
-   experiment.attach's description, and a statement showing a shortfall cannot be submitted.
-   Then `experiment.transition` with `submit_design`: it seals what is attached and queues an
-   independent design review.
+   the attach action's description, and a statement showing a shortfall cannot be submitted.
+   Then `experiment.write` (transition) with `submit_design`: it seals what is attached and queues an
+   independent design review. Each `experiment.write` call names its action and puts that
+   action's arguments under its name: `{"action":"attach","attach":{…}}`.
 3. **Design review.** Someone other than the producer reviews. `review.list` says what you may
    claim, `review.start` claims one and returns its `claimId` and verdict guidance, `review.get`
    reads the pinned criteria, and `review.submit` gives one finding per criterion. A rejection
@@ -63,7 +64,7 @@ States: planned, design_review, running, experiment_review, then completed.
    experiment; needs_changes or fail returns it to planned (a new design) or running (repair
    under the same approved plan).
 
-`experiment.transition` with `abandon` or `mark_failed` ends an experiment with a specific
+`experiment.write` (transition) with `abandon` or `mark_failed` ends an experiment with a specific
 reason. It cannot be undone.
 
 ## Tasks

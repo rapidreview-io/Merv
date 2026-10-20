@@ -84,7 +84,10 @@ export function validatePolicy(
     names.add(action.name);
     valid(
       typeof action.tool === 'string' &&
-        toolName.test(action.tool) &&
+        // A noun tool's action is named by its address, tool:action.
+        toolName.test(
+          action.tool.replace(/^([a-z][a-z0-9_]*\.[a-zA-Z0-9_.]+):[a-z][a-z0-9_]*$/, '$1'),
+        ) &&
         typeof action.instruction === 'string' &&
         action.instruction.trim(),
       'Each action needs a tool and instructions',

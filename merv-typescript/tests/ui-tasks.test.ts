@@ -433,7 +433,7 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
       ],
     },
   });
-  serve('/tools/experiment.list', {
+  serve('/tools/experiment.read:list', {
     body: { result: [{ ...listed('wf_exp', 'abandoned'), name: 'An abandoned experiment' }] },
   });
   let sent: Record<string, unknown> | undefined;
@@ -955,7 +955,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
 test('a new cycle started beside an ended one follows it', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/task.list', { body: { result: [] } });
-  serve('/tools/experiment.list', { body: { result: [] } });
+  serve('/tools/experiment.read:list', { body: { result: [] } });
   let sent: Record<string, unknown> | undefined;
   serve('/tools/research.create', (_call, body) => {
     sent = body;
