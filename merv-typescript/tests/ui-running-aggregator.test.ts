@@ -1237,7 +1237,7 @@ test('the assembled application serves both reads inside one read-only snapshot,
         {
           label: 'Pause dispatch',
           verb: 'pause',
-          tool: 'session.dispatch',
+          tool: 'session.write:dispatch',
           input: { enabled: false },
           allowed: true,
         },
@@ -1281,7 +1281,7 @@ test('the assembled application serves both reads inside one read-only snapshot,
     answer.lanes.work.summaries
       .find(({ owner }) => owner === 'probe')
       ?.actions.map(({ tool }) => tool),
-    ['session.dispatch'],
+    ['session.write:dispatch'],
   );
   const read = await tool('ui.running_panel', reader, { key: 'probe:read' });
   assert.equal(read.body.result.header.title, 'Read in the snapshot');

@@ -29,7 +29,7 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
   const [actor, project, workflows] = await Promise.all([
     tools.call('actor.whoami', caller, {}),
     tools.call('project.get', caller, {}),
-    answer(() => tools.call('workflow.catalog', caller, {})),
+    answer(() => tools.call('workflow.read:catalog', caller, {})),
   ]);
   return { actor: actor as Json, project: project as Json, workflows: workflows ?? [] };
 }

@@ -713,7 +713,7 @@ export class ApiServer {
             : [
                 this.tools.instructions(),
                 'A tool whose description says so takes its action\'s arguments under the key of the same name, as {"action":"x","x":{…}}. These tools are written for ordinary function calling; strict-mode adapters (every property required) are not supported.',
-                'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.brief and workflow.status_and_next. Never ask for, print or read Merv keys or ~/.merv.',
+                'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.',
               ]
                 .filter(Boolean)
                 .join('\n\n'),

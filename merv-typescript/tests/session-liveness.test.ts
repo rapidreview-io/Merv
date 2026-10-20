@@ -979,7 +979,7 @@ test('a ready step nobody takes is quiet, an operator step included, and a faili
     report.items.map((item) => [item.kind, item.instanceId, item.expectedRevision, item.attempts]),
     [['dispatch_held', target.id, 0, 2]],
   );
-  assert.match(report.items[0].next, /session\.release_hold/);
+  assert.match(report.items[0].next, /session\.write release_hold/);
   const status = await f.sessions.dispatch.projectStatus(f.owner);
   assert.deepEqual(status.stuck, { total: report.total, counts: report.counts });
   assert.deepEqual([status.stuck.total, status.stuck.counts.dispatch_held], [1, 1]);
@@ -1098,20 +1098,12 @@ test('the assembled application offers the stuck report as a read tool and the g
     listed.map((tool) => [tool.name, 'readOnly' in tool && tool.readOnly === true]),
     [
       ['session.ask_owner', false],
-      ['session.ask_thread', false],
       ['session.await_compute', false],
-      ['session.dispatch', false],
-      ['session.find', true],
-      ['session.halt', false],
-      ['session.message', false],
       ['session.message.ack', false],
       ['session.messages', true],
-      ['session.observe', true],
       ['session.question.resolve', false],
-      ['session.release_hold', false],
-      ['session.stuck', true],
-      ['session.thread_messages', true],
-      ['session.threads', true],
+      ['session.read', true],
+      ['session.write', false],
     ],
   );
   const task = await currentTask(app.ctx, owner, {

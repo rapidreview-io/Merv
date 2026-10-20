@@ -267,7 +267,7 @@ function ReviewRecord({ id }: { id: string }) {
   const rows = useRows();
   const subject = subjectId ? recordNames(null, home, rows).get(subjectId) : undefined;
   const guidance = useTool<WorkflowDecision>(
-    review.data && !review.data.verdict ? 'workflow.status_and_next' : null,
+    review.data && !review.data.verdict ? 'workflow.read:status' : null,
     { instanceId: subjectId ?? '' },
     { every: 8000 },
   );
@@ -442,7 +442,7 @@ export const useClaim = (reviewId: string | undefined, onClaimed: () => void) =>
 
 /**
  * What a reader may do is the server's answer, never the browser's: the subject's
- * workflow.status_and_next names review.start and review.submit with the readiness
+ * workflow.read status names review.start and review.submit with the readiness
  * and blockers it evaluated for this caller (packages/workflows/src/evaluation.ts).
  */
 function Controls({
@@ -520,7 +520,7 @@ function Release({ review, onDone }: { review: Review; onDone(): void }) {
     onSuccess: () => {
       done.current = true;
       onDone();
-      refreshTools('ui.home', 'ui.running', 'review.read:list', 'workflow.status_and_next');
+      refreshTools('ui.home', 'ui.running', 'review.read:list', 'workflow.read:status');
     },
   });
   return (

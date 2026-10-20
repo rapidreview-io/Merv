@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do research in a Merv project. Orient with project.brief and workflow.status_and_next, then create experiments, attach plans and evidence, move them through independent review, and keep files as artifacts. Use for experiment, task, review or file work in Merv.
+description: Do research in a Merv project. Orient with project.brief and workflow.read status, then create experiments, attach plans and evidence, move them through independent review, and keep files as artifacts. Use for experiment, task, review or file work in Merv.
 ---
 
 # Research in Merv
@@ -18,9 +18,9 @@ call. Each tool's description is its contract; this skill is the order to use th
    it, then call it again with the code they give you.
 1. `project.brief`: your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
-2. `workflow.status_and_next` with no `instanceId`: every unfinished record, what it waits on
+2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on
    and what comes next. Work whose review rounds are used up is listed under escalated.
-3. `workflow.status_and_next` with an `instanceId` (a work item's id): its gate, your next
+3. `workflow.read` (status) with an `instanceId` (a work item's id): its gate, your next
    action, blockers, references, revision, and `limits` (review rounds used and left at each
    gate). The guidance it returns is how the server says what it expects: follow it.
 4. Read more as needed: `project.records` indexes every task and experiment, `experiment.read` (get)

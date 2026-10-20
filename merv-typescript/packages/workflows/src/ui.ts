@@ -40,7 +40,7 @@ export function limitMarks({ admin, items }: Awaited<ReturnType<Workflows['escal
               },
               ask: { field: 'reason', label: 'Reason', value: 'Worth trying again' },
             }),
-        tool: 'workflow.extend_limit',
+        tool: 'workflow.write:extend_limit',
         input: { instanceId, limit: name, additional: exhausted ? 1 : 0 },
         allowed: true,
         requestId: true,

@@ -736,11 +736,8 @@ export interface SessionMessaging {
   ): Promise<void>;
 }
 /** The input of `session.ask_thread`: one question to one thread's agent. */
-export interface ThreadInquiryInput {
-  threadId: string;
-  body: string;
-  requestId: string;
-}
+/** A question to a thread's agent takes what a message to its thread does. */
+export type ThreadInquiryInput = SessionMessageInput;
 export interface SessionInquiries {
   /**
    * Whoever may write in the project asks a thread's agent: an inquiry visit resumes its saved

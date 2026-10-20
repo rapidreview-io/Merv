@@ -97,21 +97,20 @@ test(
     const f = await fixture(t);
     const client = await f.connect(f.producer.token);
     const catalog = (await client.listTools()).tools;
-    const assignmentTool = catalog.find((tool) => tool.name === 'workflow.assignment')!;
-    const beginTool = catalog.find((tool) => tool.name === 'workflow.begin')!;
-    assert.equal(assignmentTool.annotations?.readOnlyHint, true);
-    assert.equal(beginTool.annotations?.readOnlyHint, false);
-    assert.deepEqual(Object.keys(assignmentTool.inputSchema.properties!).sort(), [
-      'instanceId',
-      'projectId',
-    ]);
-    assert.deepEqual(Object.keys(beginTool.inputSchema.properties!).sort(), [
+    // An agent is listed the nouns; each action's object is as strict as the old tool was.
+    const readTool = catalog.find((tool) => tool.name === 'workflow.read')!;
+    const writeTool = catalog.find((tool) => tool.name === 'workflow.write')!;
+    assert.equal(readTool.annotations?.readOnlyHint, true);
+    assert.equal(writeTool.annotations?.readOnlyHint, false);
+    const object = (tool: typeof readTool, action: string) =>
+      tool.inputSchema.properties![action] as { properties: object; additionalProperties: boolean };
+    assert.deepEqual(Object.keys(object(readTool, 'assignment').properties), ['instanceId']);
+    assert.deepEqual(Object.keys(object(writeTool, 'begin').properties).sort(), [
       'expectedRevision',
       'instanceId',
-      'projectId',
     ]);
-    assert.equal(assignmentTool.inputSchema.additionalProperties, false);
-    assert.equal(beginTool.inputSchema.additionalProperties, false);
+    assert.equal(object(readTool, 'assignment').additionalProperties, false);
+    assert.equal(object(writeTool, 'begin').additionalProperties, false);
     const before = await f.durable();
     for (const [tool, base] of [
       ['workflow.assignment', { instanceId: f.task.id }],

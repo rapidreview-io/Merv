@@ -1108,12 +1108,12 @@ test('a worker is not shown the reads that answer only a person, which still ref
   const offer = await f.offer();
   const client = await f.connect(offer.secret);
   const listed = (await client.listTools()).tools.map((tool) => tool.name);
+  // The reads it replaced stay hidden from a worker under their old names too.
+  const retired = ['find', 'threads', 'thread_messages', 'observe', 'stuck'].map(
+    (n) => `session.${n}`,
+  );
   const people = [
-    'session.find',
-    'session.threads',
-    'session.thread_messages',
-    'session.observe',
-    'session.stuck',
+    'session.read',
     'ui.running',
     'ui.running_panel',
     'ui.shell',
@@ -1127,7 +1127,7 @@ test('a worker is not shown the reads that answer only a person, which still ref
   ];
   // Nor the names screen.read retired, which were never a worker's either.
   assert.deepEqual(
-    [...people, 'profiled.read', 'screen.look', 'screen.show'].filter((name) =>
+    [...people, ...retired, 'profiled.read', 'screen.look', 'screen.show'].filter((name) =>
       listed.includes(name),
     ),
     [],

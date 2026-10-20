@@ -304,7 +304,7 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
     [
       [
         `work:${instance.id}`,
-        'workflow.extend_limit',
+        'workflow.write:extend_limit',
         { instanceId: instance.id, limit: 'review_returns', additional: 1 },
       ],
     ],
@@ -582,7 +582,7 @@ test('work waiting in a state whose rule extends a limit is marked with the admi
   );
   const [mark] = limitMarks({ admin, items });
   assert.equal(mark.key, `work:${instance.id}`);
-  assert.equal(mark.action?.tool, 'workflow.extend_limit');
+  assert.equal(mark.action?.tool, 'workflow.write:extend_limit');
   // Once a round is allowed it still waits there for the move that resumes it.
   await f.workflows.extendLimit(f.owner, {
     instanceId: instance.id,

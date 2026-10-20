@@ -104,19 +104,12 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     const toolsBefore = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(
       toolsBefore.filter((name) => name.startsWith('workflow.')),
-      [
-        'workflow.assignment',
-        'workflow.begin',
-        'workflow.catalog',
-        'workflow.extend_limit',
-        'workflow.process',
-        'workflow.status_and_next',
-      ],
+      ['workflow.read', 'workflow.write'],
     );
     const taskNames = toolsBefore.filter(
       (name) => name.startsWith('task.') || name.startsWith('workflow.'),
     );
-    assert.equal(taskNames.length, 8);
+    assert.equal(taskNames.length, 4);
     assert.ok(taskNames.includes('task.write'));
 
     const nounTask = await call(client, 'task.read', { action: 'get', get: { taskId: task.id } });

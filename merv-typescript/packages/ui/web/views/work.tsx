@@ -616,7 +616,7 @@ export function CycleMove({
   // A move it refuses may wait on what that read does not show (a consolidation's code reaching
   // main), so while it refuses it is checked again now and then, never left refused for good.
   const checked = useTool<WorkflowDecision>(
-    open ? 'workflow.status_and_next' : null,
+    open ? 'workflow.read:status' : null,
     { instanceId: cycle.id },
     {
       every: (decision) =>
@@ -669,7 +669,7 @@ export function CycleMove({
       label={label}
       onSaved={() => {
         onSaved();
-        refreshTools('ui.home', 'workflow.status_and_next');
+        refreshTools('ui.home', 'workflow.read:status');
       }}
     />
   );

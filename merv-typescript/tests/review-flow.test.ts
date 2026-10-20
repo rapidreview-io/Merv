@@ -169,7 +169,7 @@ test('a task whose review rounds are used up is offered only what ends it, and i
   // The Running card carries the admin's control.
   const board = (await f.tool('ui.running', f.boot.token)).body.result as RunningBoard;
   const card = board.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
-  assert.equal(card?.attention?.action?.tool, 'workflow.extend_limit', JSON.stringify(card));
+  assert.equal(card?.attention?.action?.tool, 'workflow.write:extend_limit', JSON.stringify(card));
   assert.deepEqual(card?.attention?.action?.input, {
     instanceId: task.id,
     limit: 'review_rounds',

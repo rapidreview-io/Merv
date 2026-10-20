@@ -13,7 +13,7 @@ machinery and steer it. Read first; every control below changes what runs.
 - `system.status`: the first read for any operational question. Dispatch, Fleet allocations,
   runners, sessions, waiting work, blockers and model-budget waits. It changes nothing; do not
   propose a control just to inspect.
-- `session.stuck`: everything that stopped moving, and why. Each item has `kind`, `code`, `why`
+- `session.read` (stuck): everything that stopped moving, and why. Each item has `kind`, `code`, `why`
   and `next`; why and next are advice, and the server still enforces every guard. Kinds include:
   - session_idle: no Merv call for a while. Not proof of a problem; it may be computing.
   - dispatch_held: withheld from automatic dispatch after failed launches.
@@ -21,17 +21,17 @@ machinery and steer it. Read first; every control below changes what runs.
     (code `agent_question`, see the owners-agent skill).
   - work_waiting: waiting for its compute; it comes back by itself.
   - ready_quiet, dispatch_disabled, no_live_runner.
-- `workflow.status_and_next` with an `instanceId`: one work item's gate and blockers.
+- `workflow.read` (status) with an `instanceId`: one work item's gate and blockers.
 - `usage.read`: what closed sessions cost, in wall minutes (measured by Merv) and tokens
   (self-reported by the machine).
 
 ## Steering a worker
 
-1. `session.find` with the work's `instanceId` returns its current and latest session and the
-   `threadId`; `session.threads` lists the thread of every stage.
-2. `session.observe` with a `threadId` shows that thread's recent Merv calls;
-   `session.thread_messages` shows the messages to it and the questions its agent asked.
-3. `session.message` with `threadId`, `body` and `requestId` queues a durable message that the
+1. `session.read` (find) with the work's `instanceId` returns its current and latest session and the
+   `threadId`; `session.read` (threads) lists the thread of every stage.
+2. `session.read` (calls) with a `threadId` shows that thread's recent Merv calls;
+   `session.read` (messages) shows the messages to it and the questions its agent asked.
+3. `session.write` (message) with `threadId`, `body` and `requestId` queues a durable message that the
    live visit, or the next one, reads.
 
 A pending message refuses the worker's next Merv calls until it acknowledges, so say everything
@@ -42,12 +42,12 @@ replacement work that refers to the earlier evidence.
 
 ## Controls (project admins)
 
-- `session.dispatch`: turn automatic dispatch on or off.
-- `session.halt`: close one session, or without a session id turn dispatch off and close all.
-- `session.release_hold`: let dispatch offer a held target again once its cause is fixed.
-- `usage.set_budget`: bound agents' work in wall minutes or tokens, on the project or one item
+- `session.write` (dispatch): turn automatic dispatch on or off.
+- `session.write` (halt): close one session, or without a session id turn dispatch off and close all.
+- `session.write` (release_hold): let dispatch offer a held target again once its cause is fixed.
+- `session.write` (budget): bound agents' work in wall minutes or tokens, on the project or one item
   and what it depends on. Reaching it pauses automatic dispatch; nothing running is stopped.
-- `workflow.extend_limit`: allow more rounds of an exhausted review loop (gate
+- `workflow.write` (extend_limit): allow more rounds of an exhausted review loop (gate
   loop_limit_reached), with a reason.
 
 ## Machines

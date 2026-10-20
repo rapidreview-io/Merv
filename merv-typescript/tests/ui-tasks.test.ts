@@ -648,7 +648,7 @@ const buttons = () =>
 test('a move the gate refuses is not offered, and what it waits on is named with its state', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/workflow.status_and_next',
+    '/tools/workflow.read:status',
     cycleGate('researching', {
       status: 'blocked',
       blockers: [
@@ -673,7 +673,7 @@ test('a move the gate refuses is not offered, and what it waits on is named with
 test('a plan that continues is answered from the page: create the next wave, or skip it', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/workflow.status_and_next',
+    '/tools/workflow.read:status',
     cycleGate('consolidating', {
       status: 'needs_input',
       requiredInput: ['nextWave'],
@@ -697,7 +697,7 @@ test('a plan that continues is answered from the page: create the next wave, or 
 test('a consolidation task that ended without acceptance is retried from the page', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/workflow.status_and_next',
+    '/tools/workflow.read:status',
     cycleGate('consolidating', {
       status: 'blocked',
       blockers: [{ code: 'integration_failed', status: 409, message: 'The task ended failed.' }],
@@ -718,7 +718,7 @@ test('a choice the gate asks for is drawn as Research names it, and nothing in i
     requiredInput: ['nextWave'],
     blockers: [{ code: 'input_required', status: 400, message: 'Supply nextWave.' }],
   });
-  serve('/tools/workflow.status_and_next', asked);
+  serve('/tools/workflow.read:status', asked);
   // Whatever Research declares is what the page offers, sent as declared.
   const declared = {
     ...cyclesRow,
@@ -740,7 +740,7 @@ test('a choice the gate asks for is drawn as Research names it, and nothing in i
   assert.equal(sent[0]!.nextWave, 'create');
   await unmount();
   // A choice Research does not name is not invented: the plain move stands.
-  serve('/tools/workflow.status_and_next', asked);
+  serve('/tools/workflow.read:status', asked);
   await mount(page('consolidating', []));
   await settle(10);
   assert.deepEqual(buttons(), [['Start next step', false]]);
@@ -753,14 +753,14 @@ test('an unwritten definition is the way to the paper, automatic or not, as Rese
     blockers: [{ code: 'research_definition_required', status: 409, message: 'Fill it.' }],
   });
   const paperRow = { id: 'paper', path: '/paper', view: { kind: 'paper' } };
-  serve('/tools/workflow.status_and_next', undefinedGate);
+  serve('/tools/workflow.read:status', undefinedGate);
   await mount(page('defining', [cyclesRow, paperRow]));
   await settle(10);
   assert.deepEqual(buttons(), []);
   assert.equal(document.querySelector('a[href="/paper"]')?.textContent, 'Write the definition ');
   await unmount();
   // With no paper to write it on, the move stands disabled over what it waits on.
-  serve('/tools/workflow.status_and_next', undefinedGate);
+  serve('/tools/workflow.read:status', undefinedGate);
   await mount(page('defining'));
   await settle(10);
   assert.deepEqual(buttons(), [['Start next step', true]]);
@@ -787,7 +787,7 @@ test('an automatic run offers its stop, and only the answers Research names for 
     status: 'blocked',
     blockers: [{ code: 'integration_failed', status: 409, message: 'The task ended failed.' }],
   });
-  serve('/tools/workflow.status_and_next', gate);
+  serve('/tools/workflow.read:status', gate);
   await mount(automatic('research_definition_changed'));
   await settle(10);
   assert.deepEqual(buttons(), [
@@ -796,7 +796,7 @@ test('an automatic run offers its stop, and only the answers Research names for 
   ]);
   assert.ok(text().includes('Stopped: research_definition_changed.'));
   await unmount();
-  serve('/tools/workflow.status_and_next', gate);
+  serve('/tools/workflow.read:status', gate);
   await mount(automatic('research_waiting'));
   await settle(10);
   assert.deepEqual(buttons(), [['Stop automatic research', false]]);
@@ -839,7 +839,7 @@ test('an ended cycle that still asks its owner offers the stop Research names fo
 
 test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
   t.after(unmount);
-  serve('/tools/workflow.status_and_next', cycleGate('researching', { status: 'ready' }));
+  serve('/tools/workflow.read:status', cycleGate('researching', { status: 'ready' }));
   await mount(page('researching'));
   await settle(10);
   assert.deepEqual(buttons(), [['Start next step', false]]);
@@ -907,7 +907,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
       },
     ],
   });
-  serve('/tools/workflow.status_and_next', reflecting);
+  serve('/tools/workflow.read:status', reflecting);
   // A wave opens on the page of the row that lists its workflow.
   const waves = { id: 'reflections', path: '/reflections', workflow: 'reflection' };
   serve('/tools/ui.shell', {
@@ -951,7 +951,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
   );
   await unmount();
   // The cycle's own page already lists what it waits on, the wave among them: only the move.
-  serve('/tools/workflow.status_and_next', reflecting);
+  serve('/tools/workflow.read:status', reflecting);
   await mount(move(true));
   await settle(10);
   assert.deepEqual(buttons(), [['End cycle', false]]);

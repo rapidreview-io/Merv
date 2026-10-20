@@ -255,16 +255,12 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   });
   assert.equal(response.status, 200);
   const catalog = (await response.json()) as { tools: { name: string }[] };
-  assert.equal(catalog.tools.length, 78);
+  assert.equal(catalog.tools.length, 65);
   assert.ok(!catalog.tools.some(({ name }) => name === 'code.backup.run'));
   for (const name of [
     'reflection.write',
-    'session.dispatch',
-    'session.halt',
-    'session.observe',
-    'session.threads',
-    'session.find',
-    'session.message',
+    'session.read',
+    'session.write',
     'session.messages',
     'session.message.ack',
     'system.status',

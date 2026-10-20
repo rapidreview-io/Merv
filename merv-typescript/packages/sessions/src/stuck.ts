@@ -348,7 +348,7 @@ async function attention(
       attempts: row.attempts,
       why: row.last_message,
       next: row.held_at
-        ? 'Fix the cause, then an admin calls session.release_hold; or end or revise the record, because a hold names one revision. The hold stops automatic offers only: an offer made by hand still runs, and its failure counts.'
+        ? 'Fix the cause, then an admin calls session.write release_hold; or end or revise the record, because a hold names one revision. The hold stops automatic offers only: an offer made by hand still runs, and its failure counts.'
         : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts${row.last_message === STOPPED_WITHOUT_HANDOFF ? ', or as soon as its agent stops again without a handoff' : ''}.`,
     });
   }
@@ -401,11 +401,11 @@ async function attention(
       why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
       next:
         code === 'awaiting_operator'
-          ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
+          ? 'It is an operator’s step: no runner is ever offered it. workflow.read status on the instance names the action.'
           : code === 'usage_unavailable'
-            ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
+            ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or session.write budget clearing that bound, resumes it.'
             : code === 'budget_exceeded'
-              ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
+              ? 'A reached budget withholds it; usage.read shows which, and session.write budget raises or clears it.'
               : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
     });
   }

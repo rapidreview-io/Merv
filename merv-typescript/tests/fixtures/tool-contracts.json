@@ -1514,6 +1514,327 @@
         "status": 403,
         "error": "forbidden"
       }
+    },
+    "session.find": {
+      "input": {
+        "instanceId": "$experiment"
+      },
+      "owner": {
+        "ok": ["current", "latest"]
+      },
+      "reader": {
+        "ok": ["current", "latest"]
+      }
+    },
+    "session.threads": {
+      "input": {
+        "instanceId": "$experiment"
+      },
+      "owner": {
+        "ok": ["threads"]
+      },
+      "reader": {
+        "ok": ["threads"]
+      }
+    },
+    "session.thread_messages": {
+      "input": {
+        "threadId": "thread_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "thread_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "thread_not_found"
+      }
+    },
+    "session.observe": {
+      "input": {
+        "threadId": "thread_missing"
+      },
+      "owner": {
+        "status": 404,
+        "error": "thread_not_found"
+      },
+      "reader": {
+        "status": 404,
+        "error": "thread_not_found"
+      }
+    },
+    "session.stuck": {
+      "input": {},
+      "owner": {
+        "ok": ["counts", "items", "observedAt", "thresholds", "total", "truncated"]
+      },
+      "reader": {
+        "ok": ["counts", "items", "observedAt", "thresholds", "total", "truncated"]
+      }
+    },
+    "session.message": {
+      "input": {
+        "threadId": "thread_missing",
+        "body": "Hello",
+        "requestId": "message"
+      },
+      "owner": {
+        "status": 404,
+        "error": "thread_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "session.ask_thread": {
+      "input": {
+        "threadId": "thread_missing",
+        "body": "Why?",
+        "requestId": "ask"
+      },
+      "owner": {
+        "status": 404,
+        "error": "thread_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "session.dispatch": {
+      "input": {
+        "enabled": false
+      },
+      "owner": {
+        "ok": ["enabled", "fleet", "ownMachines", "updatedAt", "updatedBy"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "session.halt": {
+      "input": {
+        "reason": "pause"
+      },
+      "owner": {
+        "ok": ["halted"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "session.release_hold": {
+      "input": {
+        "instanceId": "$experiment",
+        "expectedRevision": 0,
+        "reason": "Fixed",
+        "requestId": "release"
+      },
+      "owner": {
+        "status": 404,
+        "error": "hold_not_found"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "usage.set_budget": {
+      "input": {
+        "maxWallMinutes": 600
+      },
+      "owner": {
+        "ok": [
+          "exceeded",
+          "kind",
+          "maxTokens",
+          "maxWallMs",
+          "scopeId",
+          "unavailable",
+          "unreportedSessions",
+          "updatedAt",
+          "updatedBy",
+          "used"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "workflow.status_and_next": {
+      "input": {
+        "instanceId": "$experiment"
+      },
+      "owner": {
+        "ok": [
+          "actions",
+          "available",
+          "blockers",
+          "currentGate",
+          "dependencies",
+          "instanceId",
+          "instruction",
+          "label",
+          "limits",
+          "nextAction",
+          "providerBlockers",
+          "references",
+          "revision",
+          "state",
+          "terminal",
+          "version",
+          "workStart",
+          "workflow"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "actions",
+          "available",
+          "blockers",
+          "currentGate",
+          "dependencies",
+          "instanceId",
+          "instruction",
+          "label",
+          "limits",
+          "nextAction",
+          "providerBlockers",
+          "references",
+          "revision",
+          "state",
+          "terminal",
+          "version",
+          "workStart",
+          "workflow"
+        ]
+      }
+    },
+    "workflow.assignment": {
+      "input": {
+        "instanceId": "$experiment"
+      },
+      "owner": {
+        "ok": [
+          "actorId",
+          "brief",
+          "context",
+          "execution",
+          "handoff",
+          "instanceId",
+          "label",
+          "name",
+          "projectId",
+          "references",
+          "revision",
+          "role",
+          "state",
+          "version",
+          "workStart",
+          "workflow"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "workflow.process": {
+      "input": {
+        "instanceId": "$experiment"
+      },
+      "owner": {
+        "ok": [
+          "currentGate",
+          "dependencies",
+          "edges",
+          "instanceId",
+          "nodes",
+          "revision",
+          "state",
+          "terminal",
+          "version",
+          "workflow"
+        ]
+      },
+      "reader": {
+        "ok": [
+          "currentGate",
+          "dependencies",
+          "edges",
+          "instanceId",
+          "nodes",
+          "revision",
+          "state",
+          "terminal",
+          "version",
+          "workflow"
+        ]
+      }
+    },
+    "workflow.catalog": {
+      "input": {},
+      "owner": {
+        "ok": {
+          "array": ["edges", "initial", "managed", "name", "states", "terminal", "version"]
+        }
+      },
+      "reader": {
+        "ok": {
+          "array": ["edges", "initial", "managed", "name", "states", "terminal", "version"]
+        }
+      }
+    },
+    "workflow.begin": {
+      "input": {
+        "instanceId": "$experiment",
+        "expectedRevision": 0
+      },
+      "owner": {
+        "ok": [
+          "actorId",
+          "brief",
+          "context",
+          "execution",
+          "handoff",
+          "instanceId",
+          "label",
+          "name",
+          "projectId",
+          "references",
+          "revision",
+          "role",
+          "state",
+          "version",
+          "workStart",
+          "workflow"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "workflow.extend_limit": {
+      "input": {
+        "instanceId": "$experiment",
+        "limit": "review_rounds",
+        "additional": 1,
+        "reason": "One more",
+        "requestId": "extend"
+      },
+      "owner": {
+        "status": 404,
+        "error": "unknown_limit"
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
     }
   }
 }

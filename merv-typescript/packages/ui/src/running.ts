@@ -203,9 +203,11 @@ export const unitOf = parsed(runningSchema.runningUnit);
  * does not have, or input that is not a small JSON object, is not sent either. The input
  * goes to the browser as it came and is sent back as it is.
  */
+/** Whether this server has a control's tool: a noun tool's action is named by its address. */
+const serves = (tools: ReadonlySet<string>, tool: string) => tools.has(tool.split(':')[0]!);
 export function actionOf(value: unknown, tools: ReadonlySet<string>): RunningAction | null {
   const action = parsed(runningAction)(value);
-  return action && tools.has(action.tool) ? action : null;
+  return action && serves(tools, action.tool) ? action : null;
 }
 const actionsOf = (value: unknown, tools: ReadonlySet<string>): RunningAction[] =>
   Array.isArray(value) ? kept(value, (action) => actionOf(action, tools)) : [];
@@ -215,7 +217,7 @@ function offered<T extends RunningAttention | undefined>(
   attention: T,
   tools: ReadonlySet<string>,
 ): T {
-  if (!attention?.action || tools.has(attention.action.tool)) return attention;
+  if (!attention?.action || serves(tools, attention.action.tool)) return attention;
   const { action: _, ...rest } = attention;
   return rest as T;
 }
@@ -226,7 +228,7 @@ export function summaryOf(value: unknown, tools: ReadonlySet<string>): RunningSu
     summary && {
       ...summary,
       ...(summary.attention ? { attention: offered(summary.attention, tools) } : {}),
-      actions: summary.actions.filter(({ tool }) => tools.has(tool)),
+      actions: summary.actions.filter(({ tool }) => serves(tools, tool)),
     }
   );
 }

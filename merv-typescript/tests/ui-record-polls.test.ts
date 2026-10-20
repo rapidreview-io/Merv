@@ -270,7 +270,7 @@ test('an open cycle page checks its gate as it opens and again only when the cyc
     process: { ...graph('planning', false), revision },
   });
   serve('/tools/ui.read', () => ({ body: { result: cycle() } }));
-  serve('/tools/workflow.status_and_next', () => ({
+  serve('/tools/workflow.read:status', () => ({
     body: {
       result: {
         instanceId: 'wf_1',
@@ -293,13 +293,13 @@ test('an open cycle page checks its gate as it opens and again only when the cyc
   }));
   await open('/research/wf_1', ResearchView);
   assert.ok(document.body.textContent!.includes('Start next step'));
-  assert.equal(reads('/tools/workflow.status_and_next'), 1);
+  assert.equal(reads('/tools/workflow.read:status'), 1);
   // The page's check-free read polls; the cycle stands still, so its gate is not checked again.
   await settle(10_600);
   assert.ok(reads('/tools/ui.read') >= 2, 'the page polls its check-free read');
-  assert.equal(reads('/tools/workflow.status_and_next'), 1, 'no check while nothing moved');
+  assert.equal(reads('/tools/workflow.read:status'), 1, 'no check while nothing moved');
   // The cycle moves: its gate is checked again.
   revision = 5;
   await settle(8_600);
-  assert.equal(reads('/tools/workflow.status_and_next'), 2);
+  assert.equal(reads('/tools/workflow.read:status'), 2);
 });

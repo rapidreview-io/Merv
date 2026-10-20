@@ -54,20 +54,12 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 46);
+    assert.equal(catalog.length, 33);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
     );
-    for (const name of [
-      'system.status',
-      'session.dispatch',
-      'session.halt',
-      'session.observe',
-      'session.threads',
-      'session.find',
-      'session.message',
-    ])
+    for (const name of ['system.status', 'session.read', 'session.write'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,
@@ -116,14 +108,7 @@ test('assembled Cordis application preserves current MCP task closure across two
     assert.ok(catalog.find((tool) => tool.name === 'project.brief')!.description!.length < 300);
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),
-      [
-        'workflow.assignment',
-        'workflow.begin',
-        'workflow.catalog',
-        'workflow.extend_limit',
-        'workflow.process',
-        'workflow.status_and_next',
-      ],
+      ['workflow.read', 'workflow.write'],
     );
     // Record listings stay out of the catalog; workflow.catalog is the machine's shape only.
     for (const name of ['workflow.list', 'workflow.get', 'workflow.history']) {
@@ -161,7 +146,9 @@ test('assembled Cordis application preserves current MCP task closure across two
     const read = await call(producer, 'task.get', { taskId: task.id });
     assert.deepEqual(guidance, read.guidance);
     assert.ok(guidance.nextAction);
-    assert.equal(guidance.nextAction.tool, 'workflow.begin');
+    // An owner is told the noun, its arguments under the action's own name.
+    assert.equal(guidance.nextAction.tool, 'workflow.write');
+    assert.equal(guidance.nextAction.arguments.action, 'begin');
     assert.equal(guidance.nextAction.status, 'ready');
     const httpGuidance = await fetch(`${app.ctx.api.url}/tools/workflow.status_and_next`, {
       method: 'POST',
@@ -461,9 +448,9 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
       'task.read get returns',
       'paper.write patch (kind problem)',
       'change the Problem to change it',
-      'session.find with',
-      'session.stuck says',
-      'workflow.status_and_next and workflow.assignment',
+      'session.read find with',
+      'session.read stuck says',
+      'workflow.read status and assignment',
     ])
       assert.ok(app.ctx.tools.instructions().includes(part), part);
     const named = [
@@ -479,7 +466,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     // A budget Pi or an MCP client writes into a brief is one Merv holds, said once, in the
     // guide both get: Sandboxes' USD caps, a dispatch budget in wall minutes or tokens, the
     // person's daily tokens; never agents' or reviews' dollars.
-    assert.match(researchGuide, /usage\.set_budget/);
+    assert.match(researchGuide, /session\.write budget/);
     assert.match(researchGuide, /Fleet daily token limit/);
     assert.match(researchGuide, /Never write a dollar cap for agents or reviews/);
     assert.equal(named.split('Never write a dollar cap').length, 2);
@@ -500,9 +487,12 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const mcp = await client(app.ctx.api.url!, credentials.token);
     assert.ok(mcp.getInstructions()?.startsWith(app.ctx.tools.instructions()));
     // The Sessions page's controls, as tools.
-    assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
-    assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });
-    const observed = await mcp.callTool({ name: 'session.observe', arguments: { threadId: 'x' } });
+    const control = { action: 'dispatch', dispatch: { enabled: true } };
+    assert.equal((await call(mcp, 'session.write', control)).enabled, true);
+    const halt = { action: 'halt', halt: { reason: 'pause' } };
+    assert.deepEqual(await call(mcp, 'session.write', halt), { halted: 0 });
+    const calls = { action: 'calls', calls: { threadId: 'x' } };
+    const observed = await mcp.callTool({ name: 'session.read', arguments: calls });
     assert.match(JSON.stringify(observed.content), /thread_not_found/);
     await mcp.close();
   } finally {

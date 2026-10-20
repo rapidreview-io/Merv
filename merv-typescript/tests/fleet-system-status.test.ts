@@ -120,6 +120,7 @@ async function status(t: TestContext) {
         if (tool.name === 'system.status') handler = tool.handler;
       },
       contributeInstructions: () => () => {},
+      noun: () => () => {},
     },
     effect: (register: () => unknown) => register(),
   } as unknown as Context);

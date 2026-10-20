@@ -203,7 +203,7 @@ async function fixture(
   });
   const sources: RunningSources = {
     contributions: () => ui.contributions(),
-    tools: async () => ['session.halt', 'session.dispatch', 'session.release_hold'],
+    tools: async () => ['session.write'],
     isolated: (read) => state.isolated(read),
     workflows: workflowsOf(() => workflows),
   };
@@ -491,7 +491,7 @@ test('the lane says how dispatch stands to everyone, and to an operator only how
     {
       label: 'Start dispatch',
       verb: 'start',
-      tool: 'session.dispatch',
+      tool: 'session.write:dispatch',
       input: { enabled: true },
       allowed: true,
       primary: true,
@@ -581,7 +581,7 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
   const release = {
     label: 'Release hold',
     verb: 'start',
-    tool: 'session.release_hold',
+    tool: 'session.write:release_hold',
     input: { instanceId: held.id, expectedRevision: held.revision },
     allowed: true,
     guard: {
@@ -754,7 +754,7 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
     {
       label: 'Halt lease',
       verb: 'halt',
-      tool: 'session.halt',
+      tool: 'session.write:halt',
       input: { sessionId: session.id, reason: 'halted_by_operator' },
       allowed: true,
       guard: undefined,
@@ -1038,7 +1038,12 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
   });
   assert.deepEqual(
     own.actions.map(({ tool, input }) => ({ tool, input })),
-    [{ tool: 'session.halt', input: { sessionId: offered.id, reason: 'halted_by_operator' } }],
+    [
+      {
+        tool: 'session.write:halt',
+        input: { sessionId: offered.id, reason: 'halted_by_operator' },
+      },
+    ],
   );
   // The real Git branch is useful workspace metadata and contains the work identity.
   noIds({ ...own, actions: [] }, [held.workspace.snapshot!.branch!]);

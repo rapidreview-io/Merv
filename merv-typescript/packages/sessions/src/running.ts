@@ -271,14 +271,14 @@ function laneSummary(reading: DispatchReading): RunningSummary {
     ? {
         label: 'Pause dispatch',
         verb: 'pause',
-        tool: 'session.dispatch',
+        tool: 'session.write:dispatch',
         input: { enabled: false },
         allowed: operator,
       }
     : {
         label: 'Start dispatch',
         verb: 'start',
-        tool: 'session.dispatch',
+        tool: 'session.write:dispatch',
         input: { enabled: true },
         allowed: operator,
         ...(waiting ? { primary: true } : {}),
@@ -317,7 +317,7 @@ const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) =>
 const releaseHold = (instanceId: string, revision: number): RunningAction => ({
   label: 'Release hold',
   verb: 'start',
-  tool: 'session.release_hold',
+  tool: 'session.write:release_hold',
   input: { instanceId, expectedRevision: revision },
   allowed: true,
   guard: {
@@ -877,7 +877,7 @@ export class SessionRunning {
       const halt: RunningAction = {
         label: 'Halt lease',
         verb: 'halt',
-        tool: 'session.halt',
+        tool: 'session.write:halt',
         input: { sessionId: row.id, reason: 'halted_by_operator' },
         allowed: operator && holding,
         guard: {

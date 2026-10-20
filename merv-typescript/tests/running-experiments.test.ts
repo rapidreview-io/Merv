@@ -408,7 +408,10 @@ test('a review state says who holds the review, and rounds used up need a person
   assert.deepEqual(own, capped);
   assert.deepEqual(
     [action?.tool, action?.input],
-    ['workflow.extend_limit', { instanceId: experiment.id, limit: 'design_rounds', additional: 1 }],
+    [
+      'workflow.write:extend_limit',
+      { instanceId: experiment.id, limit: 'design_rounds', additional: 1 },
+    ],
   );
   assert.equal(board.lanes.work.needsYou, 1);
   const sidebar = await f.panel(work(experiment.id));

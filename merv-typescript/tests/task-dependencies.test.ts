@@ -576,7 +576,10 @@ test('HTTP and MCP accept dependency input forms, reject extra keys and malforme
     );
     assert.deepEqual(await call('task.create', { ...input }), b);
     assert.deepEqual(await call('task.get', { taskId: b.id }), b);
-    assert.deepEqual(await call('workflow.status_and_next', { instanceId: b.id }), b.guidance);
+    // The same guidance, its actions told as this caller calls them (the task's own, raw).
+    const bare = (value: object) => ({ ...value, actions: undefined, nextAction: undefined });
+    const status = await call('workflow.status_and_next', { instanceId: b.id });
+    assert.deepEqual(bare(status), bare(b.guidance));
     for (const dependsOn of [a.id, null, []]) {
       const created = await call('task.create', { ...f.input(dependsOn) });
       assert.equal(created.dependencies.length, dependsOn === a.id ? 1 : 0);
@@ -607,7 +610,7 @@ test('HTTP and MCP accept dependency input forms, reject extra keys and malforme
     const task = await call('task.get', { taskId: b.id });
     const guidance = await call('workflow.status_and_next', { instanceId: b.id });
     const context = (await (await http('task.context', contextInput)).json()).result;
-    assert.deepEqual(task.guidance, guidance);
+    assert.deepEqual(bare(task.guidance), bare(guidance));
     assert.deepEqual(task.dependencies, guidance.dependencies);
     // Code may finish deriving the base between these reads without a workflow revision.
     // The context must still retain the same work and its declared prerequisites.

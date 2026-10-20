@@ -82,6 +82,25 @@ const retired = {
     (action) => `research.${action}`,
   ),
   reflection: ['list', 'get', 'lens', 'create', 'end'].map((action) => `reflection.${action}`),
+  session: [
+    'session.find',
+    'session.threads',
+    'session.thread_messages',
+    'session.observe',
+    'session.stuck',
+    'session.message',
+    'session.ask_thread',
+    'session.dispatch',
+    'session.halt',
+    'session.release_hold',
+    'usage.set_budget',
+    'workflow.status_and_next',
+    'workflow.assignment',
+    'workflow.process',
+    'workflow.catalog',
+    'workflow.begin',
+    'workflow.extend_limit',
+  ],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
@@ -106,6 +125,7 @@ const nouns = [
   'reflection.write',
   'report.read',
 ];
+nouns.push('session.read', 'session.write', 'workflow.read', 'workflow.write');
 
 /** A result's key shape, as the contract was captured. */
 const shape = (value: unknown): unknown =>
@@ -325,6 +345,14 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   // A kept name is shown its old flat input and text.
   assert.match(shown.get('board.read')!, /^Read the project's whiteboards\. Without board/);
   assert.doesNotMatch(JSON.stringify([...shown.values()]), /code\.(read|write) /);
+  // Its assignment is the frozen one in either form, and another record's is refused.
+  const frozen = (await app.ctx.tools.invoke('workflow.assignment', worker, {}, true)).value;
+  const own = { action: 'assignment', assignment: { instanceId: experiment.id } };
+  assert.deepEqual((await app.ctx.tools.invoke('workflow.read', worker, own, true)).value, frozen);
+  const other = { action: 'assignment', assignment: { instanceId: 'experiment_other' } };
+  await assert.rejects(app.ctx.tools.invoke('workflow.read', worker, other, true), {
+    code: 'execution_arguments_forbidden',
+  });
   // A noun read called by name is a read, admitted as given.
   const status = (await app.ctx.tools.invoke('code.read', worker, { action: 'status' }, true))
     .value;

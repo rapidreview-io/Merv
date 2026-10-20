@@ -118,7 +118,7 @@ const rejected = async (workflow: string, state: string, returns?: unknown[]) =>
   serve('/tools/review.read:get', {
     body: { result: { ...claimed, ...(returns && { returns }) } },
   });
-  serve('/tools/workflow.status_and_next', { body: { result: desk(workflow, state) } });
+  serve('/tools/workflow.read:status', { body: { result: desk(workflow, state) } });
   serve('/tools/review.write:submit', (_, body) => {
     submitted.body = body;
     return { body: { result: { id: 'review_1' } } };
@@ -172,7 +172,7 @@ test('the desk offers the verdicts the owning domain leaves this reader, and nam
   t.after(async () => await unmount());
   const verdicts = async (review: Record<string, unknown>, workflow = 'task') => {
     serve('/tools/review.read:get', { body: { result: review } });
-    serve('/tools/workflow.status_and_next', {
+    serve('/tools/workflow.read:status', {
       body: { result: desk(workflow, workflow === 'task' ? 'in_review' : 'experiment_review') },
     });
     await mount(page());
@@ -209,7 +209,7 @@ test('a Git task review nobody interactive can pass offers no claim, and says wh
   serve('/tools/review.read:get', {
     body: { result: { ...claimed, status: 'requested', reviewerId: null, claimId: null } },
   });
-  serve('/tools/workflow.status_and_next', {
+  serve('/tools/workflow.read:status', {
     body: {
       result: {
         ...desk('task', 'in_review'),
@@ -246,7 +246,7 @@ test('an owner the default leaves out decides the review as owner, with one cont
       },
     },
   });
-  serve('/tools/workflow.status_and_next', {
+  serve('/tools/workflow.read:status', {
     body: {
       result: {
         ...desk('task', 'in_review'),
@@ -280,7 +280,7 @@ test('an owner the default leaves out decides the review as owner, with one cont
 
   // A claim held back for another reason is not lifted by deciding as owner.
   const taken = 'Review is already claimed or closed';
-  serve('/tools/workflow.status_and_next', {
+  serve('/tools/workflow.read:status', {
     body: {
       result: {
         ...desk('task', 'in_review'),
@@ -372,7 +372,7 @@ test('a verdict the owner gave as owner says so where it says who gave it', asyn
 test('a review is named by what it judges, a reflection too, and the name leads back to it', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/review.read:get', { body: { result: claimed } });
-  serve('/tools/workflow.status_and_next', { body: { result: desk('reflection', 'in_review') } });
+  serve('/tools/workflow.read:status', { body: { result: desk('reflection', 'in_review') } });
   const reflections = { id: 'reflections', path: '/reflections', view: { kind: 'reflections' } };
   const element = page();
   serve('/tools/ui.shell', {
@@ -407,7 +407,7 @@ test('a review is named by what it judges, a reflection too, and the name leads 
 test('a check the review requires is met to pass, never waived, as review.submit decides', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/review.read:get', { body: { result: { ...claimed, requiredCriteria: [1] } } });
-  serve('/tools/workflow.status_and_next', {
+  serve('/tools/workflow.read:status', {
     body: { result: desk('experiment', 'design_review') },
   });
   await mount(page());
@@ -441,7 +441,7 @@ test('a draft belongs to its review: opening the next review starts it blank', a
   serve('/tools/review.read:get', (_, sent) => ({
     body: { result: { ...claimed, id: sent.reviewId } },
   }));
-  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/tools/workflow.read:status', { body: { result: desk('task', 'in_review') } });
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', {
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
@@ -493,7 +493,7 @@ test('the desk takes and refuses a synopsis exactly as review.submit does', asyn
   ];
   for (const synopsis of synopses) {
     serve('/tools/review.read:get', { body: { result: claimed } });
-    serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+    serve('/tools/workflow.read:status', { body: { result: desk('task', 'in_review') } });
     await mount(page());
     await settle(10);
     await click('not met');
@@ -546,13 +546,13 @@ test('a claim the reader may hand back is released on the desk, with a reason', 
   t.after(async () => await unmount());
   const sent: Record<string, unknown>[] = [];
   // Reviews says who may: without its word, the desk offers nothing.
-  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/tools/workflow.read:status', { body: { result: desk('task', 'in_review') } });
   serve('/tools/review.read:get', { body: { result: claimed } });
   await mount(page());
   await settle(10);
   assert.ok(!text().includes('Release review'));
   await unmount();
-  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/tools/workflow.read:status', { body: { result: desk('task', 'in_review') } });
   serve('/tools/review.read:get', { body: { result: { ...claimed, releasable: true } } });
   serve('/tools/review.write:release', (_, body) => {
     sent.push(body as Record<string, unknown>);

@@ -333,7 +333,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   const allow = {
     label: 'Allow another round',
     verb: 'extend',
-    tool: 'workflow.extend_limit',
+    tool: 'workflow.write:extend_limit',
     input: { instanceId: wave.id, limit: 'review_returns', additional: 1 },
   };
   const { action, ...own } = drawn(answer, wave)!.attention!;
@@ -362,7 +362,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
     [node.attention?.who, node.attention?.action?.tool],
     [
       'A project admin allows another round, or a person takes the next step by hand or ends it',
-      'workflow.extend_limit',
+      'workflow.write:extend_limit',
     ],
   );
 

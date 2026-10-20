@@ -864,8 +864,8 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
     }),
   );
   const catalog = (await mcp.listTools()).tools;
-  // A reader's agent is offered the default composition's 29 reads, and nisa.read.
-  assert.equal(catalog.length, 30);
+  // A reader's agent is offered the default composition's 22 reads, and nisa.read.
+  assert.equal(catalog.length, 23);
   for (const name of definitionsOf(new NisaService()))
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

@@ -29,7 +29,7 @@ test('a refused cycle move is checked again while it waits, though nothing on th
   serve('/tools/ui.read', () => ({
     body: { result: { record, process: { ...graph('consolidating', false), revision: 4 } } },
   }));
-  serve('/tools/workflow.status_and_next', () => ({
+  serve('/tools/workflow.read:status', () => ({
     body: {
       result: {
         instanceId: 'wf_1',
