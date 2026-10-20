@@ -93,6 +93,8 @@ export const codeCommandRecordSchema = z
           : value.error === null),
   );
 
+/** An operator binds the repository identity and names main; moving main is a compare-and-set. */
+export type CodeLocalBindInput = z.input<typeof codeLocalBindInputSchema>;
 export interface CodeProjectBinding {
   mode: 'local';
   repositoryId: string;
@@ -116,3 +118,11 @@ export interface CodeProjectBinding {
     operationId: string;
   }[];
 }
+export const codeLocalBindInputSchema = z
+  .object({
+    repositoryId: id,
+    mainOid: oid,
+    expectedMainOid: oid.optional(),
+    requestId: id,
+  })
+  .strict();

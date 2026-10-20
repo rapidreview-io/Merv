@@ -281,7 +281,8 @@ export class ToolRegistry implements Tools {
       inputSchema: action.input,
       readOnly: noun.readOnly,
       ...(action.openWorld && { openWorld: true }),
-      tier: noun.tier,
+      // Never loaded up front: a worker is listed it exactly as the old tool was.
+      tier: noun.tier === 'core' ? 'deferred' : noun.tier,
       handler: async (caller, input) => {
         const result = await action.handler(caller, input);
         return action.legacyResult ? action.legacyResult(result) : result;

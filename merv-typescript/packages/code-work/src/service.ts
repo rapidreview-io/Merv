@@ -527,8 +527,12 @@ export class CodeService implements Code {
       mirror: await this.mirrorStore.describe(caller.projectId),
     };
   }
-  importRepository = async (caller: Caller, input: unknown) =>
-    this.store.importRepository(caller, input);
+  /** A project from before Code initialized on creation gets its repository here, as on new work. */
+  importRepository = async (caller: Caller, input: unknown) => {
+    await this.state.transaction((tx) => this.ensureRepository(caller, tx));
+    await this.store.maintain(false);
+    return this.store.importRepository(caller, input);
+  };
   async prepareRepository(caller: Caller, value: CodeRepositoryPrepareInput) {
     caller = structuredClone(caller);
     const input = parseCodeInput(repositoryPrepareSchema, value);

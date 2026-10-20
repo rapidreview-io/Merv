@@ -13,6 +13,7 @@ import { AgentCallLog } from '../packages/api/src/call-log.js';
 import { describeTool, ToolRegistry } from '../packages/api/src/registry.js';
 import type { AgentToolCall, NounDefinition, ToolDefinition } from '../packages/api/src/types.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
+import { taskToolsPlugin } from '../packages/tasks/src/tools.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { PiProfiles } from '../packages/pi/src/profiles.js';
 import { profileGrants, requireGranted } from '../packages/pi/src/profile-tools.js';
@@ -102,6 +103,28 @@ test('a noun call takes its action and that action’s object, and names what it
     issues.map(({ path, message }) => [path.join('.'), message]),
     [
       ['base_retry', '"base_retry" belongs to action base_retry; this call is action unit_fence'],
+      [
+        'unit_fence',
+        'action unit_fence takes its arguments under "unit_fence": {unitId, requestId}',
+      ],
+    ],
+  );
+  // A string under the action's own key (an inner field of the same name, like transition's)
+  // with the arguments left flat is told where they go, not that a string is no object.
+  const misplaced = await refusal(
+    tools.call('code.write', owner, {
+      action: 'unit_fence',
+      unit_fence: 'abandon',
+      unitId: 'u',
+      requestId: 'r',
+    }),
+  );
+  assert.deepEqual(
+    (misplaced.details as { path: string[]; message: string }[]).map(({ path, message }) => [
+      path.join('.'),
+      message,
+    ]),
+    [
       [
         'unit_fence',
         'action unit_fence takes its arguments under "unit_fence": {unitId, requestId}',
@@ -350,6 +373,19 @@ test('tiers: core and deferred reach every agent, worker only a profile that nam
   assert.equal(tools.tool('x.legacy')?.tier, 'ui');
 });
 
+test('Pi keeps the task tools it was offered before tiers; MCP agents are still listed none', async () => {
+  const tools = new ToolRegistry(scope as never);
+  tools.registerCallerRules('conversation', conversationRules);
+  taskToolsPlugin.apply({ tools, tasks: {}, effect: (fn: () => unknown) => fn() } as never);
+  const kept = ['task.checkpoint', 'task.context', 'task.submit_delivery'];
+  // Pi's turn offer leaves tier worker to the profiles that name it.
+  for (const name of kept) assert.notEqual(tools.tool(name)?.tier, 'worker', name);
+  const chat = (await tools.describe(conversation)).map(({ name }) => name);
+  for (const name of kept) assert.ok(chat.includes(name), name);
+  const agent = (await tools.describe(owner, true)).map(({ name }) => name);
+  for (const name of kept) assert.ok(!agent.includes(name), name);
+});
+
 test('Pi offers a tier worker tool only to a profile that names it, cut to the actions it names', async (t) => {
   const f = await fixture(t);
   f.tools.register({
@@ -554,6 +590,9 @@ test('a retired name keeps its own text for workers; everyone else reads the nou
   const leased = await text(worker, true);
   assert.match(leased, /code\.unit\.fence resolves/);
   assert.doesNotMatch(leased, /code\.(read|write) /);
+  // Listed as the old tool was: a retired name of a core noun is not loaded up front.
+  const status = (await tools.describe(worker, true)).find(({ name }) => name === 'code.status');
+  assert.equal(status?._meta, undefined);
   for (const listed of [await text(owner, true), await text(conversation, false)]) {
     assert.match(listed, /code\.write unit_fence resolves/);
     assert.match(listed, /code\.write base_retry/);

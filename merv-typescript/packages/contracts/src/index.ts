@@ -63,8 +63,10 @@ export {
   codeCommitCommandSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,
+  codeLocalBindInputSchema,
 } from './code.js';
 export type {
+  CodeLocalBindInput,
   CodeProjectBinding,
   CodeCommitInput,
   CodeMergeInput,

@@ -642,3 +642,21 @@ test('a noun read, every action of which reads, is scriptable with one overload 
     'script_tool_refused: code.write cannot be called from a script',
   ]);
 });
+
+test('a script calls a retired read by name for one release, as an MCP agent does', async (t) => {
+  const { run } = await fixture(t);
+  const ran = await run(`
+    const status = await tools.code.status({});
+    const raw = await call('code.status', {});
+    const listed = await tools.experiment.list({});
+    let refused;
+    try { await call('code.publication.sync', {}); } catch (e) { refused = e.message; }
+    return [Array.isArray(status.bases), Array.isArray(raw.units), Array.isArray(listed.experiments ?? listed), refused];
+  `);
+  assert.deepEqual(ran.result, [
+    true,
+    true,
+    true,
+    'script_tool_refused: code.publication.sync cannot be called from a script',
+  ]);
+});

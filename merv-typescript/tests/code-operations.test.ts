@@ -235,22 +235,21 @@ test('only the administrator who began an import continues it, and a worker neve
     status: 503,
   });
 
-  // A project that names no repository has nothing to import into.
+  // A project from before Code initialized projects is given its repository by the import, as
+  // by new work: nothing else would give it one.
   const elsewhere = await f.scope.credentials.bootstrap({
     projectName: 'Unbound',
     actorName: 'Owner',
   });
-  await assert.rejects(
-    f.code.importRepository(
-      {
-        projectId: elsewhere.project.id,
-        actorId: elsewhere.actor.id,
-        credentialId: elsewhere.credential.id,
-      },
-      input,
-    ),
-    { code: 'code_project_unbound', status: 409 },
+  const early = await f.code.importRepository(
+    {
+      projectId: elsewhere.project.id,
+      actorId: elsewhere.actor.id,
+      credentialId: elsewhere.credential.id,
+    },
+    input,
   );
+  assert.equal(early.status, 'prepared');
 
   // A transfer nobody continues is given up by the next sweep, and its bytes go with it.
   await f.code.v2!.putPart(f.admin, begun.id, 0, bundle.content.subarray(0, 10));

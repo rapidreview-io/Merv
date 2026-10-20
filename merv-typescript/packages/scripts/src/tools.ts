@@ -14,7 +14,7 @@ import { declaration } from './declare.js';
 
 /** Whether a script may call this tool at all, or with this input: any read of tier core or
  *  deferred its caller could make one call at a time, open-world reads included (they keep their
- *  own budgets), a noun read included, but never a retired name. A mounted tool's hints are its
+ *  own budgets), a noun read and a retired read included. A mounted tool's hints are its
  *  server's word. */
 function scriptable(
   tool: RegisteredTool,
@@ -24,9 +24,7 @@ function scriptable(
   if (tool.name.startsWith('script.')) return false;
   if (tool.remote) return hints.readOnlyHint === true && hints.destructiveHint !== true;
   const reads = tool.reads && (input === undefined || tool.reads(input));
-  return (
-    (tool.readOnly || !!reads) && !tool.alias && (tool.tier === 'core' || tool.tier === 'deferred')
-  );
+  return (tool.readOnly || !!reads) && (tool.tier === 'core' || tool.tier === 'deferred');
 }
 
 /** What this caller is offered, each with whether a script may call it as registered now, and a
@@ -191,10 +189,22 @@ export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
     worker: 'never',
     handler: async (caller, { code, timeoutMs = 10_000 }: z.infer<typeof runInput>) => {
       person(caller);
-      // The names only shape `tools`; each call is judged when it runs.
-      const names = (await offered(tools, caller)).flatMap(({ description, scriptable }) =>
-        scriptable ? [description.name] : [],
+      // The names only shape `tools`; each call is judged when it runs. An offered noun's
+      // retired reads are there too: an agent may call them by name for one release.
+      const listed = await offered(tools, caller);
+      const shown = new Set(listed.map(({ description }) => description.name));
+      const retired = (await tools.list()).flatMap((definition) =>
+        'actions' in definition && shown.has(definition.name)
+          ? Object.values(definition.actions ?? {}).flatMap(({ was = [] }) => was)
+          : [],
       );
+      const names = [
+        ...listed.flatMap(({ description, scriptable }) => (scriptable ? [description.name] : [])),
+        ...retired.filter((name) => {
+          const tool = tools.tool(name);
+          return !!tool && scriptable(tool, {});
+        }),
+      ];
       return await scripts.run(code, timeoutMs, names, host(tools, caller));
     },
   };

@@ -65,8 +65,11 @@ export function nounInput(actions: NounActions) {
           message: `"${other}" belongs to action ${other}; this call is action ${action}`,
           fatal: true,
         });
-    if (input[action] !== undefined) return value;
-    if (shapes[action]!.optional) return { ...input, [action]: {} };
+    // Anything but an object there (an inner field of the same name, with the arguments left
+    // flat) is told where the arguments go.
+    const given = input[action];
+    if (given && typeof given === 'object' && !Array.isArray(given)) return value;
+    if (given === undefined && shapes[action]!.optional) return { ...input, [action]: {} };
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: [action],
