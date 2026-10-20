@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import { createApp } from './fixtures/app.js';
-import { LIMITS, parseCall, runScript } from '../packages/scripts/src/bridge.js';
+import { cut, LIMITS, parseCall, runScript } from '../packages/scripts/src/bridge.js';
 import { declaration } from '../packages/scripts/src/declare.js';
 import { scriptTools } from '../packages/scripts/src/tools.js';
 
@@ -659,4 +659,11 @@ test('a script calls a retired read by name for one release, as an MCP agent doe
     true,
     'script_tool_refused: code.publication.sync cannot be called from a script',
   ]);
+});
+
+test('a cut keeps every whole character that fits, an emoji included, and never half of one', () => {
+  const emoji = 'a'.repeat(2042) + '\u{1F600}';
+  assert.equal(cut(`${emoji}bb`, 2048), emoji);
+  assert.equal(cut(`${emoji}bb`, 2047), 'a'.repeat(2042));
+  assert.equal(cut('short', 2048), 'short');
 });

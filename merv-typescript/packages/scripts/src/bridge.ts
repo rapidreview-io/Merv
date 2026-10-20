@@ -129,16 +129,18 @@ const failure = (error: unknown): ScriptError =>
     ? { code: error.code, message: error.message }
     : { code: 'internal_error', message: 'Internal server error' };
 
-/** The longest start of `text` whose JSON is at most `room` bytes, never half a pair. */
+/** The longest start of `text` whose JSON is at most `room` bytes, in whole code points: by
+ *  those its size only grows (half a pair would be escaped to six bytes, the pair is four). */
 export function cut(text: string, room: number): string {
   if (bytes(text) <= room) return text;
-  let [low, high] = [0, text.length];
+  const points = Array.from(text);
+  let [low, high] = [0, points.length];
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (bytes(text.slice(0, mid)) <= room) low = mid;
+    if (bytes(points.slice(0, mid).join('')) <= room) low = mid;
     else high = mid - 1;
   }
-  return text.slice(0, /[\uD800-\uDBFF]/.test(text[low - 1] ?? '') ? low - 1 : low);
+  return points.slice(0, low).join('');
 }
 
 /** The whole answer within LIMITS.returned: the result, then as many logs as fit. A result too

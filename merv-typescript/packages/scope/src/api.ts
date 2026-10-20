@@ -22,6 +22,7 @@ import {
   addressBucket,
   Admission,
   agentLoginSchema,
+  canonicalIp,
   codeMail,
   connectAssets,
   Deliveries,
@@ -264,20 +265,18 @@ export function scopeRoutes(
 }
 
 const LOOPBACK = proxyList(['127.0.0.1/32', '::1/128']);
-const unmapped = (address: string) =>
-  /^::ffff:/i.test(address) && isIPv4(address.slice(7)) ? address.slice(7) : address;
 /** The client's address: the rightmost X-Forwarded-For entry, but only from a trusted proxy. */
 export function clientIp(req: IncomingMessage, proxies: BlockList = LOOPBACK): string | null {
   const remote = req.socket.remoteAddress;
   if (!remote) return null;
-  const address = unmapped(remote);
+  const address = canonicalIp(remote);
   const trusted = proxies.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
   const forwarded = req.headers['x-forwarded-for'];
   const last = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
     .split(',')
     .map((entry) => entry.trim())
     .at(-1);
-  return trusted && last && isIP(last) ? unmapped(last) : address;
+  return trusted && last && isIP(last) ? canonicalIp(last) : address;
 }
 
 function reply(res: ServerResponse, status: number, type: string, body: string): void {

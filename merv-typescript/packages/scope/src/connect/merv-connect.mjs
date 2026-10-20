@@ -55,7 +55,8 @@ const origin = new URL(ORIGIN);
 const loopback = ['127.0.0.1', '[::1]', 'localhost'].includes(origin.hostname);
 if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && loopback))
   fail('This connector was stamped with an origin it refuses (https only).');
-const HOSTDIR = origin.host.replace(':', '_');
+// The host, `_` and the port: an IPv6 literal without brackets, a `_` for each colon.
+const HOSTDIR = origin.host.replace(/[[\]]/g, '').replaceAll(':', '_');
 if (!/^[a-z0-9._-]+$/.test(HOSTDIR)) fail('This connector was stamped with an invalid origin.');
 
 // Every path comes from the home directory: clients pass MCP servers little environment.
@@ -617,7 +618,7 @@ const text = (value, isError = false) => ({
   ...(isError && { isError: true }),
 });
 let client;
-let listed;
+const listed = new Map();
 let calls = 0;
 
 class Unreadable extends Error {}
@@ -678,25 +679,24 @@ const failure = (error, forwarded = false) =>
         ? `Merv could not be reached or did not answer within ${Math.ceil(TIMEOUT / 1000)} s. The call may still have taken effect; check before repeating it.`
         : `Merv could not be reached at ${ORIGIN}. Check the network, then try again.`;
 
-function cachedTools() {
-  const cache = readJson('tools.json');
-  return Array.isArray(cache?.tools) ? cache.tools : [];
-}
-
-async function listTools() {
+/** The client's own tools/list, forwarded as asked; each project selection is listed apart. */
+async function listTools(params = {}) {
+  const selection = String(params._meta?.['merv/projectId'] ?? '');
   let remote;
   try {
-    const answer = await signedIn('tools/list', {});
+    const answer = await signedIn('tools/list', params);
     if (answer.result && Array.isArray(answer.result.tools)) {
       remote = answer.result.tools.filter((tool) => !tool.name?.startsWith('connector.'));
-      writeJson('tools.json', { tools: remote });
+      writeJson('tools.json', { lists: { ...readJson('tools.json')?.lists, [selection]: remote } });
     }
   } catch {
     // Unreachable or unreadable: the last list stands.
   }
-  const tools = [...TOOLS, ...(remote ?? cachedTools())];
-  const changed = listed !== undefined && JSON.stringify(listed) !== JSON.stringify(tools);
-  listed = tools;
+  const cached = readJson('tools.json')?.lists?.[selection];
+  const tools = [...TOOLS, ...(remote ?? (Array.isArray(cached) ? cached : []))];
+  const changed =
+    listed.has(selection) && JSON.stringify(listed.get(selection)) !== JSON.stringify(tools);
+  listed.set(selection, tools);
   if (changed) say({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
   return { tools };
 }
@@ -749,7 +749,7 @@ async function handle(message) {
       });
     }
     if (method === 'ping') return reply({});
-    if (method === 'tools/list') return reply(await listTools());
+    if (method === 'tools/list') return reply(await listTools(params ?? {}));
     if (method === 'tools/call') {
       try {
         const answer = await callTool(params);

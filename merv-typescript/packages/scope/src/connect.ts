@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { BlockList, isIP, isIPv6 } from 'node:net';
+import { BlockList, isIP, isIPv4, isIPv6, SocketAddress } from 'node:net';
 import { z } from 'zod';
 import type { AgentLoginCodeMail, AgentLoginNotice } from '@merv/contracts';
 import { escapeHtml } from '@merv/contracts/text';
 import { tooMany } from './agent-logins.js';
 import { emailHtml, mailSchema, origin, type Mail } from './mail.js';
 
-const count = (fallback: number) => z.number().int().positive().max(1_000_000).default(fallback);
+const count = (fallback: number, max = 1_000_000) =>
+  z.number().int().positive().max(max).default(fallback);
 const loopback = (hostname: string) => ['127.0.0.1', '[::1]', 'localhost'].includes(hostname);
 /** An address range, as `address/bits`. */
 const cidr = z.string().refine((value) => {
@@ -33,7 +34,8 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
     /** Proxies whose X-Forwarded-For is believed. The host's Caddy reaches a published Docker
      *  port from the bridge gateway, so a deployment names that gateway's own address (a /32). */
     trustedProxies: z.array(cidr).max(32).default(['127.0.0.1/32', '::1/128']),
-    keyDays: count(90),
+    /** Hard ceilings, like five tries a login: a deployment may lower them, never raise them. */
+    keyDays: count(90, 90),
     retentionDays: count(30),
     limits: z
       .object({
@@ -44,7 +46,7 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
         networkPerHour: count(30),
         globalPerMinute: count(30),
         globalPerDay: count(500),
-        triesPerLogin: count(5),
+        triesPerLogin: count(5, 5),
         keysPerPerson: count(10),
         // Per IPv4 address or IPv6 /64, and per IPv4 address or IPv6 /48: no cap on all callers.
         verifyPerIpMinute: count(30),
@@ -133,11 +135,11 @@ ${lines.map((line) => `<p style="margin:0 0 4px;font-size:14px;line-height:1.5">
 /** The page, installer and connector `/connect` serves, stamped with this deployment's origin
  *  and server name; the installer carries the connector's digest. */
 export function connectAssets(config: z.output<typeof agentLoginSchema>) {
-  const origin = new URL(config.publicOrigin).origin;
+  const { origin, host } = new URL(config.publicOrigin);
   const stamp = (text: string) =>
     text
       .replaceAll('__MERV_ORIGIN__', origin)
-      .replaceAll('__MERV_HOSTDIR__', new URL(origin).host.replace(':', '_'))
+      .replaceAll('__MERV_HOSTDIR__', host.replace(/[[\]]/g, '').replaceAll(':', '_'))
       .replaceAll('__MERV_SERVER_NAME__', config.serverName);
   const raw = source('merv-connect.mjs');
   const connector = stamp(raw).replaceAll('__MERV_VERSION__', sha256(raw).slice(0, 12));
@@ -193,13 +195,21 @@ export class Deliveries {
   }
 }
 
+/** One spelling per address, as Node prints it: an IPv4-mapped one, dotted or hex, as IPv4. */
+export function canonicalIp(ip: string): string {
+  if (!isIPv6(ip)) return ip;
+  const address = new SocketAddress({ address: ip, family: 'ipv6' }).address;
+  return address.startsWith('::ffff:') && isIPv4(address.slice(7)) ? address.slice(7) : address;
+}
+
 /** Where an address counts: itself for IPv4; for IPv6 its /64, since one subscriber holds a whole
  *  /64 and could otherwise rotate through it, or its /48, the most a site is usually given. */
 export function addressBucket(ip: string | null, bits: 48 | 64 = 64): string {
+  ip = ip && canonicalIp(ip);
   if (!ip || !isIPv6(ip)) return ip ?? '';
   const groups = (part: string | undefined) =>
     part ? part.split(':').flatMap((group) => (group.includes('.') ? ['0', '0'] : [group])) : [];
-  const [head, tail] = ip.split('%')[0]!.split('::');
+  const [head, tail] = ip.split('::');
   const front = groups(head);
   const back = groups(tail);
   const all =

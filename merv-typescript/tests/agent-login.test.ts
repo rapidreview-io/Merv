@@ -18,6 +18,7 @@ import {
   addressBucket,
   Admission,
   agentLoginSchema,
+  connectAssets,
   proxyList,
   startInput,
 } from '@merv/scope/connect';
@@ -657,6 +658,36 @@ test('X-Forwarded-For is believed only from the proxy ranges a deployment names'
     );
 });
 
+test('five tries a login and a 90-day key are ceilings a deployment can lower, never raise', () => {
+  const config = {
+    apiKeyEnv: 'RESEND_API_KEY',
+    from: 'Merv <login@example.com>',
+    publicOrigin: 'https://merv.example/',
+  };
+  for (const limit of [{ keyDays: 91 }, { limits: { triesPerLogin: 6 } }])
+    assert.equal(agentLoginSchema.safeParse({ ...config, ...limit }).success, false);
+  const lowered = agentLoginSchema.parse({ ...config, keyDays: 30, limits: { triesPerLogin: 3 } });
+  assert.deepEqual([lowered.keyDays, lowered.limits.triesPerLogin], [30, 3]);
+});
+
+test('the connector directory keeps DNS and IPv4 names, and an IPv6 literal gets a usable one', () => {
+  const config = {
+    apiKeyEnv: 'RESEND_API_KEY',
+    from: 'Merv <login@example.com>',
+    publicOrigin: 'https://merv.example/',
+  };
+  for (const [origin, dir] of [
+    ['https://merv.example/', 'merv.example'],
+    ['https://merv.example:8443/', 'merv.example_8443'],
+    ['http://127.0.0.1:8080/', '127.0.0.1_8080'],
+    ['http://[::1]:8080/', '__1_8080'],
+    ['https://[2001:db8::1]/', '2001_db8__1'],
+  ]) {
+    const { page } = connectAssets(agentLoginSchema.parse({ ...config, publicOrigin: origin }));
+    assert.ok(page.includes(`~/.merv/connect/${dir}/bin/merv-connect`), origin);
+  }
+});
+
 test('limits answer 429 with Retry-After, and an address is trusted only from the local proxy', async (t) => {
   const f = await connectServer({ limits: { ipPerHour: 2, verifyPerIpMinute: 2 } });
   t.after(() => f.close());
@@ -731,6 +762,13 @@ test('an IPv6 client counts by its /64, an IPv4 one by its address', () => {
     }) as never;
   assert.equal(clientIp(request('::ffff:203.0.113.9')), '203.0.113.9');
   assert.equal(clientIp(request('127.0.0.1', '::FFFF:198.51.100.7')), '198.51.100.7');
+  // In hex too: one address, one bucket, however it is spelled, and never a shared IPv6 one.
+  assert.equal(clientIp(request('::ffff:c000:201')), '192.0.2.1');
+  assert.equal(clientIp(request('::ffff:7f00:1', '0:0:0:0:0:ffff:c633:6407')), '198.51.100.7');
+  for (const bits of [48, 64] as const) {
+    assert.equal(addressBucket('::ffff:c000:201', bits), '192.0.2.1');
+    assert.equal(addressBucket('::FFFF:192.0.2.1', bits), '192.0.2.1');
+  }
 });
 
 test('verify admission holds each /64 and each /48, with no cap on all callers', () => {

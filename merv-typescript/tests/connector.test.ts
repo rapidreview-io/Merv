@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -77,6 +78,9 @@ async function proxy(
   });
 }
 
+/** The directory name the connector and the page use for `origin`. */
+const hostDir = (origin: string) => new URL(origin).host.replace(/[[\]]/g, '').replaceAll(':', '_');
+
 /** The connector `f` serves, placed for a fresh HOME as install.sh places it, speaking to `origin`
  *  (Merv itself unless a test puts something in between). */
 async function connector(t: TestContext, f: Server, origin = f.url) {
@@ -86,7 +90,7 @@ async function connector(t: TestContext, f: Server, origin = f.url) {
     f.url,
     origin,
   );
-  const dir = join(home, '.merv', 'connect', new URL(origin).host.replace(':', '_'));
+  const dir = join(home, '.merv', 'connect', hostDir(origin));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = join(dir, 'merv-connect.mjs');
   writeFileSync(file, source, { mode: 0o600 });
@@ -264,7 +268,7 @@ test('the stdio server answers initialize offline, then forwards to Merv once si
   assert.deepEqual(names.slice(0, 3), ['connector.status', 'connector.login', 'project.list']);
   assert.ok(names.includes('project.read') && !names.includes('connector.logout'));
   assert.ok(
-    c.read('tools.json').tools.some((tool: { name: string }) => tool.name === 'project.list'),
+    c.read('tools.json').lists[''].some((tool: { name: string }) => tool.name === 'project.list'),
   );
   const projects = JSON.parse((await agent.call('project.list')).content[0].text).projects;
   assert.deepEqual(projects, [{ ...f.ada.project, role: 'operator' }]);
@@ -756,6 +760,62 @@ test("install and uninstall leave another Merv server's registration alone", asy
   await clients.run('uninstall');
   assert.match(clients.log(), /claude mcp remove merv -s user/);
   assert.doesNotMatch(clients.log(), /codex mcp remove/);
+});
+
+test("tools/list forwards the client's project selection, and each selection keeps its own cache", async (t) => {
+  const f = await server(t);
+  let up = true;
+  const merv = await listen(t, (_req, res, body) => {
+    const { id, params } = JSON.parse(body);
+    const project = params?._meta?.['merv/projectId'];
+    res.writeHead(up ? 200 : 503, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify(
+        up
+          ? {
+              jsonrpc: '2.0',
+              id,
+              result: { tools: [{ name: project ? `${project}.tool` : 'plain' }] },
+            }
+          : { jsonrpc: '2.0', id, error: { code: -32603, message: 'down' } },
+      ),
+    );
+  });
+  const c = await connector(t, f, merv.url);
+  writeFileSync(
+    join(c.dir, 'credentials.json'),
+    JSON.stringify({
+      origin: merv.url,
+      email: 'ada@lab.org',
+      keyId: 'key_1',
+      token: `mk_${'a'.repeat(43)}`,
+      label: 'Codex on test',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    }),
+    { mode: 0o600 },
+  );
+  const agent = c.stdio();
+  await agent.request('initialize', {});
+  const names = async (params: unknown) =>
+    (await agent.request('tools/list', params)).result.tools
+      .map((tool: { name: string }) => tool.name)
+      .slice(2);
+  const scoped = { _meta: { 'merv/projectId': 'p1' } };
+  assert.deepEqual(await names(scoped), ['p1.tool']);
+  assert.deepEqual(JSON.parse(merv.requests.at(-1)!.body).params, scoped);
+  assert.deepEqual(await names({}), ['plain']);
+  up = false;
+  assert.deepEqual(await names(scoped), ['p1.tool']);
+  assert.deepEqual(await names({}), ['plain']);
+});
+
+test('an IPv6 origin makes a working connector, in the directory the page names', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f, 'http://[::1]:8080');
+  const help = await c.cli('help');
+  assert.equal(help.code, 0, help.stderr);
+  assert.equal((await c.cli('status')).stdout, 'Not signed in to Merv on this machine.\n');
+  assert.deepEqual(readdirSync(join(c.home, '.merv', 'connect')), ['__1_8080']);
 });
 
 /** Runs `withLock` exactly as the connector has it in `workers` processes at once; each enters
