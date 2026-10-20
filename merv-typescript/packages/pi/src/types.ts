@@ -11,7 +11,6 @@ import type {
   PiMove,
   PiMoveBy,
   PiPrompt,
-  PiRan,
   PiSnapshot,
   PiToolOutcome,
 } from './models.js';
@@ -246,8 +245,6 @@ export interface Pi {
   setMachine(caller: Caller, input: unknown): Promise<PiHostView>;
   /** pi.machine.stop {}: interrupt every turn of the host, release every slot, clear sticky (T9). */
   stopMachine(caller: Caller): Promise<PiHostView>;
-  /** pi.run {id, commandId, proposalId}: run a call the agent proposed, once, as the person. */
-  run(caller: Caller, input: unknown): Promise<PiRan>;
   /** pi.model.set {id, model}: the person picks the conversation's model, and their default here. */
   setModel(caller: Caller, input: unknown): Promise<PiSnapshot>;
 }

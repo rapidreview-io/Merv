@@ -1,7 +1,6 @@
 import type { ScreenLook } from './types.js';
 import {
   check,
-  clip,
   digest,
   newId,
   MervError,
@@ -19,7 +18,6 @@ import {
   machineInput,
   modelInput,
   piMigrations,
-  runInput,
   lookInput,
   showInput,
   screenInput,
@@ -50,14 +48,11 @@ import type {
   PiHostRecord,
   PiHostView,
   PiPlatformTurn,
-  PiProposal,
-  PiRan,
   PiShow,
   PiSnapshot,
 } from './types.js';
 import {
   active,
-  actOf,
   conversationCaller,
   decode,
   storedTurn,
@@ -72,26 +67,9 @@ import {
 import { PiHosts } from './hosts.js';
 import { PiWorkerProtocol } from './worker-protocol.js';
 
-/** What Run tells the agent, and the part of it that says how the call came out. */
-type Told = Omit<PiRan, 'result'> & { said?: string };
-/** How a call Run made came out, as Pi keeps it on its proposal. */
-type Outcome = Omit<NonNullable<PiProposal['ran']>, 'at'>;
-/** A call Run began: its turn, its tool, when it began, and how it came out once it returned. */
-type Run = { id: string; commandId: string; name: string; at: number; outcome?: Outcome };
-
-/** How often Run tries to keep a call's outcome, waiting twice as long each time from 200 ms. */
-const SAVE_ATTEMPTS = 5;
 /** Why the person's page gave no answer to the agent's ask. */
 const UNANSWERED =
   'no page of theirs answered (Merv is not open in a browser, or the tab is in the background).';
-/** A call that has not returned this long after Run began it may never return. */
-const RUN_MS = 600_000;
-/** What Pi keeps, and the agent is told, of a call whose outcome it cannot know: one a restart
- *  cut off, or one that never returned. */
-const interrupted = (name: string): Outcome => {
-  const said = 'it may have run, but how it came out is unknown';
-  return { ok: false, code: 'interrupted', told: `${name} was interrupted: ${said}.`, said };
-};
 const publicConversation = ({
   source: _source,
   profile: _profile,
@@ -113,10 +91,6 @@ export class PiService implements Pi {
   readonly tokens: PiCore['tokens'];
   private readonly disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
-  /** The calls Run began in this process whose outcome is not kept yet, keyed by proposal: when
-   *  each began, and its outcome once it returned. A ran proposal with no outcome that is not
-   *  here was cut off by a restart. */
-  private readonly runs = new Map<string, Run>();
   constructor(...args: ConstructorParameters<typeof PiCore>) {
     this.core = new PiCore(...args);
     this.hosts = new PiHosts(this.core);
@@ -131,18 +105,9 @@ export class PiService implements Pi {
   readonly progress: PiWorkerProtocol['progress'] = (...args) => this.protocol.progress(...args);
   readonly complete: PiWorkerProtocol['complete'] = (...args) => this.protocol.complete(...args);
   readonly fail: PiWorkerProtocol['fail'] = (...args) => this.protocol.fail(...args);
-  /** One reconciling pass over every live host (see PiHosts.settle), and over Run's calls: an
-   *  outcome a write could not keep is kept, and a call that never returned is interrupted. */
+  /** One reconciling pass over every live host (see PiHosts.settle). */
   readonly tick = async (): Promise<void> => {
     await this.hosts.tick();
-    for (const [proposalId, run] of this.runs)
-      if (run.outcome || this.core.clock() - run.at >= RUN_MS)
-        await this.keep(run.id, run.commandId, (p) =>
-          p.id === proposalId ? (run.outcome ?? interrupted(run.name)) : undefined,
-        ).then(
-          () => this.runs.delete(proposalId),
-          () => undefined,
-        );
   };
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
   readonly tokensUsed: PiCore['tokens']['used'] = (persons, from, to) =>
@@ -165,17 +130,6 @@ export class PiService implements Pi {
     // no machine chosen inside one waits on that read or falls back for want of it.
     await Promise.all(this.core.config.machines.map(({ key }) => this.core.machine(key)));
     await this.hosts.tick();
-    // Every call Run began before this process started is cut off. Only turns with a call that ran
-    // and was never kept are read; a turn jsonb refuses (some older JSON) is left to keep().
-    const ran = await this.core.read((tx) =>
-      tx.all<{ conversation_id: string; id: string }>(
-        `SELECT conversation_id,id FROM pi_commands WHERE strpos(data_json,'"ran"') > 0 AND CASE
-          WHEN pg_input_is_valid(data_json,'jsonb') THEN jsonb_path_exists(data_json::jsonb,
-            '$.proposals[*].ran ? (!exists(@.ok))') ELSE true END`,
-      ),
-    );
-    for (const row of ran)
-      await this.keep(row.conversation_id, row.id, (proposal) => interrupted(proposal.name));
     this.timer = setInterval(() => {
       void this.tick().catch(() => undefined);
     }, this.core.config.pollIntervalMs);
@@ -359,18 +313,6 @@ export class PiService implements Pi {
       const view = await this.hostView(tx, host, conversation, source);
       return { conversation, commands, host, allocation, view };
     });
-    // A call proposed before its tool declared an act reads with the act its tool declares now.
-    const untitled = commands.flatMap((command) => command.proposals?.filter((p) => !p.act) ?? []);
-    if (untitled.length) {
-      const tools = new Map((await this.core.tools.list()).map((tool) => [tool.name, tool]));
-      for (const proposal of untitled) {
-        // An act its tool cannot word for this input leaves the card's generic wording.
-        try {
-          const act = actOf(tools.get(proposal.name), proposal.input as Record<string, unknown>);
-          if (act) proposal.act = act;
-        } catch {}
-      }
-    }
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
     // The tail keeps only recent events: the turn's answer so far comes whole, as one event.
     const whole = streamed?.commandId === turn?.id ? streamed : undefined;
@@ -734,118 +676,6 @@ export class PiService implements Pi {
       403,
     );
     return structuredClone(conversation.source);
-  }
-
-  /** pi.run: the person presses Run on a call their agent proposed, which runs once, as them, with
-   * every check their own call meets. A secret result reaches only them: nothing keeps it. */
-  async run(caller: Caller, input: unknown): Promise<PiRan> {
-    this.core.ready();
-    const value = parse(runInput, input);
-    const find = (command: PiCommandRecord) =>
-      command.proposals?.find(({ id }) => id === value.proposalId);
-    const proposal = await this.core.state.transaction(async (tx) => {
-      const conversation = await this.owned(caller, value.id, tx);
-      check(
-        !conversation.profile,
-        'pi_profile_fixed',
-        'Profile conversations do not offer privileged action proposals',
-        403,
-      );
-      check(
-        !conversation.activeCommandId,
-        'pi_turn_busy',
-        'This conversation already has an active turn',
-        409,
-      );
-      const command = await this.core.command(tx, value.id, value.commandId);
-      const proposal = find(command);
-      check(proposal, 'pi_not_found', 'Proposal not found', 404);
-      check(!proposal.ran, 'pi_proposal_ran', 'This call has already run', 409);
-      proposal.ran = { at: this.core.time() };
-      await this.core.saveCommand(tx, command);
-      return proposal;
-    });
-    this.core.streams.changed(value.id, value.commandId);
-    const run: Run = { ...value, name: proposal.name, at: this.core.clock() };
-    this.runs.set(proposal.id, run);
-    let result: unknown = null;
-    let code: string | undefined;
-    let said = '';
-    try {
-      result = await this.core.tools.call(proposal.name, caller, proposal.input);
-    } catch (error) {
-      // A refusal is an answer too, in the tool's own words; a failure the server did not word
-      // for a person says only that it failed.
-      const refused = error instanceof MervError;
-      code = refused ? error.code : 'tool_failed';
-      said = refused && error.status < 500 ? error.message : 'it failed';
-    }
-    const told: Told = code
-      ? { told: `${proposal.name} was refused: ${said}`, said, whole: true }
-      : await this.ran(proposal, result);
-    run.outcome = {
-      ok: !code,
-      ...(code && { code }),
-      told: told.told,
-      ...(told.said !== undefined && { said: told.said }),
-    };
-    // The call ran, so how it came out is kept even past a failed write: the next tick keeps it,
-    // and a page that lost this answer reads it there and tells the agent from it.
-    for (let attempt = 1; ; attempt++)
-      try {
-        const kept = await this.keep(value.id, value.commandId, (p) =>
-          p.id === proposal.id ? run.outcome : undefined,
-        );
-        this.runs.delete(proposal.id);
-        // An interruption kept first is what the agent is told: the result is then the page's.
-        const said = find(kept)!.ran!.told!;
-        return { result, told: said, whole: told.whole && said === told.told };
-      } catch (error) {
-        if (attempt === SAVE_ATTEMPTS) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
-      }
-  }
-  /** Keeps how a turn's ran calls came out, each `outcome` names whose outcome is not kept yet:
-   *  one kept first, an interruption the agent may already have been told, stands. */
-  private async keep(
-    id: string,
-    commandId: string,
-    outcome: (proposal: PiProposal) => Outcome | undefined,
-  ): Promise<PiCommandRecord> {
-    const { command, kept } = await this.core.state.transaction(async (tx) => {
-      const command = await this.core.command(tx, id, commandId);
-      const open = command.proposals?.filter((p) => p.ran && p.ran.ok === undefined) ?? [];
-      const kept = open.filter((p) => Object.assign(p.ran!, outcome(p)).ok !== undefined);
-      if (kept.length) await this.core.saveCommand(tx, command);
-      return { command, kept: kept.length };
-    });
-    if (kept) this.core.streams.changed(id, commandId);
-    return command;
-  }
-
-  /** What Run tells the agent in the person's name: the sentence that stands for a result only the
-   *  person sees, the tool's own receipt, or as much of the result's JSON as Run sends; `said` is
-   *  the part of it that is the outcome. */
-  private async ran(proposal: PiProposal, result: unknown): Promise<Told> {
-    if (proposal.secret)
-      return { told: `Ran ${proposal.name}; its result is shown only to me.`, whole: false };
-    try {
-      const tool = (await this.core.tools.list()).find(({ name }) => name === proposal.name);
-      const receipt =
-        tool && 'receipt' in tool ? tool.receipt?.(result, proposal.input) : undefined;
-      if (receipt) {
-        const said = JSON.stringify(receipt.summary);
-        return {
-          told: `Ran ${proposal.name}: ${said}. Re-read ${receipt.reread.join(' and ')} for current details.`,
-          said,
-          whole: false,
-        };
-      }
-    } catch {
-      // The call ran; a receipt that fails says nothing, and the result stands for it.
-    }
-    const json = clip(JSON.stringify(result) ?? 'null', 4000);
-    return { told: `Ran ${proposal.name}: ${json}`, said: json, whole: true };
   }
 
   /** Interrupts this conversation's turn only; the host serves the person's others. */

@@ -69,7 +69,6 @@ function sponsorSnapshot(id: string): PiSnapshot {
         startedAt: '2026-10-14T00:00:00.100Z',
         expiresAt: '2026-10-14T01:00:00.000Z',
         completedAt: '2026-10-14T00:00:02.000Z',
-        proposals: [{ id: 'pip_1', name: 'secret.tool', input: {}, at: '2026-10-14T00:00:00Z' }],
       },
     ],
     host: {
@@ -392,7 +391,6 @@ test('the customer view of a snapshot keeps Pi’s shape and drops every sponsor
     'alloc_secret',
     'pih_secret',
     'catalog-secret',
-    'secret.tool',
     'gpt-6-astra',
     '9.99',
     'prj_other_project',

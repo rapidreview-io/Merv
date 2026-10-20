@@ -74,26 +74,6 @@ export interface PiCommand {
   firstTextAt?: string;
   expiresAt: string;
   completedAt: string | null;
-  /** Calls the agent proposed in this turn, which the person's page shows with Run. */
-  proposals?: PiProposal[];
-}
-/** A call only the person may run (ToolDefinition.conversation), as the agent proposed it: Main's
- * parsed copy of its exact input. */
-export interface PiProposal {
-  /** 'pip_…' */
-  id: string;
-  /** The native tool name. */
-  name: string;
-  input: Data;
-  /** What the tool's owner calls the act (its `act`), and the input field that title said. */
-  act?: { title: string; says?: string };
-  /** Its result is shown only to the person and never kept. */
-  secret?: true;
-  at: string;
-  /** Claimed when the person pressed Run, so it runs once; ok and code once it returned, with what
-   *  Run told the agent (PiRan.told) and the part of that which says how it came out: the result
-   *  as told, the receipt's summary, or why it was refused. A secret result says nothing. */
-  ran?: { at: string; ok?: boolean; code?: string; told?: string; said?: string };
 }
 export interface PiEvent {
   sequence: number;
@@ -217,11 +197,4 @@ export interface PiHostView {
 export interface PiPrompt {
   instructions: string;
   turn: { commandId: string; notes: string[]; tools: string[]; context?: string } | null;
-}
-/** A proposed call the person ran, and what Run tells the agent of it in their name: `whole` when
- *  that is the result itself (as much of its JSON as fits), else the person alone sees it all. */
-export interface PiRan {
-  result: unknown;
-  told: string;
-  whole: boolean;
 }

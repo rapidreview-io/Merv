@@ -8,7 +8,6 @@ import {
   id,
   machineInput,
   modelInput,
-  runInput,
   lookInput,
   showInput,
   screenInput,
@@ -128,13 +127,6 @@ export const piToolsPlugin = {
           'Choose the machine your agent runs on in this project. It starts before the current one stops, so answers under way finish where they began.',
         inputSchema: machineInput,
         handler: (caller: Caller, input: unknown) => ctx.pi.setMachine(caller, input),
-      },
-      {
-        name: 'pi.run',
-        description:
-          'Run a call your agent proposed in this conversation, once, as you. Its result comes back only to you.',
-        inputSchema: runInput,
-        handler: (caller: Caller, input: unknown) => ctx.pi.run(caller, input),
       },
       {
         name: 'pi.model.set',

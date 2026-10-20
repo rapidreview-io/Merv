@@ -147,7 +147,7 @@ test('a script makes parallel reads and returns its result, logs and calls', asy
   assert.equal(other.result, 'invalid_input: A script works in its own project only');
 });
 
-test('writes and secret reads are refused and catchable; open-world reads and download links run', async (t) => {
+test('writes and reads kept from agents are refused and catchable; open-world reads and download links run', async (t) => {
   const { app, mcp, run } = await fixture(t);
   t.after(
     app.ctx.tools.register({
@@ -161,11 +161,11 @@ test('writes and secret reads are refused and catchable; open-world reads and do
   );
   t.after(
     app.ctx.tools.register({
-      name: 'test.guarded',
-      description: 'Read a value, or a signed link only the person sees.',
-      inputSchema: z.object({ link: z.boolean().optional() }).strict(),
+      name: 'test.page',
+      description: 'A page’s own read, which no agent conversation is offered.',
+      inputSchema: z.object({}).strict(),
       readOnly: true,
-      conversation: (input: { link?: boolean }) => (input.link ? 'secret' : undefined),
+      conversation: 'never',
       handler: () => 'value',
     }),
   );
@@ -178,10 +178,7 @@ test('writes and secret reads are refused and catchable; open-world reads and do
       write: await outcome('task.create', { title: 'x', goal: 'g', checks: ['c'], requestId: 'r' }),
       outside: await outcome('test.outside', {}),
       download: await outcome('artifact.read', { artifactId: '${artifact.id}', mode: 'download' }),
-      link: await outcome('test.guarded', { link: true }),
-      // The guard reads the input invoke receives, with the script's own projectId taken out.
-      own: await outcome('test.guarded', { link: true, projectId: (await tools.project.get({})).id }),
-      value: await tools.test.guarded({}),
+      page: await outcome('test.page', {}),
       script: await outcome('script.tools', {}),
       tools: [typeof tools.task, typeof tools.test.outside, typeof tools.script],
     };
@@ -191,15 +188,13 @@ test('writes and secret reads are refused and catchable; open-world reads and do
     outside: 'ran',
     // A download link is any agent's to have; this fixture's storage signs none.
     download: 'download_unsupported: This storage provider does not support direct downloads',
-    link: 'script_tool_refused: test.guarded cannot be called so from a script',
-    own: 'script_tool_refused: test.guarded cannot be called so from a script',
-    value: 'value',
+    page: 'script_tool_refused: test.page cannot be called from a script',
     script: 'script_tool_refused: script.tools cannot be called from a script',
     tools: ['object', 'function', 'undefined'],
   });
   assert.deepEqual(
     ran.calls.filter(({ ok }: any) => !ok).map(({ error }: any) => error),
-    ['script_tool_refused', 'download_unsupported', ...Array(3).fill('script_tool_refused')],
+    ['script_tool_refused', 'download_unsupported', 'script_tool_refused', 'script_tool_refused'],
   );
   // task.get is a read, so the task namespace is there; task.create is not in it.
   assert.equal(

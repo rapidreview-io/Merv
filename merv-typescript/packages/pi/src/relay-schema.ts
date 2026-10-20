@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolDefinition, ToolDescription } from '@merv/api/types';
+import type { ToolDescription } from '@merv/api/types';
 import type { Data } from '@merv/contracts';
 import { fetchesContent, reasoningSummary, toolChoice } from '@merv/fleet/model-requests';
 import { id } from './schema.js';
@@ -153,25 +153,15 @@ export function validPiPayload(
   );
 }
 
-const described: Record<'propose' | 'secret', string> = {
-  propose: ' Proposed from a conversation: the person runs it.',
-  secret: ' Proposed from a conversation: the person runs it and alone sees its result.',
-};
-/** A native tool as a turn offers it (PiWork.tools), from its public description and its
- * registration's conversation use: the description and input schema, without the project envelope
- * a conversation never chooses; null when the relay would refuse its name or schema (the catalog
- * test keeps that from happening unseen). */
-export function piTool(
-  definition: ToolDescription,
-  conversation?: ToolDefinition['conversation'],
-): PiWork['tools'][number] | null {
+/** A native tool as a turn offers it (PiWork.tools), from its public description: the description
+ * and input schema, without the project envelope a conversation never chooses; null when the relay
+ * would refuse its name or schema (the catalog test keeps that from happening unseen). */
+export function piTool(definition: ToolDescription): PiWork['tools'][number] | null {
   const { $schema: _schema, ...schema } = definition.inputSchema as Record<string, unknown>;
   const { projectId: _project, ...properties } = schema.properties as Record<string, unknown>;
   const required = (schema.required as string[] | undefined)?.filter((key) => key !== 'projectId');
   const inputSchema = { ...schema, properties, ...(required && { required }) } as Data;
-  const use = typeof conversation === 'string' ? conversation : undefined;
-  const description =
-    (definition.description ?? '') + (use && use !== 'never' ? described[use] : '');
+  const description = definition.description ?? '';
   const name = piModelToolName(definition.name);
   const payload = piResponsesSchema.safeParse({
     model: 'catalog',

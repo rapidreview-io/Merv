@@ -25,12 +25,11 @@ script's `error.code` is `script_syntax`, `script_error`, `script_timeout`, `scr
 `script_call_limit`. `script_busy` (429) and `script_unavailable` (503) refuse the call itself.
 
 A tool is scriptable when it is listed to this caller, registered `readOnly` (open-world reads
-included: they keep their own budgets), not guarded for conversations (`never`, `propose`,
-`secret`; a guard of the input is decided per call), and not `script.*`; a mounted tool needs
+included: they keep their own budgets), not kept from conversations (`never`), and not
+`script.*`; a mounted tool needs
 `readOnlyHint` and no destructive hint. Discovery only shapes `tools`: each call is
 `invoke(name, caller, input, true, admit)` with the script's own caller, and the registry runs
-`admit` on the registration that will run it and the input it parsed, where caller rules admit
-it, so a tool re-registered since is judged as it is now. Every rule one call from this agent
+`admit` on the registration that will run it, where caller rules admit it, so a tool re-registered since is judged as it is now. Every rule one call from this agent
 meets (role, Access grants, Scope) applies to each. A native tool's project is the script's: a
 `projectId` naming another is refused. A leased worker gets neither tool (`session_forbidden`).
 

@@ -15,7 +15,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { ListedTool, Tools } from '@merv/api/types';
+import type { Tools } from '@merv/api/types';
 import type { Fleet, FleetAllocation } from '@merv/fleet/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { piConfig, type PiConfig } from './schema.js';
@@ -34,7 +34,6 @@ import type {
   PiMachineOption,
   PiNextSlot,
   PiPersonRecord,
-  PiProposal,
   PiSlot,
   PiStage,
   PiStageName,
@@ -97,23 +96,12 @@ export const publicCommand = (record: PiCommandRecord): PiCommand => {
     calledAt: _called,
     retried: _retried,
     eventsAfter: _events,
+    // Calls proposed before 2026-10-20, when no agent was asked for approval any more: inert.
+    proposals: _proposals,
     ...value
-  } = record;
+  } = record as PiCommandRecord & { proposals?: unknown };
   return value;
 };
-/** What a proposed call does, in the words its tool's owner declares (`act`), read from its input. */
-export function actOf(
-  tool: ListedTool | undefined,
-  input: Record<string, unknown>,
-): PiProposal['act'] {
-  const act = tool && !('kind' in tool) ? tool.act : undefined;
-  return (
-    act && {
-      title: typeof act.title === 'string' ? act.title : act.title(input),
-      ...(act.says && { says: act.says }),
-    }
-  );
-}
 export function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
   const parsed = schema.safeParse(plain(value));
   check(parsed.success, 'invalid_pi_input', 'Invalid conversation request');

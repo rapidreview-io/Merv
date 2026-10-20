@@ -10,7 +10,6 @@ import {
   toldMigration,
   usageMigration,
 } from '../packages/pi/src/schema.js';
-import type { PiCommandRecord } from '../packages/pi/src/types.js';
 import { openState } from './fixtures/state.js';
 import { fixture } from './fixtures/pi.js';
 
@@ -81,31 +80,23 @@ test('Pi starts over a kept turn jsonb cannot read', async (t) => {
       }),
     ),
   );
-  // Its call cut off by the restart is kept as interrupted all the same, and the kept one stands.
+  // It starts all the same, and calls proposed before 2026-10-20 reach no page.
   await f.restart();
-  const [turn] = await f.state.read((sql) =>
-    sql.all<{ data_json: string }>("SELECT data_json FROM pi_commands WHERE id='c_nul'"),
+  const turn = (await f.pi.snapshot(f.operator, conversation.id)).commands.find(
+    ({ id }) => id === 'c_nul',
   );
-  const proposals = (JSON.parse(turn!.data_json) as PiCommandRecord).proposals!;
-  assert.deepEqual(
-    proposals.map(({ ran }) => [ran!.ok, ran!.code]),
-    [
-      [true, undefined],
-      [false, 'interrupted'],
-    ],
-  );
+  assert.equal(turn && 'proposals' in turn, false);
 });
 
 test('Pi keeps no NUL or lone surrogate, whoever words the text', async (t) => {
   const f = await fixture(t);
   // A person's words and a model's answer are refused at the door.
   await assert.rejects(f.begun(f.operator, 'see\u0000this'), /cannot contain NUL/);
-  // A tool's own refusal is not, and Run keeps it as what it told the agent.
+  // A tool's own refusal is not, and the turn keeps it as what the agent was told.
   t.after(
     f.tools.register({
       name: 'probe.nul',
       description: 'Refuses in words jsonb cannot read',
-      conversation: 'propose',
       inputSchema: z.object({}).strict(),
       handler: () => check(false, 'forbidden', 'no\u0000pe \ud800', 403),
     }),
@@ -118,24 +109,17 @@ test('Pi keeps no NUL or lone surrogate, whoever words the text', async (t) => {
     }),
     /well-formed Unicode/,
   );
-  const { proposed } = (await f.pi.tool(bound.token, {
-    ...bound.input,
-    name: 'probe.nul',
-    input: {},
-  })) as { proposed: { id: string } };
-  await f.pi.complete(bound.token, f.completion(bound.input));
-  await f.pi.run(f.operator, {
-    id: bound.input.conversationId,
-    commandId: bound.input.commandId,
-    proposalId: proposed.id,
+  const output = await f.pi.tool(bound.token, { ...bound.input, name: 'probe.nul', input: {} });
+  await f.pi.complete(bound.token, {
+    ...f.completion(bound.input),
+    outcomes: [{ callId: 'nul_1', name: 'probe.nul', input: {}, output }],
   });
   const rows = await f.state.read((sql) =>
     sql.all<{ data_json: string }>('SELECT data_json FROM pi_commands'),
   );
   for (const row of rows) assert.doesNotMatch(row.data_json, /\\u0000|\\ud[89a-f]/i);
-  const told = (await f.pi.snapshot(f.operator, bound.conversation.id)).commands[0]!.proposals![0]!
-    .ran!.told;
-  assert.equal(told, 'probe.nul was refused: nope \ufffd');
+  const [kept] = (await f.pi.snapshot(f.operator, bound.conversation.id)).commands[0]!.outcomes;
+  assert.deepEqual(kept!.output, { error: { code: 'forbidden', message: 'nope \ufffd' } });
   await f.state.read((sql) => sql.all('SELECT data_json::jsonb FROM pi_commands'));
 });
 

@@ -5,7 +5,6 @@ import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@mer
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
 
-export type ConversationUse = 'never' | 'propose' | 'secret';
 /** A tool whose handler receives the input its schema parsed. */
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
@@ -17,12 +16,10 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  admitted as any read and decided again before its result leaves. It must not write; a
    *  database read opens its own. */
   openWorld?: boolean;
-  /** How an agent conversation may use this tool (what it reads reaches the model provider).
-   *  Omitted: the agent runs it as its person. 'propose': the person runs the proposed call.
-   *  'secret': as 'propose', and only the person sees its result (a bearer secret or signed URL).
-   *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
-   *  function of the parsed input decides per call. */
-  conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
+  /** 'never': offered to no person's agent conversation (only a leased worker or Merv's pages run
+   *  it); what it reads would reach the model provider. Omitted: the agent runs it as its person,
+   *  as any agent of theirs does (founder, 2026-10-20: an agent is never asked for approval). */
+  conversation?: 'never';
   /** 'never': a read no leased worker is listed. It is a person's, whose handler refuses every
    *  worker, or a page's own (ui.home), whose records a worker reads with their own tools; a Pi
    *  profile's tool (conversationProfile) is never listed either. Called by name it still answers
@@ -33,26 +30,12 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   agent?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
-  /** What the card of a proposed call says it does, in the product's words ('Submit verdict').
-   *  `title` reads the input as the agent proposed it, unparsed, where it says which act;
-   *  `says` names the input field the title already said, which the card does not list again.
-   *  Omitted: the card says the tool's own name in words. */
-  act?: ToolAct;
+  /** What the tool does, in the product's words ('Submit verdict'): its MCP title. */
+  act?: { title: string };
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
-  /** What an agent conversation is told when its person runs this tool's proposed call, in place
-   *  of the whole result: a compact summary, and the reads that give the current details. */
-  receipt?(result: unknown, input: z.infer<S>): ToolReceipt;
   /** What an MCP client (an agent) is shown in place of the JSON result, such as a rendered
    *  image beside a text summary. Other callers receive the JSON result. */
   present?(result: unknown): CallToolResult;
-}
-export interface ToolAct {
-  title: string | ((input: Record<string, unknown>) => string);
-  says?: string;
-}
-export interface ToolReceipt {
-  summary: Record<string, unknown>;
-  reread: readonly string[];
 }
 /** Public tool metadata, including the native project-selection envelope. */
 export type ToolDescription = Tool;
@@ -79,8 +62,6 @@ export interface CallerRules {
    *  `forbidden`. Absent: such a caller may use no tool, and describe refuses it too. */
   offers?(tool: RegisteredTool): boolean;
   forbidden: MervError;
-  /** Throws to refuse one call with its parsed input, before its handler runs. */
-  admits?(tool: RegisteredTool, input: unknown): void;
   /** Throws to withhold a handler's result from the caller. */
   returns?(result: unknown): void;
 }

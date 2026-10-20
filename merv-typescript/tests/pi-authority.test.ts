@@ -84,23 +84,21 @@ function registry(readScope?: <T>(fn: () => Promise<T>) => Promise<T>) {
   };
 }
 
-test('a conversation sees every conversable native tool and never a mounted, never, propose or secret one runs', async () => {
+test('a conversation sees every conversable native tool and runs it as its person, never a mounted or never one', async () => {
   const fixture = registry();
   let ran = 0;
-  const probe = (name: string, conversation?: unknown, result: unknown = name) =>
+  const probe = (name: string, conversation?: 'never', result: unknown = name) =>
     fixture.tools.register({
       name,
       description: name,
-      inputSchema: z.object({ mode: z.string().optional() }).strict(),
-      conversation: conversation as 'never',
+      inputSchema: z.object({}).strict(),
+      conversation,
       handler: () => {
         ran++;
         return result;
       },
     });
   probe('never', 'never');
-  probe('propose', 'propose');
-  probe('secret', (input: { mode?: string }) => (input.mode === 'download' ? 'secret' : undefined));
   probe('leaky', undefined, { nested: [{ token: 'bearer' }] });
   const catalog = fixture.tools.createCatalog('bridge');
   await catalog.replace([
@@ -117,21 +115,18 @@ test('a conversation sees every conversable native tool and never a mounted, nev
   ]);
   assert.deepEqual(
     (await fixture.tools.describe(caller)).map((entry) => entry.name),
-    ['leaky', 'mutate', 'propose', 'read', 'secret'],
+    ['leaky', 'mutate', 'read'],
   );
   assert.equal(await fixture.tools.call('read', caller, { value: 'ok' }), 'result');
   assert.equal(await fixture.tools.call('mutate', caller, {}), 'mutated');
-  assert.equal(await fixture.tools.call('secret', caller, { mode: 'inline' }), 'secret');
   for (const [name, input] of [
     ['never', {}],
-    ['propose', {}],
-    ['secret', { mode: 'download' }],
     ['_bridge.remote', {}],
   ] as const)
     await assert.rejects(fixture.tools.call(name, caller, input), { code: 'tool_forbidden' });
   await assert.rejects(fixture.tools.call('leaky', caller, {}), { code: 'tool_result_secret' });
   assert.equal(fixture.calls(), 2);
-  assert.equal(ran, 2);
+  assert.equal(ran, 1);
   // The person's own access decides the rest: once it is gone, nothing is listed or run.
   fixture.revokeSource();
   await assert.rejects(fixture.tools.describe(caller), { code: 'forbidden' });

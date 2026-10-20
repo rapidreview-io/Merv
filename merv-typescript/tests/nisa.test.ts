@@ -11,7 +11,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Actor, Caller } from '@merv/contracts';
 import { ToolRegistry, describeTool } from '../packages/api/src/registry.js';
 import { text } from '../packages/nisa/src/normalize.js';
-import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { USER_AGENT } from '../packages/nisa/src/client.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaConfig } from '../packages/nisa/src/input.js';
@@ -697,8 +696,8 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
     const description = describeTool(definition);
     assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
     // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(conversationUse(definition, {}), undefined);
-    assert.ok(piTool(description, definition.conversation), definition.name);
+    assert.equal(definition.conversation, undefined);
+    assert.ok(piTool(description), definition.name);
     assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
     assert.match(definition.description, /untrusted source material/);
   }

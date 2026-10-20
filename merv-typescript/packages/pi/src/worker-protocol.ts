@@ -3,11 +3,9 @@ import {
   check,
   clip,
   digest,
-  newId,
   MervError,
   plain,
   type Caller,
-  type Data,
   type Role as MemberRole,
   type Transaction,
 } from '@merv/contracts';
@@ -23,7 +21,6 @@ import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle, titleRequest } from './relay.js';
-import { conversationUse } from './conversation-rules.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
 import { turnNotes } from './prompt.js';
@@ -36,12 +33,11 @@ import type {
   PiMachine,
   PiMessage,
   PiNextReply,
-  PiProposal,
   PiSwitchMachineResult,
   PiTurnInput,
   PiWork,
 } from './types.js';
-import { actOf, conversationCaller, equal, parse, type PiCore, publicCommand } from './core.js';
+import { conversationCaller, equal, parse, type PiCore, publicCommand } from './core.js';
 import type { PiHosts } from './hosts.js';
 
 const anyJson = { keys: 'any', strings: 'json', depth: 512 } as const;
@@ -228,12 +224,8 @@ export class PiWorkerProtocol {
           'kind' in tool ? undefined : tool.conversationProfile,
         ]),
       );
-      const uses = new Map(
-        registered.map((tool) => [tool.name, 'kind' in tool ? undefined : tool.conversation]),
-      );
       // Every native tool but Pi's own and those it has its own form of (piOffers), run as the
-      // person: Scope applies their live role, and each tool's registration says what only the
-      // person may run.
+      // person: Scope applies their live role.
       const described = (await this.core.tools.describe(caller))
         .filter(({ name }) => piOffers(name))
         // Writing and rendering a report is its executing worker's job, not the chat's.
@@ -241,7 +233,7 @@ export class PiWorkerProtocol {
         .filter(({ name }) => !profileTools.get(name) || profileTools.get(name) === profile?.id)
         .filter(({ name }) => !profile || profile.tools.includes(name))
         .flatMap((description) => {
-          const tool = piTool(description, uses.get(description.name));
+          const tool = piTool(description);
           return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
         });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
@@ -575,48 +567,23 @@ export class PiWorkerProtocol {
         current.calledAt ??= this.core.time();
         await this.core.saveCommand(tx, current);
       });
-    // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
     const definition = (await this.core.tools.list()).find(({ name }) => name === value.name);
-    let use: 'propose' | 'secret' | undefined;
-    if (definition && !('kind' in definition) && definition.conversation) {
-      const parsed = await definition.inputSchema.safeParseAsync(value.input);
-      if (!parsed.success && refuse('invalid_input'))
-        return {
-          error: {
-            code: 'invalid_input',
-            message: 'Tool input failed validation',
-            details: parsed.error.issues.map(({ path, message }) => ({ path, message })),
-          },
-        };
-      const found = conversationUse(definition, parsed.data);
-      if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
-    }
-    check(
-      !conversation.profile || !use,
-      'pi_tool_forbidden',
-      'Profile turns cannot propose privileged actions',
-      403,
-    );
     this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.core.report(
       conversation.id,
       command.id,
       'tool',
-      use
-        ? 'Proposing an action'
-        : value.name === 'machine.switch'
-          ? 'Moving to a bigger machine'
-          : definition && !('kind' in definition) && definition.readOnly
-            ? 'Reading'
-            : 'Making a change',
+      value.name === 'machine.switch'
+        ? 'Moving to a bigger machine'
+        : definition && !('kind' in definition) && definition.readOnly
+          ? 'Reading'
+          : 'Making a change',
     );
     const result = await (
-      use
-        ? this.propose(token, value, use)
-        : value.name === 'machine.switch'
-          ? this.switchMachine(conversation, command, value.input)
-          : this.core.tools.call(value.name, conversationCaller(conversation, command), value.input)
+      value.name === 'machine.switch'
+        ? this.switchMachine(conversation, command, value.input)
+        : this.core.tools.call(value.name, conversationCaller(conversation, command), value.input)
     )
       .catch(async (error: unknown) => {
         // A turn that ended, or whose person lost access here, ends with its call; any other
@@ -642,52 +609,6 @@ export class PiWorkerProtocol {
       });
     return fit(value.name, result);
   }
-  /** A call only its person may run: kept on the turn for their page, where Run runs it as them
-   * (run). At most 16 an answer. */
-  private async propose(
-    token: string,
-    turn: PiTurnInput & { name: string; input: Record<string, unknown> },
-    use: 'propose' | 'secret',
-  ): Promise<unknown> {
-    // The card says what the call does in the words of the tool's owner, read as it was proposed.
-    const act = actOf(
-      (await this.core.tools.list()).find(({ name }) => name === turn.name),
-      turn.input,
-    );
-    const result = await this.core.state.transaction(async (tx) => {
-      const { command } = await this.bound(token, turn, tx);
-      const identity = digest([turn.name, turn.input, use]);
-      const existing = command.proposals?.find(
-        (item) => digest([item.name, item.input, item.secret ? 'secret' : 'propose']) === identity,
-      );
-      if (existing) return { proposal: existing, created: false };
-      if ((command.proposals?.length ?? 0) >= 16) return null;
-      const proposal: PiProposal = {
-        id: newId('pip'),
-        name: turn.name,
-        input: turn.input as Data,
-        ...(act && { act }),
-        ...(use === 'secret' && { secret: true as const }),
-        at: this.core.time(),
-      };
-      (command.proposals ??= []).push(proposal);
-      await this.core.saveCommand(tx, command);
-      return { proposal, created: true };
-    });
-    if (!result)
-      return {
-        error: {
-          code: 'too_many_proposals',
-          message: 'This answer has proposed 16 calls: say what is left',
-        },
-      };
-    if (result.created) this.core.streams.changed(turn.conversationId, turn.commandId);
-    return {
-      proposed: { id: result.proposal.id, name: result.proposal.name },
-      note: 'The person sees this call as a card in plain words with a Run button; it runs as them only if they press it.',
-    };
-  }
-
   /** switch_machine: the agent starts a move without asking (T2), within the move rules and only
    * to a machine its person may pick here. The new machine serves later turns once ready. */
   private async switchMachine(

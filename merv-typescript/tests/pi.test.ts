@@ -26,7 +26,7 @@ import { CredentialStore, tokenDigest } from '../packages/identity/src/credentia
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import { fit } from '../packages/pi/src/fit.js';
-import type { PiBootstrap, PiCommandRecord, PiStage } from '../packages/pi/src/types.js';
+import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
 
@@ -490,7 +490,7 @@ function probes(f: PiFixture, t: TestContext) {
     permission: Permission,
     options: {
       readOnly?: boolean;
-      conversation?: 'never' | 'propose' | 'secret';
+      conversation?: 'never';
       result?: unknown;
     } = {},
   ) =>
@@ -514,8 +514,6 @@ function probes(f: PiFixture, t: TestContext) {
   probe('probe.write', 'write');
   probe('probe.review', 'review');
   probe('probe.admin', 'admin');
-  probe('probe.propose', 'write', { conversation: 'propose' });
-  probe('probe.secret', 'admin', { conversation: 'secret', result: { token: 'secret' } });
   probe('probe.leaky', 'read', { readOnly: true, result: { issued: [{ token: 'secret' }] } });
   probe('probe.never', 'read', { readOnly: true, conversation: 'never' });
   probe('pi.probe', 'read', { readOnly: true });
@@ -538,7 +536,7 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
   const { all, admin } = await sources(f);
   const someone = await f.scope.credentials.issueActor(admin, { name: 'Someone', role: 'reader' });
   const reads = ['actor.credentials', 'probe.leaky', 'probe.read', 'project.get', 'shell.run'];
-  const writes = ['probe.admin', 'probe.propose', 'probe.review', 'probe.secret', 'probe.write'];
+  const writes = ['probe.admin', 'probe.review', 'probe.write'];
   for (const { kind, role, caller } of all) {
     const label = `${kind} ${role}`;
     const { token, work, input } = await f.begun(caller);
@@ -573,15 +571,6 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
       await assert.rejects(agent(name), code('pi_tool_forbidden'), `${label} ${name}`);
     // The real actor tools: only an operator reads another actor's credentials, never through a
     // key, and never through the agent.
-    // What only the person may run is proposed, never run; Run runs it as them, with exactly the
-    // outcome of their own direct call.
-    const proposed: string[] = [];
-    if (role !== 'reader')
-      for (const name of ['probe.propose', 'probe.secret']) {
-        const reply = (await agent(name)) as { proposed: { id: string; name: string } };
-        assert.equal(reply.proposed.name, name, label);
-        proposed.push(reply.proposed.id);
-      }
     const other = { actorId: someone.actor.id };
     const allowed = role === 'operator' && kind !== 'key';
     const direct = await f.tools.call('actor.credentials', caller, other).then(
@@ -590,23 +579,8 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
     );
     const via = (await agent('actor.credentials', other)) as { error?: { code: string } };
     assert.deepEqual([direct, !via.error], [allowed, false], label);
-    for (const name of ['probe.propose', 'probe.secret', 'probe.never', 'pi.probe'])
-      assert.equal(runs[name], undefined);
+    for (const name of ['probe.never', 'pi.probe']) assert.equal(runs[name], undefined);
     await f.pi.complete(token, f.completion(input));
-    for (const [index, proposalId] of proposed.entries()) {
-      const name = ['probe.propose', 'probe.secret'][index];
-      const direct = await f.tools.call(name, caller, {}).then(
-        () => true,
-        () => false,
-      );
-      await f.pi.run(caller, { id: input.conversationId, commandId: input.commandId, proposalId });
-      const { ran } = (
-        await f.pi.snapshot(caller, input.conversationId)
-      ).commands[0].proposals!.find(({ id }) => id === proposalId)!;
-      assert.equal(ran?.ok, direct, `${label} ${name}`);
-      if (!direct) assert.equal(ran?.code, 'forbidden', label);
-      delete runs[name];
-    }
   }
   assert.equal(f.mutations, 0);
 });
@@ -712,211 +686,7 @@ test('a call that returns after its turn ended leaves nothing of the turn in mem
   assert.deepEqual([memory.progressAt.has(turn), memory.refusals.has(turn)], [false, false]);
 });
 
-test('an exact repeated proposal in one turn keeps one Run action and one mutation', async (t) => {
-  const f = await fixture(t);
-  let mutations = 0;
-  t.after(
-    f.tools.register({
-      name: 'probe.decision',
-      description: 'A proposed decision',
-      conversation: 'propose',
-      // The card's words are the owner's, read from the input as the agent proposed it.
-      act: { title: ({ action }) => `Decide to ${String(action)}`, says: 'action' },
-      inputSchema: z.object({ action: z.string(), requestId: z.string() }).strict(),
-      handler: () => ({ mutations: ++mutations }),
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const propose = (input: Record<string, string>) =>
-    f.pi.tool(turn.token, { ...turn.input, name: 'probe.decision', input });
-  const [first, raced] = (await Promise.all([
-    propose({ action: 'abandon', requestId: 'one' }),
-    propose({ requestId: 'one', action: 'abandon' }),
-  ])) as [{ proposed: { id: string } }, { proposed: { id: string } }];
-  assert.deepEqual(raced, first);
-  const writes = countWrites(f.state);
-  const beforeRepeat = writes();
-  const repeated = await propose({ requestId: 'one', action: 'abandon' });
-  assert.deepEqual(repeated, first);
-  assert.equal(writes(), beforeRepeat, 'the repeated proposal makes no durable write');
-  const concurrent = await Promise.all([
-    propose({ action: 'abandon', requestId: 'one' }),
-    propose({ action: 'abandon', requestId: 'one' }),
-  ]);
-  assert.deepEqual(concurrent, [first, first]);
-  const changed = (await propose({ action: 'abandon', requestId: 'two' })) as {
-    proposed: { id: string };
-  };
-  assert.notEqual(changed.proposed.id, first.proposed.id);
-  const command = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
-  assert.deepEqual(
-    command.proposals?.map(({ id }) => id),
-    [first.proposed.id, changed.proposed.id],
-  );
-  assert.deepEqual(command.proposals?.[0]?.act, { title: 'Decide to abandon', says: 'action' });
-  assert.equal(mutations, 0);
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  const run = (proposalId: string) =>
-    f.pi.run(human, {
-      id: turn.input.conversationId,
-      commandId: turn.input.commandId,
-      proposalId,
-    });
-  assert.deepEqual((await run(first.proposed.id)).result, { mutations: 1 });
-  await assert.rejects(run(first.proposed.id), code('pi_proposal_ran'));
-  assert.equal(mutations, 1);
-  assert.deepEqual((await run(changed.proposed.id)).result, { mutations: 2 });
-});
-
-test('a call proposed before its tool declared an act reads with the act its tool declares now', async (t) => {
-  const f = await fixture(t);
-  t.after(
-    f.tools.register({
-      name: 'probe.halt',
-      description: 'Halt one or all',
-      conversation: 'propose',
-      act: { title: ({ sessionId }) => (sessionId ? 'Halt lease' : 'Halt all leases') },
-      inputSchema: z.object({ sessionId: z.string().optional() }).strict(),
-      handler: () => ({}),
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  for (const input of [{}, { sessionId: 'session_1' }])
-    await f.pi.tool(turn.token, { ...turn.input, name: 'probe.halt', input });
-  // As a turn kept it before tools declared an act: the proposals carry none.
-  await f.state.transaction(async (tx) => {
-    const row = await tx.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_commands WHERE id=?',
-      turn.input.commandId,
-    );
-    const command = JSON.parse(row!.data_json) as PiCommandRecord;
-    for (const proposal of command.proposals ?? []) delete proposal.act;
-    await tx.run(
-      'UPDATE pi_commands SET data_json=? WHERE id=?',
-      JSON.stringify(command),
-      turn.input.commandId,
-    );
-  });
-  const command = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
-  assert.deepEqual(
-    command.proposals?.map(({ act }) => act),
-    [{ title: 'Halt all leases' }, { title: 'Halt lease' }],
-  );
-});
-
-test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
-  const f = await fixture(t);
-  const runs = probes(f, t);
-  // A gate only a signed-in person passes, as code.publication.merge and workflow.extend_limit keep.
-  t.after(
-    f.tools.register({
-      name: 'probe.signed',
-      description: 'Signed-in person only',
-      conversation: 'propose',
-      inputSchema: z.object({ note: z.string().optional() }).strict(),
-      handler: (caller: Caller) => {
-        check(caller.human && !caller.key, 'forbidden', 'A signed-in person must do this', 403);
-        return { signed: true };
-      },
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const key = all.find(({ kind, role }) => kind === 'key' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const agent = (name: string, value: object = {}) =>
-    f.pi.tool(turn.token, { ...turn.input, name, input: value });
-  const ids: string[] = [];
-  for (let index = 0; index < 16; index++)
-    ids.push(
-      (
-        (await agent(
-          index ? 'probe.signed' : 'probe.secret',
-          index ? { note: `${index}` } : {},
-        )) as { proposed: { id: string } }
-      ).proposed.id,
-    );
-  assert.deepEqual(
-    ((await agent('probe.signed', { note: 'overflow' })) as { error: { code: string } }).error.code,
-    'too_many_proposals',
-  );
-  assert.equal(
-    ((await agent('probe.signed', { note: 7 })) as { error: { code: string } }).error.code,
-    'invalid_input',
-  );
-  const run = (caller: Caller, proposalId: string, commandId = turn.input.commandId) =>
-    f.pi.run(caller, { id: turn.input.conversationId, commandId, proposalId });
-  await assert.rejects(run(human, ids[1]), code('pi_turn_busy'));
-  const conversationCaller: Caller = {
-    actorId: human.actorId,
-    projectId: human.projectId,
-    conversation: {
-      id: turn.input.conversationId,
-      commandId: turn.input.commandId,
-      runtimeId: turn.work.command.runtimeId,
-      epoch: turn.work.command.epoch,
-    },
-  };
-  await assert.rejects(run(conversationCaller, ids[1]), code('pi_forbidden'));
-  const result = f.completion(turn.input);
-  result.outcomes = [
-    { callId: 'propose_1', name: 'probe.secret', input: {}, output: { proposed: {} } },
-  ];
-  await f.pi.complete(turn.token, result);
-  // What Run tells the agent never holds a secret result.
-  assert.deepEqual(await run(human, ids[0]), {
-    result: { token: 'secret' },
-    told: 'Ran probe.secret; its result is shown only to me.',
-    whole: false,
-  });
-  assert.equal(runs['probe.secret'], 1);
-  await assert.rejects(run(human, ids[0]), code('pi_proposal_ran'));
-  assert.equal(runs['probe.secret'], 1);
-  await assert.rejects(run(human, 'pip_missing'), code('pi_not_found'));
-  // The signed-in gate passes when the person presses Run, and fails through their key.
-  assert.deepEqual(await run(human, ids[1]), {
-    result: { signed: true },
-    told: 'Ran probe.signed: {"signed":true}',
-    whole: true,
-  });
-  const keyTurn = await f.begun(key);
-  await f.pi.tool(keyTurn.token, { ...keyTurn.input, name: 'probe.signed', input: {} });
-  await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
-  const [keyProposal] = (await f.pi.snapshot(key, keyTurn.input.conversationId)).commands[0]
-    .proposals!;
-  assert.deepEqual(
-    await f.pi.run(key, {
-      id: keyTurn.input.conversationId,
-      commandId: keyTurn.input.commandId,
-      proposalId: keyProposal.id,
-    }),
-    {
-      result: null,
-      told: 'probe.signed was refused: A signed-in person must do this',
-      whole: true,
-    },
-  );
-  const shown = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
-  assert.deepEqual(
-    shown.proposals!.slice(0, 2).map(({ name, secret, ran }) => [name, secret, ran?.ok]),
-    [
-      ['probe.secret', true, true],
-      ['probe.signed', undefined, true],
-    ],
-  );
-  // Nothing keeps a secret result: not the command, its outcomes or its messages.
-  assert.ok(!JSON.stringify(shown).includes('"token":"secret"'));
-  const stored = await f.state.read((sql) =>
-    sql.all<{ data_json: string }>('SELECT data_json FROM pi_commands'),
-  );
-  assert.ok(stored.every(({ data_json }) => !data_json.includes('"token":"secret"')));
-});
-
-test('a Fleet halt the person runs from a proposal is recorded as theirs', async (t) => {
+test('a Fleet halt the agent makes is recorded as its person’s', async (t) => {
   const f = await fixture(t);
   t.after(
     f.fleet.registerOwner('workflow', {
@@ -929,7 +699,6 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
     f.tools.register({
       name: 'fleet.halt',
       description: 'Halt an allocation',
-      conversation: 'propose',
       inputSchema: z.object({ id: z.string() }).strict(),
       handler: (caller: Caller, input: { id: string }) => f.fleet.cancel(caller, input.id),
     }),
@@ -942,291 +711,13 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
     owner: { kind: 'workflow', id: 'robot_work' },
   });
   const turn = await f.begun(human);
-  const { proposed } = (await f.pi.tool(turn.token, {
-    ...turn.input,
-    name: 'fleet.halt',
-    input: { id: allocation.id },
-  })) as { proposed: { id: string } };
+  await f.pi.tool(turn.token, { ...turn.input, name: 'fleet.halt', input: { id: allocation.id } });
   await f.pi.complete(turn.token, f.completion(turn.input));
-  await f.pi.run(human, {
-    id: turn.input.conversationId,
-    commandId: turn.input.commandId,
-    proposalId: proposed.id,
-  });
   const halted = (await f.state.events(human.projectId)).filter(
     ({ type, subjectId }) => type === 'fleet.changed' && subjectId === allocation.id,
   );
   assert.equal(halted.at(-1)?.actorId, human.actorId);
   assert.equal(halted.at(-1)?.data.intent, 'stop');
-});
-
-test('a proposed call whose tool writes a receipt tells the agent that receipt, not its result', async (t) => {
-  const f = await fixture(t);
-  t.after(
-    f.tools.register({
-      name: 'probe.advance',
-      description: 'Advance a probe',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => ({ id: 'probe_1', problem: 'Full Problem '.repeat(500) }),
-      receipt: (result) => ({
-        summary: { id: (result as { id: string }).id },
-        reread: ['probe.get', 'workflow.status_and_next'],
-      }),
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const { proposed } = (await f.pi.tool(turn.token, {
-    ...turn.input,
-    name: 'probe.advance',
-    input: {},
-  })) as { proposed: { id: string } };
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  const ran = await f.pi.run(human, {
-    id: turn.input.conversationId,
-    commandId: turn.input.commandId,
-    proposalId: proposed.id,
-  });
-  assert.equal(
-    ran.told,
-    'Ran probe.advance: {"id":"probe_1"}. Re-read probe.get and workflow.status_and_next for current details.',
-  );
-  assert.equal(ran.whole, false);
-  assert.match(JSON.stringify(ran.result), /Full Problem/);
-});
-
-test('a call that ran keeps how it came out though writing it down fails at first', async (t) => {
-  const f = await fixture(t);
-  let ran = 0;
-  let failing = 0;
-  t.after(
-    f.tools.register({
-      name: 'probe.once',
-      description: 'Counts its runs',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => {
-        ran++;
-        // The next two writes after the call fail, as a lost connection would fail them.
-        failing = 2;
-        return { ran };
-      },
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const { proposed } = (await f.pi.tool(turn.token, {
-    ...turn.input,
-    name: 'probe.once',
-    input: {},
-  })) as { proposed: { id: string } };
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  const transaction = f.state.transaction.bind(f.state);
-  t.mock.method(f.state, 'transaction', (...args: Parameters<typeof transaction>) =>
-    failing-- > 0 ? Promise.reject(new Error('connection lost')) : transaction(...args),
-  );
-  const proposal = async () =>
-    (await f.pi.snapshot(human, turn.input.conversationId)).commands[0]!.proposals![0]!;
-  // Claimed as running before the call, so no second Run reaches the tool.
-  const running = f.pi.run(human, {
-    id: turn.input.conversationId,
-    commandId: turn.input.commandId,
-    proposalId: proposed.id,
-  });
-  assert.deepEqual(await running, {
-    result: { ran: 1 },
-    told: 'Ran probe.once: {"ran":1}',
-    whole: true,
-  });
-  assert.equal(ran, 1);
-  assert.equal(failing, -1);
-  const { at, ...outcome } = (await proposal()).ran!;
-  assert.equal(typeof at, 'string');
-  assert.deepEqual(outcome, { ok: true, told: 'Ran probe.once: {"ran":1}', said: '{"ran":1}' });
-  await assert.rejects(
-    f.pi.run(human, {
-      id: turn.input.conversationId,
-      commandId: turn.input.commandId,
-      proposalId: proposed.id,
-    }),
-    code('pi_proposal_ran'),
-  );
-  assert.equal(ran, 1);
-});
-
-/** A conversation whose turn proposed `name`, and Run's input for it. */
-async function proposedRun(f: PiFixture, name: string) {
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const { proposed } = (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
-    proposed: { id: string };
-  };
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  const input = {
-    id: turn.input.conversationId,
-    commandId: turn.input.commandId,
-    proposalId: proposed.id,
-  };
-  const ran = async () => (await f.pi.snapshot(human, input.id)).commands[0]!.proposals![0]!.ran!;
-  return { human, input, ran };
-}
-const unknown = {
-  ok: false,
-  code: 'interrupted',
-  told: 'probe.slow was interrupted: it may have run, but how it came out is unknown.',
-  said: 'it may have run, but how it came out is unknown',
-};
-
-test('a call whose outcome no write could keep keeps it once writing works again', async (t) => {
-  const f = await fixture(t);
-  let failing = 0;
-  t.after(
-    f.tools.register({
-      name: 'probe.once',
-      description: 'Runs once',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => {
-        failing = 1000;
-        return { ran: 1 };
-      },
-    }),
-  );
-  const { human, input, ran } = await proposedRun(f, 'probe.once');
-  const transaction = f.state.transaction.bind(f.state);
-  t.mock.method(f.state, 'transaction', (...args: Parameters<typeof transaction>) =>
-    failing-- > 0 ? Promise.reject(new Error('connection lost')) : transaction(...args),
-  );
-  await assert.rejects(f.pi.run(human, input));
-  failing = 0;
-  await f.pi.tick();
-  const { at: _at, ...outcome } = await ran();
-  assert.deepEqual(outcome, { ok: true, told: 'Ran probe.once: {"ran":1}', said: '{"ran":1}' });
-  await assert.rejects(f.pi.run(human, input), code('pi_proposal_ran'));
-});
-
-test('a call cut off by a restart, or that never returns, is kept as interrupted', async (t) => {
-  const f = await fixture(t);
-  let finish = (_value: unknown) => {};
-  t.after(
-    f.tools.register({
-      name: 'probe.slow',
-      description: 'Returns when told',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => new Promise((resolve) => (finish = resolve)),
-    }),
-  );
-  // Main restarts while the call runs: the next process keeps it as interrupted at once.
-  const first = await proposedRun(f, 'probe.slow');
-  const cut = f.pi.run(first.human, first.input);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  await f.restart();
-  const { at: _at, ...outcome } = await first.ran();
-  assert.deepEqual(outcome, unknown);
-  await assert.rejects(f.pi.run(first.human, first.input), code('pi_proposal_ran'));
-  finish({ late: true });
-  await cut.catch(() => undefined);
-  // A call that has not returned after ten minutes is interrupted too; when it returns at last,
-  // Run answers with what was kept, which the agent may already have been told: the page shows
-  // the late result itself.
-  const second = await proposedRun(f, 'probe.slow');
-  const running = f.pi.run(second.human, second.input);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  await f.pi.tick();
-  assert.equal((await second.ran()).ok, undefined);
-  f.advance(600_000);
-  await f.pi.tick();
-  const { at: _at2, ...kept } = await second.ran();
-  assert.deepEqual(kept, unknown);
-  finish({ late: true });
-  assert.deepEqual(await running, { result: { late: true }, told: unknown.told, whole: false });
-  const { at: _at3, ...still } = await second.ran();
-  assert.deepEqual(still, unknown);
-});
-
-test('a call refused when the person runs it tells the agent why, and Pi keeps what it told', async (t) => {
-  const f = await fixture(t);
-  probes(f, t);
-  t.after(
-    f.tools.register({
-      name: 'probe.gated',
-      description: 'Refuses everyone',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => check(false, 'forbidden', 'Actor lacks admin permission', 403),
-    }),
-  );
-  t.after(
-    f.tools.register({
-      name: 'probe.broken',
-      description: 'Fails on the server',
-      conversation: 'propose',
-      inputSchema: z.object({}).strict(),
-      handler: () => {
-        throw new Error('database password is hunter2');
-      },
-    }),
-  );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const ids: string[] = [];
-  for (const name of ['probe.gated', 'probe.broken', 'probe.secret'])
-    ids.push(
-      (
-        (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
-          proposed: { id: string };
-        }
-      ).proposed.id,
-    );
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  const run = (proposalId: string) =>
-    f.pi.run(human, {
-      id: turn.input.conversationId,
-      commandId: turn.input.commandId,
-      proposalId,
-    });
-  // A refusal is an answer: the agent is told it in the tool's own words, and a failure the
-  // server did not word for a person says only that it failed.
-  assert.deepEqual(await run(ids[0]), {
-    result: null,
-    told: 'probe.gated was refused: Actor lacks admin permission',
-    whole: true,
-  });
-  assert.deepEqual(await run(ids[1]), {
-    result: null,
-    told: 'probe.broken was refused: it failed',
-    whole: true,
-  });
-  await run(ids[2]);
-  // Pi keeps what it told the agent and the part of it that says how the call came out, so the
-  // person's page reads the outcome without reading the sentence.
-  const [command] = (await f.pi.snapshot(human, turn.input.conversationId)).commands;
-  assert.deepEqual(
-    command.proposals!.map(({ ran }) => ran && { ...ran, at: typeof ran.at }),
-    [
-      {
-        at: 'string',
-        ok: false,
-        code: 'forbidden',
-        told: 'probe.gated was refused: Actor lacks admin permission',
-        said: 'Actor lacks admin permission',
-      },
-      {
-        at: 'string',
-        ok: false,
-        code: 'tool_failed',
-        told: 'probe.broken was refused: it failed',
-        said: 'it failed',
-      },
-      { at: 'string', ok: true, told: 'Ran probe.secret; its result is shown only to me.' },
-    ],
-  );
 });
 
 test('a list shown as an index clips its long strings at a whole character', () => {
@@ -1257,62 +748,6 @@ test('a partial result fits its byte limit after its JSON is escaped again', () 
       `Only the first ${Buffer.byteLength(shown.partial)} of ${Buffer.byteLength(JSON.stringify(result))} bytes are shown`,
     );
   }
-});
-
-test('what Run tells the agent never ends in half a character, and a failing receipt falls back to the result', async (t) => {
-  const f = await fixture(t);
-  const head = '{"id":"probe_1","title":"';
-  // The emoji straddles the 4000th character of the result's JSON.
-  const title = 'x'.repeat(3999 - head.length) + '\u{1F680} launch';
-  for (const [name, receipt] of [
-    ['probe.cut', undefined],
-    [
-      'probe.broken',
-      () => {
-        throw new Error('receipt failed');
-      },
-    ],
-  ] as const)
-    t.after(
-      f.tools.register({
-        name,
-        description: 'Probe',
-        conversation: 'propose',
-        inputSchema: z.object({}).strict(),
-        handler: () => ({ id: 'probe_1', title }),
-        ...(receipt ? { receipt } : {}),
-      }),
-    );
-  const { all } = await sources(f);
-  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
-  const turn = await f.begun(human);
-  const ids: string[] = [];
-  for (const name of ['probe.cut', 'probe.broken'])
-    ids.push(
-      (
-        (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
-          proposed: { id: string };
-        }
-      ).proposed.id,
-    );
-  await f.pi.complete(turn.token, f.completion(turn.input));
-  for (const [index, name] of ['probe.cut', 'probe.broken'].entries()) {
-    const ran = await f.pi.run(human, {
-      id: turn.input.conversationId,
-      commandId: turn.input.commandId,
-      proposalId: ids[index]!,
-    });
-    assert.deepEqual(ran.result, { id: 'probe_1', title });
-    assert.equal(ran.whole, true);
-    assert.ok(ran.told.startsWith(`Ran ${name}: ${head}`));
-    assert.doesNotMatch(ran.told, /[\uD800-\uDBFF]$/);
-  }
-  // Both calls ran and are recorded as having succeeded.
-  const [command] = (await f.pi.snapshot(human, turn.input.conversationId)).commands;
-  assert.deepEqual(
-    command!.proposals!.map((proposal) => proposal.ran?.ok),
-    [true, true],
-  );
 });
 
 test('each turn says whom the agent serves, where, on what, what the project holds now, and what a stopped answer made; its person can read it back', async (t) => {
@@ -1539,7 +974,6 @@ test('a call already refused in the turn is not run again: the model is told to 
     f.tools.register({
       name: 'research.end',
       description: 'End a cycle',
-      conversation: 'propose',
       inputSchema: z.object({ id: z.string() }).strict(),
       handler: () => ({}),
     }),
@@ -1564,11 +998,11 @@ test('a call already refused in the turn is not run again: the model is told to 
   for (const value of [{ busy: true }, { busy: true }, { missing: true }, { missing: true }])
     await call(value);
   assert.equal(runs, 6);
-  // A proposal's invalid input is held back the same way.
-  const propose = () =>
+  // An invalid input is held back the same way.
+  const invalid = () =>
     f.pi.tool(token, { ...input, name: 'research.end', input: { id: 'r', extra: 1 } });
-  assert.equal(((await propose()) as { error: { code: string } }).error.code, 'invalid_input');
-  assert.equal(((await propose()) as { error: { code: string } }).error.code, 'already_refused');
+  assert.equal(((await invalid()) as { error: { code: string } }).error.code, 'invalid_input');
+  assert.equal(((await invalid()) as { error: { code: string } }).error.code, 'already_refused');
 });
 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {

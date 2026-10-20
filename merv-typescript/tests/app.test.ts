@@ -405,9 +405,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     );
     // A tool the relay would refuse is dropped from every turn: none may be.
     assert.deepEqual(
-      offered
-        .filter((tool) => !piTool(describeTool(tool), tool.conversation))
-        .map(({ name }) => name),
+      offered.filter((tool) => !piTool(describeTool(tool))).map(({ name }) => name),
       [],
     );
     // Hosted Codex sees each MCP tool's schema whole, its dialect included, under the same rule.

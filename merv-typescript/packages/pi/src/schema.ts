@@ -64,8 +64,6 @@ export const screenInput = z
 /** pi.model.set */
 export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
-/** pi.run: the conversation, the turn and the proposal whose call the person runs. */
-export const runInput = z.object({ id, commandId: id, proposalId: id }).strict();
 /** The name of an environment variable. */
 const envVar = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 /** A PiMachine key, e.g. 'standard' or 'large'. */

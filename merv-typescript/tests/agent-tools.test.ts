@@ -33,13 +33,6 @@ test("a person's agent over MCP is offered what a Pi conversation is, while Merv
   });
   tools.register({ name: 'x.write', description: 'A write', inputSchema: input, handler });
   tools.register({
-    name: 'x.propose',
-    description: 'A write the person runs',
-    inputSchema: input,
-    conversation: 'propose',
-    handler,
-  });
-  tools.register({
     name: 'x.page',
     description: "The page's own read",
     readOnly: true,
@@ -60,26 +53,19 @@ test("a person's agent over MCP is offered what a Pi conversation is, while Merv
     (await tools.describe(caller, agent)).map(({ name }) => name);
 
   // The pages (POST /tools) see everything the caller may call.
-  assert.deepEqual(await names(owner, false), [
-    'x.intake',
-    'x.page',
-    'x.pi',
-    'x.propose',
-    'x.read',
-    'x.write',
-  ]);
+  assert.deepEqual(await names(owner, false), ['x.intake', 'x.page', 'x.pi', 'x.read', 'x.write']);
   // An agent is not offered what no conversation is, and a reader's agent only reads.
-  assert.deepEqual(await names(owner, true), ['x.propose', 'x.read', 'x.write']);
+  assert.deepEqual(await names(owner, true), ['x.read', 'x.write']);
   assert.deepEqual(await names(reader, true), ['x.read']);
   // Nor can it call it; the page still can.
   for (const name of ['x.page', 'x.pi'])
     await assert.rejects(tools.invoke(name, owner, {}, true), { code: 'tool_forbidden' });
   assert.deepEqual((await tools.invoke('x.page', owner, {})).value, { ran: true });
-  // A proposal runs over MCP as the person's own call: the agent there is the person's.
-  assert.deepEqual((await tools.invoke('x.propose', owner, {}, true)).value, { ran: true });
+  // A write runs over MCP as the person's own call: the agent there is the person's.
+  assert.deepEqual((await tools.invoke('x.write', owner, {}, true)).value, { ran: true });
 });
 
-test("a tool's description carries its guard for a client's own permission prompt", () => {
+test("a tool's description carries MCP's hints for a client's own permission prompt", () => {
   const handler = () => undefined;
   const requestId = z.string();
   const hints = (definition: Partial<ToolDefinition>) =>
@@ -89,26 +75,16 @@ test("a tool's description carries its guard for a client's own permission promp
     readOnlyHint: true,
     openWorldHint: true,
   });
-  // A proposed or secret call, or one decided per input, is the person's to allow; its card's
-  // title is the client's; a call keyed by requestId may be retried.
-  for (const conversation of ['propose', 'secret', () => 'propose' as const] as const)
-    assert.deepEqual(
-      hints({
-        conversation,
-        act: { title: 'Submit verdict' },
-        inputSchema: z.object({ requestId }),
-      }),
-      {
-        title: 'Submit verdict',
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    );
-  // A title read from the input is the card's alone; 'never' is no guard, as nothing proposes it.
-  assert.deepEqual(hints({ conversation: 'never', act: { title: () => 'Run' } }), {
-    readOnlyHint: false,
-    openWorldHint: false,
-  });
+  // A write carries no hint of its own, so a client reads it as MCP's default, possibly
+  // destructive; its title is its owner's, and a call keyed by requestId may be retried.
+  assert.deepEqual(
+    hints({ act: { title: 'Submit verdict' }, inputSchema: z.object({ requestId }) }),
+    {
+      title: 'Submit verdict',
+      readOnlyHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  );
+  assert.deepEqual(hints({ conversation: 'never' }), { readOnlyHint: false, openWorldHint: false });
 });

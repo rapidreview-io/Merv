@@ -11,7 +11,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod';
 import type { Actor, Caller } from '@merv/contracts';
 import { ToolRegistry, describeTool } from '../packages/api/src/registry.js';
-import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { fit } from '../packages/pi/src/fit.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
@@ -955,8 +954,8 @@ test('web tools are open-world reads: described as such, run without a snapshot,
     const description = describeTool(definition);
     assert.deepEqual(description.annotations, { readOnlyHint: true, openWorldHint: true });
     // The agent runs it directly, and the relay takes its schema, which names no address.
-    assert.equal(conversationUse(definition, {}), undefined);
-    assert.ok(piTool(description, definition.conversation), definition.name);
+    assert.equal(definition.conversation, undefined);
+    assert.ok(piTool(description), definition.name);
     assert.doesNotMatch(JSON.stringify(description), /https?:\/\/(?!json-schema\.org)/);
     assert.match(definition.description, /Markdown link/);
   }

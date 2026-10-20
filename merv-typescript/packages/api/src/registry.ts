@@ -57,11 +57,10 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
         },
       },
     },
-    // What Pi's card does for a guarded call, a client's own permission prompt does from these.
+    // A write carries MCP's default destructiveHint, which a client's own prompt reads.
     annotations: {
-      ...(typeof tool.act?.title === 'string' && { title: tool.act.title }),
+      ...(tool.act && { title: tool.act.title }),
       readOnlyHint: tool.readOnly ?? false,
-      ...(tool.conversation && tool.conversation !== 'never' && { destructiveHint: true }),
       ...('properties' in schema &&
         Object.hasOwn(schema.properties, 'requestId') && {
           idempotentHint: true,
@@ -525,7 +524,6 @@ export class ToolRegistry implements Tools {
       try {
         if (session) this.fence(session);
         const parsed = await entry.parse(prepared ? prepared.input : input);
-        rules?.admits?.(entry.tool, parsed);
         admit?.(entry.tool, entry.description, parsed);
         if (session && prepared)
           await this.fenced(

@@ -1,15 +1,5 @@
 import { MervError } from '@merv/contracts';
-import type { CallerRules, ConversationUse, ToolDefinition } from '@merv/api/types';
-
-/** How a conversation may use a tool with this parsed input (ToolDefinition.conversation);
- *  undefined runs it as the person. */
-export function conversationUse(
-  tool: Pick<ToolDefinition, 'conversation'>,
-  input: unknown,
-): ConversationUse | undefined {
-  const use = tool.conversation;
-  return typeof use === 'function' ? use(input) : use;
-}
+import type { CallerRules } from '@merv/api/types';
 
 /** A result holding a bearer credential: a string `token` at any depth (deeper than 24 counts). */
 const holdsToken = (value: unknown, depth = 0): boolean =>
@@ -23,17 +13,13 @@ const holdsToken = (value: unknown, depth = 0): boolean =>
 
 /**
  * What a conversation may do with tools, since everything it reads reaches the model provider: it
- * is offered no mounted tool and none marked `never`; what only the person may run with an input
- * (`propose`, `secret`) it proposes to them instead, so running it is refused; and a result that
+ * is offered no mounted tool and none marked `never`; everything else it runs as its person, under
+ * their own role (founder, 2026-10-20: an agent is never asked for approval); and a result that
  * carries a credential never reaches it.
  */
 export const conversationRules: CallerRules = {
   offers: (tool) => !tool.remote && tool.conversation !== 'never',
   forbidden: new MervError('tool_forbidden', 'This tool is not offered to conversations', 403),
-  admits(tool, input) {
-    if (conversationUse(tool, input) !== undefined)
-      throw new MervError('tool_forbidden', 'Conversation tool is not admitted', 403);
-  },
   returns(result) {
     if (holdsToken(result))
       throw new MervError(
