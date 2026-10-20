@@ -869,6 +869,57 @@
         "status": 403,
         "error": "forbidden"
       }
+    },
+    "paper.patch": {
+      "input": {
+        "kind": "methods",
+        "expectedRevision": 0,
+        "requestId": "patch",
+        "changes": [
+          {
+            "id": "design",
+            "title": "Design",
+            "content": "Planned."
+          }
+        ]
+      },
+      "owner": {
+        "ok": ["kind", "projectId", "revision", "sections", "updatedAt", "updatedBy"]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
+    },
+    "paper.cite": {
+      "input": {
+        "expectedRevision": 0,
+        "requestId": "cite",
+        "identifier": "arxiv:2401.00001",
+        "title": "A paper"
+      },
+      "owner": {
+        "ok": [
+          "authors",
+          "createdAt",
+          "id",
+          "identifier",
+          "notes",
+          "projectId",
+          "refs",
+          "revision",
+          "sectionIds",
+          "title",
+          "updatedAt",
+          "updatedBy",
+          "url",
+          "year"
+        ]
+      },
+      "reader": {
+        "status": 403,
+        "error": "forbidden"
+      }
     }
   }
 }

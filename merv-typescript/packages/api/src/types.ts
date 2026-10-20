@@ -36,23 +36,12 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   present?(result: unknown, input: z.infer<S>): CallToolResult;
 }
 export type NounActions = Record<string, NounAction>;
-/** A noun tool: `action` and the argument object named after it (Tools.noun). */
-export interface NounDefinition {
-  tier?: ToolTier;
-  /** Every action only reads. */
-  readOnly?: boolean;
-  /** One clause per action, at most 600 characters with the calling rule the helper adds. */
-  description: string;
-  actions: NounActions;
-  /** As ToolDefinition.for; it also keeps every retired name of its actions from leased workers,
-   *  so a noun that takes one of a worker's tools takes no `for`. */
-  for?: 'people' | 'conversations';
-  /** Retired names with no executable path, by the action that remains. */
-  removed?: Record<string, string>;
-  /** A name the noun keeps (§2.6): a call without action is its old flat input, run as the action
-   *  it names, and a leased session is listed that input and text, as before. */
-  legacy?: { input: ZodTypeAny; description: string; action(input: Data): string };
-}
+/** A noun tool: `action` and the argument object named after it (Tools.noun). Its description has
+ *  one clause per action, at most 600 characters with the calling rule the helper adds. */
+export type NounDefinition = Pick<
+  ToolDefinition,
+  'tier' | 'readOnly' | 'description' | 'for' | 'removed' | 'legacy'
+> & { actions: NounActions };
 
 /** A tool whose handler receives the input its schema parsed. */
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
@@ -76,7 +65,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** Default 'deferred'. A Pi profile's own tool (conversationProfile) is tier worker. */
   tier?: ToolTier;
   /** 'people': never listed to a leased session (its every call refuses a session).
-   *  'conversations': listed to Pi conversations only, never to an MCP client. */
+   *  'conversations': listed to Pi conversations only, never to an MCP client. A noun's also keeps
+   *  every retired name of its actions from leased workers, so a noun that takes one of a worker's
+   *  tools takes no `for`. */
   for?: 'people' | 'conversations';
   /** 'never': no leased worker is listed it. It is a person's, whose handler refuses every
    *  worker, a page's own (ui.home), whose records a worker reads with their own tools, or a noun
@@ -96,8 +87,14 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** Retired names with no executable path, each answering tool_renamed with what remains: the
    *  action of this tool that took its place. */
   removed?: Record<string, string>;
-  /** A kept name's old flat input and text, as a leased session is listed them (NounDefinition). */
-  legacy?: NounDefinition['legacy'];
+  /** A noun tool's name kept from a flat tool (§2.6): a call without `action` is its old flat
+   *  input, which `route` sends to an action, and a leased session is listed that old schema and
+   *  text, as before. */
+  legacy?: {
+    inputSchema: ZodTypeAny;
+    description: string;
+    route(input: Record<string, unknown>): [action: string, args: Record<string, unknown>];
+  };
   /** A name kept by hand until drain, spanning two nouns (nisa.research): listed to no outside
    *  agent, yet admitted for one called by name as this tool is, as a retired name would be. */
   became?: string;

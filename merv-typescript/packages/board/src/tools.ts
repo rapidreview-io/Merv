@@ -55,9 +55,9 @@ export const boardToolsPlugin = {
           "Read the project's whiteboards: list (every board, newest first), get (one board's frames, shapes and arrows, in words) and look (the board as an actual image, without anyone's screen). It changes nothing.",
         // Pages, Pi turns and leased workers call it as before: no board lists, a board gets.
         legacy: {
-          input: z.object({ board: id.optional() }).strict(),
+          inputSchema: z.object({ board: id.optional() }).strict(),
           description: `Read the project's whiteboards. Without board: every board, newest first. With board: ${shapes}`,
-          action: (input) => (input.board ? 'get' : 'list'),
+          route: (input) => [input.board ? 'get' : 'list', input],
         },
         actions: {
           list: {

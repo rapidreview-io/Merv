@@ -257,9 +257,7 @@ export class ToolRegistry implements Tools {
       ...(definition.inputJsonSchema !== undefined && {
         aliasInput: inputSchema,
       }),
-      ...(legacy && {
-        flat: describeTool({ ...definition, ...legacy, inputSchema: legacy.input, tier: 'worker' }),
-      }),
+      ...(legacy && { flat: describeTool({ ...definition, ...legacy, tier: 'worker' }) }),
       tool: {
         name: definition.name,
         remote: false,

@@ -65,12 +65,20 @@ const retired = {
     'experiment.transition',
   ],
   board: ['board.look', 'board.draw'],
+  paper: ['paper.patch', 'paper.cite'],
 };
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
 /** Retired with no executable path: they answer tool_renamed. */
 const removed = ['code.local.bind', 'code.repository.rebind'];
-const nouns = ['code.read', 'code.write', 'experiment.read', 'experiment.write', 'board.write'];
+const nouns = [
+  'code.read',
+  'code.write',
+  'experiment.read',
+  'experiment.write',
+  'board.write',
+  'paper.write',
+];
 
 /** A result's key shape, as the contract was captured. */
 const shape = (value: unknown): unknown =>
@@ -123,7 +131,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     return result.isError ? { error: value.error.code as string } : { ok: shape(value) };
   };
 
-  for (const name of [...retired.code, ...retired.experiment, ...retired.board, ...kept]) {
+  for (const name of [...Object.values(retired).flat(), ...kept]) {
     const contract = captured.contracts[name]!;
     assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
     assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
@@ -156,7 +164,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.equal(changed.body.error.code, 'request_conflict');
 
   // What an agent is listed: the base listing with the retired names traded for the nouns.
-  const gone = new Set([...retired.code, ...retired.experiment, ...retired.board, ...removed]);
+  const gone = new Set([...Object.values(retired).flat(), ...removed]);
   const traded = (base: string[]) =>
     [...base.filter((name) => !gone.has(name)), ...nouns].sort((a, b) => a.localeCompare(b));
   const listed = (await client.listTools()).tools.map(({ name }) => name);
@@ -204,6 +212,13 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     (await app.ctx.tools.describe(worker, true)).map((tool) => [tool.name, tool.description]),
   );
   assert.match(shown.get('code.status')!, /^Read retained bases/);
+  // A kept flat name is listed to a worker as it was, with its old flat schema; an agent is
+  // listed it with actions.
+  const schema = async (caller: Caller) =>
+    (await app.ctx.tools.describe(caller, true)).find(({ name }) => name === 'paper.read')!
+      .inputSchema.properties!;
+  assert.ok((await schema(worker)).kind && !(await schema(worker)).action);
+  assert.ok((await schema(owner)).action && !(await schema(owner)).kind);
   assert.match(shown.get('code.unit.get')!, /waits for code\.unit\.fence/);
   // A kept name is shown its old flat input and text.
   assert.match(shown.get('board.read')!, /^Read the project's whiteboards\. Without board/);

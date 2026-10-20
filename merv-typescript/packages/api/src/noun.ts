@@ -1,4 +1,4 @@
-import { MervError, type Caller, type Data } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
 import { z, type ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type {
@@ -39,7 +39,7 @@ const listed = (names: string[]) =>
 
 /** A call's action and its arguments: `{action, [action]: {…}}`; an action whose fields are all
  *  optional may leave its object out. */
-export function nounInput(actions: NounActions) {
+export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy']) {
   const names = Object.keys(actions);
   if (!names.length) throw new MervError('invalid_tool', 'A noun tool has at least one action');
   const shapes = Object.fromEntries(names.map((name) => [name, fields(actions[name]!.input)]));
@@ -60,6 +60,15 @@ export function nounInput(actions: NounActions) {
   return z.preprocess((value, ctx) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const input = value as Record<string, unknown>;
+    // A kept flat name's old flat input, without action, is checked as it was, then runs as the
+    // action it routes to.
+    if (legacy && !('action' in input)) {
+      const flat = legacy.inputSchema.safeParse(input);
+      if (!flat.success)
+        for (const issue of flat.error.issues) ctx.addIssue({ ...issue, fatal: true });
+      const [to, args] = flat.success ? legacy.route(flat.data) : [];
+      return to ? { action: to, [to]: args } : value;
+    }
     const action = input.action;
     // A missing or unknown action is the enum's own error, which lists the actions.
     if (typeof action !== 'string' || !Object.hasOwn(shapes, action)) return value;
@@ -91,8 +100,9 @@ const RULE =
 
 /**
  * One noun tool: `action` and the argument object named after it. No worker is listed one in
- * this campaign (worker 'never'): leased workers keep the retired names, which the registry
- * runs as aliases from each action's `was`. Whether a call reads is its action's.
+ * this campaign (worker 'never') but by a name kept from a flat tool (legacy): leased workers keep
+ * the retired names, which the registry runs as aliases from each action's `was`. Whether a call
+ * reads is its action's.
  */
 export function noun(name: string, definition: NounDefinition): ToolDefinition {
   const { actions, legacy } = definition;
@@ -108,15 +118,7 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   return {
     name,
     description,
-    // A kept name's old flat call (no action) runs as the action it names.
-    inputSchema: legacy
-      ? z.preprocess((value) => {
-          const flat = value && typeof value === 'object' && !Array.isArray(value);
-          if (!flat || 'action' in value) return value;
-          const action = legacy.action(value as Data);
-          return { action, [action]: value };
-        }, nounInput(actions))
-      : nounInput(actions),
+    inputSchema: nounInput(actions, legacy),
     readOnly,
     ...(!readOnly &&
       reading.length > 0 && {

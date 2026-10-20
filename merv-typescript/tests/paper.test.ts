@@ -14,7 +14,8 @@ import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import { paperToolsPlugin } from '@merv/paper/tools';
-import type { ToolDefinition } from '@merv/api/types';
+import type { NounDefinition, ToolDefinition } from '@merv/api/types';
+import { noun } from '../packages/api/src/noun.js';
 import type { Context } from 'cordis';
 import { contextSections, paperInput } from '@merv/paper/context';
 import { mergeText } from '../packages/paper/src/merge.js';
@@ -824,6 +825,7 @@ test('a revision past exact integers is refused as input; a section range ends w
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      noun: (name: string, definition: NounDefinition) => tools.set(name, noun(name, definition)),
       contributeInstructions() {},
       contributeContext() {},
     },
@@ -837,7 +839,10 @@ test('a revision past exact integers is refused as input; a section range ends w
     changes: [{ id: 'm', title: 'M', content: 'a🚀b' }],
   });
   // Two characters would end in half the emoji: the range stops before it.
-  const part = await read.handler(f.reader, { kind: 'methods', section: 'm', length: 2 });
+  const part = await read.handler(
+    f.reader,
+    read.inputSchema.parse({ kind: 'methods', section: 'm', length: 2 }),
+  );
   assert.equal((part as { content: string }).content, 'a');
 });
 
@@ -849,14 +854,19 @@ test('paper.read refuses a range without its section, outlines a document, and s
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      noun: (name: string, definition: NounDefinition) => tools.set(name, noun(name, definition)),
       contributeInstructions() {},
       contributeContext() {},
     },
   } as unknown as Context);
   const read = tools.get('paper.read')!;
   const call = async (input: object) => await read.handler(f.reader, read.inputSchema.parse(input));
-  const shown = async (input: object) =>
-    JSON.parse((read.present!(await call(input)).content[0] as { text: string }).text);
+  const refused = (input: object) => assert.equal(read.inputSchema.safeParse(input).success, false);
+  const shown = async (input: object) => {
+    const parsed = read.inputSchema.parse(input);
+    const result = await read.handler(f.reader, parsed);
+    return JSON.parse((read.present!(result, parsed).content[0] as { text: string }).text);
+  };
   const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
   // A reviewer publishes Methods at revision 1, as review.submit's paperChanges do.
   await f.state.transaction((tx) =>
@@ -881,24 +891,14 @@ test('paper.read refuses a range without its section, outlines a document, and s
       tx,
     ),
   );
-  // offset and length without a section were dropped and the whole document returned; now
-  // they are refused, naming each section and its length, at the current or a given revision.
-  for (const input of [
-    { kind: 'methods', length: 100 },
-    { kind: 'methods', revision: 1, offset: 5 },
-  ])
-    await assert.rejects(
-      call(input),
-      (error: MervError) =>
-        error.code === 'invalid_paper_input' &&
-        error.message ===
-          'offset and length read part of one section’s content, so name its section too: methods revision 1 holds design (15 characters), data (15 characters)',
-    );
+  // offset and length read part of one section, so they need its section.
+  refused({ kind: 'methods', length: 100 });
+  refused({ kind: 'methods', revision: 1, offset: 5 });
   await assert.rejects(
     call({ kind: 'methods', section: 'results' }),
     (error: MervError) =>
       error.code === 'not_found' &&
-      /^Section results is not in the document: methods revision 1 holds design/.test(
+      /^Section results is not in methods revision 1; outline lists its sections/.test(
         error.message,
       ),
   );
@@ -909,8 +909,15 @@ test('paper.read refuses a range without its section, outlines a document, and s
     { kind: 'methods', history: true, revision: 1 },
     { kind: 'methods', outline: true, section: 'design' },
     { kind: 'methods', outline: true, length: 10 },
+    { kind: 'methods', history: true, outline: true },
+    // The flat input is checked as it was: typed flags, no unknown field.
+    { outline: 'false' },
+    { kind: 'methods', mode: 'inline' },
   ])
-    await assert.rejects(call(input), { code: 'invalid_paper_input' });
+    refused(input);
+  // A false flag is one left out, as models often send it.
+  assert.ok('documents' in ((await call({ history: false, outline: false })) as object));
+  assert.ok('current' in ((await call({ kind: 'methods', history: false })) as object));
   // The outline: ids, titles and lengths, no content, and the revision last published.
   const outline = (await call({ kind: 'methods', outline: true })) as Record<string, unknown>;
   assert.deepEqual(

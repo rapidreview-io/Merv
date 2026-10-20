@@ -117,7 +117,7 @@ export function SectionEditor({
   const [title, setTitle] = useState(section?.title ?? '');
   const [content, setContent] = useState(section?.content ?? '');
   const command = useCommand<PaperRevision>({
-    tool: 'paper.patch',
+    tool: 'paper.write:patch',
     // Later than the one edited, not just the next: the paper merges an edit made against an
     // earlier revision with those written since.
     validate: (value) =>
@@ -211,7 +211,7 @@ export function CitationEditor({
       .map((ref) => ref.slice(FILE.length)),
   );
   const command = useCommand<PaperCitation>({
-    tool: 'paper.cite',
+    tool: 'paper.write:cite',
     validate: (value) =>
       !!value &&
       value.projectId === project.id &&

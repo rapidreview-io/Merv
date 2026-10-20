@@ -2,7 +2,7 @@
  * is given, before the registry's own part on tools and consent (@merv/api/guide).
  * Every dotted name here is a registered tool (tests/app.test.ts). */
 export const researchGuide = `Merv is a review-gated research system. A project holds:
-- a living paper, carried as project context in worker and reviewer assignments: a Problem document with four fixed sections (problem, scope, goals, constraints), Literature with its citations, then Methods and Results (paper.read, paper.patch, paper.cite);
+- a living paper, carried as project context in worker and reviewer assignments: a Problem document with four fixed sections (problem, scope, goals, constraints), Literature with its citations, then Methods and Results (paper.read, paper.write);
 - tasks: a goal and deliverables, delivered, then reviewed;
 - experiments: a plan, a design review, the run, then a results review;
 - research cycles: defining, researching, reflecting through five independent lenses, then complete, consolidating first when accepted code has not reached main;

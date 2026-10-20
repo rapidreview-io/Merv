@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 61);
+    assert.equal(catalog.length, 60);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -339,12 +339,22 @@ test('a paper too long to show the agent whole reads on section by section', asy
       app.ctx.tools.call('paper.read', caller, { kind: 'methods', revision: 3, section: 'd' }),
       { code: 'not_found' },
     );
-    await assert.rejects(app.ctx.tools.call('paper.read', caller, { section: 'd' }), {
-      code: 'invalid_paper_input',
-    });
-    await assert.rejects(app.ctx.tools.call('paper.read', caller, { revision: 1 }), {
-      code: 'invalid_paper_input',
-    });
+    // The old flat form and the action form read alike; a field no action takes is refused.
+    assert.deepEqual(
+      await app.ctx.tools.call('paper.read', caller, {
+        action: 'section',
+        section: { kind: 'methods', section: 'b' },
+      }),
+      await app.ctx.tools.call('paper.read', caller, { kind: 'methods', section: 'b' }),
+    );
+    for (const input of [
+      { section: 'd' },
+      { revision: 1 },
+      { kind: 'methods', history: true, section: 'd' },
+    ])
+      await assert.rejects(app.ctx.tools.call('paper.read', caller, input), {
+        code: 'invalid_input',
+      });
     await assert.rejects(
       app.ctx.tools.call('paper.read', caller, { kind: 'results', section: 'd' }),
       { code: 'not_found' },
@@ -433,7 +443,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
       toolsGuide,
       'leave production to a Fleet worker',
       'task.get returns',
-      'paper.patch (kind problem)',
+      'paper.write patch (kind problem)',
       'change the Problem to change it',
       'session.find with',
       'session.stuck says',

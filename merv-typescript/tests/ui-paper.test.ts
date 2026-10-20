@@ -238,7 +238,7 @@ test('a citation’s retained files are chosen by name, and the tool is sent art
     body: { result: [file(CURVE, 'Learning curve'), file(TABLE, 'Accuracy table')] },
   });
   let sent: Record<string, unknown> | undefined;
-  serve('/tools/paper.cite', (_call, body) => {
+  serve('/tools/paper.write:cite', (_call, body) => {
     sent = body;
     return { body: { result: { ...cited, revision: 4 } } };
   });
@@ -285,7 +285,7 @@ test('the main agent UI can save Methods and Results directly', async (t) => {
     held.documents[kind].current = revision(kind, [section(kind, kind, `Current ${kind}.`)]);
   boot(held);
   const sent: string[] = [];
-  serve('/tools/paper.patch', (_call, body) => {
+  serve('/tools/paper.write:patch', (_call, body) => {
     const kind = body.kind as 'methods' | 'results';
     assert.equal(body.expectedRevision, 1);
     sent.push(kind);
@@ -312,7 +312,7 @@ test('an edit saved after someone else wrote the document is saved, not doubted'
   const edit = tools().find((tool) => tool.getAttribute('aria-label') === 'Edit Problem')!;
   await act(async () => edit.click());
   // A reviewer writes revision 2 while the form is open; the server merges this edit as 3.
-  serve('/tools/paper.patch', (_call, body) => {
+  serve('/tools/paper.write:patch', (_call, body) => {
     assert.equal(body.expectedRevision, 1);
     held.documents.problem.current = { ...held.documents.problem.current, revision: 3 };
     return { body: { result: held.documents.problem.current } };

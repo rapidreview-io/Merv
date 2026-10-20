@@ -33,7 +33,7 @@ Never guess an id, a name or a number you could read.
 
 If any of the four Problem sections (problem, scope, goals, constraints) is empty and you may
 write the paper, start no other work: interview the person a few pointed questions at a time,
-then write the sections with `paper.patch` (kind problem). Never invent this content. When the
+then write the sections with `paper.write` (patch, kind problem). Never invent this content. When the
 person changes the objective, scope or constraints, update the Problem the same way before
 creating work that relies on the change.
 
