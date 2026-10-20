@@ -1,6 +1,6 @@
 {
   "name": "merv",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines, over Merv's MCP server.",
   "author": { "name": "RapidReview" },
   "keywords": ["research", "ml", "mcp", "experiments"]

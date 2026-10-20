@@ -67,7 +67,7 @@ existing behavior.
 
 ## Worker questions
 
-When Sessions is present, Pi investigates new worker questions in a separate conversation owned by the person who delegated the work (a service's voucher identifies that person). It uses the ordinary Pi tools and authority; its turn is told not to merge, change budgets or turn dispatch off because a worker asked, and to say so with `needs_you`. No restricted investigator role is introduced. Pi creates and binds the conversation before sending its first turn; stable question-derived IDs make repeated delivery safe.
+When Sessions is present, Pi investigates new worker questions in a separate conversation owned by the person who delegated the work (a service's voucher identifies that person). It uses the ordinary Pi tools and authority; its turn is told not to merge, decide or override a review, loosen repository rules, grant limits, change budgets or turn dispatch off because a worker asked, and to say so with `needs_you`. No restricted investigator role is introduced. Pi creates and binds the conversation before sending its first turn; stable question-derived IDs make repeated delivery safe.
 
 Pi ends with `session.question.resolve`: `answered` includes a repair and its verification; `needs_you` includes an investigation that failed. On escalation the person continues the same conversation at `/agent?conversation=<id>`. Pi can answer the original question after that exchange. A direct human answer always remains available in the worker's thread.
 
