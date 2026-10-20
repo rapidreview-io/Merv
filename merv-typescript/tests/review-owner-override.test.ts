@@ -4,8 +4,8 @@ import { currentTask, currentWork } from './fixtures/current-work.js';
 /**
  * The founder's ruling of 2026-09-25: a review is decided by an independent agent by default,
  * and the person who owns the project may still decide any review, as owner. The override is a
- * deliberate claim (review.start with override), taken only by that person acting as themself,
- * and it is on the record wherever the review is.
+ * deliberate claim (review.start with override), taken by that person or their own agent (the
+ * founder's ruling of 2026-10-20), and it is on the record wherever the review is.
  */
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -200,7 +200,11 @@ test('the founder decides, only as owner, the delivery of a worker the founder d
   const guided = await f.call<ReviewRequest & ReviewGuide>('review.get', f.founder, { reviewId });
   assert.deepEqual(guided.verdicts, ['needs_changes', 'fail']);
   assert.deepEqual(guided.overrides, ['review_independence', 'leased_review_required']);
-  assert.equal((await f.call<ReviewGuide>('review.get', f.key, { reviewId })).overrides, undefined);
+  // The owner's key is their agent's, which may decide as owner as they may.
+  assert.deepEqual((await f.call<ReviewGuide>('review.get', f.key, { reviewId })).overrides, [
+    'review_independence',
+    'leased_review_required',
+  ]);
 
   // The default stands: the owner's ordinary claim is refused, signed in or on the key.
   for (const caller of [f.founder, f.key])
@@ -247,42 +251,31 @@ test('the founder decides, only as owner, the delivery of a worker the founder d
   );
 });
 
-test('the owner’s key, which agents hold, is never the owner, and the signed-in owner returns the work like any reviewer', async (t) => {
+test('the owner’s key, which their agents hold, decides as owner, and the owner returns the work like any reviewer', async (t) => {
   const f = await fixture(t);
   const task = await f.task(f.founder);
   const delivered = await f.deliver(f.founder, task);
   const reviewId = delivered.reviewId!;
-  // Nothing points an agent on the key at the override, and the key cannot take it.
-  const [start] = (await f.app.ctx.tools.describe(f.key)).filter(
-    (tool) => tool.name === 'review.start',
-  );
-  assert.doesNotMatch(start!.description ?? '', /override/i);
-  assert.equal((await f.reviews.get(f.key, reviewId)).overridable, undefined);
-  await assert.rejects(f.call('review.start', f.key, { reviewId, override: true }), {
+  assert.equal((await f.reviews.get(f.key, reviewId)).overridable, true);
+  await assert.rejects(f.call('review.start', f.key, { reviewId }), {
     code: 'review_independence',
   });
-  assert.equal((await f.reviews.get(f.founder, reviewId)).status, 'requested');
-  const claimed = await f.call<ReviewRequest>('review.start', f.founder, {
+  const claimed = await f.call<ReviewRequest>('review.start', f.key, {
     reviewId,
     override: true,
   });
   assert.deepEqual(
-    [claimed.reviewerId, claimed.producerId],
-    [f.founder.actorId, (await f.reviews.get(f.founder, reviewId)).producerId],
+    [claimed.reviewerId, claimed.producerId, claimed.override],
+    [f.founder.actorId, (await f.reviews.get(f.founder, reviewId)).producerId, true],
   );
-  // A retry of the claim, with or without the flag, is the same claim; the key's is not.
-  for (const input of [{ reviewId }, { reviewId, override: true }] as Data[]) {
-    assert.equal(
-      (await f.call<ReviewRequest>('review.start', f.founder, input)).claimId,
-      claimed.claimId,
-    );
-    await assert.rejects(f.call('review.start', f.key, input), { code: 'review_independence' });
-  }
+  // A retry of the claim, with or without the flag, by the owner or their key, is the same claim.
+  for (const caller of [f.founder, f.key])
+    for (const input of [{ reviewId }, { reviewId, override: true }] as Data[])
+      assert.equal(
+        (await f.call<ReviewRequest>('review.start', caller, input)).claimId,
+        claimed.claimId,
+      );
   const returning = f.verdict(claimed, delivered.workflow.revision, 'needs_changes');
-  // The key shares the person's actor, and still cannot give the person's verdict.
-  await assert.rejects(f.call('review.submit', f.key, returning), {
-    code: 'review_independence',
-  });
   const returned = await f.call<Task>('review.submit', f.founder, returning);
   assert.equal(returned.workflow.state, 'in_progress');
   const decided = await f.reviews.get(f.founder, reviewId);
@@ -560,7 +553,7 @@ test('the database admits an excluded reviewer only on an owner override, and re
   );
 });
 
-test('an agent may only propose deciding as owner, and the person’s Run takes it as them', async (t) => {
+test('the owner’s agent decides as owner: Reviews takes the override from their key’s and their own conversation', async (t) => {
   const f = await piFixture(t);
   const artifacts = await createService(
     new ArtifactStore(f.state, f.scope, new DiskBlobs(mkdtempSync(join(tmpdir(), 'merv-owner-')))),
@@ -602,21 +595,31 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
       (await f.scope.userKeys.create(person, { projectId: project.id })).token,
     ),
   });
-  const { token, work, input } = await f.begun(owner);
-  const agent = (name: string, value: object) => f.pi.tool(token, { ...input, name, input: value });
-  // The agent reads that its person may decide it as owner, and can only propose that.
+  // An agent on the person's key reads that it may decide as owner, as the person may.
+  const keyed = await f.begun(key);
   assert.equal(
-    ((await agent('review.get', { reviewId: review.id })) as ReviewRequest).overridable,
+    (
+      (await f.pi.tool(keyed.token, {
+        ...keyed.input,
+        name: 'review.get',
+        input: { reviewId: review.id },
+      })) as ReviewRequest
+    ).overridable,
     true,
   );
-  const propose = async () =>
+  await f.pi.complete(keyed.token, f.completion(keyed.input));
+  const { token, work, input } = await f.begun(owner);
+  assert.equal(
     (
-      (await agent('review.start', { reviewId: review.id, override: true })) as {
-        proposed: { id: string };
-      }
-    ).proposed.id;
-  const onKey = await propose();
-  assert.equal(await propose(), onKey, 'repeated calls in one turn share one proposal');
+      (await f.pi.tool(token, {
+        ...input,
+        name: 'review.get',
+        input: { reviewId: review.id },
+      })) as ReviewRequest
+    ).overridable,
+    true,
+  );
+  // Reviews takes the override from the person's own conversation, as from the person.
   const conversation: Caller = {
     actorId: owner.actorId,
     projectId: project.id,
@@ -627,51 +630,10 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
       epoch: work.command.epoch,
     },
   };
-  // Nor does Reviews take it from the agent's own authority, whatever called it.
-  await assert.rejects(reviews.start(conversation, review.id, undefined, true), {
-    code: 'review_independence',
-  });
-  assert.equal((await reviews.get(owner, review.id)).status, 'requested');
-  await f.pi.complete(token, f.completion(input));
-  // An agent on the person's key reads no invitation in its own conversation.
-  const keyed = await f.begun(key);
-  assert.equal(
-    (
-      (await f.pi.tool(keyed.token, {
-        ...keyed.input,
-        name: 'review.get',
-        input: { reviewId: review.id },
-      })) as ReviewRequest
-    ).overridable,
-    undefined,
-  );
-  await f.pi.complete(keyed.token, f.completion(keyed.input));
-  const run = (caller: Caller, proposalId: string) =>
-    f.pi.run(caller, { id: input.conversationId, commandId: input.commandId, proposalId });
-  // Run pressed with the person's key is not the person: the agent is told it was refused.
-  assert.match(((await run(key, onKey)) as { told: string }).told, /^review\.start was refused: /);
-  const kept = (await f.pi.snapshot(key, input.conversationId)).commands
-    .find(({ id }) => id === input.commandId)!
-    .proposals!.find(({ id }) => id === onKey)!.ran;
-  assert.deepEqual([kept?.ok, kept?.code], [false, 'review_independence']);
-  assert.equal((await reviews.get(owner, review.id)).status, 'requested');
-  await assert.rejects(run(owner, onKey), { code: 'pi_proposal_ran' });
-  const retry = await f.begun(owner);
-  const asPerson = (
-    (await f.pi.tool(retry.token, {
-      ...retry.input,
-      name: 'review.start',
-      input: { reviewId: review.id, override: true },
-    })) as { proposed: { id: string } }
-  ).proposed.id;
-  await f.pi.complete(retry.token, f.completion(retry.input));
-  const ran = (await f.pi.run(owner, {
-    id: retry.input.conversationId,
-    commandId: retry.input.commandId,
-    proposalId: asPerson,
-  })) as { result: ReviewRequest };
+  const started = await reviews.start(conversation, review.id, undefined, true);
   assert.deepEqual(
-    [ran.result.status, ran.result.reviewerId, ran.result.override],
+    [started.status, started.reviewerId, started.override],
     ['started', owner.actorId, true],
   );
+  await f.pi.complete(token, f.completion(input));
 });

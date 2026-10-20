@@ -155,7 +155,7 @@ export interface Reviews {
   home(caller: Caller): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */
   open(caller: Caller): Promise<number>;
-  /** `override` claims it as the project's owner: only that person, signed in, may. */
+  /** `override` claims it as the project's owner: that person or their own agent may. */
   start(
     caller: Caller,
     reviewId: string,

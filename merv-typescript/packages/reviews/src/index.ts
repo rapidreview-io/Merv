@@ -6,8 +6,7 @@ import {
   roundsUsed,
   standings,
 } from './rules.js';
-import { canonical, freezeData, visible, isDirectHuman, within } from '@merv/contracts';
-import { sourceCaller } from '@merv/scope/rules';
+import { canonical, freezeData, visible, isAdministrator, within } from '@merv/contracts';
 import { bound, createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { leaseReleaseConsumer } from '@merv/workflows/lease-rows';
@@ -63,12 +62,6 @@ const submitFields: ReadonlySet<string> = new Set([
   'requestId',
 ]);
 
-/**
- * The project's owner as the signed-in person: an operator's member actor with human authority.
- * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
- */
-const projectOwner = (caller: Caller, actor: Actor) =>
-  actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
 /** Where a snapshot keeps a review row `row` or `find` read, until the scope ends or writes. */
 const rowKey = (projectId: string, id: string) => `reviews:row:${projectId}:${id}`;
 
@@ -188,9 +181,9 @@ export class ReviewService implements Reviews {
         409,
       );
     }
-    // The owner's override lifts the exclusions below, and only for that person: an agent's
-    // conversation proposes it, and the person's own Run takes it.
-    if (review.override) return projectOwner(caller, actor);
+    // The owner's override lifts the exclusions below, for the project's owner (an operator's
+    // member actor) or their own agent; never a worker or a machine actor.
+    if (review.override) return isAdministrator(actor);
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&
@@ -421,14 +414,10 @@ export class ReviewService implements Reviews {
    */
   private async reader(caller: Caller, transaction?: Transaction) {
     const reader = await this.scope.require(caller, 'read', transaction);
-    // The person's own agent reads it as the person, to propose what only the person's Run takes.
-    const person = caller.conversation
-      ? sourceCaller(await this.scope.delegationSource(caller, transaction))
-      : caller;
     return async (review: ReviewRequest): Promise<ReviewRequest> => {
       if (review.status !== 'requested' || reader.role !== 'operator' || reader.sessionId)
         return review;
-      if (projectOwner(person, reader)) review.overridable = true;
+      if (isAdministrator(reader)) review.overridable = true;
       const { producerId, excludedActorIds = [], provenance } = review;
       if (
         provenance &&
