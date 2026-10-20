@@ -58,6 +58,11 @@ export interface Reader {
    * base, mirror, fence and publication tools require: admin scope and no session.
    */
   manages: boolean;
+  /**
+   * The same administrator as a member: the person, their key or their conversation, never a
+   * machine operator. Fencing a writer and every publication control require one.
+   */
+  administers: boolean;
   /** Who accepted or merged, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;
 }
@@ -379,6 +384,7 @@ export function CodeCard({
   publications,
   names,
   manages,
+  administers,
   named,
   head = true,
   onDone,
@@ -455,7 +461,7 @@ export function CodeCard({
           <UnitCode unit={unit} named={named} open={open} />
           {/* The one verb a quarantined capture needs, where the writer is read: every other
               writer generation ends with its session. */}
-          {manages && !!unit.quarantine && (
+          {administers && !!unit.quarantine && (
             <Verb
               tool="code.unit.fence"
               input={{ unitId: unit.unitId }}

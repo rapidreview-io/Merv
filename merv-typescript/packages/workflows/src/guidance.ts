@@ -215,13 +215,19 @@ export class WorkflowGuidance extends WorkflowEngine {
         })),
         tx,
       );
-    // Asked once, and only where some record waits on a project admin; never of a worker.
-    let admin: Promise<boolean> | undefined;
+    // Asked once, and only where some record waits on a project admin; never of a worker. An
+    // eligible admin is a member when its actor is a person's (a machine actor has no user).
+    let admin: Promise<{ admin: boolean; member: boolean }> | undefined;
     const isAdmin = () =>
       (admin ??=
         caller.session || !caller.actorId
-          ? Promise.resolve(false)
-          : this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx));
+          ? Promise.resolve({ admin: false, member: false })
+          : this.scope
+              .eligible(caller.projectId, caller.actorId, 'admin', tx)
+              .then(async (admin) => ({
+                admin,
+                member: admin && !!(await this.scope.require(caller, 'read', tx)).user,
+              })));
     const decided = await mapAsync(rows, async (row, index) => {
       const known = facts.get(row.id)!;
       const context = readContext({

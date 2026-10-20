@@ -25,7 +25,7 @@ const { act } = await import('react-dom/test-utils');
 const { refreshTools, setProject } = await import('../packages/ui/web/api.js');
 const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
 const { CodeFiles } = await import('../packages/ui/web/views/code-files.js');
-const { CodePage, managesCode } = await import('../packages/ui/web/views/code.js');
+const { CodePage, administersCode, managesCode } = await import('../packages/ui/web/views/code.js');
 const { GitHubPublications } = await import('../packages/ui/web/views/github-publications.js');
 const { PageLede } = await import('../packages/ui/web/shell.js');
 const { chipsOf, gitModel, relationsOf, waitersOf } =
@@ -77,7 +77,7 @@ const Probe = () => {
  * shell's own line and nowhere else. `manages` is the principal: false is what a leased
  * session sees.
  */
-const page = (rows = [row], { at = '/code', manages = true } = {}) =>
+const page = (rows = [row], { at = '/code', manages = true, administers = manages } = {}) =>
   createElement(
     MemoryRouter,
     { initialEntries: [at] },
@@ -94,6 +94,7 @@ const page = (rows = [row], { at = '/code', manages = true } = {}) =>
           // The rows the records it names open under.
           shell: { rows: [...rows, ...lists], plugins: [] },
           manages,
+          administers,
           named: () => undefined,
         },
       ),
@@ -1230,13 +1231,27 @@ test('a recoverable writer waits; only quarantine is called quarantine', () => {
   );
 });
 
-test('one rule draws every Code verb: a project administrator, by any credential of theirs', () => {
-  const actor = (role: string) => ({ id: 'a', projectId: 'p', name: 'Ada', role, active: true });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+test('Code verbs answer a project administrator; the person-bound ones only a member', () => {
+  const user = { issuer: 'i', subject: 's' };
+  const actor = (role: string, member = true) => ({
+    id: 'a',
+    projectId: 'p',
+    name: 'Ada',
+    role,
+    active: true,
+    ...(member ? { user } : {}),
+  });
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   assert.equal(managesCode(actor('operator') as any), true);
-  for (const role of ['producer', 'reviewer', 'reader'])
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(administersCode(actor('operator') as any), true);
+  // A machine operator runs the base verbs, never a fence or a publication control.
+  assert.equal(managesCode(actor('operator', false) as any), true);
+  assert.equal(administersCode(actor('operator', false) as any), false);
+  for (const role of ['producer', 'reviewer', 'reader']) {
     assert.equal(managesCode(actor(role) as any), false, `${role} controls no server work`);
+    assert.equal(administersCode(actor(role) as any), false, `${role} controls no server work`);
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 });
 
 test('the units waiting on a base are joined by the member set alone', () => {
@@ -1517,6 +1532,11 @@ test('fencing a writer is offered to a project administrator and to nobody else'
   // not offer what would come back refused.
   servedProject();
   await mount(page([row], { at: '/code/unit/u8', manages: false }));
+  assert.ok(!text().includes('Fence the writer'), text().slice(0, 300));
+  await unmount();
+  // A machine operator administers nothing a person must: the server refuses it the fence.
+  servedProject();
+  await mount(page([row], { at: '/code/unit/u8', manages: true, administers: false }));
   assert.ok(!text().includes('Fence the writer'), text().slice(0, 300));
   await unmount();
   servedProject();
@@ -2576,6 +2596,19 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     await mount(createElement(GitHubConnection));
     assert.match(text(), /Base branch.*research-base/);
     assert.doesNotMatch(text(), /GitHub default: main/);
+  });
+
+  test('connecting GitHub is offered to the signed-in person, never to their key', async (t) => {
+    t.after(unmount);
+    for (const connects of [true, false]) {
+      serve('/code/github', { body: { ...status, status: 'needs_reconnect' } });
+      await mount(createElement(GitHubConnection, { connects }));
+      const offered = [...document.querySelectorAll('button')].some(
+        (b) => b.textContent === 'Reconnect GitHub',
+      );
+      assert.equal(offered, connects, text());
+      await unmount();
+    }
   });
 
   test('repository picker can be cancelled without changing the connection; account actions stay tucked away', async (t) => {

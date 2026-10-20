@@ -82,7 +82,7 @@ function mainSaid(status: CodeProjectStatus | undefined): string {
 /** A count not yet read is the em dash the console uses, never a zero. */
 const EM = '—';
 
-export function CodePage({ row, shell, manages }: ViewProps & Omit<Reader, 'named'>) {
+export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<Reader, 'named'>) {
   const named = useActorNames();
   const read = useTool<{
     commands: CodeCommandRecord[];
@@ -176,6 +176,7 @@ export function CodePage({ row, shell, manages }: ViewProps & Omit<Reader, 'name
           head={head}
           onDone={read.reload}
           manages={manages}
+          administers={administers}
           named={named}
         />
       )
@@ -237,7 +238,7 @@ export function CodePage({ row, shell, manages }: ViewProps & Omit<Reader, 'name
       <GitHubPublications
         rows={published}
         onDone={read.reload}
-        operator={manages}
+        operator={administers}
         named={named}
         controls={unlinked ? undefined : read.data?.status?.publication?.controls}
       />
@@ -247,12 +248,17 @@ export function CodePage({ row, shell, manages }: ViewProps & Omit<Reader, 'name
 }
 
 /**
- * Code's machinery — the base verbs, the blocked ref, fencing a writer and every publication
- * control — answers a project administrator or their agent, never a leased worker. A worker's
- * lease is not an account credential and never reaches this page, so the role is the whole of
- * the test.
+ * Code's own machinery — the base verbs and the blocked ref — answers a project administrator
+ * who is not a leased worker. A worker's lease is not an account credential and never reaches
+ * this page, so the role is the whole of the test.
  */
 export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
+/**
+ * Fencing a writer and every publication control answer an administrator who is a member (the
+ * person, their key, their conversation), never a machine operator: the server's
+ * requireAdministrator, drawn by the same rule.
+ */
+export const administersCode = (actor: Actor) => managesCode(actor) && !!actor.user;
 
 /**
  * A record's Code section. The publication verbs answer a project administrator and nobody
@@ -260,7 +266,7 @@ export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
  */
 export function RecordCode(props: Pick<Parameters<typeof UnitCode>[0], 'unit' | 'named'>) {
   const { actor } = useSession();
-  return <UnitCode {...props} manages={managesCode(actor)} />;
+  return <UnitCode {...props} manages={administersCode(actor)} />;
 }
 
 export const CodeView = (props: ViewProps) => {
@@ -289,7 +295,7 @@ export const CodeView = (props: ViewProps) => {
           <CodeFiles {...props} root={root} />
         </div>
       ) : (
-        <CodePage {...props} manages={managesCode(actor)} />
+        <CodePage {...props} manages={managesCode(actor)} administers={administersCode(actor)} />
       )}
     </>
   );

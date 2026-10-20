@@ -110,9 +110,10 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
   assert.equal(yoursOf(delivery, owner, me), undefined);
   assert.deepEqual(yoursOf(delivery, { actorId: me }, me), {});
   // A blocker another plugin published says whose move ending it is, on ended work too, and
-  // the gate names it: the record's owner's (an admin's too), an admin's, an operator's (any
-  // admin's, or their agent's, too), or nobody's.
-  const admin = { admin: true };
+  // the gate names it: the record's owner's (an admin's too), an admin's, an operator's (an
+  // admin who is a member: the person or their agent, never a machine operator), or nobody's.
+  const admin = { admin: true },
+    member = { admin: true, member: true };
   const held = (whose: string, key = whose) => ({
     ...blocker('held'),
     provider: 'plugin',
@@ -138,8 +139,9 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
     yoursOf(published(held('admin')), undefined, 'actor_ada', admin),
     asked('admin'),
   );
+  assert.equal(yoursOf(published(held('operator')), owner, 'actor_ada', admin), undefined);
   assert.deepEqual(
-    yoursOf(published(held('operator')), owner, 'actor_ada', admin),
+    yoursOf(published(held('operator')), owner, 'actor_ada', member),
     asked('operator'),
   );
   // While a blocker holds the record for somebody else, or for nobody, its owner's own ask
