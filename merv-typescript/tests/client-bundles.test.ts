@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './fixtures/app.js';
@@ -18,6 +18,10 @@ const skillsOf = (bundle: string) =>
 /** Named by a skill but absent from the committed composition: Pi registers record.look, and
  *  production adds Fleet and Sandboxes (deploy/render-config.mjs). project.brief is being added. */
 const elsewhere = new Set([
+  // project.list is answered by the MCP route itself; connector.* by the local connector.
+  'project.list',
+  'connector.login',
+  'connector.status',
   'record.look',
   'project.brief',
   'fleet.list',
@@ -30,20 +34,16 @@ const elsewhere = new Set([
   'sandbox.release',
 ]);
 
-test('both client bundles say what the manifest says, with the same skills', () => {
-  const { name, version, description, mcp } = manifest;
+test('both client bundles say what the manifest says, with the same skills and no server', () => {
+  const { name, version, description } = manifest;
   for (const path of ['claude-code/.claude-plugin/plugin.json', 'codex/.codex-plugin/plugin.json'])
     assert.deepEqual({ ...json(path) }, { ...json(path), name, version, description }, path);
-  assert.deepEqual(json('claude-code/.mcp.json').mcpServers[mcp.server], {
-    type: 'http',
-    url: `\${${mcp.urlEnv}:-${mcp.url}}`,
-    headers: { Authorization: `Bearer \${${mcp.keyEnv}}` },
-  });
-  assert.deepEqual(json('codex/.mcp.json').mcpServers[mcp.server], {
-    type: 'http',
-    url: mcp.url,
-    bearer_token_env_var: mcp.keyEnv,
-  });
+  // The connector, which /connect installs, is the one registration: a plugin's own server
+  // would list every tool twice.
+  assert.match(manifest.connect, /\/connect$/);
+  for (const bundle of ['claude-code', 'codex'])
+    assert.equal(existsSync(new URL(`${bundle}/.mcp.json`, clients)), false, bundle);
+  assert.equal(json('codex/.codex-plugin/plugin.json').mcpServers, undefined);
   const skills = skillsOf('claude-code');
   assert.deepEqual(Object.keys(skills).sort(), [...manifest.skills].sort());
   assert.deepEqual(skillsOf('codex'), skills, 'codex/skills is a copy of claude-code/skills');

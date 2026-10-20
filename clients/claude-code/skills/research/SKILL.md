@@ -12,6 +12,10 @@ call. Each tool's description is its contract; this skill is the order to use th
 
 ## Orient first
 
+0. `project.list` when no project is chosen yet: the projects you can work in, with your role in
+   each. Pass the chosen project's id as `projectId` on every call. If any Merv tool says _not
+   signed in_, ask the person for the email they use for Merv and call `connector.login` with
+   it, then call it again with the code they give you.
 1. `project.brief`: your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.status_and_next` with no `instanceId`: every unfinished record, what it waits on
