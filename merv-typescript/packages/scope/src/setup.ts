@@ -4,6 +4,7 @@ import { escapeHtml } from '@merv/contracts/text';
 
 export function setupGuide(origin: string) {
   const name = packageName(origin);
+  const marketplace = name === 'merv' ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
   return `# Connect your agent to Merv
 
 Install Merv once in your agent client, sign in in your browser, then use it in fresh chats.
@@ -17,15 +18,24 @@ print or ask for tokens, passwords, email codes, credential files or authenticat
 If Merv already connects to this origin, reuse it and verify access below.
 Do not register both a plugin-bundled server and a standalone server for the same origin.
 
-## Download the plugin package
+## Install the Merv plugin
+${
+  name === 'merv'
+    ? `Open your client's Plugins view, add the marketplace reference **rapidreview-io/merv-plugins**
+(or https://github.com/rapidreview-io/merv-plugins), then install **Merv** for your user account.
+This small public repository contains only plugin metadata, skills and the hosted MCP connection.
+It does not install the Merv application, a local server, or the application's source history.
+No official-directory listing is required. The terminal equivalents are below.`
+    : `This is a separate Merv deployment. Use its origin-specific package, not the production marketplace.
 Download ${origin}/connect/bundle.tar.gz and extract it into a persistent user-owned folder,
 for example ~/.local/share/${name}/plugins. That folder is MARKETPLACE below (absolute path).
 Create the folder first. Standard archive tools can extract it; there is no installer to run.
-Agents can instead fetch ${origin}/connect/bundle.json and write its files to that folder.
-Preserve unrelated configuration; the bundle contains only manifests, metadata and skills.
+Agents can instead fetch ${origin}/connect/bundle.json and write its files to that folder.`
+}
+Preserve unrelated configuration and reuse an existing connection to this origin.
 
 ## Codex
-Run: codex plugin marketplace add MARKETPLACE
+Run: codex plugin marketplace add ${marketplace}
 On versions offering it, run: codex plugin add ${name}@${name}
 Otherwise install Merv from that marketplace in the desktop Plugins directory.
 After installing, run: codex mcp login ${name}
@@ -39,15 +49,15 @@ Choose that route instead of the bundled connection, not alongside it. Direct re
 alone does not install the plugin skills.
 
 ## Claude Code
-From the extraction directory (MARKETPLACE):
-claude plugin marketplace add MARKETPLACE
+${name === 'merv' ? 'In Claude Code, open /plugin → Marketplaces → Add and enter rapidreview-io/merv-plugins. Or run in your terminal:' : 'From the extraction directory (MARKETPLACE):'}
+claude plugin marketplace add ${marketplace}
 claude plugin install ${name}@${name} --scope user
 Open /mcp, select the plugin's Merv server and authenticate in the browser.
 Use /reload-plugins if your version supports it; restart only if the client asks for it.
 For direct MCP without the plugin: claude mcp add --transport http --scope user ${name} ${origin}/mcp
 Then authenticate from /mcp. Do not also enable the plugin-bundled server.
 
-## Choose persistent tool permission once
+## Optional: save tool permissions
 Browser sign-in saves identity; tool approval is a separate client setting. To let Merv act
 on your behalf across fresh chats without repeated tool prompts, choose a saved permission
 scoped to this Merv plugin. Installing the plugin does not change permission policy for you.
@@ -126,11 +136,12 @@ valid. Do not delete ~/.merv/connect wholesale: other deployments/clients may st
 The old installer and email login endpoints return 410; old issued keys remain valid until
 explicitly revoked or expired. Never copy those keys into the plugin.
 
-## Deployment and distribution
-The release must publish the clients bundle with its MCP URL set to this origin. Production
-and staging need distinct plugin/marketplace names when installed together. This source build
-is not automatically a public-directory listing; install from the released bundle until the
-publisher has completed directory review. A server deployment must enable scope-api.oauth.
+## Archive fallback and distribution
+If repository installation is unavailable, download ${origin}/connect/bundle.tar.gz into a
+persistent user-owned directory, add that directory as the marketplace, and install ${name}@${name}.
+The archive is tied to the deployed server version; the public marketplace can receive newer
+instruction-only updates independently. Do not install both sources as duplicate connections.
+Production and staging use distinct plugin names and URLs. A server deployment must enable scope-api.oauth.
 `;
 }
 
@@ -160,20 +171,18 @@ export function setupRoutes(origin: string): MountHandler {
           "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
       });
       const name = packageName(origin);
-      res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect to Merv</title><style>body{max-width:760px;margin:4rem auto;padding:0 1.5rem;font:17px/1.65 system-ui;color:#18212b;background:#faf9f6}h1{font-size:2.6rem;line-height:1.15}h2{margin-top:2.5rem}code{font-size:.9em;overflow-wrap:anywhere}pre{padding:1rem;background:#eeece7;white-space:pre-wrap}a{color:#174e69}li{margin:.6rem 0}</style></head><body>
-<h1>Use Merv with your agent</h1><p>Install once, sign in in your browser, then say “use Merv” in a fresh chat. Your agent can work with your projects, experiments, tasks, papers and artifacts. No Git repository is required.</p>
-<p><strong>Let your agent set it up:</strong> ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>.</p>
-<h2>1. Get the plugin</h2><p><a href="/connect/bundle.tar.gz">Download the Merv plugin package</a> and extract it into a permanent folder you own. Use that folder's absolute path as <code>MARKETPLACE</code> below.</p><p>If Merv already connects to this server, reuse that connection. Before replacing an older installation, follow the <a href="/connect/agent.md">migration instructions</a> to preserve unrelated settings.</p>
-<h2>2. Install in your client</h2><h3>Codex</h3><pre>codex plugin marketplace add MARKETPLACE
-codex plugin add ${name}@${name}
-codex mcp login ${name}</pre><p>The login command authenticates the installed plugin's server. Open the URL it displays, complete browser sign-in and consent, and wait for login confirmation. No desktop app is needed. If your version has no plugin install command, use desktop Plugins or the direct-connection alternative in the full guide.</p>
-<h3>Claude Code</h3><pre>claude plugin marketplace add MARKETPLACE
-claude plugin install ${name}@${name} --scope user</pre><p>Open <code>/mcp</code>, select Merv and authenticate. Reload plugins or restart only if your client requires it.</p>
-<h2>3. Sign in and authorize your account</h2><p>Complete Merv's browser sign-in. Review the client and callback address and authorize. No project or repository is required. Your agent follows your current project permissions, including memberships added later. If no projects are accessible yet, create or join one on the website and ask your agent to list again; no reconnect is needed.</p>
-<h2>4. Save your tool permission preference</h2><p>Sign-in and tool approval are separate. For Merv to act on your behalf without repeated tool prompts, choose a persistent permission scoped to this plugin. The <a href="/connect/agent.md">full guide</a> shows Codex’s per-tool Always allow and server-specific policy, and Claude Code’s user-level /permissions rule. Existing organization restrictions still apply.</p>
-<h2>Git access</h2><p>For code-linked work, your agent keeps the selected user branch synchronized with a separate Merv remote, preserving origin. It verifies commits after pushing and reports uncommitted files or conflicts. The installed plugin obtains and renews short-lived project credentials through the same saved connection. No Settings key or second login is needed. Git access follows your current permissions.</p>
-<h2>5. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys or <a href="/ui/account/keys">Account keys and connections</a> under its “OAuth:” label, even with no projects. Reconnect through your client's sign-in action when authorization expires.</p>
-<p><a href="/connect/agent.md">Full setup, direct-connection alternatives and migration guide</a></p></body></html>`);
+      const production = name === 'merv';
+      const marketplace = production ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
+      res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect to Merv</title><style>body{max-width:760px;margin:4rem auto;padding:0 1.5rem;font:17px/1.65 system-ui;color:#18212b;background:#faf9f6}h1{font-size:2.6rem;line-height:1.15}h2{margin-top:2rem}code{font-size:.9em;overflow-wrap:anywhere}pre{padding:1rem;background:#eeece7;white-space:pre-wrap}a{color:#174e69}li{margin:.6rem 0}.card{padding:1.2rem 1.5rem;margin:1rem 0;background:white;border:1px solid #ddd9d0;border-radius:14px}.card h2{margin-top:0}summary{cursor:pointer}small{color:#53606b}</style></head><body>
+<h1>Merv, in your agent.</h1><p>Install the plugin. Sign in once. Work across your projects.</p>
+<section class="card"><h2>1. Install Merv</h2>${production ? `<p>In your client's <strong>Plugins</strong> view, choose <strong>Add marketplace</strong> and paste:</p><pre>rapidreview-io/merv-plugins</pre><p>Then install <strong>Merv</strong> for your user account. <a href="https://github.com/rapidreview-io/merv-plugins">View the plugin repository</a>.</p><small>A small package of skills and connection settings. No local Merv server or application source.</small>` : `<p>This deployment has its own plugin. <a href="/connect/bundle.tar.gz">Download the package</a>, extract it to a permanent folder, and use that folder as <code>MARKETPLACE</code>.</p>`}
+<details><summary>Terminal installation</summary><h3>Claude Code</h3><pre>claude plugin marketplace add ${marketplace}
+claude plugin install ${name}@${name} --scope user</pre><h3>Codex</h3><pre>codex plugin marketplace add ${marketplace}
+codex plugin add ${name}@${name}</pre></details></section>
+<section class="card"><h2>2. Sign in</h2><p><strong>Claude Code:</strong> open <code>/mcp</code>, select Merv, and choose Authenticate.</p><p><strong>Codex:</strong> connect Merv from Plugins, or run <code>codex mcp login ${name}</code>.</p><p>Complete browser sign-in and authorize your account. No API key to copy. Your client saves the connection.</p></section>
+<section class="card"><h2>Start a conversation</h2><pre>Use Merv. Show me my projects.</pre><p>Choose a project or switch between projects without signing in again. If you have none yet, create or join one on the website, then ask again.</p><p>For code work, your agent uses the same connection to sync committed changes to a separate Merv Git remote. Your existing remote stays intact.</p></section>
+<details><summary>Permissions, existing installations and help</summary><p>Your client may ask permission to use tools or run local Git commands. Save a Merv-specific tool permission if you want fewer prompts; account sign-in and local permissions are separate.</p><p>If Merv is already connected, reuse it. See the <a href="/connect/agent.md">setup and migration guide</a> before replacing a legacy plugin. To disconnect, revoke its OAuth connection in <a href="/ui/account/keys">Account keys and connections</a>.</p><p><a href="/connect/bundle.tar.gz">Archive fallback</a> · <a href="/connect/agent.md">Full agent instructions</a></p></details>
+<p><small>Let your agent handle setup: ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>.</small></p></body></html>`);
       return;
     }
     res.writeHead(410, { 'content-type': 'application/json' });

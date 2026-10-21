@@ -77,3 +77,12 @@ test('downloadable tar contains only package files; staging uses distinct names 
   assert.ok(!setupGuide(origin).includes("bundle's clients directory"));
   assert.ok(!Object.keys(files).some((p) => /\.(sh|mjs)$/.test(p)));
 });
+
+test('production onboarding uses the small marketplace while other origins remain isolated', () => {
+  const guide = setupGuide('https://experiments.rapidreview.io');
+  assert.match(guide, /codex plugin marketplace add rapidreview-io\/merv-plugins/);
+  assert.match(guide, /claude plugin marketplace add rapidreview-io\/merv-plugins/);
+  assert.match(guide, /No official-directory listing is required/);
+  assert.match(guide, /Archive fallback/);
+  assert.ok(!setupGuide('https://staging.example').includes('rapidreview-io/merv-plugins'));
+});
