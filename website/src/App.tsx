@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type RefObject,
+} from "react";
 import {
   ArrowUpRight,
   RotateCcw,
-  Plus,
-  Minus,
   X,
   Database,
   LibraryBig,
@@ -156,16 +161,6 @@ const nodes = [
     hardware: "H100 · 4 distillation runs",
   },
 ];
-function Mark() {
-  return (
-    <svg viewBox="0 0 40 32" aria-hidden="true">
-      <path
-        d="M2 29V3h8l10 13L30 3h8v26h-8V16L20 29 10 16v13z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
 function Logo({ id }: { id: string }) {
   const p = providers.find((p) => p[0] === id)!;
   return (
@@ -486,10 +481,10 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
         width={360}
         height={430}
         reach={116}
-        band={162}
+        band={180}
         bandHeight={168}
         r={46}
-        fan={95}
+        fan={84}
         swing={56}
         tail={(44 * 360) / px}
         userInput={userInput}
@@ -573,29 +568,6 @@ function Dag({
           <Wire d={`M${experimentLeft.cx} 470V525H${experimentRight.cx}V470`} />
           <Wire d={`M${center} 470V630`} />
         </svg>
-        <svg
-          className="dag-wires-mobile"
-          viewBox="0 0 360 550"
-          aria-hidden="true"
-        >
-          <DagArrow id="dag-arrow-mobile" />
-          <Inflow id="dag-inflow-mobile" from={-24} />
-          {[85, 275].map((x) => (
-            <Wire
-              key={x}
-              d={`M${x} -24V48`}
-              stroke="url(#dag-inflow-mobile)"
-              markerEnd="url(#dag-arrow-mobile)"
-              active={phase >= 0.5 && phase < 3.5}
-            />
-          ))}
-          <Wire d="M85 155V218" active={phase >= 7 && phase < 10} />
-          <Wire d="M85 218H60V278" markerEnd="url(#dag-arrow-mobile)" />
-          <Wire d="M85 218H180V278" markerEnd="url(#dag-arrow-mobile)" />
-          <Wire d="M275 155V218H300V278" markerEnd="url(#dag-arrow-mobile)" />
-          <Wire d="M60 410V445H300V410" />
-          <Wire d="M180 410V550" />
-        </svg>
         {layout.map((n, index) => {
           const task = n.kind === "TASK";
           const end = task ? 7 : 21;
@@ -619,10 +591,6 @@ function Dag({
                   "--y": `${n.y / 6.3}%`,
                   "--w": `${(n.w / width) * 100}%`,
                   "--h": `${n.h / 6.3}%`,
-                  "--mx": `${(task ? 10 + index * 190 : 5 + (index - 2) * 120) / 3.6}%`,
-                  "--my": `${(task ? 50 : 280) / 5.5}%`,
-                  "--mw": `${(task ? 150 : 110) / 3.6}%`,
-                  "--mh": `${(task ? 105 : 130) / 5.5}%`,
                 } as CSSProperties
               }
               onClick={() => onSelect(selected === n.id ? null : n.id)}
@@ -903,7 +871,78 @@ function Fleet({
     </div>
   );
 }
+function EarlyAccess({
+  dialog,
+}: {
+  dialog: RefObject<HTMLDialogElement | null>;
+}) {
+  const [state, setState] = useState<"form" | "sent" | "failed">("form");
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const body = JSON.stringify(
+      Object.fromEntries(new FormData(event.currentTarget)),
+    );
+    try {
+      const res = await fetch("/api/early-access", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      setState(res.ok ? "sent" : "failed");
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <dialog
+      ref={dialog}
+      className="early-access"
+      aria-labelledby="early-access-title"
+      onClick={(e) => e.target === dialog.current && dialog.current.close()}
+    >
+      <button
+        type="button"
+        className="dialog-close"
+        onClick={() => dialog.current?.close()}
+        aria-label="Close"
+      >
+        <X size={15} />
+      </button>
+      {state === "sent" ? (
+        <p className="dialog-done">You’re on the list. We’ll be in touch.</p>
+      ) : (
+        <form onSubmit={submit}>
+          <h2 id="early-access-title">Early access</h2>
+          <label>
+            Research domain
+            <input name="domain" required />
+          </label>
+          <label>
+            Affiliation
+            <input name="affiliation" required />
+          </label>
+          <label>
+            LinkedIn / X
+            <input name="handle" required />
+          </label>
+          <label>
+            Email
+            <input name="email" type="email" required autoComplete="email" />
+          </label>
+          <button type="submit">Submit</button>
+          {state === "failed" && (
+            <p className="dialog-error">
+              Couldn’t send. <a href={CONTACT}>Email us</a> instead.
+            </p>
+          )}
+        </form>
+      )}
+    </dialog>
+  );
+}
 export default function App() {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const openDialog = () => dialog.current?.showModal();
   const [phase, setPhase] = useState(12),
     [reduced, setReduced] = useState(false),
     [selected, setSelected] = useState<string | null>(null),
@@ -930,8 +969,7 @@ export default function App() {
       <header>
         <div className="brand-lockup">
           <a className="brand" href="#" aria-label="Merv home">
-            <Mark />
-            merv
+            Merv
           </a>
           <span className="brand-credit">
             by <a href="https://rapidreview.io">rapidreview</a>
@@ -941,9 +979,9 @@ export default function App() {
           <a href="https://rapidreview.io/docs/merv">
             Docs <ArrowUpRight size={12} />
           </a>
-          <a href={CONTACT}>
+          <button type="button" onClick={openDialog}>
             Run with us <ArrowUpRight size={14} />
-          </a>
+          </button>
         </nav>
       </header>
       <main id="main">
@@ -1000,20 +1038,6 @@ export default function App() {
               ))}
             </div>
           </div>
-          <details className="coverage">
-            <summary>
-              Integration coverage <Plus size={13} />
-              <Minus size={13} />
-            </summary>
-            <p>
-              Provider adapters are implemented. Live research workflows have
-              been validated on Lambda A10 and Cloudflare CPU; DigitalOcean and
-              GiveMeANode have CPU transfer validation. Other providers and
-              hardware configurations require live validation. The fleet above
-              illustrates possible workloads, not a running deployment or a
-              performance claim.
-            </p>
-          </details>
         </section>
         <div className="loop-return">
           <a href="#ideas">
@@ -1023,15 +1047,15 @@ export default function App() {
         </div>
         <section className="closing">
           <h2>Your next idea?</h2>
-          <a href={CONTACT}>
+          <button type="button" onClick={openDialog}>
             Let’s run it <ArrowUpRight size={24} strokeWidth={1} />
-          </a>
+          </button>
         </section>
       </main>
+      <EarlyAccess dialog={dialog} />
       <footer>
         <a href="#" className="brand" aria-label="Merv home">
-          <Mark />
-          merv
+          Merv
         </a>
         <div>
           <a href="https://github.com/rapidreview-io/Merv">GitHub ↗</a>

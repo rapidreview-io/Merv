@@ -69,33 +69,34 @@ footer {
   top: 12px;
 }
 header {
-  height: 86px;
+  padding: 25px 0;
   margin: 0 var(--page-gutter);
   border-bottom: 1px solid var(--line);
   display: flex;
-  align-items: center;
+  align-items: baseline;
 }
 .brand {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 9px;
   font-size: 28px;
   font-weight: 600;
-  letter-spacing: -1.5px;
+  letter-spacing: -0.3px;
 }
-.brand svg {
-  width: 24px;
-  height: 26px;
-}
-.brand-lockup {
+.brand-lockup,
+.brand-credit {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: baseline;
+  gap: 8px;
 }
 .brand-credit {
   color: var(--slate-11);
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
+}
+.brand-credit a {
+  color: var(--slate-12);
+  font-weight: 500;
 }
 nav {
   margin-left: auto;
@@ -103,7 +104,13 @@ nav {
   gap: 36px;
   font-size: 12px;
 }
-nav a {
+nav button {
+  border: 0;
+  background: none;
+  padding: 0;
+}
+nav a,
+nav button {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -321,21 +328,26 @@ h1 {
 }
 .dag-wrap {
   margin-top: 38px;
+  position: relative;
+}
+/* The detail panel overlays the empty wire below the experiments; it never adds height. */
+#workload-detail {
+  position: absolute;
+  top: 82%;
+  height: 120px;
+  left: 0;
+  right: 0;
 }
 .dag-canvas {
   position: relative;
   aspect-ratio: var(--diagram-ratio, 1080 / 630);
 }
-.dag-wires,
-.dag-wires-mobile {
+.dag-wires {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   overflow: visible;
-}
-.dag-wires-mobile {
-  display: none;
 }
 .dag-node {
   position: absolute;
@@ -417,6 +429,8 @@ h1 {
   gap: 20px;
   padding: 22px 0;
   border-block: 1px solid var(--line);
+  height: 100%;
+  box-sizing: border-box;
 }
 .dag-inspector > span {
   font: 10px var(--mono);
@@ -580,7 +594,7 @@ h1 {
   animation: boot 1.2s ease-in-out infinite;
 }
 .worker-boot {
-  border-color: var(--slate-9);
+  border-color: var(--slate-10);
 }
 .worker-boot:after {
   content: "";
@@ -730,36 +744,6 @@ h1 {
 .provider-wall .logo-lambda {
   padding: 0;
 }
-.coverage {
-  border-bottom: 1px solid var(--line);
-}
-.coverage summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  list-style: none;
-  cursor: pointer;
-  font-size: 10px;
-  color: var(--slate-11);
-  padding: 18px 0;
-}
-.coverage summary::-webkit-details-marker {
-  display: none;
-}
-.coverage summary svg:last-child,
-.coverage[open] summary svg:first-of-type {
-  display: none;
-}
-.coverage[open] summary svg:last-child {
-  display: block;
-}
-.coverage p {
-  max-width: 790px;
-  color: var(--slate-11);
-  font-size: 12px;
-  line-height: 1.8;
-  margin: 0 0 24px;
-}
 .loop-return {
   display: flex;
   align-items: center;
@@ -778,25 +762,121 @@ h1 {
   padding: 68px 0 96px;
   border-top: 1px solid var(--line);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.closing h2 {
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.45em;
   font-size: clamp(35px, 4.5vw, 65px);
+}
+.closing h2,
+.closing > button {
+  font-size: inherit;
   line-height: 1.1;
   font-weight: 450;
-  letter-spacing: -2.8px;
+  letter-spacing: -0.04em;
   margin: 0;
 }
-.closing > a {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 55px;
-  padding: 15px 0;
+.closing > button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2em;
+  padding: 0;
+  background: none;
+  color: var(--slate-11);
+  border: 0;
   border-bottom: 1px solid var(--slate-8);
+}
+.closing > button svg {
+  width: 0.5em;
+  height: 0.5em;
+  align-self: center;
+}
+/* Early-access dialog, in Luma's proportions with this site's colours. */
+.early-access {
+  width: min(380px, calc(100% - 32px));
+  padding: 26px 26px 28px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.04);
+  backdrop-filter: blur(16px);
+  color: var(--slate-12);
+}
+.early-access::backdrop {
+  background: rgb(0 0 0 / 0.7);
+}
+.early-access h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: -0.2px;
+  margin: 2px 32px 14px 0;
+}
+.early-access label {
+  display: block;
+  margin-top: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 21px;
+}
+.early-access input {
+  display: block;
+  width: 100%;
+  height: 42px;
+  margin-top: 8px;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  background: rgb(21 21 21 / 0.32);
+  color: var(--slate-12);
+  font:
+    16px "DM Sans",
+    sans-serif;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.early-access input:focus {
+  border-color: rgb(255 255 255 / 0.4);
+}
+.early-access [type="submit"] {
+  display: block;
+  width: 100%;
+  height: 42px;
+  margin-top: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 21px;
+  background: var(--slate-12);
+  color: var(--slate-1);
+  font-size: 16px;
+  font-weight: 500;
+}
+.early-access [type="submit"]:hover {
+  background: white;
+}
+nav button:hover svg {
+  color: var(--blue-10);
+}
+.dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 6px;
+  border: 0;
+  background: none;
+  color: var(--slate-11);
+}
+.dialog-done {
   font-size: 18px;
-  letter-spacing: -0.5px;
+  margin: 8px 40px 0 0;
+}
+.dialog-error {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: var(--slate-11);
+}
+.dialog-error a {
+  color: var(--slate-12);
+  border-bottom: 1px solid var(--slate-8);
 }
 footer {
   margin: 0 var(--page-gutter);
@@ -837,7 +917,7 @@ footer > small {
 .dag-node.selected .node-id {
   color: var(--blue-11);
 }
-.closing > a:hover svg {
+.closing > button:hover svg {
   color: var(--blue-10);
 }
 .paused * {
@@ -940,17 +1020,18 @@ footer > small {
 }
 @media (max-width: 650px) {
   header {
-    height: 72px;
+    padding: 20px 0;
     margin: 0 5%;
   }
   header .brand {
     font-size: 25px;
   }
-  .brand-lockup {
-    gap: 8px;
+  .brand-lockup,
+  .brand-credit {
+    gap: 6px;
   }
   .brand-credit {
-    font-size: 10px;
+    font-size: 11px;
   }
   nav {
     font-size: 11px;
@@ -990,8 +1071,13 @@ footer > small {
   .integrations-layer {
     padding-inline: 5%;
   }
+  /* Diagrams run edge to edge; only text keeps a gutter. */
   .layer {
-    padding: 47px 5% 0;
+    padding: 47px 0 0;
+  }
+  .layer-title {
+    padding-inline: 5%;
+    text-align: center;
   }
   .layer-title h2 {
     font-size: 26px;
@@ -1017,17 +1103,17 @@ footer > small {
   }
   .layer-bridge {
     height: 72px;
-    margin-inline: 5%;
+    margin-inline: 0;
   }
   .ideas-bridge {
     height: 44px;
     margin: 0;
   }
   .ideas-bridge i:nth-child(1) {
-    left: 23.611%;
+    left: 26.667%;
   }
   .ideas-bridge i:nth-child(2) {
-    left: 76.389%;
+    left: 73.333%;
   }
   .ideas-bridge i:nth-child(3) {
     left: 97.778%;
@@ -1038,47 +1124,37 @@ footer > small {
   }
   .dag-wrap {
     margin-top: 25px;
+    overflow-x: clip;
   }
+  /* The desktop diagram, scaled so its experiment row (90–990 of 1080) spans the screen. */
   .dag-canvas {
-    aspect-ratio: 360/550;
-  }
-  .dag-wires {
-    display: none;
-  }
-  .dag-wires-mobile {
-    display: block;
+    width: 120%;
+    margin-left: -10%;
   }
   .dag-node {
-    left: var(--mx);
-    top: var(--my);
-    width: var(--mw);
-    height: var(--mh);
-    padding: 13px 11px;
+    padding: 5px 8px;
   }
   .dag-node strong {
-    font-size: 14px;
-    line-height: 1.2;
-    letter-spacing: -0.3px;
-    margin: 10px 0;
-  }
-  .dag-node.experiment strong {
-    font-size: 13px;
+    font-size: 11px;
+    line-height: 1.15;
+    letter-spacing: -0.2px;
+    margin: 2px 0;
   }
   .node-id {
-    font-size: 8px;
+    font-size: 7px;
   }
   .node-agents {
-    gap: 4px;
+    display: none;
   }
-  .node-agents i {
-    width: 6px;
-    height: 9px;
+  #workload-detail {
+    height: 132px;
   }
   .dag-inspector {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 14px;
-    padding: 18px 0;
+    align-content: start;
+    gap: 12px;
+    padding: 14px 5%;
   }
   .dag-inspector > span {
     display: none;
@@ -1099,7 +1175,7 @@ footer > small {
   }
   .fleet-toolbar {
     font-size: 8px;
-    padding: 12px 0;
+    padding: 12px 5%;
   }
   .fleet-grid {
     grid-template-columns: 1fr;
@@ -1199,28 +1275,15 @@ footer > small {
     width: 20px;
     height: 20px;
   }
-  .coverage p {
-    font-size: 11px;
-  }
   .loop-return {
-    padding: 45px 6%;
+    padding: 36px 6%;
   }
   .loop-return a {
     font-size: 13px;
   }
   .closing {
-    padding: 45px 0 65px;
-    display: block;
-  }
-  .closing h2 {
-    font-size: 43px;
-    letter-spacing: -2px;
-  }
-  .closing > a {
-    margin-top: 25px;
-    font-size: 18px;
-    max-width: 200px;
-    padding-bottom: 15px;
+    padding: 40px 0 56px;
+    font-size: 23px;
   }
   footer {
     gap: 17px;
@@ -1232,13 +1295,6 @@ footer > small {
   }
 }
 @media (max-width: 360px) {
-  .dag-node {
-    padding: 10px 8px;
-  }
-  .dag-node strong,
-  .dag-node.experiment strong {
-    font-size: 12px;
-  }
   .provider-wall {
     grid-template-columns: repeat(2, 1fr);
   }
