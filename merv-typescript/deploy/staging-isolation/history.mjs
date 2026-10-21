@@ -185,6 +185,51 @@ const parents = {
   job_reader_progress: [['jobs', 'job_id', 'id']],
   sandbox_events: [['sandboxes', 'sandbox_id', 'id']],
 };
+// The only permitted missing logical parent is an observed, pre-existing closed-session
+// certificate reference. Declared foreign keys always retain their normal closure rules.
+function missingCertificateRecord(meta, session, namespaces) {
+  const row = session.original;
+  safeRow('sessions', row, namespaces);
+  need(namespaces.includes(row.namespace), 'unapproved missing-reference namespace');
+  need(
+    meta.sessions.columns.some((c) => c.name === 'certificate_serial' && c.type === 'bigint') &&
+      canonical(meta.certificates?.pk) === canonical(['serial']) &&
+      !meta.sessions.fk.some((f) => f.columns.includes('certificate_serial')),
+    'missing certificate exception cannot bypass declared FK or ambiguous target schema',
+  );
+  need(
+    typeof row.certificate_serial === 'string' &&
+      /^-?\d+$/.test(row.certificate_serial) &&
+      session.sourceSha256 === hash(row) &&
+      canonical(session.key) === canonical(keyOf(meta.sessions, row)),
+    'invalid missing-reference session evidence',
+  );
+  return {
+    kind: 'closed-session-missing-certificate',
+    sessionKey: session.key,
+    sessionSourceSha256: session.sourceSha256,
+    namespace: row.namespace,
+    certificateSerial: row.certificate_serial,
+    observedSourceTargetRows: 0,
+  };
+}
+function validateMissingReferences(bundle) {
+  const expected = [];
+  for (const session of bundle.rows.sessions ?? []) {
+    const serial = session.original.certificate_serial;
+    if (serial == null) continue;
+    const matches = (bundle.rows.certificates ?? []).filter((r) => r.original.serial === serial);
+    need(matches.length <= 1, 'ambiguous certificate in bundle');
+    if (!matches.length)
+      expected.push(missingCertificateRecord(bundle.schema, session, bundle.selection.namespaces));
+  }
+  expected.sort((a, b) => canonical(a).localeCompare(canonical(b)));
+  need(
+    canonical(bundle.missingReferences ?? []) === canonical(expected),
+    'missing-reference manifest differs from exact session closure',
+  );
+  return expected;
+}
 export async function exportHistory(db, selection, blobDir, fetchBlob) {
   need(
     selection.version === 1 && selection.namespaces.length && selection.roots.length,
@@ -197,6 +242,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
     const source = await identity(db),
       meta = await schema(db),
       rows = {},
+      missingReferences = [],
       queue = [...selection.roots];
     while (queue.length) {
       const { table, key } = queue.shift();
@@ -226,8 +272,20 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
           key: Object.fromEntries(fk.foreign.map((k, i) => [k, original[fk.columns[i]]])),
         });
       }
-      for (const [target, col, dest] of parents[table] ?? [])
-        if (original[col] != null) queue.push({ table: target, key: { [dest]: original[col] } });
+      for (const [target, col, dest] of parents[table] ?? []) {
+        if (original[col] == null) continue;
+        if (table === 'sessions' && col === 'certificate_serial') {
+          const targets = await select(db, target, { [dest]: original[col] }, meta[target]);
+          need(targets.length <= 1, 'ambiguous certificate reference');
+          if (!targets.length) {
+            missingReferences.push(
+              missingCertificateRecord(meta, rows[table][id], selection.namespaces),
+            );
+            continue;
+          }
+        }
+        queue.push({ table: target, key: { [dest]: original[col] } });
+      }
       for (const [child, col] of table === 'sandboxes'
         ? [
             ['sandbox_events', 'sandbox_id'],
@@ -352,9 +410,11 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       selection,
       schema: meta,
       rows: exported,
+      missingReferences: missingReferences.sort((a, b) => canonical(a).localeCompare(canonical(b))),
       files,
       dataFiles,
     };
+    validateMissingReferences(body);
     validateOutputFiles(body, blobDir);
     await db.query('ROLLBACK');
     return { ...body, sha256: hash(body) };
@@ -512,6 +572,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
   );
   need(canonical(expectedIdentity) !== canonical(bundle.source), 'source and destination coincide');
   need(canonical(await schema(db)) === canonical(bundle.schema), 'schema drift');
+  const missingReferences = validateMissingReferences(bundle);
   for (const f of bundle.files) {
     const b = readFileSync(join(blobDir, f.sha256));
     need(hash(b) === f.sha256 && b.length === count(f.size), 'blob verification failed');
@@ -533,6 +594,22 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
     // Match export rendering without changing the caller's session setting.
     await db.query("SET LOCAL TIME ZONE 'UTC'");
     await db.query("SELECT pg_advisory_xact_lock(hashtext('merv-staging-history-import'))");
+    if (missingReferences.length) {
+      // Keep absence stable through commit, including against concurrent certificate writers.
+      await db.query('LOCK TABLE public.certificates IN SHARE MODE');
+      for (const ref of missingReferences)
+        need(
+          (
+            await select(
+              db,
+              'certificates',
+              { serial: ref.certificateSerial },
+              bundle.schema.certificates,
+            )
+          ).length === 0,
+          'missing-reference target is present at destination',
+        );
+    }
     // FK order is derived from the actual pinned schema. No constraint disabling or broad upsert.
     const pending = Object.keys(bundle.rows),
       done = new Set();
@@ -575,6 +652,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
     return {
       bundle: sha256,
       destination: expectedIdentity,
+      missingReferences,
       rows: Object.fromEntries(Object.entries(bundle.rows).map(([t, r]) => [t, r.length])),
     };
   } catch (e) {

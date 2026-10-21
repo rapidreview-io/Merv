@@ -328,3 +328,17 @@ INT64_MAX as used so PostgreSQL reports exhaustion rather than wrapping or reusi
 Descending or cycling sequences require separate review. The pinned certificate serial is a BIGINT primary
 key without an owned serial sequence; this generic reset applies only where an owned sequence
 actually exists.
+
+Closed sessions can retain a pre-existing missing logical certificate reference only when the
+export transaction observes zero rows for the exact serial. The `missingReferences` manifest
+binds each session primary key, original-row SHA256, namespace, exact certificate serial and
+zero-row observation into the independently reviewed bundle digest. The session row and serial
+remain unchanged. No certificate is invented or omitted; present targets follow normal closure.
+Declared foreign keys, open sessions, unapproved namespaces, ambiguous targets and all other
+missing references still refuse export.
+
+Import validates the complete manifest against session/certificate closure and rejects omitted,
+extra or altered entries. It checks destination certificate absence under a transaction table
+lock and returns the manifest in its receipt, including on idempotent replay. Operators must
+independently compare this manifest with read-only source evidence and bind the fresh export
+digest before importing; a destination cannot independently reconstruct a past source absence.

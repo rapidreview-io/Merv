@@ -6,11 +6,7 @@
     "postgresPassed": 12,
     "postgresSkipped": 0,
     "pythonPassed": 12,
-    "timezones": [
-      "UTC",
-      "America/Los_Angeles",
-      "Asia/Kathmandu"
-    ],
+    "timezones": ["UTC", "America/Los_Angeles", "Asia/Kathmandu"],
     "checks": [
       "Identical complete bundle digest and row originals/source hashes across source timezones",
       "Idempotent imports across destination timezones",

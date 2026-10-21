@@ -232,6 +232,11 @@ test(
           ['session-' + i, LEGACY, serial],
         );
       }
+      const orphanSerial = '9007199254740995';
+      await source.query(
+        "INSERT INTO sessions(id,sandbox_id,namespace,certificate_serial,remote_addr,started_at,ended_at) VALUES('orphan-session','stopped-one',$1,$2,'local','2026-10-19 00:00:00.123456+00','2026-10-20 00:00:00.987654+00')",
+        [LEGACY, orphanSerial],
+      );
       const rate = '123456789012345678.123456789012';
       await source.query(
         "INSERT INTO infra_compute(sandbox_id,account_id,namespace,member_id,provider,source,rate) VALUES('stopped-one','acct_zo40u4jf8tmbhjkh',$1,'member','cloudflare-fleet-staging','host',$2)",
@@ -339,7 +344,7 @@ test(
       await source.query("SET TIME ZONE 'UTC'");
       assert.equal(bundle.rows.pipelines[0].value.state, 'completed');
       assert.equal(bundle.rows.storage_manifest_refs.length, 1);
-      assert.equal(bundle.rows.sessions.length, serials.length);
+      assert.equal(bundle.rows.sessions.length, serials.length + 1);
       assert.equal(bundle.rows.certificates.length, serials.length);
       assert.equal(bundle.version, 2);
       assert.equal((await exportHistory(source, selection, dir)).sha256, bundle.sha256);
@@ -349,7 +354,7 @@ test(
       );
       assert.deepEqual(
         new Set(bundle.rows.sessions.map((r) => r.value.certificate_serial)),
-        new Set(serials),
+        new Set([...serials, orphanSerial]),
       );
       for (const r of bundle.rows.certificates) {
         const independent = (
@@ -381,6 +386,105 @@ test(
       await source.query("UPDATE sandboxes SET request_json=$1::jsonb WHERE id='stopped-one'", [
         exactJson,
       ]);
+      const orphan = bundle.rows.sessions.find((r) => r.key.id === 'orphan-session');
+      assert.deepEqual(orphan.value, orphan.original);
+      assert.equal(orphan.original.certificate_serial, orphanSerial);
+      assert.deepEqual(bundle.missingReferences, [
+        {
+          kind: 'closed-session-missing-certificate',
+          sessionKey: orphan.key,
+          sessionSourceSha256: hash(orphan.original),
+          namespace: LEGACY,
+          certificateSerial: orphanSerial,
+          observedSourceTargetRows: 0,
+        },
+      ]);
+      await source.query("UPDATE sessions SET ended_at=NULL WHERE id='orphan-session'");
+      await assert.rejects(exportHistory(source, selection, dir), /open historical session/);
+      await source.query(
+        "UPDATE sessions SET ended_at='2026-10-20 00:00:00.987654+00' WHERE id='orphan-session'",
+      );
+      await source.query("UPDATE sessions SET namespace='customer' WHERE id='orphan-session'");
+      await assert.rejects(exportHistory(source, selection, dir), /unapproved namespace/);
+      await source.query("UPDATE sessions SET namespace=$1 WHERE id='orphan-session'", [LEGACY]);
+      await source.query(
+        'ALTER TABLE sessions ADD CONSTRAINT test_declared_certificate_fk FOREIGN KEY(certificate_serial) REFERENCES certificates(serial) NOT VALID',
+      );
+      await assert.rejects(exportHistory(source, selection, dir), /cannot bypass declared FK/);
+      await source.query('ALTER TABLE sessions DROP CONSTRAINT test_declared_certificate_fk');
+      const ambiguous = {
+        query: async (sql, ...args) => {
+          const result = await source.query(sql, ...args);
+          if (sql.includes('FROM public."certificates"') && args[0]?.[0] === orphanSerial)
+            return { rows: [{ row: {} }, { row: {} }] };
+          return result;
+        },
+      };
+      await assert.rejects(exportHistory(ambiguous, selection, dir), /ambiguous certificate/);
+      // A present exact target must be included, never labeled missing.
+      await source.query(
+        'INSERT INTO certificates SELECT ($1::bigint),namespace,token_id,kind,key_id,key_fingerprint,principals_json,sandbox_id,issued_at,expires_at FROM certificates WHERE serial=42',
+        [orphanSerial],
+      );
+      const present = await exportHistory(source, selection, dir);
+      assert.deepEqual(present.missingReferences, []);
+      assert.equal(present.rows.certificates.length, serials.length + 1);
+      await source.query('DELETE FROM certificates WHERE serial=$1', [orphanSerial]);
+      for (const mutate of [
+        (b) => {
+          delete b.missingReferences;
+        },
+        (b) => {
+          b.missingReferences[0].certificateSerial = '42';
+        },
+        (b) => {
+          b.missingReferences[0].observedSourceTargetRows = 1;
+        },
+        (b) => {
+          b.missingReferences.push(b.missingReferences[0]);
+        },
+        (b) => {
+          b.missingReferences[0].sessionSourceSha256 = '0'.repeat(64);
+        },
+      ]) {
+        const altered = structuredClone(bundle);
+        mutate(altered);
+        const { sha256: ignored, ...body } = altered;
+        altered.sha256 = hash(body);
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, bundle.sha256),
+          /reviewed export digest/,
+        );
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, altered.sha256),
+          /missing-reference manifest/,
+        );
+      }
+      for (const field of ['ended_at', 'namespace']) {
+        const altered = structuredClone(bundle);
+        const session = altered.rows.sessions.find((r) => r.key.id === 'orphan-session');
+        session.original[field] = field === 'ended_at' ? null : 'customer';
+        session.value = structuredClone(session.original);
+        session.sourceSha256 = hash(session.original);
+        altered.missingReferences[0].sessionSourceSha256 = session.sourceSha256;
+        const { sha256: ignored, ...body } = altered;
+        altered.sha256 = hash(body);
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, altered.sha256),
+          /open historical session|unapproved namespace/,
+        );
+      }
+      await assert.rejects(
+        exportHistory(
+          source,
+          {
+            ...selection,
+            roots: [...selection.roots, { table: 'certificates', key: { serial: orphanSerial } }],
+          },
+          dir,
+        ),
+        /missing or ambiguous certificates reference/,
+      );
       assert.equal(bundle.rows.api_tokens[0].value.id, 'revoked');
       assert.equal(bundle.dataFiles.length, outputs.size);
       process.env.STAGING_HISTORY_DATA_DIR = targetData;
@@ -411,12 +515,25 @@ test(
       );
       assert.equal((await dest.query('SELECT count(*) FROM job_outputs')).rows[0].count, '0');
       await dest.query("SET TIME ZONE 'UTC'");
-      await importHistory(dest, bundle, binding, dir, bundle.sha256);
+      const receipt = await importHistory(dest, bundle, binding, dir, bundle.sha256);
+      assert.deepEqual(receipt.missingReferences, bundle.missingReferences);
       for (const zone of ['America/Los_Angeles', 'Asia/Kathmandu']) {
         await dest.query("SELECT set_config('TimeZone', $1, false)", [zone]);
-        await importHistory(dest, bundle, binding, dir, bundle.sha256);
+        assert.deepEqual(
+          (await importHistory(dest, bundle, binding, dir, bundle.sha256)).missingReferences,
+          bundle.missingReferences,
+        );
         assert.equal((await dest.query('SHOW TIME ZONE')).rows[0].TimeZone, zone);
       }
+      await dest.query(
+        'INSERT INTO certificates SELECT ($1::bigint),namespace,token_id,kind,key_id,key_fingerprint,principals_json,sandbox_id,issued_at,expires_at FROM certificates WHERE serial=42',
+        [orphanSerial],
+      );
+      await assert.rejects(
+        importHistory(dest, bundle, binding, dir, bundle.sha256),
+        /target is present at destination/,
+      );
+      await dest.query('DELETE FROM certificates WHERE serial=$1', [orphanSerial]);
       for (const [path, bytes] of outputs) {
         assert.deepEqual(readFileSync(join(targetData, path)), bytes);
         assert.equal(hash(readFileSync(join(targetData, path))), hash(bytes));

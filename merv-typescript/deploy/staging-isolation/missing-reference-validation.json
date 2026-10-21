@@ -1,0 +1,27 @@
+{
+  "base": "f63cf8cb8d57878b9d44a2bc7184780f2bd98802",
+  "scope": "Preserve observed pre-existing dangling closed-session logical certificate references; no live/source repair or operations.",
+  "manifest": "missingReferences binds session PK, exact serial, original row SHA256, namespace and zero source target count under full bundle digest. Import receipts include identical manifest.",
+  "validation": {
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "serverDefault": "America/Los_Angeles",
+    "checks": [
+      "Pinned schema closed orphan session with exact serial 9007199254740995 preserves original row, timestamps and serial",
+      "Export observes zero exact target rows; present target exports normally",
+      "Idempotent import receipts match manifest across timezones; SQL text dump/restore unchanged",
+      "Missing, duplicated, changed serial, changed row hash and nonzero-count manifests refuse, even with recomputed self-digest",
+      "Independent expected digest rejects altered bundles",
+      "Open or unapproved-namespace sessions reject on export and import",
+      "Declared certificate FK, ambiguous target results and explicit missing certificate roots reject",
+      "Present destination certificate rejects replay; absence held stable through transaction by table lock",
+      "Existing numeric precision, FK closure, file integrity and sequence regressions pass"
+    ]
+  },
+  "log": {
+    "path": "/tmp/merv-orphan-suite.log",
+    "sha256": "9f03448bdca6572f7ff8088d6fa180a3b816fca796ed98ce4c24afb147b39c2d"
+  },
+  "operatorRequirement": "Parent must freshly export, independently compare manifest to read-only source absence evidence, and bind new bundle digest before any import."
+}
