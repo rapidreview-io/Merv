@@ -2,6 +2,8 @@
 
 This harness runs **real fresh Codex and Claude Code model sessions** through the installed native plugin/MCP connection. It makes no Merv HTTP calls. Production runs belong to the release operator after deployment; preparation and self-tests neither deploy nor provision anything.
 
+The combined-candidate [exact action matrix](candidate-4530/README.md) supplies per-action recipes and native-client stage commands; use it for action coverage alongside the journey scenarios below.
+
 `coverage.json` is a static candidate inventory, with source locations and scenario area mappings. Its legacy worker snapshot includes aliases and may include retired tools. **Area mapping is not action coverage or a pass.** Regenerate after integration, retain actual client tool discovery/schema evidence, and reconcile every exposed noun action and worker-only tool against the inventory. An enabled capability without executed evidence remains a launch gap. Disabled/retired surfaces need explicit evidence and a release-owner scope decision; they do not turn into passes.
 
 ## Reuse and boundaries

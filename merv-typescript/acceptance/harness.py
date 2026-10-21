@@ -184,7 +184,7 @@ def init(args):
 
 def run(args):
     root = Path(args.root).resolve(); meta = read(root/'run.json')
-    scenario = next(s for s in scenarios() if s['id'] == args.scenario)
+    scenario = getattr(args, 'entry', None) or next(s for s in scenarios() if s['id'] == args.scenario)
     proof = root/args.client/'proof'
     previous = sorted(p for p in proof.glob(args.scenario + '-*.json') if not p.name.endswith('.attestation.json'))
     if previous and not args.resume:
