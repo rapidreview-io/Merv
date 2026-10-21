@@ -109,20 +109,30 @@ a background Merv daemon. No GitHub account/integration inside Merv is involved.
 ## Prepare an ephemeral receiving key
 
 Run this locally. The output contains only a temporary directory and public key.
-Keep the directory for the next step; never read or print `key.pem`.
+Use an existing, isolated workspace already authorized for local tool writes as
+`workspace` in both blocks. Keep its path short enough for Git's Unix cache socket;
+do not move keys to an unauthorized `/tmp` path to work around a denial. Keep the
+returned directory for the next step; never read or print `key.pem`.
+
+Use a quoted Python heredoc with the `dict(...)` forms below. Claude Code can reject
+inline object literals containing a brace followed by a quote as shell expansion
+obfuscation, even inside Python. Copy reply fields as quoted string data, not Python
+expressions; do not weaken permission settings to get the command through.
 
 ```python
 import json, os, shutil, subprocess, tempfile
 os.umask(0o077)
-directory = tempfile.mkdtemp(prefix="merv-git-", dir="/tmp")
+workspace = os.path.realpath("<authorized-isolated-workspace>")
+directory = tempfile.mkdtemp(prefix="merv-git-", dir=workspace)
 key = os.path.join(directory, "key.pem")
 try:
+    assert len(os.fsencode(os.path.join(directory, "socket"))) < 100, "Choose a shorter authorized workspace path"
     subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
                     "rsa_keygen_bits:2048", "-out", key],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     public = subprocess.check_output(["openssl", "pkey", "-in", key, "-pubout"],
                                      stderr=subprocess.DEVNULL).decode()
-    print(json.dumps({"directory": directory, "publicKey": public}), flush=True)
+    print(json.dumps(dict(directory=directory, publicKey=public)), flush=True)
 except BaseException:
     # This exact directory was created above; no receiving-key result was returned.
     shutil.rmtree(directory)
@@ -158,9 +168,10 @@ removed by this block, and no cache exists until this block starts.
 import base64, datetime, json, os, re, shlex, shutil, stat, subprocess
 from urllib.parse import urlsplit
 # Fill these with the non-secret values from the preceding steps.
+workspace = os.path.realpath("<authorized-isolated-workspace>")
 directory = "<temporary-directory>"
 # Accept only the exact private directory returned by the receiving-key step.
-assert os.path.dirname(directory) == "/tmp"
+assert os.path.dirname(directory) == workspace
 assert re.fullmatch(r"merv-git-[A-Za-z0-9_-]+", os.path.basename(directory))
 owned = os.lstat(directory)
 assert stat.S_ISDIR(owned.st_mode) and owned.st_uid == os.getuid()
@@ -176,7 +187,8 @@ options = ["-c", "credential.helper=", "-c", "credential.helper=cache --socket="
 try:
     origin = "https://<connected-merv-host>"
     project_id = "<selected-project-id>"
-    reply = json.loads(r'''<JSON-tool-reply>''')
+    reply = dict(url="<reply-url>", encryption="<reply-encryption>",
+                 expiresAt="<reply-expiresAt>", encryptedToken="<reply-encryptedToken>")
     checkout = "<existing-working-directory>"
     batch = json.loads(r'''<JSON-Git-argument-arrays>''')
     assert batch and all(isinstance(args, list) and args and
@@ -209,8 +221,8 @@ try:
     os.unlink(key)
     for args in batch:
         subprocess.run(["git", *options, *args], cwd=checkout, env=env, check=True)
-    print(json.dumps({"completedCommands": len(batch),
-                      "remote": origin.rstrip("/") + reply["url"]}))
+    print(json.dumps(dict(completedCommands=len(batch),
+                          remote=origin.rstrip("/") + reply["url"])))
 finally:
     try:
         subprocess.run(["git", "credential-cache", "--socket=" + socket, "exit"],

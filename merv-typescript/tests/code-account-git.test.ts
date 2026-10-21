@@ -492,33 +492,42 @@ test(
     );
     const blocks = [...skill.matchAll(/```python\n([\s\S]*?)```/g)].map((m) => m[1]!);
     assert.equal(blocks.length, 2);
+    const skillWorkspace = mkdtempSync('/tmp/merv-skill-');
+    t.after(() => rmSync(skillWorkspace, { recursive: true, force: true }));
+    const inWorkspace = (script: string) =>
+      script.replace('"<authorized-isolated-workspace>"', JSON.stringify(skillWorkspace));
+    for (const block of blocks)
+      assert.ok(!/\{\s*["']/.test(block), 'no brace-quote shell false-positive');
+    const heredoc = (python: string, script: string) =>
+      `'${python.replace(/'/g, "'\\''")}' - <<'MERV_PY'\n${script}\nMERV_PY`;
     const prepare = () =>
-      JSON.parse(execFileSync('python3', ['-c', blocks[0]!], { encoding: 'utf8', env }));
+      JSON.parse(
+        execFileSync('/bin/sh', ['-c', heredoc('python3', inWorkspace(blocks[0]!))], {
+          encoding: 'utf8',
+          env,
+        }),
+      );
     const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], {
       encoding: 'utf8',
     }).trim();
     const run = async (
       prepared: { directory: string; publicKey: string },
       batch: string[][],
-      overrides: { expiresAt?: string; rawReply?: string; path?: string } = {},
+      overrides: { expiresAt?: string; rawBatch?: string; path?: string } = {},
     ) => {
       const reply = await f.mint('read', f.admin.projectId, prepared.publicKey);
-      const script = blocks[1]!
+      const script = inWorkspace(blocks[1]!)
         .replace('"<temporary-directory>"', JSON.stringify(prepared.directory))
         .replace('https://<connected-merv-host>', origin)
         .replace('<selected-project-id>', f.admin.projectId)
-        .replace(
-          '<JSON-tool-reply>',
-          overrides.rawReply ??
-            JSON.stringify({
-              ...reply,
-              encryption: 'RSA-OAEP-SHA256',
-              ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
-            }),
-        )
+        .replace('"<reply-url>"', JSON.stringify(reply.url))
+        .replace('"<reply-encryption>"', JSON.stringify('RSA-OAEP-SHA256'))
+        .replace('"<reply-expiresAt>"', JSON.stringify(overrides.expiresAt ?? reply.expiresAt))
+        .replace('"<reply-encryptedToken>"', JSON.stringify(reply.encryptedToken))
         .replace('"<existing-working-directory>"', JSON.stringify(f.directory))
-        .replace('<JSON-Git-argument-arrays>', JSON.stringify(batch));
-      const result = await execute(python, ['-c', script], {
+        .replace('<JSON-Git-argument-arrays>', overrides.rawBatch ?? JSON.stringify(batch));
+      assert.ok(!/\{\s*["']/.test(script), 'populated command avoids brace-quote form');
+      const result = await execute('/bin/sh', ['-c', heredoc(python, script)], {
         env: { ...env, ...(overrides.path ? { PATH: overrides.path } : {}) },
       }).catch((error: { stdout: string; stderr: string }) => {
         assert.ok(!/mg_[A-Za-z0-9_-]{43}/.test(error.stdout + error.stderr));
@@ -613,9 +622,9 @@ test(
       },
       { name: 'empty batch', batch: [], overrides: {}, error: /AssertionError/ },
       {
-        name: 'malformed reply',
+        name: 'malformed batch',
         batch: [['status']],
-        overrides: { rawReply: '{' },
+        overrides: { rawBatch: '[' },
         error: /JSONDecodeError/,
       },
       {
@@ -638,12 +647,18 @@ test(
   },
 );
 
-test('receiving-key preparation cleans up when public-key extraction fails after real generation', () => {
+test('receiving-key preparation cleans up when public-key extraction fails after real generation', (t) => {
   const skill = readFileSync(
     new URL('../../clients/codex/skills/git-access/SKILL.md', import.meta.url),
     'utf8',
   );
-  const preparation = [...skill.matchAll(/```python\n([\s\S]*?)```/g)][0]![1]!;
+  const skillWorkspace = mkdtempSync('/tmp/merv-skill-');
+  t.after(() => rmSync(skillWorkspace, { recursive: true, force: true }));
+  const preparation = [...skill.matchAll(/```python\n([\s\S]*?)```/g)][0]![1]!.replace(
+    '"<authorized-isolated-workspace>"',
+    JSON.stringify(skillWorkspace),
+  );
+  assert.ok(!/\{\s*["']/.test(preparation));
   const harness = `
 import json, os, shutil, subprocess, tempfile
 from unittest.mock import patch
@@ -653,6 +668,7 @@ original_output = subprocess.check_output
 checked_key = False
 def track_directory(*args, **kwargs):
     directory = original_mkdtemp(*args, **kwargs)
+    assert os.path.dirname(directory) == os.path.realpath(${JSON.stringify(skillWorkspace)})
     created.append(directory)
     return directory
 def fail_extraction(args, **kwargs):

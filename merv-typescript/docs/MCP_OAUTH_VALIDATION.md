@@ -407,3 +407,22 @@ extraction to fail, and verifies the directory is gone without returning key dat
 The skill explicitly distinguishes execution-tool denial before a batch starts:
 cleanup then requires a separate authorized action, and denied cleanup must be
 reported rather than bypassed or claimed complete.
+
+## Claude shell guidance correction (0.5.6)
+
+The supplied 0.5.5 native transcript shows brace-with-quote shell refusals for both
+receiving-key JSON output and inline reply JSON. Equivalent `dict(...)` commands
+passed that particular check later in the same transcript. A Write attempt outside
+the authorized workspace was separately denied. Version 0.5.6 uses `dict(...)`
+for reply fields and output, and puts the temporary directory inside an explicitly
+selected, already authorized isolated workspace. Directory identity, permissions,
+same-invocation cache lifetime and failure cleanup remain enforced. Preparation
+rejects overlong Unix socket paths and cleans its directory before returning failure.
+
+Focused local tests execute the published recipes through quoted `/bin/sh` heredocs
+and check that neither their
+source nor populated commands contain the offending brace-quote form. This is not
+a fresh Claude permission-engine acceptance run: the installed CLI exposes no
+standalone supported shell-check command, and no model call or live credential
+injection was used. Public plugin publication is independent of Main; the hosted
+embedded bundle remains at its deployed version until a later application release.

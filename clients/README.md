@@ -71,3 +71,14 @@ verification and cache cleanup run inside one live exec invocation. Never rely o
 a returned cache socket in another exec call; the executor may have killed its
 process. The 0.5.5 skill re-mints through saved MCP auth for each later batch and
 clears the cache and ephemeral key directory on both success and failure.
+
+Version 0.5.6 uses Python `dict(...)` for reply data and JSON output to avoid Claude
+Code's brace-and-quote shell false-positive. Receiving keys stay in a private child
+of an already authorized isolated workspace, with the same live-batch cleanup.
+
+The standalone `clients/` marketplace can be published and installed independently
+of Main. Updating that public plugin does not update the server's embedded
+`/connect/bundle.*` or direct setup guide. Regenerate the embedded source with
+`build:clients` for the next application release; a plugin-only rollout needs no
+Main image rebuild. The legacy `publish-client-bundle.yml` workflow builds from
+`merv/`, not this canonical `clients/` tree, so do not use it for this publication.
