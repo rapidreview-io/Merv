@@ -47,6 +47,32 @@ Use /reload-plugins if your version supports it; restart only if the client asks
 For direct MCP without the plugin: claude mcp add --transport http --scope user ${name} ${origin}/mcp
 Then authenticate from /mcp. Do not also enable the plugin-bundled server.
 
+## Choose persistent tool permission once
+Browser sign-in saves identity; tool approval is a separate client setting. To let Merv act
+on your behalf across fresh chats without repeated tool prompts, choose a saved permission
+scoped to this Merv plugin. Installing the plugin does not change permission policy for you.
+
+Codex: the first write prompt offers Allow, Allow for this session, Always allow, or Cancel.
+Always allow persists permission for that particular tool. For all tools from this Merv
+server, merge this table into your existing Codex config.toml (normally ~/.codex/config.toml):
+
+[plugins."${name}@${name}".mcp_servers."${name}"]
+default_tools_approval_mode = "approve"
+
+Update the existing table if present; do not duplicate it or replace the whole configuration.
+Keep unrelated plugin settings and intentional per-tool restrictions. Restart Codex after
+editing. This approves this server's tools, including writes, while Merv still enforces your
+current account roles. It does not change shell or other servers' permissions.
+
+Claude Code: in /permissions, select Allow → Add a new rule, enter
+mcp__plugin_${name}_${name}__*, then save to User settings for use across projects and chats.
+This native UI adds the rule to permissions.allow without replacing existing settings.
+Choose individual tool rules instead if you want narrower approval. Manual-mode Yes is
+one call only; it is not a saved permission. Auto mode may approve harmless calls on its
+own, but is not a guarantee that every future write will run without a prompt. Managed
+ask/deny rules and existing explicit restrictions can still require approval or block calls.
+Never use global permission-bypass flags or an all-servers wildcard to set up Merv.
+
 ## Browser sign-in and project selection
 The browser opens Merv's existing account sign-in. Sign in or sign up there. New users must
 create a project or accept an invitation in the website before authorizing. No Git repository
@@ -120,7 +146,8 @@ codex mcp login ${name}</pre><p>The login command authenticates the installed pl
 <h3>Claude Code</h3><pre>claude plugin marketplace add MARKETPLACE
 claude plugin install ${name}@${name} --scope user</pre><p>Open <code>/mcp</code>, select Merv and authenticate. Reload plugins or restart only if your client requires it.</p>
 <h2>3. Sign in and select a project</h2><p>Complete Merv's browser sign-in. A new account must create a project or accept an invitation on the website before authorizing the connection. Review the client and callback address, select your project, and authorize. Your agent keeps your current permissions.</p>
-<h2>4. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys under its “OAuth:” label. Reconnect through your client's sign-in action when authorization expires.</p>
+<h2>4. Save your tool permission preference</h2><p>Sign-in and tool approval are separate. For Merv to act on your behalf without repeated tool prompts, choose a persistent permission scoped to this plugin. The <a href="/connect/agent.md">full guide</a> shows Codex’s per-tool Always allow and server-specific policy, and Claude Code’s user-level /permissions rule. Existing organization restrictions still apply.</p>
+<h2>5. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys under its “OAuth:” label. Reconnect through your client's sign-in action when authorization expires.</p>
 <p><a href="/connect/agent.md">Full setup, direct-connection alternatives and migration guide</a></p></body></html>`);
       return;
     }

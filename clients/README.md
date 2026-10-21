@@ -10,6 +10,9 @@ The 0.5.1 bundles combine remote MCP and three concise skills. Codex uses
 `.mcp.json`. The server publishes the same files at `/connect/bundle.tar.gz` and
 `/connect/bundle.json`, stamping its origin and a distinct marketplace/plugin name
 for nonproduction hosts. Installing Merv does not preapprove every tool.
+The setup guide includes a one-time, plugin-scoped permission choice for operation
+across fresh chats: Codex saved tool/server policy or Claude Code user-level
+`/permissions` rules. OAuth consent alone does not save tool approval.
 
 From a checkout, add `clients/` as a local marketplace, then install `merv@merv`:
 
