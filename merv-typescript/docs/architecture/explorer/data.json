@@ -146,6 +146,7 @@
           "merv-feed-tools",
           "merv-fleet-tools",
           "merv-knowledge-tools",
+          "merv-legacy-history-tools",
           "merv-nisa-tools",
           "merv-paper-tools",
           "merv-pi-tools",
@@ -201,7 +202,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-20",
+  "snapshot": "2026-10-21",
   "groups": [
     {
       "id": "front",
@@ -1078,6 +1079,25 @@
       "owner": "legacyHistory",
       "label": "Legacy history",
       "purpose": "Optional read-only archive of research imported from the previous backend, with its UI page. Requires State and Scope; preserves historical records without resuming old workflows.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-legacy-history-tools",
+      "source": "packages/legacy-history/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "legacyHistory",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-legacy-history-tools",
+      "group": "front",
+      "owner": "legacyHistory",
+      "label": "Legacy history · tools adapter",
+      "purpose": "Connects Legacy history to the Tools registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -3140,6 +3160,16 @@
       "optional": false
     },
     {
+      "from": "merv-legacy-history-tools",
+      "to": "legacyHistory",
+      "optional": false
+    },
+    {
+      "from": "merv-legacy-history-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
       "from": "merv-legacy-history-ui",
       "to": "legacyHistory",
       "optional": false
@@ -3891,10 +3921,10 @@
     }
   ],
   "counts": {
-    "plugins": 83,
+    "plugins": 84,
     "providers": 38,
-    "adapters": 45,
-    "dependencies": 268
+    "adapters": 46,
+    "dependencies": 270
   },
   "network": [
     {

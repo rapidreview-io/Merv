@@ -197,6 +197,10 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
   assert.equal(config.plugins.length, 16);
+  assert.equal(
+    config.plugins.some((p) => p.id.startsWith('legacy-history')),
+    false,
+  );
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
@@ -209,11 +213,19 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 18);
+  assert.equal(config.plugins.length, 19);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
   assert.equal(history.name, '@merv/legacy-history/ui');
+  assert.deepEqual(
+    config.plugins.find((p) => p.id === 'legacy-history-tools'),
+    {
+      id: 'legacy-history-tools',
+      name: '@merv/legacy-history/tools',
+      config: history.config,
+    },
+  );
   assert.equal(config.plugins.find((p) => p.id === 'legacy-history').name, '@merv/legacy-history');
   assert.notEqual(run({ MERV_TS_DB_SCHEMA: 'public' }).status, 0);
   assert.notEqual(run({ MERV_TS_LEGACY_SOURCE_ID: '../source' }).status, 0);

@@ -31,6 +31,7 @@ flowchart BT
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
     legacyHistory["legacyHistory"]
+    merv_legacy_history_tools["merv-legacy-history-tools"]
     merv_legacy_history_ui["merv-legacy-history-ui"]
     mounts["mounts"]
     merv_mounts_ui["merv-mounts-ui"]
@@ -204,6 +205,8 @@ flowchart BT
   merv_knowledge_tools --> tools
   legacyHistory --> state
   legacyHistory --> scope
+  merv_legacy_history_tools --> legacyHistory
+  merv_legacy_history_tools --> tools
   merv_legacy_history_ui --> legacyHistory
   merv_legacy_history_ui --> ui
   mounts --> tools

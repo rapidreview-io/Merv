@@ -517,6 +517,11 @@ if (legacySourceId !== undefined) {
       name: '@merv/legacy-history/ui',
       config: { sourceId: legacySourceId },
     },
+    {
+      id: 'legacy-history-tools',
+      name: '@merv/legacy-history/tools',
+      config: { sourceId: legacySourceId },
+    },
   );
 }
 writeFileSync(process.argv[2] ?? '/tmp/merv-config.json', JSON.stringify(config), { mode: 0o600 });

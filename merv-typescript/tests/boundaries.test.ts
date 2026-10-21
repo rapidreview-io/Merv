@@ -1071,6 +1071,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'feed',
       'fleet',
       'knowledge',
+      'legacy-history',
       'nisa',
       'paper',
       'pi',
