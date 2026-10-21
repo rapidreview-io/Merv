@@ -1,6 +1,6 @@
 {
   "name": "merv",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Use Merv for research projects: experiments, tasks, papers, artifacts, reviews and status through remote MCP with browser sign-in.",
   "author": {
     "name": "RapidReview"

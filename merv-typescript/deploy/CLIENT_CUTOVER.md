@@ -32,13 +32,16 @@ connector, proxy or daemon. Public plugin-directory publication is separate.
 Tell users to read `/connect/agent.md` or open `/connect`. Download the provided
 plugin archive, extract into a persistent user-owned directory, add that directory
 as a marketplace, install Merv, and connect with browser sign-in. The website
-handles account and project creation/joining before consent. Git is optional.
+handles account sign-in before consent. Project membership and selection are not required;
+a verified person with zero projects can authorize. Git is optional.
 
-The OAuth grant delegates current account memberships; selection identifies the
-initial project and agents pass `projectId` explicitly. It does not grant account
+The OAuth grant delegates current account memberships, including those added after
+consent. Agents list projects and pass `projectId` explicitly for project operations;
+there is no sticky default. Ask which project when ambiguous, including in fresh chats. It does not grant account
 administration. Access tokens expire after an hour. Refresh tokens rotate on use;
 reuse revokes the whole grant. The grant has a 30-day absolute lifetime. Revocation
-is available through RFC 7009 and Settings → Keys (`OAuth: <client name>`).
+is available through RFC 7009, Settings → Keys, and `/ui/account/keys`
+(`OAuth: <client name>`), including after the last membership is removed.
 Clients own credential persistence; Merv never copies credentials into skills or
 asks for tokens in a conversation. OAuth bearers are accepted only on `/mcp`.
 

@@ -19,7 +19,10 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
    `/connect/agent.md` guide once. If authentication is required, use the client's browser
    sign-in action. Never ask for credentials or email codes. Call `project.list` or
    `project.read` (list), select the intended project and pass `projectId` on every call.
-   Ask which project only when ambiguous. Git is optional; do not require a repository.
+   Ask which project when ambiguous, including in fresh chats; never silently inherit a
+   previous chat's selection. If none are accessible, explain how to create/join one on the
+   website, then list again without reconnecting. Change the explicit projectId to switch
+   projects and read its brief to check your role. Git is optional.
 1. `project.read` (brief): your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on

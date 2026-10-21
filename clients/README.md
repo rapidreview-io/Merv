@@ -28,12 +28,16 @@ reuse it. Client versions without plugin support need updating or
 the documented direct remote MCP fallback; that fallback alone has no skills.
 
 Sign in or create an account through the browser's normal identity flow (Google
-sign-in can create an account when enabled). Create/join a project on the website,
-select it, and approve the connection. Neither account creation nor repository
-setup is a job for the agent. Research tools work without Git.
+sign-in can create an account when enabled), then approve account access. No project
+membership or selection is required. The connection follows current project permissions;
+new memberships appear without reconnecting and removed memberships lose access.
+If the project list is empty, create/join a project on the website and list again.
+Research tools work without Git. Revoke access at `/ui/account/keys`, even with zero projects.
 
 In a fresh chat, “use Merv” loads the skills; the agent lists projects and reads
-the selected project's brief and workflow status. If needed, reconnect through
+the intended project's brief and workflow status, passing its explicit `projectId`.
+Ask the person which project when ambiguous; never silently reuse another chat's selection.
+Switch between permitted projects without reconnecting. If needed, reconnect through
 the client's sign-in action. Never put a token in chat or plugin files.
 
 See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and

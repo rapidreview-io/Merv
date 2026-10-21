@@ -1,6 +1,6 @@
 {
   "name": "merv",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Use Merv for research projects: experiments, tasks, papers, artifacts, reviews and status through remote MCP with browser sign-in.",
   "author": {
     "name": "RapidReview"
@@ -13,7 +13,7 @@
     "category": "Productivity",
     "capabilities": ["Read", "Write", "Interactive"],
     "defaultPrompt": [
-      "Use Merv. Start with project.read brief, then workflow.read status."
+      "Use Merv. List projects, choose the intended project or ask when ambiguous, then pass projectId to project.read brief and workflow.read status."
     ]
   },
   "mcpServers": "./.mcp.json"

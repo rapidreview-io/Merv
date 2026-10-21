@@ -59,7 +59,11 @@ test('downloadable tar contains only package files; staging uses distinct names 
     `${origin}/mcp`,
   );
   assert.ok(!JSON.stringify(files).includes('experiments.rapidreview.io'));
-  assert.match(setupGuide(origin), /Git repository\nis required|No Git repository/);
+  assert.match(
+    setupGuide(origin),
+    /No project membership, project\nselection or Git repository is required/,
+  );
+  assert.match(setupGuide(origin), /ui\/account\/keys, even with no projects/);
   assert.match(setupGuide(origin), /bundle.tar.gz/);
   assert.ok(setupGuide(origin).includes('codex mcp login ' + packageName(origin)));
   assert.match(setupGuide(origin), /authenticates the plugin-bundled server/);
