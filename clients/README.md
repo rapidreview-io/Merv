@@ -11,8 +11,9 @@ plugin identity **`merv@merv`**, regardless of the GitHub repository name.
 
 ## Install and sign in
 
-Use a current client with plugin support. If you already have Merv connected,
-update that installation instead of adding a second connection to the same server.
+Use a current client with plugin support. For an existing modern `merv@merv`
+installation, update it instead of adding another connection. If you used the old
+Python plugin (`merv@rapidreview`), follow the migration note below first.
 
 ### Codex
 
@@ -70,6 +71,29 @@ uncommitted files and divergence rather than sweeping unrelated work into commit
 Readers can fetch; producers and operators can push permitted user branches.
 Branch sync does not advance the reviewed research baseline or change experiment
 pins. Research tools also work without Git.
+
+## Updates and older installations
+
+For this marketplace, refresh it and update the installed plugin:
+
+```sh
+# Claude Code
+claude plugin marketplace update merv
+claude plugin update merv@merv --scope user
+
+# Codex
+codex plugin marketplace upgrade merv
+codex plugin add merv@merv
+```
+
+Start a fresh chat after updating. Reuse your saved browser connection.
+
+**Coming from the Python plugin (`merv@rapidreview`)?** Back up your client settings,
+disable or uninstall only the old Merv plugin, then install this marketplace and
+sign in through the browser. Preserve other plugins, servers and permissions.
+Do not copy old API keys into the new plugin or register a duplicate Merv server.
+The [migration guide](https://experiments.rapidreview.io/connect/agent.md#migrate-an-older-installation)
+covers old standalone connectors and revoking their old keys after the new connection works.
 
 ## Other installation paths
 
