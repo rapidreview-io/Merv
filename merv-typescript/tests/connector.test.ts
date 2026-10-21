@@ -686,7 +686,6 @@ if (args[0] === 'mcp' && args[1] === 'add') {
 }
 if (args[0] === 'mcp' && args[1] === 'add-json')
   fs.writeFileSync(had, 'Command: ' + JSON.parse(args[3]).command);
-// Leave config removal to the connector, so tests can check the precise approval edit.
 `,
       { mode: 0o700 },
     );
@@ -780,7 +779,8 @@ test('install grants only this server approval, is idempotent, and uninstall rem
     assert.equal(statSync(join(claudeDir, copies[0]!)).mode & 0o777, 0o600);
     const removed = await clients.run('uninstall');
     assert.equal(removed.code, 0, removed.out);
-    assert.equal(readFileSync(config, 'utf8'), before);
+    // Codex drops the server's whole table, approval included, on its own mcp remove.
+    assert.ok(clients.log().includes(`codex mcp remove ${name}\n`), clients.log());
     assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), initial);
   }
 });

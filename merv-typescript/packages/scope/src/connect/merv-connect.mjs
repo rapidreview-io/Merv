@@ -453,42 +453,28 @@ async function editClientConfig(client, dir, name, change, save = false) {
   );
 }
 
-async function codexApproval(installing) {
+/** Codex asks before each call to a tool not marked read-only unless the server's table says
+ *  otherwise. `codex mcp add` has just written that table; `codex mcp remove` drops it whole. */
+async function codexApproval() {
   const dir = process.env.CODEX_HOME || join(HOME, '.codex');
-  await editClientConfig('codex', dir, 'config.toml', (before) => {
-    const name = SERVER_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const header = new RegExp(
-      `^[ \\t]*\\[[ \\t]*(?:mcp_servers|"mcp_servers"|'mcp_servers')[ \\t]*\\.[ \\t]*(?:${name}|"${name}"|'${name}')[ \\t]*\\][ \\t]*(?:#[^\\r\\n]*)?(?:\\r?\\n|$)`,
-      'm',
-    ).exec(before ?? '');
-    if (!header) {
-      if (installing) throw new Refusal(`Codex: could not find the "${SERVER_NAME}" config table.`);
-      return;
-    }
-    const start = header.index + header[0].length;
-    const next = before.slice(start).search(/^[ \t]*\[/m);
-    const end = next < 0 ? before.length : start + next;
-    const body = before.slice(start, end);
-    const key =
-      /^[ \t]*(?:default_tools_approval_mode|"default_tools_approval_mode"|'default_tools_approval_mode')[ \t]*=[^\r\n]*(?:\r?\n|$)/m;
-    const line = `default_tools_approval_mode = "approve"${before.includes('\r\n') ? '\r\n' : '\n'}`;
-    const changed = installing
-      ? key.test(body)
-        ? body.replace(key, line)
-        : line + body
-      : body.replace(/^[ \t]*default_tools_approval_mode = "approve"\r?\n/m, '');
-    return (
-      before.slice(0, start) +
-      (installing && !header[0].endsWith('\n') ? '\n' : '') +
-      changed +
-      before.slice(end)
+  await editClientConfig('codex', dir, 'config.toml', (before = '') => {
+    const lines = before.split('\n');
+    const headers = [SERVER_NAME, `"${SERVER_NAME}"`, `'${SERVER_NAME}'`].map(
+      (n) => `[mcp_servers.${n}]`,
     );
+    const at = lines.findIndex((line) => headers.includes(line.replace(/#.*/, '').trim()));
+    if (at < 0) throw new Refusal(`Codex: no [mcp_servers.${SERVER_NAME}] table to configure.`);
+    const key = 'default_tools_approval_mode = "approve"';
+    if (lines[at + 1]?.trim() === key) return;
+    lines.splice(at + 1, 0, key);
+    return lines.join('\n');
   });
 }
 
+/** Claude Code asks before each MCP tool it has not been told to allow. Only an entry this
+ *  installer added is removed again; one the person had stays theirs. */
 async function claudeApproval(installing) {
   const dir = process.env.CLAUDE_CONFIG_DIR || join(HOME, '.claude');
-  const file = join(dir, 'settings.json');
   const owned = 'claude-approval.json';
   const permission = `mcp__${SERVER_NAME}`;
   await editClientConfig(
@@ -496,26 +482,19 @@ async function claudeApproval(installing) {
     dir,
     'settings.json',
     (before) => {
-      if (!installing && readJson(owned)?.file !== file) return;
+      if (!installing && !readJson(owned)) return;
       const config = before === undefined ? {} : JSON.parse(before);
-      const object = (value) => value && typeof value === 'object' && !Array.isArray(value);
-      if (
-        !object(config) ||
-        (config.permissions !== undefined && !object(config.permissions)) ||
-        (config.permissions?.allow !== undefined && !Array.isArray(config.permissions.allow))
-      )
-        throw new Refusal(`Claude Code: invalid permissions in ${file}; left alone.`);
       const allow = config.permissions?.allow ?? [];
-      if (installing) {
-        if (allow.includes(permission)) return;
-        // Remember only entries we add; an existing user permission belongs to the user.
-        writeJson(owned, { file });
-        config.permissions ??= {};
-        config.permissions.allow = [...allow, permission];
-      } else {
-        if (!allow.includes(permission)) return;
-        config.permissions.allow = allow.filter((item) => item !== permission);
-      }
+      if (!Array.isArray(allow))
+        throw new Refusal(
+          `Claude Code: permissions.allow in ${join(dir, 'settings.json')} is not a list; left alone.`,
+        );
+      if (installing === allow.includes(permission)) return;
+      if (installing) writeJson(owned, {});
+      config.permissions = {
+        ...config.permissions,
+        allow: installing ? [...allow, permission] : allow.filter((item) => item !== permission),
+      };
       return `${JSON.stringify(config, null, 2)}\n`;
     },
     true,
@@ -592,7 +571,7 @@ async function install(sha, node = process.execPath) {
       replacing('Codex', had, had !== undefined && !connectorOf(had) ? backup(config) : undefined);
       run('codex', ['mcp', 'remove', SERVER_NAME]);
       const added = run('codex', ['mcp', 'add', SERVER_NAME, '--', SHIM]);
-      if (added.status === 0) await codexApproval(true);
+      if (added.status === 0) await codexApproval();
       say(
         added.status === 0
           ? `Codex: Merv's tools run without asking (default_tools_approval_mode = "approve").`
@@ -622,10 +601,7 @@ async function uninstall() {
     await claudeApproval(false);
     removeFromClaude();
   }
-  if (ours('codex')) {
-    await codexApproval(false);
-    run('codex', ['mcp', 'remove', SERVER_NAME]);
-  }
+  if (ours('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
   await cursor((servers) => {
     if (servers[SERVER_NAME]?.command !== SHIM) return undefined;
     delete servers[SERVER_NAME];
