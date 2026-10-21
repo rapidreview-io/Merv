@@ -47,6 +47,7 @@ def availability(name):
     if name.startswith('nisa.'): return 'conditional:MERV_NISA_API_KEY'
     if name.startswith('web.'): return 'conditional:MERV_TAVILY_API_KEY or MERV_WEB_FALLBACK_KEY_ENV'
     if name.startswith('history.'): return 'conditional:MERV_TS_LEGACY_SOURCE_ID; imported source required'
+    if name=='sandboxes.access': return 'UI-tier; excluded from external discovery; worker access requires explicit actual lease-policy grant, not assignment alone'
     if name.startswith('sandboxes.'): return 'conditional:SANDBOXES_DATABASE_URL and configured host; no allocation implied'
     if name=='fleet': return 'conditional:MERV_FLEET_ENABLED and sandboxes'
     if name.startswith(('pi.','screen.')): return 'conditional:MERV_PI_ENABLED and fleet/sandboxes'
@@ -94,6 +95,9 @@ def build(args):
         elif d['audience']=='conversations':lane='pi_or_assigned_worker'
         if name.startswith('intake.'):lane='bound_intake_pi_only'
         if name=='screen.read':lane='internal_pi_only'
+        # The pinned registration snapshot's manually supplemented SSH tier was
+        # mislabeled worker; actual legacy conversation:'never' maps to UI.
+        if name=='sandboxes.access':lane='ui_or_explicit_worker_grant'
         rows.append({'id':key,'tool':name,'action':action,'stage':recipe['group'],'lane':lane,'availability':availability(name),'inMeasuredOperatorListing':key in published_ids,'source':d['source'],'aliases':d['aliases'],'contract':d['contract'],'inputStyle':style,'requiredFields':required,'inputFields':fields,'argumentTemplate':template,'fixture':recipe['fixture'],'operation':recipe['steps'][action or 'call'],'independentEvidence':recipe['verify'],'checks':['native_action_observed','domain_result_verified','independent_readback','cleanup_recorded'],'initialStatus':'not_run'})
     # Each stage is a bounded coherent agent prompt; stateful workflows may revisit it.
     tool_order={'artifact.write':['create','upload_begin','upload_resume','upload_complete'],'review.write':['start','release','submit'],'code.write':['repository_configure','repository_prepare','publication_sync','base_suspend','base_resume','base_retry','base_quarantine','base_release','base_repair','unit_fence','base_cancel'],'research.write':['create','replan','advance','end'],'sandboxes.storage':['upload','resume','complete','manifest','get','list','download','usage','delete'],'sandboxes.sandbox':['options','providers','list','get','events','create','renew','delete'],'sandboxes.snapshot':['list','create','get','restore','delete']}

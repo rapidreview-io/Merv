@@ -55,10 +55,14 @@ replacement work that refers to the earlier evidence.
 
 ## Machines
 
-On a Merv server that runs Fleet and Sandboxes, the seven tools are
+On a configured Merv server, external discovery can expose six Sandboxes tool families:
 `sandboxes.sandbox`, `sandboxes.job`, `sandboxes.snapshot`, `sandboxes.storage`,
-`sandboxes.workflow`, `sandboxes.access` and `sandboxes.spend`. Read their schemas
+`sandboxes.workflow` and `sandboxes.spend`. Check live discovery and read their schemas
 for action inputs; these mixed read/write tools keep their own input shapes.
+
+`sandboxes.access` is UI-tier and is not an external agent tool. Worker SSH access
+requires an explicit grant under the actual assignment lease policy; an assignment
+alone does not establish permission to issue credentials.
 
 - `fleet` with action `list` or `get` reads the Fleet allocations the project's workers run on.
   Action `drain` stops admission, keeps the current assignment's results, then releases the

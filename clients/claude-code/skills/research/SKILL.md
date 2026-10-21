@@ -52,6 +52,10 @@ then write the sections with `paper.write` (patch, kind problem). Never invent t
 person changes the objective, scope or constraints, update the Problem the same way before
 creating work that relies on the change.
 
+Use an experiment to test a research hypothesis through design and results review.
+Use a task for enabling work with a verifiable deliverable, such as a literature sweep,
+dataset preparation or a harness; a completed task is not empirical confirmation of a hypothesis.
+
 ## An experiment's life
 
 States: planned, design_review, running, experiment_review, then completed.
@@ -101,7 +105,7 @@ yourself. `task.read` (get) returns a compact reminder; pass `full:true` for Mer
   the file to the signed URL it returns, then `artifact.write` (upload_complete). Do not base64 a
   large file into create.
 - `artifact.read` reads files: list, get (metadata), content and download.
-- `screen.read` with `{"action":"look","look":{"at":{"record":"<artifact id>"}}}`
+- `artifact.read` with `{"action":"look","look":{"artifactId":"<artifact id>"}}`
   shows a JPEG, PNG or WebP artifact as an image. `board.read` with action
   `get` says what a board's shapes say, and with `look` shows the board as an image.
 

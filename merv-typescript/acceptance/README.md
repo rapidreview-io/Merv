@@ -63,19 +63,45 @@ Run each applicable scenario for both clients. Scenario prompts are in `scenario
 2. `experiment`, `task`, `revision-resume`, `storage`, `knowledge`, `feed-board`, `operations`, `public-intake`. Use stable request IDs tied to run ID and recover existing records. The fixture takes milliseconds, uses only the standard library, retains seed/hash/exact arithmetic, and makes only an empirical algebraic claim.
 3. Hosted worker and Pi scenarios require the release operator's separately allocated CPU capacity/dispatch configuration. Both owner-side request/status and hosted worker execution/session/review receipts must be retained. A terminal owner doing the work is not evidence that hosted execution works. No worker available means blocked. The harness never provisions, enables dispatch, or pays for compute.
 4. Real independent design/result/task reviewers must inspect actual retained evidence under authorized identities/leases. Reflection requires all five lens contributions and independent reflection/consolidation gates. An owner's forced approval is not acceptance.
-5. Git scenario separates owner standard clone/fetch/user-branch push from a leased worker’s assigned-branch push. Never put credentials in remote URLs or commands. Retain remote refs, commits, rejected unauthorized push and immutable submission/approval receipts.
+5. Git scenario separates member clone/fetch and authorized producer/operator user-branch push from a leased worker’s assigned-branch push. Never put credentials in remote URLs or commands. Retain remote refs, commits, rejected unauthorized push and immutable submission/approval receipts.
 6. Cleanup observes exact run-owned resources and closes only allocated disposable compute/jobs. Preserve artifacts, review decisions and Git receipts. Local process cleanup does not prove remote cleanup.
 
-## Optional Git authentication after plugin OAuth
+## Git synchronization through saved plugin OAuth
 
-MCP OAuth acceptance does not establish Git access. The Git implementation currently documents Basic authentication with username `merv` and a Merv user key; the native MCP OAuth token is resource-bound and must never be repurposed. Validate this actual user path against the integrated/deployed instructions:
+Follow the integrated `clients/{codex,claude-code}/skills/git-access/SKILL.md` exactly
+(source `ed7cd6877`). Git is optional for non-code research; code-linked work uses
+proactive synchronization during the active task. This updated journey requires the
+newer `code.git_credential` tool, which is absent from the historical candidate-4530
+inventory. Reconcile fresh native discovery before running; absence is a blocker.
 
-1. The signed-in person opens Settings → Keys, creates a dedicated **project-scoped** key for the synthetic project with a short expiry, and records only its label/ID/scope/expiry. Account-scoped grants are broader and must not be silently substituted.
-2. Copy the exact credential-free project remote from Code. Run ordinary `git clone <remote-url>`, supplying `merv` and the key only through the native secure credential prompt/OS credential manager (for example the existing macOS Keychain helper). Never put the key in a URL, command argument, chat, captured terminal output, or repository configuration. No Merv-specific helper, watcher or daemon is required. Do not install a custom helper to rescue acceptance.
-3. Fetch again in a fresh process to prove persistence. Confirm role semantics: reading follows current membership; pushing ordinary user branches currently requires project administration. User keys cannot push `merv-main` or `merv/*`. Hosted leased worker credentials have a separate assigned-branch fence and must be tested as that worker, not simulated with an administrator key.
-4. Revoke only this test Git key through Settings → Keys, start a fresh Git request and verify denial. Verify the separate MCP OAuth connection still works. Remove the dedicated credential-manager entry using its normal UI after the test; preserve unrelated credentials.
+1. Use the saved MCP sign-in and explicit projectId. Request a read/write credential
+   with an ephemeral RSA public key through `code.git_credential`, decrypt directly
+   into Git's private memory cache using the skill's Python/OpenSSL procedure, and
+   remove the temporary key. No Settings key, additional sign-in, custom helper or
+   private OAuth-store access. Never reuse the MCP bearer token for Git or expose
+   plaintext credentials in URLs, argv, environment, files, chat or captured output.
+2. Verify current permissions: reader/reviewer can clone/fetch; producer/operator
+   can push ordinary user branches. Preserve origin, other remotes and upstream.
+   Inspect the intended branch and dirty/untracked files, sync authorized focused
+   commits initially, at meaningful checkpoints and before cloud work. Do not
+   auto-stage unrelated files or secrets. Fetch exact refs and handle divergence
+   without force, silent reset or overwriting local changes.
+3. After push, re-read/fetch the exact ref and compare with local HEAD. Retain both
+   heads, observation time, ahead/behind/diverged state and unsynced local files.
+   Report the reviewed research baseline separately. An authorized operator prepares
+   the exact observed source head/current expected main for independent integration
+   review; user-branch push alone must not advance the baseline or change old pins.
+4. Verify reserved-ref denial separately from a genuinely leased worker's assigned
+   branch success and wrong-branch denial. Verify fresh-chat branch rediscovery and
+   automatic ephemeral credential renewal. Coordinate only synthetic source-grant
+   and membership revocation/role changes, checking immediate derived-credential
+   invalidation. Re-read permissions on denial; use native sign-in only when the
+   account grant requires it. Exit the cache and remove its temporary directory.
 
-The harness never supplies a privileged key. If the release's published onboarding omits these steps, mark `published_optional_setup` blocked even if a manually arranged transport test passes. Record role constraints and human steps as part of the user journey. This optional Git path must not block research-only plugin use.
+Record actual discovery, current role and independent Git/workflow evidence. The
+harness never supplies a privileged key. Missing deployed capabilities or genuine
+worker grants are blockers, not a reason to fall back to manual keys. No live test
+or credential mint is performed by preparing this recipe.
 
 ## Resume and evidence
 

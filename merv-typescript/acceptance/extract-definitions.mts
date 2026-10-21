@@ -49,6 +49,6 @@ const records=definitions.map(({source,definition:d})=>({
   schema:describeTool(d).inputSchema, description:d.description,
   actions:d.actions ? Object.fromEntries(Object.entries(d.actions).map(([action,a]:any)=>[action,{description:a.description,readOnly:!!(d.readOnly||a.readOnly),audience:a.for??d.for??'all',aliases:a.was??[]}])) : null,
 }));
-records.push({source:'vendor/merv-sandboxes/typescript/hosts/merv/src/tools.ts',name:'sandboxes.access',tier:'worker',audience:'all',worker:null,became:null,removed:[],readOnly:false,schema:ssh.inputSchema,description:ssh.description,actions:null});
+records.push({source:'vendor/merv-sandboxes/typescript/hosts/merv/src/tools.ts',name:'sandboxes.access',tier:'ui',audience:'all',worker:null,became:null,removed:[],readOnly:false,schema:ssh.inputSchema,description:ssh.description,actions:null});
 writeFileSync(out,JSON.stringify({kind:'registration_only_not_execution',candidateRevision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),gaps,definitions:records},null,2)+'\n');
 console.log(JSON.stringify({definitions:records.length,gaps}));

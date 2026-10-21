@@ -2,7 +2,7 @@
 
 Pinned candidate: `4530bd6224b869ab8989814bf70d979f039d8428`.
 
-This replaces area-level coverage with **211 exact action/tool rows in 38 stages**. All rows are **not_run**, not acceptance passes. There are **142 actions in the measured external operator listing** and **10 further conditional external actions** (Fleet and legacy history). Other rows deliberately cover website-only controls, genuine worker/Pi/intake-profile tools and hidden compatibility names. The two worker SSH actions are included even though external conversations cannot discover them.
+This replaces area-level coverage with **211 exact action/tool rows in 38 stages**. All rows are **not_run**, not acceptance passes. There are **142 actions in the measured external operator listing** and **10 further conditional external actions** (Fleet and legacy history). Other rows deliberately cover website-only controls, genuine worker/Pi/intake-profile tools and hidden compatibility names. The two UI-tier SSH actions are included even though external conversations cannot discover them; worker access requires an explicit grant under the actual lease policy.
 
 - [ACTION_MATRIX.md](ACTION_MATRIX.md): reviewable operation/evidence table, one row per exact action.
 - [action-matrix.json](action-matrix.json): exact argument style, required fields, field schemas, binding templates, source file, aliases, fixture identity, operation, evidence, lane and availability for every row.
@@ -13,6 +13,15 @@ This replaces area-level coverage with **211 exact action/tool rows in 38 stages
 The measurement helper creates isolated schemas on loopback PostgreSQL, enables optional Feed/Nisa/Web/Sandboxes definitions for measurement, lists tools, then closes clients/services and drops its test schemas. It neither calls their action handlers nor allocates compute. Actual deployed enablement and native-client visibility remain to be verified. The registration extractor reports every unsupported registration as a gap and matrix generation refuses gaps or missing recipes.
 
 Parent maintenance integration advanced to `a5fe8936ca60276d5dfeb4427f943715597b7136` during preparation. Registration extraction was rerun against this worktree pinned at `4530bd6`; all 82 registration definitions were byte-for-byte structurally equal to the later maintenance candidate's extraction. This does not assert unchanged runtime behavior or future revisions. Refresh discovery after final deployment.
+
+The guidance audit corrected the SSH lane in the matrix and recipes: the original
+registration snapshot incorrectly labelled the manually supplemented SSH schema
+`worker`. That historical input is preserved; the extractor now emits `ui`, and the
+matrix explicitly classifies SSH as UI or explicitly granted worker access. The
+operator discovery snapshot and candidate revision are unchanged. Updated Git
+journey instructions follow source `ed7cd6877`; they do not add its newer
+`code.git_credential` tool to this historical inventory. Preparation hashes below
+remain historical; current matrix source hashes identify the revised recipes.
 
 ## Execution setup and sequence
 
@@ -40,10 +49,10 @@ Execute stages sequentially with pauses at workflow gates. Stage numbers organiz
 2. `25-literature` first when a citation is needed; then `06-paper-write`, `07-paper-read`. Missing optional literature service stays blocked; do not invent a citation.
 3. `09-task-create`, `10-experiment` through the first review gate; inspect `08-workflow-orientation`. Run genuine assigned work (`11-assigned-work`) and reviewer stages `13-independent-review`/`14-review-observe` on their actual identities. Resume `10-experiment` for execution/result submission and its next independent review. Use `12-workflow-observe` to read retained final evidence. A blocked dependent task must not start early.
 4. `15-session-controls` and `16-session-observe` on already running/retained fixture work. Resume the same work after interruptions. Owner session observations and hosted worker execution evidence are distinct requirements.
-5. Optional ordinary Git authentication from the main runbook, then `18-git-observe`. `19-git-recovery` requires separately prepared, disposable failed/suspended/quarantined bases; do not damage production to create fixtures. Healthy-state rejection alone does not satisfy a positive repair/recovery row.
+5. For code-linked work, saved-OAuth Git synchronization from the main runbook, then `18-git-observe`. `19-git-recovery` requires separately prepared, disposable failed/suspended/quarantined bases; do not damage production to create fixtures. Healthy-state rejection alone does not satisfy a positive repair/recovery row.
 6. `20-research`, `21-reflection`, `22-research-observe`, returning to actual independent workers/reviewers as required. Finish the main wave before creating the separate abandonment fixture. Keep automatic cycles off and nextWave skipped.
 7. Optional `24-optional-feed`, `26-optional-archive`, `27-script`. Read-only absence remains disabled/blocked; no silent pass.
-8. Compute stages `30`–`36` use separately allocated capacity. Job runs take at most ten CPU seconds; cancellation uses a separate short bounded sleep. Creation, renewal, snapshots/restoration, pipelines, Fleet retry and Nisa agent runs remain separately metered release gates. Retain provider cleanup receipts; client shutdown is not remote cleanup.
+8. Compute stages `30`–`36` use separately allocated capacity. Stage `36-worker-ssh` retains its historical name but requires a UI-authorized identity or an explicit actual worker lease-policy grant; it cannot launch as an external owner. Job runs take at most ten CPU seconds; cancellation uses a separate short bounded sleep. Creation, renewal, snapshots/restoration, pipelines, Fleet retry and Nisa agent runs remain separately metered release gates. Retain provider cleanup receipts; client shutdown is not remote cleanup.
 9. `40-pi-ui`, `41-intake`, `41-intake-worker`, `42-ui-only`, `43-credential-boundary` require their genuine website/Pi/worker surfaces. The stage launcher rejects attempts to execute wholly non-external stages as an owner terminal.
 
 Many controls intentionally require distinct disposable targets: failure task, abandoned research cycle/wave, cancellation job, quarantined/mismatched base, exhausted loop/dispatch hold. Prepare these through supported workflows under release coordination. Never reuse the successful evidence-producing unit for destructive checks. Each row states its own fixture and readback. Always read latest revisions and use a stable request ID tied to run/action; never guess IDs or retry creation after uncertain outcomes.
@@ -92,7 +101,7 @@ This compares exact tool **and action**, retains transcript path/line, reports n
 - Feed is disabled in committed `config/default.json`; the candidate renderer does not turn it on. The measurement fixture deliberately enables its definitions. Four Feed action rows remain disabled/blocked unless actual release configuration proves otherwise.
 - Nisa and Web require their renderer environment configuration. Nisa start/follow-up incur separate service spend; the Claude model budget does not bound it.
 - Sandboxes requires its configured host/database. Fleet and Pi add explicit enable flags; public intake additionally requires Pi and workflow dispatch. Legacy history requires an imported source ID. Missing services do not justify provisioning in this task.
-- `pi.*` controls are UI-tier. `screen.read` is internal conversation-only. Intake actions require a bound intake profile; delivery/report/SSH actions require actual assignment/worker authority. An external agent's inability to call these is an expected boundary, not evidence that the corresponding product journey works.
+- `pi.*` controls are UI-tier. `screen.read` is internal conversation-only. Intake actions require a bound intake profile; delivery/report actions require actual assignment/worker authority. `sandboxes.access` is UI-tier; a worker must have an explicit actual lease-policy grant, not merely an assignment. An external agent's inability to call these is an expected boundary, not evidence that the corresponding product journey works.
 - `actor.*` credential administration is UI-tier and refused for key/OAuth/worker/Pi callers (`tests/credential-lock.test.ts`). Do not mint another credential to rescue coverage or reviewer independence.
 - GitHub integrations and old `code.commit`, `code.merge`, `code.mirror.retry`, `code.publication.control`, `code.publication.merge`, `code.repository.import` are absent from candidate registrations and were removed by the Git cutover. Ordinary Git push/fetch and retained review/integration receipts are the replacement journey. Do not fabricate calls to removed tools.
 - `code.local.bind` and `code.repository.rebind` are explicitly removed names redirecting guidance to `repository_prepare`; cached aliases listed per row are distinct from removed operations.
