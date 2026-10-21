@@ -164,6 +164,78 @@ Official documentation supports [native MCP OAuth login](https://developers.open
 The installed binary test establishes that the command also resolves this bundle.
 No interactive `/plugins` or `/mcp` terminal sign-in path is claimed here.
 
+## Native writes and saved permission checks
+
+On 2026-10-21, seven harmless task records were created and read back through the
+installed plugin's actual `task.write`/`task.read` tools against disposable local
+PostgreSQL, real Task/Workflow services and local managed Git storage. No worker,
+dispatcher, cloud machine or production write was started. The test identity and
+OAuth consent were synthetic; native login, client permission dialogs and model
+tool calls were real. There were no standalone MCP registrations, global bypass
+flags or per-run tool allowlists in these write checks.
+
+| Client/run | Native interaction | Result after restart |
+| --- | --- | --- |
+| Codex 0.155.0-alpha.2, interactive default | Directory trust once; first `task.write` offered Allow, Allow for this session, Always allow, Cancel. Selected Always allow. Reads did not prompt. | A new `codex exec` process read the old task, created/read a second task without prompting. |
+| Codex, saved server policy | Replaced only the isolated plugin's saved per-tool policy with `default_tools_approval_mode = "approve"`. Other configuration stayed unchanged. | Another fresh process created/read a third task without prompting. |
+| Claude interactive Auto mode | Theme/onboarding and directory trust once; no tool approvals for harmless create/read. | A fresh interactive process read the old task and created/read another without prompting. |
+| Claude 2.1.304, Manual mode | A read prompted with Yes/No only; Yes approved one call, and the next read prompted again. Cancelled, opened `/permissions` → Allow → Add a new rule, entered `mcp__plugin_merv-1e9e436e_merv-1e9e436e__*`, saved to User settings. | The resumed task created/read successfully; a fresh Manual-mode `claude -p` process created/read another task with `permission_denials: []`. No `--allowedTools` was passed. |
+
+The Claude native updater advanced the interactive Auto-mode restart from 2.1.304
+to 2.1.306. The subsequent Manual-mode and restart checks explicitly used the
+existing 2.1.304 binary with auto-updates disabled for those child processes.
+No global permission setting or user configuration was edited by the test.
+
+Codex's Always allow dialog saved exactly this tool-scoped policy:
+
+```toml
+[plugins."merv@merv".mcp_servers.merv.tools."task.write"]
+approval_mode = "approve"
+```
+
+For a one-time decision covering all Merv tools, the separately tested policy is:
+
+```toml
+[plugins."merv@merv".mcp_servers.merv]
+default_tools_approval_mode = "approve"
+```
+
+Claude's native UI appended `mcp__plugin_merv_merv__*` to `permissions.allow` in
+user settings (the local fixture used its origin-specific name). It preserved the
+existing installed-plugin setting. User scope applies across projects; project
+scope would only cover that project. Manual Yes, session-only approval, and OAuth
+consent alone are not substitutes for this saved choice. Auto mode can still stop
+other actions; no claim is made that it approves every future write. Existing
+explicit restrictions and managed policies still take precedence.
+
+These controls are documented in [Codex plugin policy](https://developers.openai.com/codex/mcp)
+and [Claude Code MCP permissions](https://code.claude.com/docs/en/permissions#mcp).
+The served setup guide now includes the precise one-time choices, with host-specific
+names, without silently enabling them during installation.
+
+To reproduce interactively, start the opt-in fixture in one terminal:
+
+```sh
+MERV_ALLOW_MODEL_TESTS=1 \
+MERV_TEST_POSTGRES_URL=postgres://postgres:oauth-local-test@127.0.0.1:55441/postgres \
+  node --import tsx scripts/oauth-plugin-write-fixture.ts
+```
+
+Use its printed root as FIXTURE in another terminal. The helper uses existing local
+model credentials privately and leaves all tool permission decisions to the native
+client. These sessions make paid model calls:
+
+```sh
+MERV_ALLOW_MODEL_TESTS=1 python3 tests/fixtures/native-write-client.py FIXTURE codex
+MERV_ALLOW_MODEL_TESTS=1 python3 tests/fixtures/native-write-client.py FIXTURE claude --permission-mode default
+```
+
+Ask to create and read a harmless task, choose the scoped native permission, exit,
+and run a new process with the same fixture root. Repeat the create/read. The fixture
+prints successful task tool calls and writes durable `task-records.json` evidence.
+Close clients before sending SIGTERM to the fixture PID in `fixture.json`; it removes
+its private configuration and database schema. Never point it at production.
+
 ## Required combined-release acceptance
 
 1. Integrate this branch with the Git changes; preserve both sides' authorization
