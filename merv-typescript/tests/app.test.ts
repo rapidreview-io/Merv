@@ -53,12 +53,12 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 26);
+    assert.equal(catalog.length, 27);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
     );
-    for (const name of ['project.read', 'session.read', 'session.write'])
+    for (const name of ['project.read', 'session.read', 'session.write', 'code.git_credential'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,
@@ -67,7 +67,7 @@ test('assembled Cordis application preserves current MCP task closure across two
     assert.ok(!catalog.some((tool) => tool.name === 'session.messages'));
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
-    // Credentials are managed from Merv's own pages: an agent over MCP is not offered them.
+    // Long-lived credential administration stays on Merv's pages; short-lived Git access is listed.
     // Nor what it cannot use: a leased worker's writes, a Pi responder's answer, retiring waves.
     for (const name of [
       'actor.credentials',
