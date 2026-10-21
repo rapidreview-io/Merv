@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--public https://origin] [--host HOST]
-//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>]
+//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>] [--prebuilt-build ID --prebuilt-revision SHA --prebuilt-archive SHA256 --prebuilt-receipt SHA256]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -15,7 +15,7 @@
 // --skip-hosted leaves the hosted image for an emergency Main-only release. A production row is
 // committed by path and pushed when this checkout is at origin/main's tip.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { PRODUCTION, releaseTarget, UI_DIR } from './release-target.mjs';
@@ -30,6 +30,10 @@ const { values: args, tokens } = parseArgs({
     sandboxes: { type: 'string' },
     resume: { type: 'string' },
     'expected-image': { type: 'string' },
+    'prebuilt-build': { type: 'string' },
+    'prebuilt-revision': { type: 'string' },
+    'prebuilt-archive': { type: 'string' },
+    'prebuilt-receipt': { type: 'string' },
     'retry-prestart': { type: 'string' },
     'dry-run': { type: 'boolean' },
     'skip-hosted': { type: 'boolean' },
@@ -38,7 +42,7 @@ const { values: args, tokens } = parseArgs({
 });
 if (args.help) {
   console.log(
-    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE | --retry-prestart RELEASE] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>]',
+    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE | --retry-prestart RELEASE] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>] [--prebuilt-build ID --prebuilt-revision SHA --prebuilt-archive SHA256 --prebuilt-receipt SHA256]',
   );
   process.exit(0);
 }
@@ -75,10 +79,23 @@ if (
   );
 if (retry !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(retry) || resume || !noRollback || !args['skip-hosted']))
   throw new Error('--retry-prestart requires a safe release ID, --no-rollback --skip-hosted, and no --resume');
+const prebuiltKeys = ['prebuilt-build', 'prebuilt-revision', 'prebuilt-archive', 'prebuilt-receipt'];
+const prebuilt = prebuiltKeys.some((key) => args[key] !== undefined) ? {
+  build: args['prebuilt-build'], revision: args['prebuilt-revision'],
+  archive: args['prebuilt-archive'], receipt: args['prebuilt-receipt'],
+} : undefined;
+if (prebuilt && (
+  !expectedImage || !noRollback || !args['skip-hosted'] || resume !== undefined || retry !== undefined ||
+  !prebuilt.build || /[\x00-\x1f\x7f]/.test(prebuilt.build) || prebuilt.build.length > 121 || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(prebuilt.build) ||
+  !prebuilt.revision || prebuilt.revision.length !== 40 || !/^[a-f0-9]+$/.test(prebuilt.revision) ||
+  [prebuilt.archive, prebuilt.receipt].some((value) => !value || value.length !== 64 || !/^[a-f0-9]+$/.test(value)) ||
+  prebuiltKeys.some((key) => tokens.filter((token) => token.kind === 'option' && token.name === key).length !== 1)
+)) throw new Error('--prebuilt-build requires one safe build ID, exact --prebuilt-revision/--prebuilt-archive/--prebuilt-receipt, --expected-image, --skip-hosted --no-rollback, and a new release');
+const promotionVerifier = prebuilt ? readFileSync(new URL('./prebuilt-release.py', import.meta.url), 'utf8') : '';
 const { PUBLIC, host, RELEASES, ssh } = releaseTarget(args);
 
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
-const remoteJob = ({ release, archiveSha256, retryImage, expectedImage }) => `
+const remoteJob = ({ release, archiveSha256, retryImage, expectedImage, prebuilt, promotionVerifier }) => `
 set -euo pipefail
 # Serialize Main's entire release with recovery capture and hosted-image changes.
 mkdir -p /run/lock
@@ -92,8 +109,20 @@ REL=/opt/merv-typescript/releases/${release}
 IMG=merv-typescript:${release}
 BK=/var/backups/merv/typescript-staging-refresh/${release}
 cd "$REL"
-echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
-${retryImage ? `[ ! -e deploy-status.json ] && [ ! -e deploy.log ] && [ ! -e candidate-started ] || { echo 'release already attempted candidate startup; prestart retry refused' >&2; exit 1; }
+${prebuilt ? `SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.env)
+[[ $SANDBOXES_TS_IMAGE =~ ^([a-zA-Z0-9][a-zA-Z0-9._:/-]*@)?sha256:[a-f0-9]{64}$ ]] || exit 1
+python3 - '/opt/merv-typescript/cutover-builds/${prebuilt.build}' "$REL" '${expectedImage}' '${prebuilt.revision}' '${prebuilt.archive}' '${prebuilt.receipt}' "$SANDBOXES_TS_IMAGE" <<'PROMOTION_VERIFY'
+${promotionVerifier}
+PROMOTION_VERIFY
+` : ""}echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
+${prebuilt ? `echo "${archiveSha256}  source.tar.gz" > archive.sha256
+mkdir source && tar -xizf source.tar.gz -C source
+IMAGE_ID=${expectedImage}
+IMG=$IMAGE_ID
+# Re-run actual checks on the immutable image; the attested boolean alone is insufficient.
+docker run --rm --network none --entrypoint node "$IMAGE_ID" --import tsx dist/src/cli.js help > build.log 2>&1
+docker run --rm --network none --entrypoint node "$IMAGE_ID" --import tsx deploy/staging-isolation/runtime-check.mjs >> build.log 2>&1
+` : retryImage ? `[ ! -e deploy-status.json ] && [ ! -e deploy.log ] && [ ! -e candidate-started ] || { echo 'release already attempted candidate startup; prestart retry refused' >&2; exit 1; }
 [ "$(docker inspect --format '{{.State.Status}}' merv-typescript-control-1)" = exited ] || { echo 'previous Main must remain stopped' >&2; exit 1; }
 IMAGE_ID=${retryImage}
 [ "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" = "$IMAGE_ID" ]
@@ -240,19 +269,21 @@ cp staging-refresh-acceptance.json deploy-status.json
 
 function upload({ dir, release, archiveSha256 }) {
   const rel = `/opt/merv-typescript/releases/${release}`;
-  execFileSync('ssh', ['-o', 'BatchMode=yes', host, `mkdir -p ~/merv-release-${release}`]);
-  execFileSync('scp', [
-    '-q',
-    join(dir, 'source.tar.gz'),
-    join(dir, 'source-manifest.json'),
-    `${host}:merv-release-${release}/`,
-  ]);
-  const job = remoteJob({ release, archiveSha256, expectedImage });
+  if (!prebuilt) {
+    execFileSync('ssh', ['-o', 'BatchMode=yes', host, `mkdir -p ~/merv-release-${release}`]);
+    execFileSync('scp', [
+      '-q',
+      join(dir, 'source.tar.gz'),
+      join(dir, 'source-manifest.json'),
+      `${host}:merv-release-${release}/`,
+    ]);
+  }
+  const job = remoteJob({ release, archiveSha256, expectedImage, prebuilt, promotionVerifier });
   const start = ssh(`
 set -euo pipefail
-mkdir -p ${rel} && chmod 700 ${rel}
+${prebuilt ? `mkdir -m 700 ${rel}` : `mkdir -p ${rel} && chmod 700 ${rel}
 mv ~azureuser/merv-release-${release}/source.tar.gz ~azureuser/merv-release-${release}/source-manifest.json ${rel}/
-rmdir ~azureuser/merv-release-${release}
+rmdir ~azureuser/merv-release-${release}`}
 cat > ${rel}/release-job.sh <<'JOB'
 ${job}
 JOB
@@ -297,7 +328,10 @@ async function publicChecks() {
   return { health: await code('/health'), ui: await code('/ui/'), assets: assetCodes.join('; ') };
 }
 
-const local = resume || retry ? null : packageSource();
+const local = resume || retry ? null : prebuilt ? {
+  release: `${new Date().toISOString().replace(/[-:]|\.\d+/g, '')}-${prebuilt.revision.slice(0, 8)}-promote-${prebuilt.archive.slice(0, 12)}`,
+  archiveSha256: prebuilt.archive, gitRevision: prebuilt.revision,
+} : packageSource();
 if (local)
   console.log(
     JSON.stringify({

@@ -141,3 +141,30 @@ test('expected Main image rejects malformed, repeated and non-new-release overri
     assert.equal(result.stdout, '');
   }
 });
+
+test('prebuilt promotion requires all immutable pins and refuses overrides before external work', () => {
+  const valid = ['--prebuilt-build', 'reviewed-build', '--prebuilt-revision', 'a'.repeat(40),
+    '--prebuilt-archive', 'b'.repeat(64), '--prebuilt-receipt', 'c'.repeat(64),
+    '--expected-image', 'sha256:' + 'd'.repeat(64), '--skip-hosted', '--no-rollback'];
+  const run = (args) => spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], {
+    env: { PATH: '/nonexistent' }, encoding: 'utf8', timeout: 5000,
+  });
+  for (let index = 0; index < valid.length; index += index < 10 ? 2 : 1) {
+    const args = valid.filter((_, i) => i !== index && !(index < 10 && i === index + 1));
+    const result = run(args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /--prebuilt-build requires/);
+  }
+  for (const extra of [['--prebuilt-build', 'other'], ['--resume', 'old'], ['--retry-prestart', 'old']]) {
+    assert.equal(run([...valid, ...extra]).status, 1);
+  }
+  for (const bad of ['../build', 'build\n', 'build;id']) {
+    const args = [...valid]; args[1] = bad;
+    const result = run(args);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--prebuilt-build requires/);
+  }
+  const dry = run([...valid, '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.equal(JSON.parse(dry.stdout).git, 'aaaaaaaa');
+});

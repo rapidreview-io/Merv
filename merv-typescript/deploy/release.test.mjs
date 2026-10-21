@@ -568,9 +568,38 @@ echo reached > live-mutations
 
 test('new uploads freeze expected image in the saved job; resume only observes that job', () => {
   const upload = source.slice(source.indexOf('function upload'), source.indexOf('function waitForVm'));
-  assert.match(upload, /remoteJob\(\{ release, archiveSha256, expectedImage \}\)/);
+  assert.match(upload, /remoteJob\(\{ release, archiveSha256, expectedImage, prebuilt, promotionVerifier \}\)/);
   assert.match(upload, /cat > \$\{rel\}\/release-job.sh/);
-  assert.match(source, /const local = resume \|\| retry \? null : packageSource\(\)/);
+  assert.match(source, /const local = resume \|\| retry \? null : prebuilt \?/);
   assert.match(source, /if \(local\) upload\(local\)/);
   assert.match(source, /const vm = waitForVm\(release, retryDirectory\)/);
+});
+
+test('prebuilt promotion freezes exact inputs, skips builds and retains live safeguards', () => {
+  const expectedImage = 'sha256:' + 'a'.repeat(64);
+  const prebuilt = { build: 'reviewed-build', revision: 'b'.repeat(40), archive: 'c'.repeat(64), receipt: 'd'.repeat(64) };
+  const job = render('node:test', 'https://example.test', true)({
+    release: 'promotion', archiveSha256: prebuilt.archive, expectedImage, prebuilt,
+    promotionVerifier: readFileSync(new URL('./prebuilt-release.py', import.meta.url), 'utf8'),
+  });
+  const syntax = spawnSync('bash', ['-n'], { input: job, encoding: 'utf8' });
+  assert.equal(syntax.status, 0, syntax.stderr);
+  assert.doesNotMatch(job, /docker build |docker builder prune|docker pull /);
+  assert.match(job, /IMG=\$IMAGE_ID/);
+  assert.match(job, /flock -n 9/);
+  assert.match(job, /recovery snapshot restart is pending/);
+  assert.match(job, /hosted run \$HOSTED is open/);
+  assert.match(job, /--network none --entrypoint node "\$IMAGE_ID" --import tsx dist\/src\/cli.js help/);
+  assert.match(job, /--network none --entrypoint node "\$IMAGE_ID" --import tsx deploy\/staging-isolation\/runtime-check.mjs/);
+  for (const value of Object.values(prebuilt)) assert.ok(job.includes(value));
+  assert.ok(job.indexOf('PROMOTION_VERIFY\n') < job.indexOf('# The served UI'));
+  assert.match(job, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false/);
+  assert.match(job, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml up -d/);
+  assert.match(job, /staging-refresh-acceptance.json/);
+  assert.match(source, /const pub = await publicChecks\(\)/);
+});
+
+test('prebuilt verifier rejects source, image and attestation mismatch', () => {
+  const result = spawnSync('python3', [new URL('./prebuilt-release.test.py', import.meta.url).pathname], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });
