@@ -837,7 +837,7 @@ h1 {
 .early-access input:focus {
   border-color: rgb(255 255 255 / 0.4);
 }
-.early-access [type="submit"] {
+.early-access .pill {
   display: block;
   width: 100%;
   height: 42px;
@@ -850,8 +850,44 @@ h1 {
   font-size: 16px;
   font-weight: 500;
 }
-.early-access [type="submit"]:hover {
+.early-access .pill:hover {
   background: white;
+}
+/* Submission: a light sweeps the button while the request is out. */
+.early-access .pill:disabled {
+  opacity: 1;
+  cursor: progress;
+  color: var(--slate-3);
+  background: linear-gradient(
+    100deg,
+    var(--slate-11) 20%,
+    white 50%,
+    var(--slate-11) 80%
+  );
+  background-size: 250% 100%;
+  animation: sweep 1.2s linear infinite;
+}
+@keyframes sweep {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+.early-access form,
+.dialog-done {
+  animation: dialog-in 0.35s ease-out both;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 nav button:hover svg {
   color: var(--blue-10);
@@ -866,8 +902,48 @@ nav button:hover svg {
   color: var(--slate-11);
 }
 .dialog-done {
-  font-size: 18px;
-  margin: 8px 40px 0 0;
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+/* The check draws itself, then a ring breathes out once. */
+.dialog-done svg {
+  box-sizing: content-box;
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--slate-12);
+  animation: ring 1.2s ease-out 0.5s both;
+}
+.dialog-done svg * {
+  stroke-dasharray: 80;
+  stroke-dashoffset: 80;
+  animation: draw 0.8s ease-out 0.2s forwards;
+}
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ring {
+  from {
+    box-shadow: 0 0 0 0 rgb(255 255 255 / 0.18);
+  }
+  to {
+    box-shadow: 0 0 0 28px rgb(255 255 255 / 0);
+  }
+}
+.dialog-done h2 {
+  margin: 0 0 6px;
+}
+.dialog-done p {
+  margin: 0 0 24px;
+  font-size: 14px;
+  color: var(--slate-11);
 }
 .dialog-error {
   margin: 18px 0 0;

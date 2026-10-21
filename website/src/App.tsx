@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   ArrowUpRight,
+  CheckCircle,
   RotateCcw,
   X,
   Database,
@@ -876,9 +877,13 @@ function EarlyAccess({
 }: {
   dialog: RefObject<HTMLDialogElement | null>;
 }) {
-  const [state, setState] = useState<"form" | "sent" | "failed">("form");
+  const [state, setState] = useState<"form" | "sending" | "sent" | "failed">(
+    "form",
+  );
+  const close = () => dialog.current?.close();
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setState("sending");
     const body = JSON.stringify(
       Object.fromEntries(new FormData(event.currentTarget)),
     );
@@ -898,18 +903,26 @@ function EarlyAccess({
       ref={dialog}
       className="early-access"
       aria-labelledby="early-access-title"
-      onClick={(e) => e.target === dialog.current && dialog.current.close()}
+      onClick={(e) => e.target === dialog.current && close()}
+      onClose={() => setState("form")}
     >
       <button
         type="button"
         className="dialog-close"
-        onClick={() => dialog.current?.close()}
+        onClick={close}
         aria-label="Close"
       >
         <X size={15} />
       </button>
       {state === "sent" ? (
-        <p className="dialog-done">You’re on the list. We’ll be in touch.</p>
+        <div className="dialog-done">
+          <CheckCircle size={28} strokeWidth={1.5} aria-hidden="true" />
+          <h2>You’re on the list</h2>
+          <p>We’ve sent a confirmation to your email.</p>
+          <button type="button" className="pill" onClick={close}>
+            Done
+          </button>
+        </div>
       ) : (
         <form onSubmit={submit}>
           <h2 id="early-access-title">Early access</h2>
@@ -929,7 +942,9 @@ function EarlyAccess({
             Email
             <input name="email" type="email" required autoComplete="email" />
           </label>
-          <button type="submit">Submit</button>
+          <button type="submit" className="pill" disabled={state === "sending"}>
+            {state === "sending" ? "Submitting…" : "Submit"}
+          </button>
           {state === "failed" && (
             <p className="dialog-error">
               Couldn’t send. <a href={CONTACT}>Email us</a> instead.

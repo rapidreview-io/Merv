@@ -1,5 +1,6 @@
 // Early-access form → Attio: upsert the person by email, then add them to the list.
-// Needs ATTIO_API_KEY and ATTIO_LIST (the list's api_slug) in the Vercel project.
+// Needs ATTIO_API_KEY and ATTIO_LIST (the list's api_slug) in the Vercel project;
+// RESEND_API_KEY sends the confirmation (skipped, and logged, when unset or failing).
 const ATTIO = "https://api.attio.com/v2";
 const field = (v: unknown) =>
   typeof v === "string" ? v.trim().slice(0, 300) : "";
@@ -46,9 +47,28 @@ export async function POST(req: Request) {
       },
     }),
   });
-  return entry.ok
-    ? new Response(null, { status: 204 })
-    : upstream("entry", entry);
+  if (!entry.ok) return upstream("entry", entry);
+  await confirm(email);
+  return new Response(null, { status: 204 });
+}
+async function confirm(email: string) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return console.error("resend: no key, confirmation not sent");
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: "Merv <support@rapidreview.io>",
+      to: [email],
+      subject: "You’re on the Merv early access list",
+      text: "Thank you for getting on the early access list for Merv. We’ll reach out as spots open.\n\n— The Merv team, RapidReview",
+    }),
+  });
+  if (!res.ok)
+    console.error(`resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 async function upstream(step: string, res: Response) {
   console.error(
