@@ -20,7 +20,13 @@
   },
   "selfTests": {
     "command": "python3 -m unittest discover -s acceptance -v",
-    "passed": 10
+    "passed": 14,
+    "redactionRegressions": [
+      "embedded and multiply escaped JSON secret fields",
+      "current Merv OAuth and credential token shapes",
+      "split writes with newline and EOF",
+      "ordinary project/workflow IDs retained"
+    ]
   },
   "dryRuns": [
     "codex experiment",

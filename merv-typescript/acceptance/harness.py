@@ -32,7 +32,42 @@ def write(path, value):
     tmp.chmod(0o600)
     tmp.replace(path)
 
-def redact(text):
+SECRET_KEYS = frozenset(('access_token', 'refresh_token', 'id_token', 'api_key',
+                         'authorization', 'client_secret', 'token', 'password'))
+# scope/oauth.ts and identity/credentials.ts mint 32 random bytes as 43 base64url
+# characters. Prefixless actor credentials require field/Bearer context: matching
+# arbitrary opaque IDs would destroy workflow evidence.
+MERV_TOKEN = re.compile(r'(?<![A-Za-z0-9_-])(?:mo_|mrfr_|mk_|mi_)[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])')
+ESCAPED_SECRET = re.compile(
+    r'(?P<quote>\\*")(?P<key>' + '|'.join(sorted(SECRET_KEYS)) +
+    r')(?P=quote)\s*:\s*(?P=quote).*?(?P=quote)', re.IGNORECASE)
+
+def redact(text, _depth=0):
+    # Decode transcript JSON and embedded JSON strings so escaped quotes (or
+    # unicode escapes) cannot hide sensitive fields. Preserve valid JSON events.
+    if _depth < 32:
+        try:
+            parsed = json.loads(text)
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, (dict, list, str)):
+            def scrub(value):
+                if isinstance(value, dict):
+                    return {key: '[REDACTED]' if key.lower() in SECRET_KEYS else scrub(child)
+                            for key, child in value.items()}
+                if isinstance(value, list):
+                    return [scrub(child) for child in value]
+                if isinstance(value, str):
+                    return redact(value, _depth + 1)
+                return value
+            return json.dumps(scrub(parsed), ensure_ascii=True)
+    return redact_plain(text)
+
+def redact_plain(text):
+    # Also cover non-JSON prose and malformed/truncated embedded JSON.
+    text = MERV_TOKEN.sub('[REDACTED]', text)
+    text = ESCAPED_SECRET.sub(lambda m: m['quote'] + m['key'] + m['quote'] +
+                             ': ' + m['quote'] + '[REDACTED]' + m['quote'], text)
     # Defense in depth: clients must never be asked to display credentials.
     text = re.sub(r'(?i)(Bearer\s+)[^\s"\\]+', r'\1[REDACTED]', text)
     text = re.sub(r'(?i)("(?:access_token|refresh_token|id_token|api_key|authorization|client_secret)"\s*:\s*")[^"]*', r'\1[REDACTED]', text)

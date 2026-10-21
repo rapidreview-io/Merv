@@ -19,6 +19,48 @@ class HarnessTest(unittest.TestCase):
             p=Path(d)/'log'
             code,reason=h.capture([sys.executable,'-c',"import sys,time;sys.stdout.write('Bearer sec');sys.stdout.flush();time.sleep(.05);print('ret')"],os.environ,d,p,2)
             self.assertEqual((code,reason),(0,None)); self.assertNotIn('secret',p.read_text())
+    def test_nested_json_secret_fields(self):
+        for key in h.SECRET_KEYS:
+            for depth in range(4):
+                secret = 'synthetic-private-value'
+                nested = json.dumps({key:secret, 'projectId':'project_123'})
+                for _ in range(depth): nested=json.dumps({'text':nested})
+                event={'message':{'content':[{'type':'text','text':nested}]},'thread_id':'thread_456'}
+                safe=h.redact(json.dumps(event))
+                self.assertNotIn(secret,safe)
+                self.assertEqual(json.loads(safe)['thread_id'],'thread_456')
+                self.assertIn('project_123',safe)
+        # JSON unicode escapes must not conceal field names or token prefixes.
+        raw=json.dumps({'text':json.dumps({'access_token':'synthetic-private'})}).replace('access_token',r'access\u005ftoken')
+        self.assertNotIn('synthetic-private',h.redact(raw))
+    def test_merv_token_shapes_preserve_record_ids(self):
+        ids=['project_'+'A'*43, 'workflow_'+'B'*43, 'review_123',
+             '01a15ca8-678b-7c20-9581-3208a3479359', 'A'*43]
+        for prefix in ('mo_','mrfr_','mk_','mi_'):
+            token=prefix+'A'*41+'_-'
+            raw=json.dumps({'message':{'content':[{'type':'text','text':json.dumps({'access_token':token})}]}})
+            self.assertNotIn(token,h.redact(raw))
+            self.assertNotIn(token,h.redact('credential: ('+token+')'))
+        for record in ids: self.assertEqual(h.redact(record),record)
+    def test_escaped_json_in_prose(self):
+        nested=json.dumps({'refresh_token':'synthetic-private'})
+        for _ in range(4):
+            self.assertNotIn('synthetic-private',h.redact('tool output: '+nested))
+            nested=json.dumps(nested)
+    def test_split_merv_tokens_in_nested_output(self):
+        for prefix, ending in ((prefix, ending) for prefix in ('mo_','mrfr_','mk_','mi_') for ending in ('', '\n')):
+            with self.subTest(prefix=prefix, newline=bool(ending)), tempfile.TemporaryDirectory() as d:
+                token=prefix+'A'*43
+                raw=json.dumps({'message':{'content':[{'type':'text','text':json.dumps({'access_token':token, 'projectId':'project_123'})}]}})
+                split=raw.index(token)+len(prefix)+17
+                # Synthetic output only. Explicit flush forces separate writes;
+                # exercise both newline-delimited events and the EOF remainder.
+                script='import sys,time;sys.stdout.write('+repr(raw[:split])+');sys.stdout.flush();time.sleep(.05);sys.stdout.write('+repr(raw[split:]+ending)+');sys.stdout.flush()'
+                log=Path(d)/'log'
+                code,reason=h.capture([sys.executable,'-c',script],os.environ,d,log,2)
+                self.assertEqual((code,reason),(0,None))
+                saved=log.read_text();self.assertNotIn(token,saved)
+                self.assertIn('project_123',saved);json.loads(saved)
     def test_timeout_and_descendant_cleanup(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'log'; marker=Path(d)/'escaped'
