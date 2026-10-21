@@ -192,6 +192,8 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
   );
   await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   try {
+    // Canonical timestamp JSON must not depend on the caller's session timezone.
+    await db.query("SET LOCAL TIME ZONE 'UTC'");
     const source = await identity(db),
       meta = await schema(db),
       rows = {},
@@ -528,6 +530,8 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
   }
   await db.query('BEGIN');
   try {
+    // Match export rendering without changing the caller's session setting.
+    await db.query("SET LOCAL TIME ZONE 'UTC'");
     await db.query("SELECT pg_advisory_xact_lock(hashtext('merv-staging-history-import'))");
     // FK order is derived from the actual pinned schema. No constraint disabling or broad upsert.
     const pending = Object.keys(bundle.rows),

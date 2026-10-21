@@ -326,8 +326,17 @@ test(
       writeFileSync(join(sourceData, flatPath), 'short');
       await assert.rejects(exportHistory(source, selection, dir), /byte length drift/);
       writeFileSync(join(sourceData, flatPath), outputs.get(flatPath));
+      await source.query("SET TIME ZONE 'UTC'");
       const bundle = await exportHistory(source, selection, dir),
         binding = await identity(dest);
+      for (const zone of ['America/Los_Angeles', 'Asia/Kathmandu']) {
+        await source.query("SELECT set_config('TimeZone', $1, false)", [zone]);
+        const otherZone = await exportHistory(source, selection, dir);
+        assert.equal(otherZone.sha256, bundle.sha256);
+        assert.deepEqual(otherZone.rows, bundle.rows);
+        assert.equal((await source.query('SHOW TIME ZONE')).rows[0].TimeZone, zone);
+      }
+      await source.query("SET TIME ZONE 'UTC'");
       assert.equal(bundle.rows.pipelines[0].value.state, 'completed');
       assert.equal(bundle.rows.storage_manifest_refs.length, 1);
       assert.equal(bundle.rows.sessions.length, serials.length);
@@ -401,8 +410,13 @@ test(
         /database interruption/,
       );
       assert.equal((await dest.query('SELECT count(*) FROM job_outputs')).rows[0].count, '0');
+      await dest.query("SET TIME ZONE 'UTC'");
       await importHistory(dest, bundle, binding, dir, bundle.sha256);
-      await importHistory(dest, bundle, binding, dir, bundle.sha256);
+      for (const zone of ['America/Los_Angeles', 'Asia/Kathmandu']) {
+        await dest.query("SELECT set_config('TimeZone', $1, false)", [zone]);
+        await importHistory(dest, bundle, binding, dir, bundle.sha256);
+        assert.equal((await dest.query('SHOW TIME ZONE')).rows[0].TimeZone, zone);
+      }
       for (const [path, bytes] of outputs) {
         assert.deepEqual(readFileSync(join(targetData, path)), bytes);
         assert.equal(hash(readFileSync(join(targetData, path))), hash(bytes));
@@ -431,10 +445,13 @@ test(
       );
       await dest.query("UPDATE certificates SET key_id='drift' WHERE serial=9223372036854775807");
       await assert.rejects(importHistory(dest, bundle, binding, dir, bundle.sha256), /same-ID/);
+      assert.equal((await dest.query('SHOW TIME ZONE')).rows[0].TimeZone, 'Asia/Kathmandu');
       await dest.query("UPDATE certificates SET key_id='key' WHERE serial=9223372036854775807");
       await importHistory(dest, bundle, binding, dir, bundle.sha256);
       assert.equal((await dest.query('SELECT count(*) FROM sandboxes')).rows[0].count, '1');
       assert.equal((await source.query('SELECT count(*) FROM sandboxes')).rows[0].count, '2');
+      assert.equal((await dest.query('SHOW TIME ZONE')).rows[0].TimeZone, 'Asia/Kathmandu');
+      await dest.query("SET TIME ZONE 'UTC'");
       for (const table of ['certificates', 'sessions', 'infra_compute', 'sandbox_events']) {
         const sql = `SELECT to_jsonb(t)::text AS exact FROM ${table} t ORDER BY to_jsonb(t)::text`;
         assert.deepEqual((await dest.query(sql)).rows, (await source.query(sql)).rows);

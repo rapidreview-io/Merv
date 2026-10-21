@@ -1,0 +1,28 @@
+{
+  "base": "bed4403aa63d1974ef2ddf6499d8edf5126a443e",
+  "issue": "Timestamp JSON depended on the session timezone, changing hashes and causing same-ID conflicts on replay.",
+  "fix": "SET LOCAL TIME ZONE UTC inside export and import transactions makes row rendering canonical and restores caller settings on commit or rollback. Stored timestamp instants and schema are unchanged.",
+  "validation": {
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "timezones": [
+      "UTC",
+      "America/Los_Angeles",
+      "Asia/Kathmandu"
+    ],
+    "checks": [
+      "Identical complete bundle digest and row originals/source hashes across source timezones",
+      "Idempotent imports across destination timezones",
+      "Caller timezone preserved after successful export/import and rejected same-ID conflict rollback",
+      "Pinned-schema timestamps retain microseconds in independent SQL text equality",
+      "Existing numeric, JSON, sequence, file integrity and restore checks pass"
+    ]
+  },
+  "command": "ISOLATION_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:56108/postgres npm run test:staging-isolation:pg",
+  "log": {
+    "path": "/tmp/merv-timezone-suite.log",
+    "sha256": "a6ed91a36259adf45caa116279961c7f3da823e26f0549eb851e3969e8e11bbf"
+  },
+  "scope": "Disposable local PostgreSQL only. Parent retains independent review, fresh source export and all live operations."
+}
