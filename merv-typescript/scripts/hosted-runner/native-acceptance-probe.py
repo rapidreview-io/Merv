@@ -41,7 +41,7 @@ def git(root, *args, required=True):
         env={'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C',
              'HOME': '/nonexistent', 'GIT_CONFIG_NOSYSTEM': '1',
              'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_OPTIONAL_LOCKS': '0',
-             'GIT_TERMINAL_PROMPT': '0'},
+             'GIT_TERMINAL_PROMPT': '0', 'GIT_NO_REPLACE_OBJECTS': '1'},
         stdin=subprocess.DEVNULL, capture_output=True, timeout=15, check=False,
     )
     need(len(result.stdout) + len(result.stderr) <= 2 * 1024 * 1024, 'git_output_limit')
@@ -113,12 +113,24 @@ def launcher_report(root):
             'denialCount': len(expected), 'identity': report['identity']}
 
 
-def inspect(root, prefix):
+def inspect(root, prefix, submitted_tree=None):
     need(re.fullmatch(r'[a-z][a-z0-9-]{0,47}', prefix), 'canary_prefix_invalid')
     need(Path(git(root, 'rev-parse', '--show-toplevel')).resolve() == root,
          'checkout_root_required')
     head = git(root, 'rev-parse', '--verify', 'HEAD')
-    tree = git(root, 'write-tree')
+    if submitted_tree is None:
+        tree = git(root, 'write-tree')
+    else:
+        # write-tree needs index.lock even when the tree already exists. Reviewers
+        # instead compare the index directly with the exact frozen tree, read-only.
+        need(re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', submitted_tree),
+             'git_object_invalid')
+        need(git(root, 'cat-file', '-t', submitted_tree) == 'tree', 'git_object_invalid')
+        need(git(root, 'diff-index', '--cached', '--quiet', '--no-ext-diff',
+                 '--no-textconv', '--ignore-submodules=none', '--ita-visible-in-index',
+                 submitted_tree, '--',
+                 required=False).returncode == 0, 'submission_mismatch')
+        tree = submitted_tree
     head_tree = git(root, 'rev-parse', 'HEAD^{tree}')
     need(all(re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', value)
              for value in (head, tree, head_tree)), 'git_object_invalid')
@@ -188,8 +200,12 @@ def remount_denied(path):
 
 def review(root, facts, parent, tree, prefix):
     need(facts['head'] == parent and facts['indexTree'] == tree, 'submission_mismatch')
-    need(git(root, 'diff-files', '--quiet', '--no-ext-diff', required=False).returncode == 0
-         and not git(root, 'ls-files', '--others', '--exclude-standard'),
+    # Full review checkouts must not hide tracked content behind index flags.
+    need(all(entry.startswith('H ') for entry in git(root, 'ls-files', '-v', '-z').split('\0')
+             if entry), 'review_index_flags_invalid')
+    need(git(root, 'diff', '--quiet', '--no-ext-diff', '--no-textconv',
+             '--ignore-submodules=none', '--', required=False).returncode == 0
+         and not git(root, 'ls-files', '--others'),
          'review_worktree_differs_from_index')
     # Resolve actual metadata: .git may be a pointer, and linked worktrees keep
     # HEAD/index separately from common config. Every containing mount must be ro.
@@ -200,7 +216,7 @@ def review(root, facts, parent, tree, prefix):
     writes = {name: write_denied(path) for name, path in paths.items()}
     commands = {
         'config': ['config', '--local', 'mervAcceptance.probe', prefix],
-        'index': ['update-index', '--index-version=2'],
+        'index': ['write-tree'],
         'ref': ['update-ref', 'refs/heads/native-acceptance-' + prefix, 'HEAD'],
     }
     denials = {}
@@ -210,7 +226,7 @@ def review(root, facts, parent, tree, prefix):
              'review_git_write_not_erofs')
         denials[name] = {'exitCode': result.returncode, 'erofs': True}
     remounts = {mount['path']: remount_denied(Path(mount['path'])) for mount in mounts.values()}
-    need(inspect(root, prefix) == facts, 'review_probe_changed_checkout')
+    need(inspect(root, prefix, tree) == facts, 'review_probe_changed_checkout')
     return {'parent': parent, 'tree': tree, 'mounts': mounts,
             'writeErrnos': writes, 'gitDenials': denials, 'remountErrnos': remounts}
 
@@ -228,7 +244,8 @@ def main():
         root = Path.cwd().resolve()
         proof = {'formatVersion': 1, 'stage': args.stage, 'prefix': args.prefix,
                  'identity': identity(), 'launcher': launcher_report(root)}
-        proof['checkout'] = inspect(root, args.prefix)
+        proof['checkout'] = inspect(root, args.prefix,
+                                    args.tree if args.stage == 'reviewer' else None)
         if args.stage == 'reviewer':
             proof['review'] = review(root, proof['checkout'], args.parent, args.tree, args.prefix)
         print(json.dumps({'passed': True, **proof}, sort_keys=True))

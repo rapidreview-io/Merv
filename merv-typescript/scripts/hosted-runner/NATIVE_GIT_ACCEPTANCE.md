@@ -92,7 +92,14 @@ experiment's exact allocations. It never enrolls a runner, claims a workflow,
 authors evidence, submits a verdict, changes dispatch, or clears an existing hold.
 Planning, design review, execution, rendered reporting and results review are actual
 hosted agent work. The immutable request includes the exact worker probe, supplied
-through Python stdin/command input so it adds no file to the reviewed checkout.
+through `/usr/bin/python3 -I -B -c` so checkout modules and Python environment
+overrides cannot replace its imports, and it adds no file to the reviewed checkout.
+Reviewers compare the index directly with the exact submitted tree without
+`write-tree`, which would require a forbidden index lock on the read-only mount.
+`linux-native-acceptance-probe.py` documents a local Docker regression using the
+production mount and identity helpers, exact submitted content, and real denied
+Git writes. It also checks stale index metadata, hidden changes and linked Git
+metadata; it does not establish hosted/provider acceptance.
 
 The retained project `project_c54cd6d765d8467d948bb638c55f169d` (Fleet Git acceptance
 2026-09-23) had a human admin, an active human operator and only terminal work at the

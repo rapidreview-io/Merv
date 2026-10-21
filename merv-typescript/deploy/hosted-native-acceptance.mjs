@@ -17,7 +17,9 @@ export function request(runId, probe) {
   assert.match(runId, /^[a-z][a-z0-9-]{0,28}$/);
   const prefix = `acceptance-${runId}`;
   const program = `import base64,gzip;exec(compile(gzip.decompress(base64.b64decode('${gzipSync(probe).toString('base64')}')),'acceptance-probe','exec'))`;
-  const command = `python3 -B -c "${program}" --prefix ${prefix} --stage STAGE`;
+  // The hosted image supplies this interpreter. Isolated mode excludes checkout
+  // modules, user site packages and PYTHONPATH before the embedded source loads.
+  const command = `/usr/bin/python3 -I -B -c "${program}" --prefix ${prefix} --stage STAGE`;
   const details = `This is a bounded real hosted workflow acceptance experiment. Follow your actual assignment, permissions, review criteria and honest findings. The owner does not perform the research or reviews. Use your assigned checkout and Python standard library only; no provisioned compute, network dataset, dependency installation, or work on other projects. Do not hand-create Git commits, stage changes, reset/clean, change mounts, or replace the assigned checkout. Approval must commit the submitted dirty tree. Budget the scientific calculation below one second and each visit below five minutes; report any real blocker instead of bypassing it.
 
 Scientific question: fit ordinary least-squares y=a*x+b to training pairs [(-3,-5),(-2,-3),(-1,-1)]. Compare with the training-mean predictor on held-out pairs [(0,1),(1,3),(2,5),(3,7),(4,9)]. Preregister mean absolute error and candidate MAE < baseline MAE. This deterministic arithmetic exercise establishes no statistical or generalization claim. Independently calculate and explain the result; the owner supplies neither result files nor conclusions.

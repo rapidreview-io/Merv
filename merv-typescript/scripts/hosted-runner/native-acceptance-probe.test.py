@@ -47,6 +47,49 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(prefix=prefix), self.assertRaises(probe.Refused):
                 probe.inspect(self.root, prefix)
 
+    def test_review_inspection_matches_staged_tree_without_changing_git_files(self):
+        (self.root / 'canary-one.txt').write_text('submitted\n')
+        probe.git(self.root, 'add', 'canary-one.txt')
+        expected = probe.inspect(self.root, 'canary')
+        self.assertNotEqual(expected['headTree'], expected['indexTree'])
+
+        def git_files():
+            return {str(path.relative_to(self.root)): path.read_bytes()
+                    for path in (self.root / '.git').rglob('*') if path.is_file()}
+
+        before = git_files()
+        self.assertEqual(probe.inspect(self.root, 'canary', expected['indexTree']), expected)
+        self.assertEqual(git_files(), before)
+        for value in ('--help', expected['head']):
+            with self.subTest(value=value), self.assertRaisesRegex(probe.Refused, 'git_object_invalid'):
+                probe.inspect(self.root, 'canary', value)
+        with self.assertRaisesRegex(probe.Refused, 'submission_mismatch'):
+            probe.inspect(self.root, 'canary', expected['headTree'])
+
+    def test_review_tree_comparison_detects_modes_flags_and_intent_to_add(self):
+        tree = probe.git(self.root, 'write-tree')
+        probe.git(self.root, 'config', 'core.filemode', 'false')
+        probe.git(self.root, 'update-index', '--chmod=+x', 'canary-one.txt')
+        for flag in ('--assume-unchanged', '--skip-worktree'):
+            probe.git(self.root, 'update-index', flag, 'canary-one.txt')
+            with self.subTest(flag=flag), self.assertRaisesRegex(probe.Refused, 'submission_mismatch'):
+                probe.inspect(self.root, 'canary', tree)
+        probe.git(self.root, 'update-index', '--no-assume-unchanged', '--no-skip-worktree',
+                  '--chmod=-x', 'canary-one.txt')
+        (self.root / 'pending.txt').write_text('not submitted\n')
+        probe.git(self.root, 'add', '-N', 'pending.txt')
+        with self.assertRaisesRegex(probe.Refused, 'submission_mismatch'):
+            probe.inspect(self.root, 'canary', tree)
+
+    def test_review_tree_comparison_ignores_local_object_replacements(self):
+        original = probe.git(self.root, 'write-tree')
+        (self.root / 'canary-one.txt').write_text('replacement\n')
+        probe.git(self.root, 'add', 'canary-one.txt')
+        replacement = probe.git(self.root, 'write-tree')
+        probe.git(self.root, 'replace', original, replacement)
+        with self.assertRaisesRegex(probe.Refused, 'submission_mismatch'):
+            probe.inspect(self.root, 'canary', original)
+
     def test_symlink_canary_is_not_followed(self):
         (self.root / 'canary-link').symlink_to(self.root / 'canary-one.txt')
         with self.assertRaises(OSError):
@@ -61,6 +104,25 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.Refused, 'review_worktree_differs_from_index'):
             probe.review(self.root, facts, facts['head'], facts['indexTree'], 'canary')
 
+    def test_review_refuses_index_flags_that_can_hide_modified_files(self):
+        tree = probe.git(self.root, 'write-tree')
+        (self.root / 'canary-one.txt').write_text('hidden dirty content\n')
+        for flag in ('--assume-unchanged', '--skip-worktree'):
+            probe.git(self.root, 'update-index', flag, 'canary-one.txt')
+            facts = probe.inspect(self.root, 'canary', tree)
+            with self.subTest(flag=flag), self.assertRaisesRegex(probe.Refused, 'review_index_flags_invalid'):
+                probe.review(self.root, facts, facts['head'], tree, 'canary')
+            probe.git(self.root, 'update-index', '--no-assume-unchanged', '--no-skip-worktree',
+                      'canary-one.txt')
+
+    def test_review_refuses_ignored_untracked_files(self):
+        (self.root / '.git/info/exclude').write_text('hidden.txt\n')
+        (self.root / 'hidden.txt').write_text('not in submitted tree\n')
+        facts = probe.inspect(self.root, 'canary')
+        self.assertFalse(facts['dirty'])
+        with self.assertRaisesRegex(probe.Refused, 'review_worktree_differs_from_index'):
+            probe.review(self.root, facts, facts['head'], facts['indexTree'], 'canary')
+
     def test_linked_worktree_checks_actual_common_and_private_git_metadata(self):
         linked = self.root.parent / 'linked'
         probe.git(self.root, 'worktree', 'add', '-q', '--detach', str(linked), 'HEAD')
@@ -72,7 +134,7 @@ class ProbeTests(unittest.TestCase):
         actual_git = probe.git
 
         def fake_git(root, *args, required=True):
-            if args[0] in ('config', 'update-index', 'update-ref'):
+            if args[0] in ('config', 'write-tree', 'update-ref'):
                 return SimpleNamespace(returncode=128, stderr=b'Read-only file system')
             return actual_git(root, *args, required=required)
 

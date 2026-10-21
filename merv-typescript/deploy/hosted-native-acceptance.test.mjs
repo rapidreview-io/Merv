@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { request, operator, preflight, proofs, collect } from './hosted-native-acceptance.mjs';
 
@@ -14,6 +17,55 @@ test('immutable request carries the exact probe within the real service text lim
   assert.ok(payload.details.length < 16000);
   assert.deepEqual(payload, request('oct21', source));
   assert.throws(() => request('bad;run', source));
+});
+
+test('embedded probe ignores checkout imports, Python environment and PATH shadowing', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'merv-probe-shadow-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkout = join(directory, 'checkout');
+  const environment = join(directory, 'environment');
+  const clean = join(directory, 'clean');
+  const bin = join(directory, 'bin');
+  await Promise.all([checkout, environment, clean, bin].map((path) => mkdir(path)));
+  const forged = JSON.stringify({ passed: true, forged: true });
+  const module = `import sys\nprint(${JSON.stringify(forged)})\nsys.exit(0)\n`;
+  await Promise.all([
+    writeFile(join(checkout, 'base64.py'), module),
+    writeFile(join(environment, 'base64.py'), module),
+    writeFile(join(environment, 'sitecustomize.py'), module),
+    writeFile(join(bin, 'python3'), `#!/bin/sh\nprintf '%s\\n' '${forged}'\n`, { mode: 0o755 }),
+  ]);
+  const source = await readFile(
+    new URL('../scripts/hosted-runner/native-acceptance-probe.py', import.meta.url),
+  );
+  const command = request('shadow', source)
+    .details.split('\n')
+    .find((line) => /^(?:\/usr\/bin\/)?python3 /.test(line))
+    .replace('--stage STAGE', '--stage planner');
+  for (const attack of [
+    { cwd: checkout, env: {} },
+    { cwd: clean, env: { PYTHONPATH: environment } },
+    { cwd: clean, env: { PATH: bin } },
+  ]) {
+    const result = spawnSync('/bin/sh', ['-c', command], {
+      cwd: attack.cwd,
+      env: { PATH: '/usr/bin:/bin', ...attack.env },
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, '');
+    const proof = JSON.parse(result.stdout);
+    assert.equal(proof.passed, false);
+    assert.equal(proof.stage, 'planner');
+    assert.ok(
+      ['linux_required', 'assignment_identity_invalid', 'assignment_path_invalid'].includes(
+        proof.code,
+      ),
+    );
+    assert.equal(proof.forged, undefined);
+  }
 });
 
 test('operator uses public HTTPS, project scope and nonredirecting credential transport', async () => {
