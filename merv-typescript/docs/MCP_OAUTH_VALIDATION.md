@@ -278,7 +278,6 @@ Installed-client help was also checked. In this Codex build `mcp add --url` can
 start authentication immediately. Claude's `mcp login --no-browser` still requires
 a terminal for pasting the callback; it is not a noninteractive bypass of consent.
 
-
 ## Account consent without a project (local regression checks)
 
 Scope migration 14 permits a null issuance project only for account grants; existing
@@ -348,7 +347,6 @@ unchanged integration-base Git implementation reproduces both. Server build and
 typecheck pass. This inherited startup failure is a separate release check, not a
 claim that the full application suite is green.
 
-
 ## Default active Git synchronization
 
 The follow-up expands user-owned credential push admission from admin to project
@@ -380,3 +378,18 @@ The metadata fixture changes only the new credential tool and `code.read`'s chan
 status declaration. All worker hashes and unrelated schemas/hashes are preserved;
 the historical total and 25% reduction threshold are unchanged. Full application
 inventory measurement must be rerun with the separate startup fix before release.
+
+## Native shell cache lifetime correction (0.5.5)
+
+Production Codex demonstrated that a cache stored in one exec call may disappear
+before a later Git call: the executor may clean up descendant processes. The skill
+now runs store, all authorized Git commands, verification reads and cache cleanup
+in one live invocation. Later batches re-mint via saved MCP auth, with no detached
+Merv helper, plaintext token file, token environment variable or credential argument.
+
+The local regression uses real native Git over a private TLS endpoint and the actual
+published Python blocks. It first proves the old split flow fails after native cache
+shutdown simulates executor cleanup, while the credential itself remains valid. It
+then verifies same-invocation clone/fetch/head reads, cleanup before return, successful
+fresh-batch renewal, and cleanup on a failed Git command. This reproduces the lifetime
+boundary, rather than claiming the local test runner is the production Codex executor.

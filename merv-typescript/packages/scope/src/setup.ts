@@ -104,7 +104,9 @@ Report dirty/local-only files and divergence; do not auto-commit unrelated work 
 branches. Branch sync is separate from reviewed baseline integration; experiments keep pins. Through the saved MCP
 connection, code.git_credential accepts an ephemeral RSA public key and explicit projectId,
 and returns encrypted ten-minute Git access. Decrypt directly into Git's built-in memory
-credential cache; never expose the token in URLs, commands, logs, files or chat. No Settings
+credential cache; never expose the token in URLs, commands, logs, files or chat. Store,
+run the authorized Git batch and verification, then clear the cache in the same live shell
+invocation. Native shells may kill caches between exec calls; mint fresh for each later batch. No Settings
 key, manual token copy, second browser login, Merv daemon or helper installation is needed.
 The agent renews access through MCP before later Git batches. Standalone Git outside an active
 agent cannot renew through the native client's private MCP session. Reader roles can fetch;

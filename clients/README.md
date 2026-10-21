@@ -47,7 +47,6 @@ Edit skills in `claude-code/skills/` and copy to `codex/skills/`. After editing 
 bundle file, run `npm run build:clients` in `merv-typescript/`. The generated
 server-side bundle is checked against the originals in the bundle tests.
 
-
 Terminal Git uses the same saved account connection: the git-access skill calls
 `code.git_credential` with an ephemeral RSA public key and explicit projectId, then
 decrypts the reply directly into Git's built-in memory credential cache. No Settings
@@ -56,7 +55,6 @@ The agent renews ten-minute credentials through MCP for later Git batches. Nativ
 Git outside an active agent cannot renew through the client's private MCP session.
 Read access follows current membership; producer/operator users can push user branches, while readers/reviewers retain read-only
 access. All protected-ref and repository admission checks remain. Revoking the account grant revokes derived access.
-
 
 For code-linked work, the installed agents sync the selected branch by default:
 add/reuse a separate Merv remote, preserve origin, push existing and newly committed
@@ -67,3 +65,9 @@ exposes live user-branch heads, observation time and the research baseline commi
 User-branch sync does not advance the baseline: reviewed integration governs new
 baseline code, and running/completed experiments retain their pinned commits.
 Synchronization runs while the agent is active, with no offline-daemon promise.
+
+Git credential lifetime in native shells: store, authorized Git commands, exact-head
+verification and cache cleanup run inside one live exec invocation. Never rely on
+a returned cache socket in another exec call; the executor may have killed its
+process. The 0.5.5 skill re-mints through saved MCP auth for each later batch and
+clears the cache and ephemeral key directory on both success and failure.

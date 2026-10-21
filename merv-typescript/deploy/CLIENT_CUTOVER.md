@@ -103,7 +103,7 @@ production/nonproduction plugin archives. It also verifies source hashes, omissi
 of dirty/untracked inputs and credential-shaped files, and that a committed skill
 change changes the release content hash.
 
-For normal agent Git access, use plugin 0.5.4's git-access skill and the
+For normal agent Git access, use plugin 0.5.5's git-access skill and the
 `code.git_credential` MCP tool. Do not require a Settings key or token copy-paste.
 The already authenticated agent mints ten-minute access, encrypted to an ephemeral
 local public key, and supplies it to Git's built-in memory credential cache over
@@ -130,3 +130,9 @@ integration; no automatic branch-follow switch or rewriting of experiment pins i
 introduced. Validate a producer pushing two successive commits, separate agent
 branches, read-only refusal, divergence/deletion refusal, baseline drift reporting,
 and unchanged active work pins before live release.
+
+For native-agent shells, credential-cache store and the complete Git batch (including
+exact-head verification and cleanup) must run inside one exec invocation. Never depend
+on cache survival across tool calls. Version 0.5.5 re-mints for each later batch via
+saved MCP auth. Verify the installed skill has this flow before repeating live Git
+acceptance; this change does not modify production credentials or client configuration.

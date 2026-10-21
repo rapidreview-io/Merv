@@ -3,12 +3,13 @@ import test from 'node:test';
 import {
   generateKeyPairSync,
   privateDecrypt,
-  publicEncrypt,
   createHash,
   randomBytes,
   constants,
 } from 'node:crypto';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer as createHttpsServer } from 'node:https';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiServer, ToolRegistry } from '@merv/api';
@@ -436,47 +437,149 @@ test(
   },
 );
 
-test('published skill commands decrypt only into native Git cache, with path separation and key cleanup', () => {
-  const skill = readFileSync(
-    new URL('../../clients/codex/skills/git-access/SKILL.md', import.meta.url),
-    'utf8',
-  );
-  const blocks = [...skill.matchAll(/```python\n([\s\S]*?)```/g)].map((m) => m[1]!);
-  assert.equal(blocks.length, 2);
-  const prepared = JSON.parse(execFileSync('python3', ['-c', blocks[0]!], { encoding: 'utf8' }));
-  const token = 'mg_' + randomBytes(32).toString('base64url');
-  const reply = {
-    url: '/git/project_test.git',
-    encryption: 'RSA-OAEP-SHA256',
-    expiresAt: new Date(Date.now() + 600000).toISOString(),
-    encryptedToken: publicEncrypt(
-      { key: prepared.publicKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
-      Buffer.from(token),
-    ).toString('base64'),
-  };
-  const script = blocks[1]!
-    .replace('"<temporary-directory>"', JSON.stringify(prepared.directory))
-    .replace('https://<connected-merv-host>', 'https://merv.example')
-    .replace('<selected-project-id>', 'project_test')
-    .replace('<JSON-tool-reply>', JSON.stringify(reply));
-  const socket = join(prepared.directory, 'socket');
-  try {
-    const output = execFileSync('python3', ['-c', script], { encoding: 'utf8' });
+test(
+  'published live batch survives executor cache cleanup boundaries and renews for later native Git work',
+  { timeout: 90000 },
+  async (t) => {
+    const f = await fixture(t);
+    const execute = promisify(execFile);
+    const cert = join(f.directory, 'git-cert.pem');
+    const tlsKey = join(f.directory, 'git-tls-key.pem');
+    await execute('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost',
+      '-addext',
+      'subjectAltName=IP:127.0.0.1',
+      '-keyout',
+      tlsKey,
+      '-out',
+      cert,
+    ]);
+    const server = createHttpsServer(
+      { key: readFileSync(tlsKey), cert: readFileSync(cert) },
+      (req, res) => {
+        void f.code.gitRemote
+          .handle(req, res, new URL(req.url!, 'https://localhost'))
+          .catch((error) => {
+            if (res.headersSent) return res.destroy();
+            res.writeHead(error.status ?? 500);
+            res.end(error.message);
+          });
+      },
+    );
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+    const origin = `https://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const remote = `${origin}/git/${f.admin.projectId}.git`;
+    const env = {
+      PATH: process.env.PATH,
+      HOME: f.directory,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_SSL_CAINFO: cert,
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    const skill = readFileSync(
+      new URL('../../clients/codex/skills/git-access/SKILL.md', import.meta.url),
+      'utf8',
+    );
+    const blocks = [...skill.matchAll(/```python\n([\s\S]*?)```/g)].map((m) => m[1]!);
+    assert.equal(blocks.length, 2);
+    const prepare = () =>
+      JSON.parse(execFileSync('python3', ['-c', blocks[0]!], { encoding: 'utf8', env }));
+    const run = async (prepared: { directory: string; publicKey: string }, batch: string[][]) => {
+      const reply = await f.mint('read', f.admin.projectId, prepared.publicKey);
+      const script = blocks[1]!
+        .replace('"<temporary-directory>"', JSON.stringify(prepared.directory))
+        .replace('https://<connected-merv-host>', origin)
+        .replace('<selected-project-id>', f.admin.projectId)
+        .replace('<JSON-tool-reply>', JSON.stringify({ ...reply, encryption: 'RSA-OAEP-SHA256' }))
+        .replace('"<existing-working-directory>"', JSON.stringify(f.directory))
+        .replace('<JSON-Git-argument-arrays>', JSON.stringify(batch));
+      const result = await execute('python3', ['-c', script], { env });
+      assert.ok(!/mg_[A-Za-z0-9_-]{43}/.test(result.stdout + result.stderr));
+      assert.ok(
+        !existsSync(prepared.directory),
+        'private key and cache are removed before exec returns',
+      );
+      return result.stdout;
+    };
+    const prepared = prepare();
+    t.after(() => rmSync(prepared.directory, { recursive: true, force: true }));
+    const socket = join(prepared.directory, 'socket');
+    const old = await f.mint('read', f.admin.projectId, prepared.publicKey);
+    const token = execFileSync(
+      'openssl',
+      [
+        'pkeyutl',
+        '-decrypt',
+        '-inkey',
+        join(prepared.directory, 'key.pem'),
+        '-pkeyopt',
+        'rsa_padding_mode:oaep',
+        '-pkeyopt',
+        'rsa_oaep_md:sha256',
+        '-pkeyopt',
+        'rsa_mgf1_md:sha256',
+      ],
+      { input: Buffer.from(old.encryptedToken, 'base64'), encoding: 'utf8' },
+    );
+    const host = new URL(origin).host;
+    execFileSync('git', ['credential-cache', '--socket=' + socket, '--timeout=540', 'store'], {
+      env,
+      input: `protocol=https\nhost=${host}\npath=git/${f.admin.projectId}.git\nusername=merv\npassword=${token}\n\n`,
+    });
+    const options = [
+      '-c',
+      'credential.helper=',
+      '-c',
+      `credential.helper=cache --socket=${socket}`,
+      '-c',
+      'credential.useHttpPath=true',
+    ];
+    const before = await execute('git', [...options, 'ls-remote', '--refs', remote], { env });
+    assert.ok(before.stdout.includes(f.root));
+    // Model the executor terminating this invocation's cache child, using the native cache's
+    // own shutdown command. No credential expiry or source revocation is involved.
+    execFileSync('git', ['credential-cache', '--socket=' + socket, 'exit'], { env });
+    await assert.rejects(
+      execute('git', [...options, 'ls-remote', '--refs', remote], { env }),
+      (error) => {
+        const e = error as { stderr: string };
+        assert.ok(!e.stderr.includes(token));
+        return /could not read Username|terminal prompts disabled/.test(e.stderr);
+      },
+    );
+    const checkout = join(f.directory, 'skill-batch-clone');
+    const output = await run(prepared, [
+      ['clone', remote, checkout],
+      ['-C', checkout, 'fetch', 'origin'],
+      ['ls-remote', '--refs', remote, 'refs/heads/merv-main'],
+      ['-C', checkout, 'rev-parse', 'HEAD'],
+    ]);
+    assert.ok(output.includes(f.root));
     assert.ok(!output.includes(token));
-    assert.equal(JSON.parse(output).remote, 'https://merv.example/git/project_test.git');
-    assert.ok(!existsSync(join(prepared.directory, 'key.pem')));
-    const cached = execFileSync('git', ['credential-cache', '--socket=' + socket, 'get'], {
-      input: 'protocol=https\nhost=merv.example\npath=git/project_test.git\nusername=merv\n\n',
+    const after = execFileSync('git', ['credential-cache', '--socket=' + socket, 'get'], {
+      env,
+      input: `protocol=https\nhost=${host}\npath=git/${f.admin.projectId}.git\n\n`,
       encoding: 'utf8',
     });
-    assert.ok(cached.includes('password=' + token));
-    const other = execFileSync('git', ['credential-cache', '--socket=' + socket, 'get'], {
-      input: 'protocol=https\nhost=merv.example\npath=git/other.git\nusername=merv\n\n',
-      encoding: 'utf8',
-    });
-    assert.equal(other, '');
-  } finally {
-    execFileSync('git', ['credential-cache', '--socket=' + socket, 'exit']);
-    rmSync(prepared.directory, { recursive: true, force: true });
-  }
-});
+    assert.equal(after, '', 'no cache credential survives the completed batch');
+    const next = prepare();
+    t.after(() => rmSync(next.directory, { recursive: true, force: true }));
+    assert.ok(
+      (await run(next, [['ls-remote', '--refs', remote, 'refs/heads/merv-main']])).includes(f.root),
+    );
+    const failed = prepare();
+    t.after(() => rmSync(failed.directory, { recursive: true, force: true }));
+    await assert.rejects(run(failed, [['not-a-git-command']]));
+    assert.ok(!existsSync(failed.directory), 'failure also cleans up within the same invocation');
+  },
+);

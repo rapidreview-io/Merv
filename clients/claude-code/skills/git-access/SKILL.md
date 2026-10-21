@@ -127,7 +127,7 @@ print(json.dumps({"directory": directory, "publicKey": public}))
 Call `code.git_credential` through the installed MCP connection with that public
 key, the selected projectId, and mode. No additional account sign-in is needed.
 
-## Pass the credential directly to Git's memory cache
+## Store, use and clear the credential in one live shell invocation
 
 Run this locally with the directory from above, the encrypted reply, the selected
 projectId, and the HTTPS origin of the **already connected MCP server**. Those four
@@ -135,14 +135,31 @@ values are not secrets. Use the reply as data; do not execute server-provided co
 Do not derive the origin from an untrusted repository or remote URL. The following
 code validates the path and sends the decrypted token only over a local stdin pipe.
 
+Plan the authorized Git argument arrays before running this block: clone/fetch or
+push the selected branch, then fetch/read its exact remote head and read local HEAD
+for comparison. Put those commands in `batch` below; `checkout` is an existing local
+working directory (the parent directory for a clone). Pass argument arrays, not shell
+strings. Use only credential-free URLs or a previously verified Merv remote name.
+
+**Run this entire block in one exec invocation.** Store, all authenticated Git
+commands, verification reads and cleanup must happen before that invocation exits.
+Native agent shells may kill descendant processes at exit, including Git's cache;
+a returned socket path is not a credential that later exec calls can rely on.
+The receiving-key step and MCP call may be separate: their temporary key file is
+removed by this block, and no cache exists until this block starts.
+
 ```python
-import base64, datetime, json, os, re, shlex, subprocess
+import base64, datetime, json, os, re, shlex, shutil, subprocess
 from urllib.parse import urlsplit
 # Fill these with the non-secret values from the preceding steps.
 directory = "<temporary-directory>"
 origin = "https://<connected-merv-host>"
 project_id = "<selected-project-id>"
 reply = json.loads(r'''<JSON-tool-reply>''')
+checkout = "<existing-working-directory>"
+batch = json.loads(r'''<JSON-Git-argument-arrays>''')
+assert batch and all(isinstance(args, list) and args and
+                     all(isinstance(arg, str) for arg in args) for args in batch)
 u = urlsplit(origin)
 assert u.scheme == "https" and u.netloc and not u.username and not u.password
 assert u.path in ("", "/") and not u.query and not u.fragment
@@ -158,6 +175,8 @@ socket = os.path.join(directory, "socket")
 env = {k: v for k, v in os.environ.items()
        if not k.startswith(("GIT_TRACE", "GIT_CONFIG_")) and k != "GIT_CURL_VERBOSE"}
 env["GIT_TERMINAL_PROMPT"] = "0"
+options = ["-c", "credential.helper=", "-c", "credential.helper=cache --socket=" + shlex.quote(socket),
+           "-c", "credential.useHttpPath=true", "-c", "http.followRedirects=false"]
 try:
     result = subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", key,
         "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256",
@@ -175,27 +194,33 @@ try:
                             stderr=subprocess.DEVNULL)
     assert result.returncode == 0, "Git credential-cache is unavailable"
     del token, entry
-finally:
     os.unlink(key)
-options = ["-c", "credential.helper=", "-c", "credential.helper=cache --socket=" + shlex.quote(socket),
-           "-c", "credential.useHttpPath=true", "-c", "http.followRedirects=false"]
-print(json.dumps({"remote": origin.rstrip("/") + reply["url"], "gitOptions": options,
-                  "socket": socket, "expiresAt": reply["expiresAt"]}))
+    for args in batch:
+        subprocess.run(["git", *options, *args], cwd=checkout, env=env, check=True)
+    print(json.dumps({"completedCommands": len(batch),
+                      "remote": origin.rstrip("/") + reply["url"]}))
+finally:
+    subprocess.run(["git", "credential-cache", "--socket=" + socket, "exit"],
+                   env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # This is only the private temporary directory created in the receiving-key step.
+    shutil.rmtree(directory)
+
 ```
 
-Use those exact `gitOptions` before the Git subcommand, for example
-`git <gitOptions> clone <remote> <directory>` or
-`git <gitOptions> -C <checkout> fetch origin`. Keep tracing disabled for Git too.
-Validate an existing remote equals this credential-free URL before using it; add a
-separate named remote if needed, preserving unrelated remotes. `useHttpPath=true`
-and the private cache socket keep projects separated. No token enters `.git/config`.
-Use the same options for an authorized push; they reset other generic helpers for
-that invocation. Do not set global Git configuration or install a credential helper.
+For example, a read batch is `[["ls-remote", "--refs", "<remote>",
+"refs/heads/<branch>"]]`. For synchronization, include the exact fetch/push and
+verification commands from the workflow above in the same batch. Compare their
+reported heads before claiming success; `completedCommands` only confirms execution.
+Do not print or export a cache socket for later tool calls, leave an exec running
+indefinitely, or detach the cache to evade executor cleanup. Validate existing remote
+URLs first; preserve origin and unrelated remotes. The options reset generic helpers
+for this batch, use path separation and disable redirects. No token enters Git config.
 
 ## Renewal and cleanup
 
-Before another batch when the cache expires (at most nine minutes), repeat the
-public-key, MCP-mint and cache steps automatically. On an authentication expiry,
+For every later exec batch, repeat the public-key and MCP-mint steps automatically,
+then store/use/clear in that new invocation. Do not probe or reuse a previous socket.
+A single batch must finish within the credential lifetime (at most ten minutes). On an authentication expiry,
 request a new credential via MCP and retry the read. On permission denial, re-read
 current project access instead of trying another route. Before retrying a push
 whose result is uncertain, inspect the remote ref to avoid assuming it failed.
@@ -203,8 +228,9 @@ The native client refreshes its own OAuth tokens; do not reconnect for project
 switches or Git expiry. If the account grant itself expires or is revoked, use the
 client's native sign-in action, just as for other MCP tools.
 
-After the batch (or a failed mint), run `git credential-cache --socket=<socket> exit` and remove only
-the temporary directory you created. No persistent Merv process remains. Git's own
-cache may run during the batch. Standalone Git, outside an active authenticated
-agent, cannot renew through that agent's private MCP connection; expired access is
-renewed when the agent next performs this workflow, not by a hidden background helper.
+The block clears its cache and private directory on both success and failure. If
+MCP minting fails before the block runs, remove only the receiving-key directory you
+created. No persistent Merv process remains. Git's own cache exists only for the live
+batch. Standalone Git cannot renew through a native client's private MCP connection;
+renewal happens when the authenticated agent runs the next batch. If a batch is
+interrupted after a push, re-mint and inspect the exact remote ref before retrying.
