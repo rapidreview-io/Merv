@@ -3,7 +3,8 @@ import { register } from 'tsx/esm/api';
 import test from 'node:test';
 import { releaseEntry, releaseId } from './hosted-release.mjs';
 register();
-const { applicationStatus, probe } = await import('./hosted-sandboxes-probe.mjs');
+const { applicationStatus, applicationInventory, probe } =
+  await import('./hosted-sandboxes-probe.mjs');
 const provider = { settings: { account_id: 'a'.repeat(32), application_id: 'b'.repeat(36) } };
 const credential = { cloudflare_api_token: 'secret' };
 const result = {
@@ -76,4 +77,86 @@ test('native status cancels an expired request without retrying', async () => {
   controller.abort(new Error('deadline'));
   await assert.rejects(pending, /deadline/);
   assert.equal(count, 1);
+});
+
+const inventoryPage = (instances = [], durable_objects = [], result_info = { per_page: 100 }) => ({
+  success: true,
+  result: { instances, durable_objects },
+  result_info,
+});
+test('native inventory proves empty despite positive healthy summary and reads every page', async () => {
+  const calls = [];
+  const pages = [
+    inventoryPage([], [], { per_page: 100, next_page_token: 'page2' }),
+    inventoryPage(),
+  ];
+  const actual = await applicationInventory(provider, credential, {
+    fetcher: async (url, options) => {
+      calls.push([url, options.method]);
+      return Response.json(pages.shift());
+    },
+  });
+  assert.deepEqual(actual, { empty: true, instances: 0, durableObjects: 0, pages: 2 });
+  assert.ok(calls[1][0].includes('page_token=page2'));
+  assert.ok(
+    calls.every(
+      ([url, method]) => url.includes('/containers/dash/applications/') && method === 'GET',
+    ),
+  );
+  for (const page of [
+    inventoryPage([
+      { id: 'active', current_placement: { status: { container_status: 'running' } } },
+    ]),
+    inventoryPage([], [{ name: 'assigned', deployment_id: 'pending' }]),
+    inventoryPage([{ id: 'starting' }]),
+  ]) {
+    assert.equal(
+      (
+        await applicationInventory(provider, credential, {
+          fetcher: async () => Response.json(page),
+        })
+      ).empty,
+      false,
+    );
+  }
+});
+
+test('native inventory rejects incomplete, unfamiliar, duplicate and endless pages', async () => {
+  for (const page of [
+    { success: false, result: { instances: [], durable_objects: [] }, result_info: {} },
+    { success: true, result: { instances: [] }, result_info: {} },
+    { ...inventoryPage(), result_info: null },
+    { ...inventoryPage(), result_info: { has_more: true } },
+    { ...inventoryPage(), result: { instances: [], durable_objects: [], pending: [] } },
+    inventoryPage([{}]),
+    inventoryPage([], [{}]),
+    inventoryPage([{ id: 'same' }, { id: 'same' }]),
+    inventoryPage([], [], { next_page_token: '' }),
+    inventoryPage([], [], { per_page: '100' }),
+  ])
+    await assert.rejects(
+      applicationInventory(provider, credential, { fetcher: async () => Response.json(page) }),
+    );
+  await assert.rejects(
+    applicationInventory(provider, credential, {
+      fetcher: async () => Response.json(inventoryPage([], [], { next_page_token: 'same' })),
+    }),
+    /pagination/,
+  );
+  let number = 0;
+  await assert.rejects(
+    applicationInventory(provider, credential, {
+      fetcher: async () =>
+        Response.json(inventoryPage([], [], { next_page_token: String(++number) })),
+    }),
+    /page limit/,
+  );
+  for (const status of [401, 403, 404, 503])
+    await assert.rejects(
+      applicationInventory(provider, credential, {
+        fetcher: async () => new Response('private response', { status }),
+        sleep: async () => {},
+      }),
+      new RegExp('HTTP ' + status),
+    );
 });

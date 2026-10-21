@@ -1485,9 +1485,24 @@ def staging_provider_census():
     need(row['n'] == launches['n'] == 0, 'staging provider ownership is not empty')
     for provider in STAGING_PROVIDERS:
         status = native(provider)
-        counts = (status.get('health') or {}).get('instances')
-        need(isinstance(counts, dict) and counts and all(type(n) is int and n == 0 for n in counts.values()),
+        health = status.get('health') or {}
+        counts = health.get('instances')
+        fields = {'active', 'assigned', 'healthy', 'stopped', 'failed', 'scheduling', 'starting'}
+        need(isinstance(counts, dict) and set(counts) == fields and
+             all(type(n) is int and n >= 0 for n in counts.values()),
+             'staging provider instance counters are malformed or unknown')
+        # Cloudflare defines active + assigned as live DO-bound placements. The observed healthy
+        # summary can be positive with a completely empty native inventory; it cannot certify
+        # ownership either way. Require the concrete full inventory below, not a guessed meaning.
+        need(status.get('rollout') is None and health.get('errors') == [] and
+             all(counts[key] == 0 for key in fields - {'healthy'}),
              'staging provider instances are not confirmed empty')
+        inventory = sbx(MERV_PROVIDER=provider, MERV_INVENTORY='1')
+        need(isinstance(inventory, dict) and inventory.get('empty') is True and
+             type(inventory.get('instances')) is int and inventory['instances'] == 0 and
+             type(inventory.get('durableObjects')) is int and inventory['durableObjects'] == 0 and
+             type(inventory.get('pages')) is int and 1 <= inventory['pages'] <= 100,
+             'staging provider native inventory is not confirmed empty')
     return {'drained': True, 'readOnly': True}
 
 

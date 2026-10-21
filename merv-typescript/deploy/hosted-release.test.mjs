@@ -1674,13 +1674,14 @@ test('staging provider census refuses unknown live machines, pending bootstraps 
   const out = py(`${scratch}
 queries=[];values=[0,0]
 vm.main_read=lambda q,*a,**k:queries.append([q,a,k]) or {'n':values.pop(0)}
-vm.native=lambda p:{'health':{'instances':{'active':0}}}
+vm.native=lambda p:{'health':{'errors':[],'instances':dict(active=0,assigned=0,healthy=5,stopped=0,failed=0,scheduling=0,starting=0)}}
+vm.sbx=lambda **k:dict(empty=True,instances=0,durableObjects=0,pages=1)
 res={'idle':vm.staging_provider_census()}
 for name,pair in [('machine',[1,0]),('bootstrap',[0,1])]:
     values[:]=pair
     try:vm.staging_provider_census()
     except RuntimeError as e:res[name]=str(e)
-values[:]=[0,0];vm.native=lambda p:{'health':{'instances':{'active':1}}}
+values[:]=[0,0];vm.native=lambda p:{'health':{'errors':[],'instances':dict(active=1,assigned=0,healthy=5,stopped=0,failed=0,scheduling=0,starting=0)}}
 try:vm.staging_provider_census()
 except RuntimeError as e:res['native']=str(e)
 res['queries']=queries
@@ -1769,4 +1770,55 @@ vm.run=lambda command,**kwargs:seen.append(kwargs['payload'].decode()) or b'{}'
 vm.sbx(MERV_PROVIDER='cloudflare-fleet-staging')
 print(json.dumps(seen))`);
   assert.deepEqual(out, ['committed probe']);
+});
+
+test('staging census accepts healthy summary only with concrete empty inventory; all live or unknown states fail closed', () => {
+  const out = py(`${scratch}
+counts=dict(active=0,assigned=0,healthy=5,stopped=0,failed=0,scheduling=0,starting=0)
+inventory=dict(empty=True,instances=0,durableObjects=0,pages=1)
+status={'health':{'errors':[],'instances':counts}}
+vm.main_read=lambda *a,**k:{'n':0}
+vm.native=lambda _:status
+vm.sbx=lambda **k:inventory
+res={'idle':vm.staging_provider_census(),'denied':[]}
+for key in ['active','assigned','starting','scheduling','failed','stopped','unknown']:
+    counts[key]=1
+    try:vm.staging_provider_census()
+    except RuntimeError:res['denied'].append(key)
+    if key=='unknown':del counts[key]
+    else:counts[key]=0
+for key,value in [('active',False),('assigned','0'),('healthy',-1)]:
+    saved=counts[key];counts[key]=value
+    try:vm.staging_provider_census()
+    except RuntimeError:res['denied'].append('malformed-'+key)
+    counts[key]=saved
+for field in ['instances','durableObjects']:
+    inventory[field]=1
+    try:vm.staging_provider_census()
+    except RuntimeError:res['denied'].append(field)
+    inventory[field]=0
+status['rollout']='pending'
+try:vm.staging_provider_census()
+except RuntimeError:res['denied'].append('rollout')
+del status['rollout'];status['health']['errors']=['error']
+try:vm.staging_provider_census()
+except RuntimeError:res['denied'].append('health')
+print(json.dumps(res))`);
+  assert.equal(out.idle.readOnly, true);
+  assert.deepEqual(out.denied, [
+    'active',
+    'assigned',
+    'starting',
+    'scheduling',
+    'failed',
+    'stopped',
+    'unknown',
+    'malformed-active',
+    'malformed-assigned',
+    'malformed-healthy',
+    'instances',
+    'durableObjects',
+    'rollout',
+    'health',
+  ]);
 });

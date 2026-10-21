@@ -168,3 +168,25 @@ keeps both the production run and staging's `ordinary-<production-run>` marker o
 pipeline. It verifies the production pair and finishes only staging; it does not repeat the
 production rollout/canary or roll it back. Driver leases permit same-run takeover after silence;
 expiry never gives a different run permission to steal staging. Success releases both markers.
+
+## Provider inventory evidence (2026-10-21)
+
+The Cloudflare application summary is not the ownership inventory. Read-only GETs returned
+`healthy=5` for staging Standard and `healthy=2` for staging Large while `active`, `assigned`,
+`stopped`, `failed`, `scheduling` and `starting` were all zero. For both applications,
+`GET /accounts/<account>/containers/dash/applications/<application>/instances?per_page=100`
+returned `instances: []`, `durable_objects: []` and terminal `result_info: {per_page: 100}`.
+Credentials remained inside the existing Sandboxes process.
+
+Cloudflare's [application API reference](https://developers.cloudflare.com/api/resources/containers/subresources/applications/methods/get/)
+defines `active + assigned` as the running Durable-Object-bound count. It does not establish that
+this observed positive `healthy` value represents owned machines; no such interpretation is used.
+The census requires the full native instance/binding inventory to be empty in addition to zero
+activity counters, no rollout, no health errors, no active staging Sandbox rows and no pending
+bootstrap. Positive `healthy` is accepted only with this independent concrete empty inventory.
+Every page is checked; incomplete data, unfamiliar counter/pagination fields, duplicates, cycles,
+page-limit exhaustion and provider errors refuse preparation. Any actual instance or binding
+blocks, even if its individual state is stopped or unknown. This is deliberately conservative.
+
+The corrected census was executed read-only through `ResearchSuite_Control` on 2026-10-21 and
+returned `{"drained":true,"readOnly":true}`. No gateway/deploy/mutation method was invoked.
