@@ -14,7 +14,9 @@ for nonproduction hosts. Installing Merv does not preapprove every tool.
 From a checkout, add `clients/` as a local marketplace, then install `merv@merv`:
 
 - Codex: `codex plugin marketplace add /absolute/path/to/clients`, then
-  `codex plugin add merv@merv` where supported, or install through desktop Plugins.
+  `codex plugin add merv@merv`, then `codex mcp login merv`. The last command
+  authenticates the bundled server in the terminal; no desktop app is needed.
+  Complete the displayed browser sign-in and consent before using tools.
 - Claude Code: `claude plugin marketplace add /absolute/path/to/clients`, then
   `claude plugin install merv@merv --scope user`. Authenticate from `/mcp`.
 

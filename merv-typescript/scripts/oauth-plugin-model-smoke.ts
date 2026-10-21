@@ -1,4 +1,3 @@
-import { authenticateCodexPlugin } from '../tests/fixtures/codex-plugin-auth.js';
 /** Real plugin-bundled MCP checks in two fresh model sessions per installed client.
  * Uses existing model credentials privately; Merv consent is synthetic.
  * This does not test browser account sign-in or production. */
@@ -19,7 +18,8 @@ import { scopeRoutes } from '@merv/scope/api';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import { openState } from '../tests/fixtures/state.js';
 
-if (process.env.MERV_ALLOW_MODEL_TESTS !== '1')
+const loginOnly = process.argv.includes('--login-only');
+if (!loginOnly && process.env.MERV_ALLOW_MODEL_TESTS !== '1')
   throw new Error(
     'Set MERV_ALLOW_MODEL_TESTS=1 to authorize paid model calls and private reuse of local model credentials.',
   );
@@ -77,9 +77,6 @@ for (const [path, text] of Object.entries(packageFiles(origin))) {
   await mkdir(join(file, '..'), { recursive: true });
   await writeFile(file, text);
 }
-const results: Record<string, unknown> = {
-  caveat: 'Real client binaries; synthetic consent, no browser identity or model chat.',
-};
 async function run(bin: string, args: string[], env: NodeJS.ProcessEnv, login = false) {
   return new Promise<{ code: number | null; output: string }>((resolve, reject) => {
     const interactive = bin === 'claude' && args[0] === 'mcp' && args[1] === 'login';
@@ -157,13 +154,15 @@ try {
       BROWSER: 'true',
     };
     if (bin === 'codex') {
-      await copyFile(join(homedir(), '.codex', 'auth.json'), join(dir, 'auth.json'));
-      await chmod(join(dir, 'auth.json'), 0o600);
+      if (!loginOnly) {
+        await copyFile(join(homedir(), '.codex', 'auth.json'), join(dir, 'auth.json'));
+        await chmod(join(dir, 'auth.json'), 0o600);
+      }
       await writeFile(
         join(dir, 'config.toml'),
         'model = "gpt-6-astra"\nmcp_oauth_credentials_store = "file"\n',
       );
-    } else {
+    } else if (!loginOnly) {
       const stored = JSON.parse(
         execFileSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], {
           encoding: 'utf8',
@@ -179,27 +178,21 @@ try {
       env,
     );
     if (market.code || installed.code) throw new Error(bin + ' plugin installation failed');
-    if (bin === 'codex') {
-      const authenticated = await authenticateCodexPlugin(
-        env,
-        root,
-        name,
-        async (authorizationUrl) => {
-          const r = await fetch(authorizationUrl, { redirect: 'manual' });
-          const requestId = new URL(r.headers.get('location')!).pathname.split('/').at(-1)!;
-          const callback = await oauth.consent(requestId, person, project.id, true);
-          await fetch(callback);
-        },
+    const serverName = bin === 'codex' ? name : `plugin:${name}:${name}`;
+    const login = await run(
+      bin,
+      ['mcp', 'login', serverName, ...(bin === 'claude' ? ['--no-browser'] : [])],
+      env,
+      true,
+    );
+    if (login.code)
+      throw new Error(
+        bin + ' bundled OAuth failed: ' + login.output.replace(/https?:\/\/[^\s]+/g, '[URL]'),
       );
-      console.log(JSON.stringify({ bundledOAuth: authenticated }));
-    } else {
-      const serverName = `plugin:${name}:${name}`;
-      const login = await run(bin, ['mcp', 'login', serverName, '--no-browser'], env, true);
-      if (login.code)
-        throw new Error(
-          'Claude bundled OAuth failed: ' + login.output.replace(/https?:\/\/[^\s]+/g, '[URL]'),
-        );
-    }
+    console.log(
+      JSON.stringify({ client: bin, bundledNativeLogin: true, serverName, code: login.code }),
+    );
+    if (loginOnly) continue;
 
     for (let session = 1; session <= 2; session++) {
       const before = called.length;

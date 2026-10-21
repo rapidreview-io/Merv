@@ -61,6 +61,8 @@ test('downloadable tar contains only package files; staging uses distinct names 
   assert.ok(!JSON.stringify(files).includes('experiments.rapidreview.io'));
   assert.match(setupGuide(origin), /Git repository\nis required|No Git repository/);
   assert.match(setupGuide(origin), /bundle.tar.gz/);
+  assert.ok(setupGuide(origin).includes('codex mcp login ' + packageName(origin)));
+  assert.match(setupGuide(origin), /authenticates the plugin-bundled server/);
   assert.match(setupGuide(origin), /From the extraction directory \(MARKETPLACE\)/);
   assert.ok(!setupGuide(origin).includes("bundle's clients directory"));
   assert.ok(!Object.keys(files).some((p) => /\.(sh|mjs)$/.test(p)));
