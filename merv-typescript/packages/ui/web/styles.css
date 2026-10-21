@@ -3203,7 +3203,7 @@ pre.math--source {
 .hub-needs {
   margin-top: var(--space-5);
 }
-/* What needs the reader: one line per move, its name, its sentence and its control. */
+/* What needs the reader: one line per move, its name and its control; the sentence is on the record. */
 .hub-needs .ov-block {
   margin-top: 0;
   padding-top: 0;
@@ -3233,14 +3233,7 @@ pre.math--source {
   padding-block: 0;
   margin-block: 0;
 }
-.hub-needs .ov-say {
-  overflow: hidden;
-  max-width: 100%;
-  font-size: var(--text-sm);
-  color: var(--muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+.hub-needs .ov-say,
 .hub-needs .ov-meta,
 .hub-needs .ov-said,
 .hub-needs .kind {
