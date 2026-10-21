@@ -108,7 +108,7 @@ ${name === 'codex' ? codexStandIn() : ''}
       `claude mcp remove ${name} -s local`,
       `claude mcp remove ${name} -s user`,
       `claude mcp add-json ${name} ${entry} -s user`,
-      `codex mcp remove ${name}`,
+      // A first install has no Merv table to remove, so Codex's config is only appended to.
       `codex mcp get ${name} --json`,
     ])
       assert.ok(calls.includes(call), `${call}\n${calls.join('\n')}`);

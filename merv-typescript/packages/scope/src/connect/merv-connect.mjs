@@ -523,7 +523,12 @@ async function codexApproval(installing, had) {
         // Codex serializes LF; normalize first so restoring CRLF cannot double a string's CR.
         fs.writeFileSync(file, before.replace(/\r\n/g, '\n'), { mode: 0o600 });
         const env = { ...process.env, CODEX_HOME: stage };
-        if (run('codex', ['mcp', 'remove', SERVER_NAME], env).status !== 0)
+        // Codex rewrites every server's table when it removes one, so a first install, with no
+        // Merv table to remove, leaves the file as it was and only appends Merv's.
+        if (
+          (!installing || had !== undefined) &&
+          run('codex', ['mcp', 'remove', SERVER_NAME], env).status !== 0
+        )
           throw new Refusal('Codex: could not remove the old registration; config left untouched.');
         const eol = lineEnding(before);
         let after = readPrivate(file).replace(/\r?\n/g, eol);
