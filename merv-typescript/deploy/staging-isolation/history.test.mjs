@@ -509,6 +509,9 @@ test(
       const restored = new pg.Client({ connectionString: new URL('/isolation_restore', url).href });
       await restored.connect();
       try {
+        // Compare exact SQL text under the same rendering timezone on both connections.
+        await dest.query("SET TIME ZONE 'UTC'");
+        await restored.query("SET TIME ZONE 'UTC'");
         for (const table of Object.keys(bundle.rows)) {
           const a = await dest.query(
               `SELECT to_jsonb(t)::text AS row FROM ${table} t ORDER BY to_jsonb(t)::text`,

@@ -24,5 +24,15 @@
     "path": "/tmp/merv-timezone-suite.log",
     "sha256": "a6ed91a36259adf45caa116279961c7f3da823e26f0549eb851e3969e8e11bbf"
   },
-  "scope": "Disposable local PostgreSQL only. Parent retains independent review, fresh source export and all live operations."
+  "scope": "Disposable local PostgreSQL only. Parent retains independent review, fresh source export and all live operations.",
+  "nonUtcServerDefaultFollowup": {
+    "base": "ef85995ed4983c64ef99870ed873608228bc637a",
+    "fix": "Test-only: set both destination and fresh restore comparison connections to UTC before exact PostgreSQL JSON text equality. No assertions removed or runtime changes.",
+    "serverDefault": "America/Los_Angeles (ALTER SYSTEM on disposable local port 56108, reload and verified SHOW timezone on a fresh connection)",
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "log": "/tmp/merv-timezone-la-suite.log",
+    "sha256": "03c56115f7051b951fca2d103a0eec1b3679de128c534dad74ea64daf5fabcb5"
+  }
 }
