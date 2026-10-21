@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   CODE_CHECK_SLACK_SECONDS,
   codeCheckSpecSchema,
@@ -244,6 +245,7 @@ export class CodeBaseService {
    * here; a transaction that queues work also asks once it has committed.
    */
   start(everyMs = 5000): void {
+    if (bootMaintenance.active) return;
     if (this.timer) return;
     const tick = () =>
       void this.due()
@@ -258,6 +260,7 @@ export class CodeBaseService {
 
   /** Asked from inside a transaction that queued work: it runs once that has committed. */
   soon(projectId: string): void {
+    if (bootMaintenance.active) return;
     if (this.closed) return;
     setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
   }

@@ -70,7 +70,7 @@ LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
-         'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins'}
+         'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins', 'prepare_cutover', 'accept_cutover'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env[process.env.MERV_URL??'MERV_DB_URL']});await c.connect();const w=!!process.env.MERV_W;
@@ -320,7 +320,7 @@ def with_machines(raw, releases):
     return with_env(raw, RUNTIMES, "'" + json.dumps(profiles, separators=(',', ':')) + "'")
 
 
-def recreate(raw, want, backup=None):
+def recreate(raw, want, backup=None, restore=True):
     """Writes `want` over the env file `raw` and recreates Main on its own image, which must render it
     and take its pins; restores `raw` on failure. `backup` keeps `raw` for a later process."""
     need(not main_release_running(), 'a Main release job is running')
@@ -341,8 +341,9 @@ def recreate(raw, want, backup=None):
         need(inspect(MAIN)['Image'] == image and pins(env_of(MAIN)) == pins(file_env(want)),
              'Main did not take the release')
     except BaseException:
-        atomic(ENV, raw)
-        run(up, env=env, cwd=directory, timeout=240)
+        if restore:
+            atomic(ENV, raw)
+            run(up, env=env, cwd=directory, timeout=240)
         raise
     return {'changed': True, 'image': image, 'envSha256Before': sha(raw), 'envSha256After': sha(ENV.read_bytes())}
 
@@ -558,8 +559,15 @@ class Step:
             need(shutil.disk_usage('/').free >= 8 << 30, 'less than 8 GiB free on /')
             run(['docker', 'image', 'inspect', '--format', '{{.Id}}', self.plan['current']['localId']])
             cred = credential(Path(self.plan['canary']['credential']))
-            whoami(cred)
-            return {**self.pins(), 'canaryActor': cred['actorId']}
+            if self.plan.get('cutover'):
+                self.cutover_maintenance(True)
+                self.cutover_census()
+                need(inspect(MAIN)['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
+                     'cutover requires native-compatible Main')
+            else:
+                whoami(cred)
+            return {**self.pins(), 'canaryActor': cred['actorId'],
+                    **({'cutoverMainImage': inspect(MAIN)['Image']} if self.plan.get('cutover') else {})}
         except BaseException:
             if owner() == self.run.name:
                 (HOME / 'active').unlink()
@@ -722,6 +730,9 @@ class Step:
         try:
             apply(doc)
         except BaseException:
+            if self.plan.get('cutover'):
+                broken()
+                raise
             try:
                 apply(raw)
             except BaseException as error:
@@ -734,7 +745,11 @@ class Step:
         """Adds the release, an entry per live app, to both shared-env readers, keeping earlier releases,
         and recreates them. {"restore": true} puts back the file this run replaced, for a restore that failed."""
         backup = self.run / 'catalog.before'
+        if self.plan.get('cutover'):
+            self.cutover_maintenance(True)
+            self.cutover_census()
         if arg.get('restore'):
+            need(not self.plan.get('cutover'), 'cutover cannot restore the old catalog')
             if backup.exists():
                 self.sandboxes_file()[1](backup.read_bytes())
             self.note({'catalogBroken': False})
@@ -747,6 +762,7 @@ class Step:
         """Once the release has passed: its copy for each staging app (arg's entries) that Sandboxes serves,
         added as `catalog` adds the live apps'. Nothing here can roll the release back; staging Main is
         switched by the driver on the staging host."""
+        need(not self.plan.get('cutover'), 'staging is deferred until its Main protocol is accepted')
         served = {p['name'] for p in json.loads(env_of(CONTROL)['SANDBOXES_PROVIDERS'])}
         entries = [e for e in arg['entries'] if e['provider'] in served]
         need(entries, 'Sandboxes serves no staging app')
@@ -759,6 +775,9 @@ class Step:
         too) and holding work machines, so Fleet stops each once its step settles. A rollback's drain
         ({"work": true}) waits on work machines alone: it must not wait on turns the release it undoes
         is serving."""
+        if self.plan.get('cutover'):
+            self.cutover_maintenance(True)
+            return self.cutover_census()
         if arg.get('work'):
             return work_drain(self.plan['drainSeconds'])
         return quiet(self.plan['drainSeconds'], release=True)
@@ -772,6 +791,10 @@ class Step:
         image; restores the env on failure. It never waits for a drain: by now Cloudflare runs the
         release and Main must name it."""
         named = arg['releases'] if 'releases' in arg else {PROVIDER: arg['releaseId']}
+        if self.plan.get('cutover'):
+            self.cutover_maintenance(True)
+            need(named == (read(self.run / 'catalog.json') or {}).get('releases'),
+                 'cutover may only switch to its prepared candidate pins')
         releases = {**machines(env_of(MAIN)), **named}
         need(all(re.fullmatch(r'rt1_[0-9a-f]{64}', r or '') for r in releases.values()), 'invalid release id')
         raw = ENV.read_bytes()
@@ -780,11 +803,59 @@ class Step:
             return {'changed': False}
         # The drain's hold outlasts the switch: a failed canary rolls back, redeploying every app, and
         # a step admitted meanwhile would hold that rollback up until it ended. The canary lifts it.
-        return recreate(raw, want, self.run / 'env.before')
+        return recreate(raw, want, self.run / 'env.before', restore=not self.plan.get('cutover'))
+
+    def cutover_maintenance(self, active):
+        need(self.plan.get('cutover'), 'not a cutover run')
+        live, saved = env_of(MAIN).get('MERV_BOOT_MAINTENANCE', '0'), file_env(ENV.read_bytes()).get('MERV_BOOT_MAINTENANCE', '0')
+        need(live == saved and live == ('1' if active else '0'),
+             'Main and saved environment must both have maintenance ' + ('enabled' if active else 'removed'))
+        with urllib.request.urlopen('http://127.0.0.1:3081/health', timeout=30) as response:
+            health = json.load(response)
+        need(health.get('status') == 'ok' and (health.get('maintenance') is True) == active,
+             'Main health does not confirm the requested maintenance state')
+
+    def cutover_census(self):
+        # Unlike drain, this never releases idle hosts, sets a hold, or expects fenced workers to act.
+        pending = busy(False)
+        allocations = main_read("SELECT coalesce(json_agg(id), '[]'::json)::text AS ids FROM {s}.fleet_allocations WHERE phase <> 'released'")
+        need(not pending and not json.loads(allocations['ids']),
+             'cutover ownership is not empty; complete the authorized drain before preparation')
+        return {'drained': True, 'readOnly': True}
+
+    def cutover_pair(self):
+        before, pushed, catalog = (read(self.run / p) for p in ('preflight.json', 'push.json', 'catalog.json'))
+        need(before and pushed and catalog, 'cutover artifacts are incomplete')
+        need(inspect(MAIN)['Image'] == before['cutoverMainImage'], 'prepared Main image changed')
+        live = self.pins()
+        need(live['releases'] == live['fileReleases'] == catalog['releases'], 'prepared release pins changed')
+        need(live['mainReleaseId'] == live['fileReleaseId'] == catalog['releaseId'], 'prepared Standard pin changed')
+        held = {(entry['provider'], entry['id'], entry['digest']) for entry in live['catalog']}
+        need(all((provider, release, pushed['image'].split('@')[1]) in held
+                 for provider, release in catalog['releases'].items()), 'prepared catalog entry changed')
+        need(all(n['image'] == pushed['image'] and not n.get('rollout') for n in live['apps'].values()),
+             'prepared hosted image changed or rollout is incomplete')
+        return {'mainImage': before['cutoverMainImage'], 'image': pushed['image'], 'releases': catalog['releases']}
+
+    def prepare_cutover(self, _):
+        self.cutover_maintenance(True)
+        self.cutover_census()
+        pair = self.cutover_pair()
+        self.note({'cutoverPrepared': pair})
+        return pair
+
+    def accept_cutover(self, _):
+        checkpoint = (read(self.run / 'progress.json') or {}).get('cutoverPrepared')
+        need(checkpoint, 'cutover has no preparation checkpoint')
+        self.cutover_maintenance(False)
+        need(self.cutover_pair() == checkpoint, 'prepared image pair changed')
+        return {'accepted': True}
 
     def canary(self, arg):
         """One real Pi turn as the canary reader on Standard; proves the release served it and its
         machine was released, and that every other live app runs the same image, healthy."""
+        if self.plan.get('cutover'):
+            self.accept_cutover({})
         cred, target = credential(Path(self.plan['canary']['credential'])), arg['releaseId']
         whoami(cred)
         nonce = secrets.token_hex(4)
@@ -833,7 +904,8 @@ class Step:
                   'seconds': round(time.monotonic() - started)}
         need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released']
              and all(result['apps'].values()), 'canary_failed ' + json.dumps(result))
-        unhold()  # the release stays: work machines rent on it again
+        if not self.plan.get('cutover'):
+            unhold()  # normal release removes only its own drain hold
         return result
 
     def note(self, arg):
@@ -845,7 +917,8 @@ class Step:
 
     def finish(self, arg):
         """Closes the run: the new pins (on success), the drain's hold, the guard, the backups, the marker."""
-        unhold()
+        if not self.plan.get('cutover'):
+            unhold()
         if arg.get('state'):
             atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
         for name in ('catalog.before', 'stage.before', 'env.before'):  # they hold secrets
@@ -874,6 +947,8 @@ class Step:
         if (self.run / 'finish.json').exists() or owner() != self.run.name:
             subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             return {'guard': 'closed'}
+        if self.plan.get('cutover'):
+            return {'guard': 'cutover: preserve pins; explicit forward resume required'}
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:
             return {'guard': 'driver alive'}
@@ -907,6 +982,7 @@ class Step:
         """Changes nothing: names the release production agrees on, so the driver may close the run
         without finishing or rolling it back. Every live app runs one of this run's images with no
         rollout, Main and the env file name its releases, and both shared-env readers' catalog holds them."""
+        need(not self.plan.get('cutover'), 'cutover cannot be abandoned; resume forward')
         live = {p: native(p) for p in self.apps()}
         image = live[PROVIDER]['image']
         target, catalog = self.releases().get(image), json.loads(env_of(CONTROL)[CATALOG])

@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   check,
@@ -1464,6 +1465,7 @@ export class CustomerService {
     );
   }
   async reconcile() {
+    if (bootMaintenance.active) return;
     for (const record of await this.store.list()) {
       if (!record.experimentId) continue;
       try {

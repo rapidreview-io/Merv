@@ -184,7 +184,20 @@ if (step === 'switch') {
   if (sim.machines) sim.machines = releases;
   out({ changed });
 }
+if (step === 'prepare_cutover') {
+  if (!sim.maintenance) err('maintenance must be enabled');
+  R.progress.cutoverPrepared = { image: sim.native.image, release: sim.main };
+  out(R.progress.cutoverPrepared);
+}
+if (step === 'accept_cutover') {
+  if (sim.maintenance) err('maintenance must be removed');
+  if (fail) err(fail);
+  const checkpoint = R.progress.cutoverPrepared;
+  if (!checkpoint || checkpoint.image !== sim.native.image || checkpoint.release !== sim.main) err('prepared pair changed');
+  out({ accepted: true });
+}
 if (step === 'canary') {
+  if (sim.maintenance) err('ordinary canary is fenced');
   const each = Object.entries(machines()).every(([p, id]) => sim.releases[id] === apps()[p].image);
   if (!each || sim.main !== arg.releaseId) err('canary_failed pins disagree');
   if (fail === 'all' || (fail && arg.releaseId !== previous.releaseId)) err('canary_failed {"status":"interrupted"}');
@@ -531,4 +544,105 @@ test('a staging failure is reported in the ledger and never rolls production bac
   const none = simulate('no-staging');
   assert.equal(none.status, 0, none.out);
   assert.match(none.ledger, /STAGING NOT UPDATED: stage: Sandboxes serves no staging app \|/);
+});
+
+const editRun = (result, change) => {
+  const sim = result.sim;
+  sim.runs[sim.active].lease.seen -= 400_000;
+  change(sim);
+  writeFileSync(join(result.dir, 'sim.json'), JSON.stringify(sim));
+};
+test('cutover preparation pauses the real driver before canary; ordinary resume cannot accept; explicit reopening resumes', () => {
+  const first = simulate(
+    'cutover-prepare',
+    { ...TWO, maintenance: true },
+    { args: ['--prepare-cutover'] },
+  );
+  assert.equal(first.status, 5, first.out);
+  assert.equal(first.sim.main, NEXT_ID);
+  assert.equal(first.sim.native.image, NEXT);
+  assert.ok(first.sim.active);
+  assert.ok(!first.steps.includes('canary'));
+  assert.ok(!first.steps.includes('stage'));
+  assert.ok(!first.steps.includes('finish'));
+  assert.match(first.ledger, /PREPARED/);
+  order(first.steps, 'catalog', 'drain', 'wrangler', 'switch', 'prepare_cutover');
+  editRun(first, () => {});
+  const plain = simulate('cutover-prepare', {}, { dir: first.dir, args: ['--resume'] });
+  assert.equal(plain.status, 5, plain.out);
+  assert.ok(!plain.steps.includes('canary'));
+  editRun(plain, () => {});
+  const fenced = simulate(
+    'cutover-prepare',
+    {},
+    { dir: first.dir, args: ['--resume', '--accept-cutover'] },
+  );
+  assert.equal(fenced.status, 3, fenced.out);
+  assert.equal(fenced.sim.native.image, NEXT);
+  assert.ok(!fenced.steps.includes('canary'));
+  assert.ok(!fenced.steps.includes('finish'));
+  editRun(fenced, (sim) => {
+    sim.maintenance = false;
+  });
+  const accepted = simulate(
+    'cutover-prepare',
+    {},
+    { dir: first.dir, args: ['--resume', '--accept-cutover'] },
+  );
+  assert.equal(accepted.status, 0, accepted.out);
+  order(accepted.steps, 'prepare_cutover', 'accept_cutover', 'canary', 'finish');
+  assert.equal(accepted.sim.active, null);
+  assert.equal(accepted.sim.main, NEXT_ID);
+  assert.ok(!accepted.steps.includes('stage'));
+  assert.match(accepted.out, /DEFERRED/);
+});
+
+test('cutover canary failure preserves candidate and resumable checkpoint without rollback', () => {
+  const prepared = simulate('cutover-fail', { maintenance: true }, { args: ['--prepare-cutover'] });
+  assert.equal(prepared.status, 5, prepared.out);
+  editRun(prepared, (sim) => {
+    sim.maintenance = false;
+    sim.fail.canary = 'new';
+  });
+  const failed = simulate(
+    'cutover-fail',
+    {},
+    { dir: prepared.dir, args: ['--resume', '--accept-cutover'] },
+  );
+  assert.equal(failed.status, 3, failed.out);
+  assert.equal(failed.sim.native.image, NEXT);
+  assert.equal(failed.sim.main, NEXT_ID);
+  assert.ok(failed.sim.active);
+  assert.ok(!failed.steps.includes('finish'));
+  assert.ok(!failed.events.some((e) => e.includes('"restore":true')));
+  editRun(failed, (sim) => {
+    sim.fail = {};
+  });
+  const retry = simulate(
+    'cutover-fail',
+    {},
+    { dir: prepared.dir, args: ['--resume', '--accept-cutover'] },
+  );
+  assert.equal(retry.status, 0, retry.out);
+  assert.equal(retry.sim.main, NEXT_ID);
+});
+
+test('partial cutover switch failure never deploys the previous image and can finish preparation forward', () => {
+  const failed = simulate(
+    'cutover-switch',
+    { maintenance: true, fail: { switch: 'cannot recreate Main' } },
+    { args: ['--prepare-cutover'] },
+  );
+  assert.equal(failed.status, 3, failed.out);
+  assert.equal(failed.sim.native.image, NEXT);
+  assert.ok(failed.sim.active);
+  assert.ok(!failed.steps.includes('canary'));
+  assert.ok(!failed.steps.includes('finish'));
+  assert.equal(failed.steps.filter((s) => s === 'wrangler').length, 1);
+  editRun(failed, (sim) => {
+    sim.fail = {};
+  });
+  const resumed = simulate('cutover-switch', {}, { dir: failed.dir, args: ['--resume'] });
+  assert.equal(resumed.status, 5, resumed.out);
+  assert.equal(resumed.sim.main, NEXT_ID);
 });

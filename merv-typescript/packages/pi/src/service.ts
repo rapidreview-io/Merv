@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import type { ScreenLook } from './types.js';
 import {
   check,
@@ -128,7 +129,8 @@ export class PiService implements Pi {
     );
     // Fleet reads the host project's offers on their first ask: ask outside any transaction, so
     // no machine chosen inside one waits on that read or falls back for want of it.
-    await Promise.all(this.core.config.machines.map(({ key }) => this.core.machine(key)));
+    if (!bootMaintenance.active)
+      await Promise.all(this.core.config.machines.map(({ key }) => this.core.machine(key)));
     await this.hosts.tick();
     this.timer = setInterval(() => {
       void this.tick().catch(() => undefined);
@@ -892,6 +894,7 @@ export class PiService implements Pi {
     // registrations go even when that fails, so the next Pi can register itself.
     try {
       await this.hosts.pending?.catch(() => undefined);
+      if (bootMaintenance.active) return;
       await this.core.state.transaction(async (tx) => {
         const hosts = await tx.all<{ data_json: string }>(
           "SELECT data_json FROM pi_hosts WHERE status='live'",

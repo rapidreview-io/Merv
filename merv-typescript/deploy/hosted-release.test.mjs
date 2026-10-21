@@ -1339,3 +1339,100 @@ print(json.dumps({'calls':calls,'restored':state['raw']==raw,'error':error}))`);
   assert.equal(commands.filter((args) => args.includes('up')).length, 4);
   for (const [args, image] of out.calls) assert.equal(image, args[3] + '-image');
 });
+
+test('cutover checkpoint binds Main and every hosted pin; resume requires actual maintenance removal', () => {
+  const result = py(`${scratch}${twoApps}
+import io
+step.plan['cutover']=True
+# Use literal line bytes, not the JS template's newline escape.
+vm.ENV=t/'typescript.env';vm.ENV.write_bytes(b'MERV_BOOT_MAINTENANCE=1'+bytes([10]))
+vm.ENV=t/'typescript.env'
+main={'MERV_BOOT_MAINTENANCE':'1'};image=['sha256:main'];health={'status':'ok','maintenance':True}
+vm.env_of=lambda _:main
+vm.inspect=lambda _:{'Image':image[0]}
+vm.urllib.request.urlopen=lambda *a,**k:io.BytesIO(json.dumps(health).encode())
+pre=vm.read(r/'preflight.json');pre['cutoverMainImage']=image[0];vm.atomic(r/'preflight.json',json.dumps(pre).encode())
+vm.Step.pins=lambda self:{'releases':vm.read(r/'catalog.json')['releases'],'fileReleases':vm.read(r/'catalog.json')['releases'],
+ 'mainReleaseId':'${NEW}','fileReleaseId':'${NEW}','apps':apps,
+ 'catalog':[{'provider':p,'id':v,'digest':'sha256:new'} for p,v in vm.read(r/'catalog.json')['releases'].items()]}
+vm.busy=lambda release=False:{}
+reads=[]
+vm.main_read=lambda query,*a,**k:reads.append(k) or {'ids':'[]'}
+prepared=step.prepare_cutover({})
+res={'prepared':prepared,'checkpoint':vm.read(r/'progress.json'),'reads':reads}
+try: step.accept_cutover({})
+except RuntimeError as e: res['fenced']=str(e)
+main['MERV_BOOT_MAINTENANCE']='0';vm.ENV.write_bytes(b'MERV_BOOT_MAINTENANCE=0'+bytes([10]));health.pop('maintenance')
+res['accepted']=step.accept_cutover({})
+image[0]='sha256:other'
+try: step.accept_cutover({})
+except RuntimeError as e: res['changed']=str(e)
+image[0]='sha256:main';apps['cloudflare-fleet-large']['image']='reg@sha256:old'
+try: step.accept_cutover({})
+except RuntimeError as e: res['runnerChanged']=str(e)
+vm.main_read=lambda *a,**k:{'ids':'["real-work"]'}
+try: step.cutover_census()
+except RuntimeError as e: res['busy']=str(e)
+print(json.dumps(res))`);
+  assert.equal(result.prepared.mainImage, 'sha256:main');
+  assert.deepEqual(result.checkpoint.cutoverPrepared, result.prepared);
+  assert.deepEqual(result.reads, [{}]);
+  assert.match(result.fenced, /maintenance removed/);
+  assert.deepEqual(result.accepted, { accepted: true });
+  assert.match(result.changed, /Main image changed/);
+  assert.match(result.runnerChanged, /hosted image changed/);
+  assert.match(result.busy, /ownership is not empty/);
+});
+
+test('cutover switch failure keeps candidate env and never recreates old pins', () => {
+  const result = py(`${scratch}
+vm.ENV=t/'typescript.env';vm.ENV.write_bytes(b'old')
+vm.inspect=lambda _:{'Image':'sha256:main','Config':{'Labels':{'com.docker.compose.project.working_dir':str(t)}}}
+vm.main_release_running=lambda:False
+calls=[]
+def fail(command,**kwargs):
+    calls.append(command)
+    raise RuntimeError('render failed')
+vm.run=fail
+try: vm.recreate(b'old',b'candidate',r/'env.before',restore=False)
+except RuntimeError as e: error=str(e)
+print(json.dumps({'env':vm.ENV.read_text(),'before':(r/'env.before').read_text(),'calls':len(calls),'error':error}))`);
+  assert.deepEqual(result, { env: 'candidate', before: 'old', calls: 1, error: 'render failed' });
+});
+
+test('cutover guard cannot restore old pins and its drain is read-only', () => {
+  const result = py(`${scratch}
+vm.owner=lambda:r.name
+step=vm.Step(r,{'cutover':True})
+vm.native=lambda *a:(_ for _ in ()).throw(Exception('guard must not switch'))
+res={'guard':step.guard({})}
+vm.Step.cutover_maintenance=lambda self,active:None
+vm.busy=lambda release=False:{} if not release else (_ for _ in ()).throw(Exception('must not release'))
+vm.main_read=lambda *a,**k:{'ids':'[]'} if not k.get('write') else (_ for _ in ()).throw(Exception('must not write'))
+res['drain']=step.drain({})
+try: step.abandon({})
+except RuntimeError as e:res['abandon']=str(e)
+print(json.dumps(res))`);
+  assert.match(result.guard.guard, /preserve pins/);
+  assert.equal(result.drain.readOnly, true);
+  assert.match(result.abandon, /cannot be abandoned/);
+});
+
+test('cutover preflight defers ordinary HTTP identity checks but requires maintenance and empty ownership', () => {
+  const result = py(`${scratch}
+vm.claim=lambda _:None;vm.main_release_running=lambda:False
+vm.shutil.disk_usage=lambda _:type('Space',(),{'free':16<<30})()
+vm.run=lambda *a,**k:b''
+vm.credential=lambda _: {'actorId':'canary-reader'}
+vm.whoami=lambda _:(_ for _ in ()).throw(Exception('HTTP is fenced'))
+vm.inspect=lambda _:{'Image':'sha256:main','Config':{'Labels':{'org.merv.native-git-protocol':'1'}}}
+vm.Step.pins=lambda self:{}
+calls=[]
+vm.Step.cutover_maintenance=lambda self,active:calls.append(['maintenance',active])
+vm.Step.cutover_census=lambda self:calls.append(['census'])
+step=vm.Step(r,{'cutover':True,'current':{'localId':'old'},'canary':{'credential':'/private'}})
+print(json.dumps({'preflight':step.preflight({}),'calls':calls}))`);
+  assert.deepEqual(result.calls, [['maintenance', true], ['census']]);
+  assert.equal(result.preflight.cutoverMainImage, 'sha256:main');
+  assert.equal(result.preflight.canaryActor, 'canary-reader');
+});

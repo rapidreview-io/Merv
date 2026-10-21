@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 /** Standard Git smart HTTP. Git owns its wire protocol; Merv owns admission and retained refs. */
 import { randomBytes, createHash } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -140,7 +141,8 @@ END;
 $merv$;
 `,
     });
-    await this.recover();
+    // Automatic startup recovery waits; admitted Git requests still reconcile their own project.
+    if (!bootMaintenance.active) await this.recover();
   }
 
   /** Observe native outcomes after the receiver exits; a proposal never authorizes replay. */

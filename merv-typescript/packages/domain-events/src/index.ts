@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { types as nodeTypes } from 'node:util';
 import type { Context } from 'cordis';
@@ -125,6 +126,7 @@ export class DurableEvents implements DomainEvents {
   }
 
   private wake(delay = 0): void {
+    if (bootMaintenance.active) return;
     if (this.closed) return;
     if (this.running) {
       if (delay === 0) this.wakeRequested = true;
@@ -141,6 +143,7 @@ export class DurableEvents implements DomainEvents {
   }
 
   drain(): Promise<void> {
+    if (bootMaintenance.active) return Promise.resolve();
     this.requireOutsideHandler();
     if (this.running) {
       this.wakeRequested = true;

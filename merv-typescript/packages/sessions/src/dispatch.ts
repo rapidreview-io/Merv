@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { postgresMigrations } from './dispatch.postgres.js';
 import { z } from 'zod';
 import {
@@ -217,6 +218,7 @@ export class SessionDispatch {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('session_dispatch', postgresMigrations);
+    if (bootMaintenance.active) return;
     // Holds made before they were reported are reported once; an unchanged report writes
     // nothing. A schema held back below the holds table has none.
     await this.state.transaction(async (tx) => {

@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
@@ -250,6 +251,7 @@ export class CodeService implements Code {
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
+        if (bootMaintenance.active) return;
         pass ??= this.network(async () => {
           await landing.tick();
           await this.publicationStore.syncDue(() => this.publicationClosed);

@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -200,7 +201,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   async start(): Promise<void> {
     await this.state.migrate('fleet_workflow', modelMigrations);
     // Main, and the relay with it, starts: the visits it cut by stopping are told so.
-    await markRelayStart(this.state);
+    if (!bootMaintenance.active) await markRelayStart(this.state);
     check(
       !this.closed && !this.timer,
       'fleet_workflow_started',
@@ -719,6 +720,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
+    if (bootMaintenance.active) return Promise.resolve();
     if (this.closed) return Promise.resolve();
     return (this.pending ??= this.reconcileOnce().finally(() => {
       this.pending = undefined;

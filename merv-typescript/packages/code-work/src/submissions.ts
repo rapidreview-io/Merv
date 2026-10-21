@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { z } from 'zod';
 import {
   canonical,
@@ -163,11 +164,13 @@ export class CodeSubmissionService {
     await this.state.migrate('code_submissions', { 1: schema });
   }
   start() {
+    if (bootMaintenance.active) return;
     this.release = this.state.onEventsCommitted(() => this.wake());
     this.wake();
   }
   /** Recovery retries only already-approved journal entries; it never captures a working tree. */
   wake() {
+    if (bootMaintenance.active) return;
     if (this.closed || this.pending) return;
     this.pending = this.reconcile()
       .catch(() => undefined)
@@ -489,6 +492,7 @@ export class CodeSubmissionService {
   }
   /** Journal replay is safe after any crash, including durable Git success before DB acknowledgement. */
   async reconcile(): Promise<void> {
+    if (bootMaintenance.active) return;
     check(
       !this.state.ambient,
       'code_commit_in_transaction',

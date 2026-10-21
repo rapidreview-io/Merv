@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   captureTitle,
   check,
@@ -136,6 +137,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
   }
 
   async reconcile(): Promise<void> {
+    if (bootMaintenance.active) return;
     check(
       !this.state.ambient && !this.state.readScope,
       'sandbox_evidence_transaction',

@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   check,
   digest,
@@ -165,12 +166,14 @@ export class MainLanding {
 
   /** Asked from inside a transaction that may have made work to land: it runs after a beat. */
   soon(projectId: string): void {
+    if (bootMaintenance.active) return;
     if (!this.enabled || this.closed) return;
     setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
   }
 
   /** Every project with accepted work: at start, and on Code Work's 30 s timer. */
   async tick(): Promise<void> {
+    if (bootMaintenance.active) return;
     if (!this.enabled) return;
     const projects = await this.state.read((sql) =>
       sql.all<{ project_id: string }>(

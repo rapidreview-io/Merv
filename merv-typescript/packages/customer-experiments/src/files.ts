@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { check, MervError, type State, type Transaction } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { RequestRecord, RequestStore } from './store.js';
@@ -590,6 +591,7 @@ export class FilesService implements RequestFiles {
   }
   /** Deletes every object and the bucket of each ended request once its deleteAt passes. */
   async sweep() {
+    if (bootMaintenance.active) return;
     const rows = await this.state.read((sql) =>
       sql.all<FilesRow>(
         'SELECT * FROM customer_experiment_files WHERE provisioned_at IS NOT NULL AND deleted_at IS NULL',

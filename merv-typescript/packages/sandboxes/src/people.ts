@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import type { Context } from 'cordis';
 import { digest, MervError, type Scope } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
@@ -135,15 +136,21 @@ export class SandboxesPeople implements People {
 
   /** In the background: a person's failure is logged and stops no one else. */
   signedIn(person: Person): void {
+    // Authentication can occur before the HTTP maintenance refusal; backfill resumes this later.
+    if (bootMaintenance.active) return;
     if (!this.#closed) this.#track(this.#ensure(person));
   }
   /** In the background, after the links asked before it: a failure is logged and stops none. */
+  // A committed explicit admin/billing change owns this reconciliation. Do not discard it:
+  // startup backfill intentionally leaves already-linked projects alone. During maintenance
+  // HTTP admits such mutations only through the operator capability and normal authorization.
   adminChanged(projectId: string, admin: Person): void {
     if (!this.#closed) this.#link(() => this.#linked(projectId, admin));
   }
   /** Everyone already signed in, one at a time, once; then every project with an admin and no
    *  link yet. One linked already stays where someone put it. */
   backfill(scope: Scope): void {
+    if (bootMaintenance.active) return;
     this.#track(
       (async () => {
         for (const person of (await scope.directory()).people) {

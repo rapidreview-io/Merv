@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Native cutover: --prepare-cutover persists a forward-only run and pauses before live canary (exit 5).
+// Reopen Main explicitly, then --resume --accept-cutover; plain resume never accepts. Staging is deferred.
 // Release the hosted Pi/Codex worker image with one guarded command, from the founder's Mac:
 //   node deploy/hosted-release.mjs [--dry-run] [--resume] [--host ResearchSuite_Control]
 //        [--staging-host azureuser@dev-experiments.rapidreview.io]
@@ -295,7 +297,9 @@ export function describePlan(p) {
         : []
       : [
           `  gates     ${GATES[p.lane].join(', ')}, then a live canary Pi turn (the host's image diff may raise the lane)`,
-          `  steps     ${STEPS}; rollback after catalog`,
+          p.cutover
+            ? '  steps     prepare under boot maintenance; checkpoint (exit 5); explicit acceptance; NEVER rollback; staging deferred'
+            : `  steps     ${STEPS}; rollback after catalog`,
         ]),
   ].join('\n');
 }
@@ -346,14 +350,20 @@ async function main(args) {
       check: { type: 'boolean' },
       resume: { type: 'boolean' },
       abandon: { type: 'boolean' },
+      'prepare-cutover': { type: 'boolean' },
+      'accept-cutover': { type: 'boolean' },
     },
   });
   if (values.help) {
     console.log(
-      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--prepare-cutover | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
     );
     return 0;
   }
+  if (values['accept-cutover'] && (!values.resume || values['prepare-cutover'] || values.abandon))
+    throw new Error('--accept-cutover requires --resume and cannot prepare or abandon');
+  if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
+    throw new Error('--prepare-cutover cannot abandon, check or mint a credential');
   const dryRun = values['dry-run'];
   if (!dryRun && !values.check && !process.env.MERV_HOSTED_DRIVER) return detached(args);
   const host = values.host;
@@ -564,7 +574,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
   }
   if (values.resume || mode === 'abandon') {
     console.log('No hosted run is open.');
-    return 0;
+    return values['accept-cutover'] ? 2 : 0;
   }
   const since = (from, to, paths, cwd) =>
     from && spawnSync('git', ['-C', cwd, 'cat-file', '-e', `${from}^{commit}`]).status === 0
@@ -584,6 +594,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     sandboxChanged,
     lane: classify(changed, sandboxChanged),
     current,
+    cutover: values['prepare-cutover'] === true,
     canary,
     nodeImage: NODE_IMAGE,
     drainSeconds: Number(values['drain-minutes']) * 60,
@@ -593,9 +604,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     const why = unready(current);
     if (why) console.log(`A real run would refuse: ${why}.`);
   }
-  if (dryRun || (plan.lane === 'none' && current.verified !== false)) return 0;
+  if (dryRun || (plan.lane === 'none' && current.verified !== false && !plan.cutover)) return 0;
   if (!clean()) return 2;
-  const why = unready(current);
+  const why = values['prepare-cutover'] ? null : unready(current);
   if (why) {
     console.error(`hosted release refused, nothing changed: ${why}`);
     return 2;
@@ -646,6 +657,18 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     }
     const { plan, preflight: pre } = s;
     let { build, gates, push: pushed, progress = {} } = s;
+    if ((values['prepare-cutover'] || values['accept-cutover']) && !plan?.cutover)
+      throw new Error('This existing run was not opened with --prepare-cutover');
+    if (plan?.cutover && mode === 'abandon')
+      throw new Error('Cutover runs cannot be abandoned or rolled back; repair and resume forward');
+    if (plan?.cutover && values['accept-cutover'] && !progress.cutoverPrepared)
+      throw new Error('Cutover has no verified preparation checkpoint; resume preparation first');
+    if (plan?.cutover && progress.cutoverPrepared && !values['accept-cutover']) {
+      console.log(
+        `hosted run ${run} prepared; admissions stay fenced. Authorize reopening, then --resume --accept-cutover`,
+      );
+      return 5;
+    }
     if (!pre) {
       onHost(run, 'finish', { result: 'refused' });
       console.error(`hosted run ${run} never passed preflight; closed, nothing changed`);
@@ -775,11 +798,15 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     let failure = progress.rollback;
     if (mode === 'resume' && !failure) {
       // Forward only with the pipeline this run began with, and only while a rollback could run.
-      const why = unready(previous);
+      const why = plan.cutover ? null : unready(previous);
       const moved =
         spawnSync('git', ['diff', '--quiet', plan.sourceCommit, head, '--', ...PIPELINE], {
           cwd: root,
         }).status !== 0 && 'the release pipeline differs from the one this run began with';
+      if (plan.cutover && moved)
+        throw new Error(
+          'Cutover pipeline changed; resume from the original committed pipeline, never roll back',
+        );
       if ((why || moved) && !rollbackSteps(progress, previous).length) {
         close('refused');
         console.error(`hosted run ${run} closed, production unchanged: ${why || moved}`);
@@ -799,7 +826,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     try {
       build ??= onHost(run, 'build');
       row.lane = build.lane;
-      if (build.lane === 'none') {
+      if (build.lane === 'none' && !plan.cutover) {
         const current = { ...previous, ...commits };
         if (previous.verified === false)
           return closeCanaried(current, 'rechecked', 'unverified, rebuilt identical');
@@ -807,6 +834,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         console.log('The hosted image is current: the rebuilt image matches the deployed one.');
         return 0;
       }
+      if (build.lane === 'none' && plan.cutover)
+        throw new Error(
+          'Cutover requires a changed, gated candidate; identical-image preparation is refused',
+        );
       gates ??= onHost(run, 'gates');
       row.gates = `${Object.keys(gates).length} pass`;
       if (!pushed) {
@@ -821,6 +852,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         pushed = onHost(run, 'push', { credential: { username, password } });
       }
     } catch (error) {
+      if (plan.cutover) {
+        onHost(run, 'note', { cutoverFailure: error.message.slice(0, 1000) });
+        throw error;
+      }
       close('failed');
       record('FAILED', error.message, 'nothing changed');
       console.error(`hosted release stopped before any change: ${error.message}`);
@@ -838,17 +873,31 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     Object.assign(row, { image: next.image, releaseId: next.releaseId });
     if (!failure) {
       try {
-        onHost(run, 'catalog', { ...pins(next), entries, protect: [digestOf(previous.image)] });
-        const stale = providers.filter(
-          (p) => onHost(run, 'native', { provider: p }).image !== next.image,
-        );
-        if (stale.length) {
-          onHost(run, 'drain');
-          deploy(next, stale, { deployAttempted: true }); // the note also arms the host's guard timer
+        if (plan.cutover && progress.cutoverPrepared) {
+          // Verify the exact prepared image pair and deliberate reopening before real traffic.
+          onHost(run, 'accept_cutover');
+          row.version = await settle(next.image, 1);
+        } else {
+          onHost(run, 'catalog', { ...pins(next), entries, protect: [digestOf(previous.image)] });
+          const stale = providers.filter(
+            (p) => onHost(run, 'native', { provider: p }).image !== next.image,
+          );
+          if (stale.length) {
+            onHost(run, 'drain');
+            deploy(next, stale, { deployAttempted: true }); // the note also arms the host's guard timer
+          }
+          await landed(next.image, 1);
+          onHost(run, 'switch', pins(next));
+          row.version = await settle(next.image, 1);
+          if (plan.cutover) {
+            onHost(run, 'prepare_cutover');
+            record('PREPARED', 'live canary and staging not run; maintenance remains required');
+            console.log(
+              `hosted run ${run} prepared; authorize reopening, then --resume --accept-cutover`,
+            );
+            return 5;
+          }
         }
-        await landed(next.image, 1);
-        onHost(run, 'switch', pins(next));
-        row.version = await settle(next.image, 1);
         const turn = onHost(run, 'canary', { releaseId: next.releaseId });
         row.canary = `${turn.status} in ${turn.seconds}s`;
       } catch (error) {
@@ -857,6 +906,15 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     }
     if (failure) {
       console.error(`hosted release failed: ${failure}`);
+      if (plan.cutover) {
+        onHost(run, 'note', { cutoverFailure: failure.slice(0, 1000) });
+        record(
+          'CUTOVER OPEN',
+          failure,
+          'no rollback; retain or re-establish maintenance and resume forward',
+        );
+        return 3;
+      }
       let outcome = 'nothing to roll back';
       let code = 1;
       try {
@@ -908,7 +966,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`hosted release ${run}: ${outcome}`);
       return code;
     }
-    const staged = await stage(entry, next.image);
+    const staged = plan.cutover
+      ? 'DEFERRED: staging Main protocol compatibility requires separate acceptance'
+      : await stage(entry, next.image);
     close('pass', { current: next, inputs: build.inputs });
     record('pass', `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`, staged);
     console.log(JSON.stringify({ run, ...next, version: row.version, canary: row.canary, staged }));

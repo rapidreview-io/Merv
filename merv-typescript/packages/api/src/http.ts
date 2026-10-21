@@ -4,6 +4,11 @@ import {
   type ServerResponse,
   type Server as HttpServer,
 } from 'node:http';
+import {
+  bootMaintenance,
+  maintenancePublicRead,
+  maintenanceRefusal,
+} from '@merv/contracts/maintenance';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -272,7 +277,7 @@ export class ApiServer {
       '/health',
       (req, _res, r) => {
         if (req.method !== 'GET' || r.url.pathname !== '/health') throw unknownEndpoint();
-        return { status: 'ok' };
+        return { status: 'ok', ...(bootMaintenance.active ? { maintenance: true } : {}) };
       },
       { public: true },
     );
@@ -605,6 +610,14 @@ export class ApiServer {
       throw unknownEndpoint();
     }
     const principal = open(mounted, url.pathname) ? undefined : await this.authenticate(req, url);
+    // A second deployment-only capability admits explicit acceptance requests. It never
+    // replaces route authentication/authorization or wakes a background scheduler.
+    if (
+      bootMaintenance.active &&
+      !maintenancePublicRead(req.method, url.pathname) &&
+      !bootMaintenance.operator(req.headers['x-merv-maintenance-operator'])
+    )
+      maintenanceRefusal();
     // A route withdrawn while its caller was authenticated reaches no handler.
     if (this.mounts.get(prefix) !== mounted)
       throw new MervError('unavailable', 'This route was withdrawn', 503);
@@ -621,6 +634,11 @@ export class ApiServer {
   private async upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     this.checkOrigin(req);
     if (this.stopping) throw new MervError('unavailable', 'API server is stopping', 503);
+    if (
+      bootMaintenance.active &&
+      !bootMaintenance.operator(req.headers['x-merv-maintenance-operator'])
+    )
+      maintenanceRefusal();
     const url = new URL(req.url ?? '/', 'http://localhost');
     const prefix = `/${url.pathname.split('/')[1]}`;
     const mounted = this.mounts.get(prefix);

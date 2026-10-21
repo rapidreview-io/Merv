@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   check,
   type Scope,
@@ -146,6 +147,7 @@ export class SandboxRuns {
   }
 
   reconcile(): Promise<void> {
+    if (bootMaintenance.active) return Promise.resolve();
     return (this.reconciling ??= this.pass().finally(() => {
       this.reconciling = undefined;
     }));
