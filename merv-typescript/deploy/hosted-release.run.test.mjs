@@ -961,3 +961,87 @@ test('deferral cannot be added to a run already propagating staging', () => {
   assert.equal(refused.sim.stagingOwner, first.sim.stagingOwner);
   assert.equal(refused.sim.active, first.sim.active);
 });
+
+test('identical rebuild and successful or failed canary recheck retain outstanding staging deferral', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Storage key pending',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  for (const [name, verified, fail, status] of [
+    ['current', true, {}, 0],
+    ['rechecked', false, {}, 0],
+    ['failed-recheck', false, { canary: 'all' }, 4],
+  ]) {
+    const r = simulate(`retain-${name}`, {
+      ...STAGING,
+      lane: 'none',
+      fail,
+      state: {
+        current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1, verified },
+        inputs: [],
+        staging,
+      },
+    });
+    assert.equal(r.status, status, r.out);
+    assert.deepEqual(r.sim.state.staging, staging);
+    assert.deepEqual(JSON.parse(r.record).staging, staging);
+    assert.deepEqual(r.sim.staging, STAGING.staging);
+    assert.equal(r.sim.state.current.verified === false, status === 4);
+  }
+});
+
+test('later changed production release retains deferral when staging remains owned', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Storage key pending',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  const r = simulate('retain-changed', {
+    ...STAGING,
+    stagingOwner: 'isolated-cutover',
+    state: {
+      current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 },
+      inputs: [],
+      staging,
+    },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.sim.state.current.image, NEXT);
+  assert.deepEqual(r.sim.state.staging, staging);
+  assert.deepEqual(JSON.parse(r.record).staging, staging);
+  assert.deepEqual(r.sim.staging, STAGING.staging);
+  assert.equal(r.sim.stagingOwner, 'isolated-cutover');
+});
+
+test('explicit later deferral supersedes old receipt only after accepting the new image', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Old reason',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  const r = simulate(
+    'supersede-deferred',
+    {
+      ...STAGING,
+      state: {
+        current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 },
+        inputs: [],
+        staging,
+      },
+    },
+    { args: ['--defer-staging', 'Still waiting for staging storage'] },
+  );
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.sim.state.staging.image, NEXT);
+  assert.equal(r.sim.state.staging.reason, 'Still waiting for staging storage');
+  assert.notEqual(r.sim.state.staging.sourceRun, staging.sourceRun);
+  assert.deepEqual(JSON.parse(r.record).staging, r.sim.state.staging);
+  assert.deepEqual(r.sim.staging, STAGING.staging);
+});

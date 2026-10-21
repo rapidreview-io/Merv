@@ -876,6 +876,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       prettier(file);
     };
     const close = (result, state) => {
+      // Updating production provenance is not staging acceptance. Keep the outstanding
+      // receipt, including its original target, unless this transition explicitly replaces it.
+      if (state && !Object.hasOwn(state, 'staging') && live.state?.staging?.status === 'deferred')
+        state = { ...state, staging: live.state.staging };
       onHost(run, 'finish', { result, state });
       if (!state) return;
       const file = join(

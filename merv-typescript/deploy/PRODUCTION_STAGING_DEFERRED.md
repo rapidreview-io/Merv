@@ -56,3 +56,11 @@ Later staging acceptance uses the supported isolated staging cutover with its ow
 accepted production source. A production-deferred receipt is not staging acceptance. If staging already
 has a prepared source checkpoint, its source-change guard still applies; preserve it and follow its
 reviewed forward recovery. The deferral does not make that old checkpoint accept a new source.
+
+Production-only state refreshes (including identical-image rebuilds and successful or failed canary
+rechecks) retain any outstanding staging deferral. Later changed releases also retain it unless an
+explicit transition supplies a replacement receipt. The retained receipt keeps its original source
+run/image; it is an outstanding historical obligation, not a claim that staging runs the latest
+production image. A new explicit deferral supersedes that current receipt only after its new
+production image passes acceptance. Historical run receipts remain intact. Ordinary staging
+propagation alone is not independent staging canary acceptance and does not erase the obligation.

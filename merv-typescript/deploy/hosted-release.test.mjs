@@ -1911,3 +1911,18 @@ print(json.dumps({'refused':len(refused),'receipt':vm.read(r/'staging-deferred.j
   assert.equal(result.closed, true);
   assert.deepEqual(result.receipt, result.state.staging);
 });
+
+test('host state refresh cannot drop an outstanding staging deferral', () => {
+  const result = py(`${scratch}
+vm.owner=lambda:'';vm.unhold=lambda:None;vm.subprocess.run=lambda *a,**k:None
+old={'status':'deferred','reason':'Storage pending','sourceRun':'earlier','image':'old-image','releaseId':'old-release'}
+vm.atomic(vm.HOME/'state.json',json.dumps({'current':{'image':'old-image'},'staging':old}).encode())
+step=vm.Step(r,{})
+for status in ['current','rechecked','rechecked, canary failed','pass']:
+ step.finish({'result':status,'state':{'current':{'image':'new-image'},'inputs':[]}})
+ assert vm.read(vm.HOME/'state.json')['staging']==old
+print(json.dumps(vm.read(vm.HOME/'state.json')))`);
+  assert.equal(result.current.image, 'new-image');
+  assert.equal(result.staging.status, 'deferred');
+  assert.equal(result.staging.sourceRun, 'earlier');
+});

@@ -1450,6 +1450,9 @@ class Step:
             with authorized(self.run.name):
                 unhold()
         if arg.get('state'):
+            previous=read(HOME / 'state.json') or {}
+            if 'staging' not in arg['state'] and (previous.get('staging') or {}).get('status') == 'deferred':
+                arg['state']={**arg['state'],'staging':previous['staging']}
             current=arg['state'].get('current') or {}
             canary=read(self.run / 'canary.json') or {}
             if (arg.get('result') in ('pass','rechecked','abandoned') and current.get('verified') is not False
