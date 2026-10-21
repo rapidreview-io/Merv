@@ -581,6 +581,11 @@
       "purpose": "Connects Code Work to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
+          "name": "code.git_credential",
+          "description": "Prepare short-lived Git access through the signed-in account for this explicit projectId. Supply an ephemeral RSA public key (SPKI PEM, 2048–4096 bits); returns an RSA-OAEP-SHA256 encrypted token for local decryption directly into Git credential-cache. Never print decrypted credentials or put them in URLs, command arguments, files or chat. Read mode supports clone/fetch; write follows project write permission for user branches and preserves normal push admission. Renew before expiry through this tool with saved MCP auth; no Settings key or second login.",
+          "readOnly": false
+        },
+        {
           "name": "code.publication.read",
           "description": "Read retained local integration and historical publication evidence. No external service is contacted.",
           "readOnly": true
@@ -639,6 +644,11 @@
       "label": "Code Work",
       "purpose": "Connects Git to generic work units: exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded.",
       "exposedTools": [
+        {
+          "name": "code.git_credential",
+          "description": "Prepare short-lived Git access through the signed-in account for this explicit projectId. Supply an ephemeral RSA public key (SPKI PEM, 2048–4096 bits); returns an RSA-OAEP-SHA256 encrypted token for local decryption directly into Git credential-cache. Never print decrypted credentials or put them in URLs, command arguments, files or chat. Read mode supports clone/fetch; write follows project write permission for user branches and preserves normal push admission. Renew before expiry through this tool with saved MCP auth; no Settings key or second login.",
+          "readOnly": false
+        },
         {
           "name": "code.publication.read",
           "description": "Read retained local integration and historical publication evidence. No external service is contacted.",
