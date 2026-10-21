@@ -29,13 +29,13 @@ Run: codex plugin marketplace add MARKETPLACE
 On versions offering it, run: codex plugin add ${name}@${name}
 Otherwise install Merv from that marketplace in the desktop Plugins directory.
 Connect/sign in from the plugin's connection UI. Complete the browser authorization.
-If the installed client cannot load portable plugin MCP servers, update it. A direct remote
-connection is also supported: codex mcp add ${name} --url ${origin}/mcp, then codex mcp login ${name}.
+The package uses Codex's supported compatibility manifest and remote MCP bundle.
+A direct remote connection is also supported: codex mcp add ${name} --url ${origin}/mcp, then codex mcp login ${name}.
 Choose that route instead of the bundled connection, not alongside it. Direct registration
 alone does not install the plugin skills.
 
 ## Claude Code
-From the client bundle's clients directory (MARKETPLACE):
+From the extraction directory (MARKETPLACE):
 claude plugin marketplace add MARKETPLACE
 claude plugin install ${name}@${name} --scope user
 Open /mcp, select the plugin's Merv server and authenticate in the browser.

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import { MervError, type Principal, type State, type Sql } from '@merv/contracts';
 import type { ProjectScope } from './index.js';
@@ -25,6 +26,10 @@ function requireOAuth(
 }
 export const oauthConfig = z
   .object({
+    trustedProxyIps: z
+      .array(z.string().refine((ip) => isIP(ip) !== 0))
+      .max(32)
+      .default(['127.0.0.1', '::1']),
     publicOrigin: z.string().refine((value) => {
       try {
         const u = new URL(value);
@@ -137,7 +142,6 @@ export class OAuth {
         grant_types: z.array(z.enum(['authorization_code', 'refresh_token'])).optional(),
         response_types: z.array(z.literal('code')).optional(),
       })
-      .passthrough()
       .safeParse(input);
     requireOAuth(parsed.success, 'invalid_client_metadata');
     const data = parsed.data;
@@ -328,8 +332,6 @@ export class OAuth {
         );
         requireOAuth(
           row &&
-            !row.used &&
-            row.expires_at > iso(this.clock()) &&
             row.client_id === client.id &&
             row.resource === this.resource &&
             row.redirect_uri === p.get('redirect_uri') &&
@@ -342,6 +344,12 @@ export class OAuth {
             createHash('sha256').update(verifier).digest('base64url') === row.challenge,
           'invalid_grant',
         );
+        if (row.used) {
+          await tx.run('UPDATE oauth_grants SET revoked=1 WHERE key_id=?', row.key_id);
+          await this.scope.userKeys.revokeDelegation(row.key_id, tx);
+          return null; // Commit genuine code-replay revocation before returning the error.
+        }
+        requireOAuth(row.expires_at > iso(this.clock()), 'invalid_grant');
         await this.scope.userKeys.authenticateDelegation(row.key_id);
         await tx.run('UPDATE oauth_requests SET used=1 WHERE id=?', row.id);
         const grant = secret();
@@ -374,7 +382,7 @@ export class OAuth {
       await tx.run('UPDATE oauth_tokens SET used=1 WHERE hash=?', t.hash);
       return this.issue(tx, t.grant_id);
     });
-    requireOAuth(result, 'invalid_grant', 'Refresh token replay; sign in again');
+    requireOAuth(result, 'invalid_grant', 'Authorization replay; sign in again');
     return result;
   }
   async authenticate(token: string): Promise<Principal> {

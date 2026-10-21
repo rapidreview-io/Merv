@@ -45,7 +45,7 @@ From `merv-typescript/`:
 
 ```sh
 MERV_TEST_POSTGRES_URL=postgres://postgres:oauth-local-test@127.0.0.1:55441/postgres \
-  node --import tsx --test tests/oauth.test.ts tests/client-bundles.test.ts \
+  node --import tsx --test tests/oauth.test.ts tests/oauth-admission.test.ts tests/client-bundles.test.ts \
   tests/credential-lock.test.ts tests/user-key-api.test.ts \
   tests/credential-auth.test.ts tests/api.test.ts
 node --test deploy/render-config.test.mjs
@@ -54,7 +54,7 @@ npm run build:ui
 npm run build
 ```
 
-The focused command passed 47 tests; deployment rendering passed 15 tests. Server
+The focused command passed 52 tests; deployment rendering passed 16 tests. Server
 build, UI typecheck and UI build passed (the UI retains existing bundle-size warnings).
 
 The focused suite covers code/callback/PKCE/resource/client binding, code reuse,
@@ -100,10 +100,40 @@ Results:
 **The harness approves consent in-process as a synthetic account.** It does not
 exercise Supabase browser sign-in, a human clicking consent, model authentication,
 a fresh model chat, or production. Codex's `mcp list/get` evidence cannot establish
-bundled-plugin runtime loading. Both portable and legacy Codex manifest layouts
-are supplied; they are alternatives, not two independently registered servers.
-The production test must check the installed plugin in the actual desktop/CLI
-runtime. Do not interpret a successful plugin install as successful MCP usage.
+bundled-plugin runtime loading. The separate model harness below establishes bundled runtime loading locally.
+Production acceptance still requires the deployed package and browser identity flow.
+
+## Fresh model sessions through the installed plugin
+
+Version 0.5.1 was tested with Codex CLI **0.155.0-alpha.2** and Claude Code
+**2.1.304**, using two new model processes per client after one native OAuth login.
+All four sessions loaded the research skill, called the bundled project-list and
+project-read tools, and reported the exact synthetic project name and operator
+role. No direct MCP registration or injected Merv API key was used. No global
+client configuration or binary was changed.
+
+```sh
+MERV_ALLOW_MODEL_TESTS=1 \
+MERV_TEST_POSTGRES_URL=postgres://postgres:oauth-local-test@127.0.0.1:55441/postgres \
+  node --import tsx scripts/oauth-plugin-model-smoke.ts
+```
+
+This opt-in harness makes paid model calls. It privately copies existing Codex
+model authentication into a temporary directory and reads Claude model OAuth
+from macOS Keychain into child-process memory. It never prints these credentials.
+Merv consent remains synthetic; native clients perform DCR, PKCE and token storage.
+Codex uses its native app-server OAuth interface; its fixture is test-only and is
+not shipped in the plugin. Configuration directories are removed afterward.
+
+Both Codex 0.155.0-alpha.2 and desktop 0.163.0-alpha.10.2 silently omitted bundled
+MCP when root portable manifests shadowed the compatibility manifest. The bundle
+therefore ships only `.codex-plugin/plugin.json` and `.mcp.json`. Regression tests
+prevent reintroducing the shadowing files. Nonproduction MCP server names, plugin
+names and marketplace names all receive the same origin-specific suffix.
+
+Follow-up security checks cover authorization-code replay revocation (only after
+validating the original client, resource, callback and PKCE proof), stripping
+client-supplied registration response fields, and bounded public-route admission.
 
 ## Required combined-release acceptance
 
@@ -113,8 +143,8 @@ runtime. Do not interpret a successful plugin install as successful MCP usage.
    or Git chat branch changes were made here.
 2. Publish the complete server/UI/client build with explicit `MERV_MCP_OAUTH=true`
    and retired flags removed. Verify public-origin metadata and reverse-proxy
-   forwarding. Rate-limit unauthenticated OAuth registration/authorization at
-   ingress. Public-directory publication/review is separate; OIDC workspace
+   forwarding. Verify the application admission limits and trusted immediate proxy
+   addresses described in CLIENT_CUTOVER.md. Public-directory publication/review is separate; OIDC workspace
    domain-restriction support is not claimed for a public directory submission.
 3. In isolated **real** Codex and Claude configurations, follow only the published
    URL, install the plugin, and finish browser sign-in. A human must choose/sign

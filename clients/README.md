@@ -5,8 +5,8 @@ The guide downloads an ordinary plugin package, installs it in Codex or Claude
 Code, and starts the client's browser sign-in. No local connector runs. The
 connection and credentials belong to the client and persist across chats.
 
-The 0.5.0 bundles combine remote MCP and three concise skills. Codex uses portable
-`plugin.json` + `mcp.json`; Claude Code uses `.claude-plugin/plugin.json` +
+The 0.5.1 bundles combine remote MCP and three concise skills. Codex uses
+`.codex-plugin/plugin.json` + `.mcp.json`; Claude Code uses `.claude-plugin/plugin.json` +
 `.mcp.json`. The server publishes the same files at `/connect/bundle.tar.gz` and
 `/connect/bundle.json`, stamping its origin and a distinct marketplace/plugin name
 for nonproduction hosts. Installing Merv does not preapprove every tool.
@@ -19,7 +19,7 @@ From a checkout, add `clients/` as a local marketplace, then install `merv@merv`
   `claude plugin install merv@merv --scope user`. Authenticate from `/mcp`.
 
 Use one bundled or direct MCP connection per origin. If Merv is already connected,
-reuse it. Older client versions without portable plugin support need updating or
+reuse it. Client versions without plugin support need updating or
 the documented direct remote MCP fallback; that fallback alone has no skills.
 
 Sign in or create an account through the browser's normal identity flow (Google

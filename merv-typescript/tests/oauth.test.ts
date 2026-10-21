@@ -150,9 +150,11 @@ test('concurrent code exchanges issue once; concurrent refresh replay fails clos
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   const first = results.find((r) => r.status === 'fulfilled')!;
   if (first.status !== 'fulfilled') return;
+  await assert.rejects(f.oauth.authenticate(first.value.access_token), { status: 401 });
+  const fresh = await f.grant();
   const rs = await Promise.allSettled([
-    f.oauth.exchange(f.refresh(first.value.refresh_token)),
-    f.oauth.exchange(f.refresh(first.value.refresh_token)),
+    f.oauth.exchange(f.refresh(fresh.refresh_token)),
+    f.oauth.exchange(f.refresh(fresh.refresh_token)),
   ]);
   assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 1);
   for (const r of rs)
@@ -384,4 +386,84 @@ test('stored grants cannot be used at a different resource sharing the same data
   refresh.set('resource', other.resource);
   await assert.rejects(other.exchange(refresh), refused('invalid_grant'));
   await f.oauth.authenticate(tokens.access_token);
+});
+
+test('genuine code replay revokes its grant; wrong proof, callback or client cannot revoke it', async (t) => {
+  const f = await fixture(t);
+  const code = await f.code();
+  const issued = await f.oauth.exchange(code);
+  const other = await f.oauth.register({ redirect_uris: ['http://localhost:9999/callback'] });
+  for (const [field, value] of [
+    ['code_verifier', 'z'.repeat(43)],
+    ['redirect_uri', 'http://localhost:9999/callback'],
+    ['client_id', other.client_id],
+  ]) {
+    const wrong = new URLSearchParams(code);
+    wrong.set(field!, value!);
+    await assert.rejects(f.oauth.exchange(wrong), refused('invalid_grant'));
+    await f.oauth.authenticate(issued.access_token);
+  }
+  await assert.rejects(f.oauth.exchange(code), refused('invalid_grant'));
+  await assert.rejects(f.oauth.authenticate(issued.access_token), { status: 401 });
+  await assert.rejects(f.oauth.exchange(f.refresh(issued.refresh_token)), refused('invalid_grant'));
+});
+
+test('registration ignores response-only and unsupported fields and returns its stored identity', async (t) => {
+  const f = await fixture(t);
+  const registered = await f.oauth.register({
+    redirect_uris: ['http://localhost:9999/callback'],
+    client_id: 'supplied-id',
+    client_id_issued_at: -1,
+    client_secret: 'do-not-echo',
+  });
+  assert.notEqual(registered.client_id, 'supplied-id');
+  assert.ok(registered.client_id_issued_at > 0);
+  assert.equal('client_secret' in registered, false);
+  const params = f.params();
+  params.set('client_id', registered.client_id);
+  params.set('redirect_uri', registered.redirect_uris[0]!);
+  assert.ok(await f.oauth.start(params));
+});
+
+test('public registration and authorization are rate-limited before durable allocation', async (t) => {
+  const f = await fixture(t);
+  const tools = new ToolRegistry(f.scope, f.scope.toolPolicy);
+  const identity = {
+    configuration: () => ({ enabled: false }),
+    verify: async () => {
+      throw new Error('unused');
+    },
+  };
+  const api = new ApiServer(f.scope, tools);
+  api.mount('/oauth', oauthRoutes(f.oauth, identity), { public: true });
+  const base = await api.start();
+  t.after(() => api.stop());
+  t.after(() => tools.close());
+  const register = () =>
+    fetch(`${base}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['http://localhost:9988/callback'] }),
+    });
+  for (let i = 0; i < 10; i++) assert.equal((await register()).status, 201);
+  const limited = await register();
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get('retry-after')) > 0);
+  assert.equal(
+    Number(
+      (await f.state.read((sql) =>
+        sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM oauth_clients'),
+      ))!.n,
+    ),
+    11,
+  );
+  for (let i = 0; i < 30; i++)
+    assert.equal(
+      (await fetch(`${base}/oauth/authorize?${f.params()}`, { redirect: 'manual' })).status,
+      302,
+    );
+  assert.equal(
+    (await fetch(`${base}/oauth/authorize?${f.params()}`, { redirect: 'manual' })).status,
+    429,
+  );
 });

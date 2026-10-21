@@ -271,7 +271,7 @@ export const scopeApiPlugin = {
         );
       const oauth = new OAuth(ctx.state, ctx.scope as ProjectScope, config.oauth.publicOrigin);
       await oauth.initialize();
-      const handler = oauthRoutes(oauth, ctx.identity);
+      const handler = oauthRoutes(oauth, ctx.identity, config.oauth.trustedProxyIps);
       ctx.effect(() => ctx.api.mount('/oauth', handler, { public: true }));
       ctx.effect(() => ctx.api.mount('/.well-known', handler, { public: true }));
       ctx.effect(() =>
