@@ -1,0 +1,135 @@
+{
+  "checkedAt": "2026-10-21T10:47:25.034105+00:00",
+  "status": "ready_for_parent_integrated_release_preparation",
+  "codeCommit": "9081a32ec1fe5c31dd2b4f3bdeebfd2a90ceead2",
+  "productionMigrationApplied": false,
+  "candidateDeployed": false,
+  "productionAcceptanceComplete": false,
+  "sourceArchive": {
+    "release": "20261021T104643Z-9081a32e-3b9ab74ee93d",
+    "contentSha256": "3b9ab74ee93d8ea070d7bea304109bc9556b74d0780b2936c4c31195b9c5d425",
+    "archiveSha256": "5f9cd52b9e92ef545bdbe4383a6f738f8e0897219f17cfea737314ddef4dcdb3"
+  },
+  "archiveFiles": 1456,
+  "applicationSourceDiff": {
+    "added": 5237,
+    "deleted": 8695,
+    "net": -3458
+  },
+  "readOnlyProductionPlan": {
+    "hash": "84fe162b88eef4e8db108ff83a8dddd9bda17422496b355098e43acf99597c41",
+    "ready": true,
+    "workflows": 39,
+    "migrate": 38,
+    "retainArtifactReview": 1,
+    "commandRetirements": [
+      {
+        "id": "codecmd_4bb21dbc0c594ad1aeca5748ca957e58",
+        "eligible": true,
+        "sourceHash": "603ce8b343bde66c3ea14efef32efd58f0d3a3e246df98e8e49491fac6858e3c"
+      }
+    ],
+    "blockers": {
+      "contractConflicts": [],
+      "unsupported": [],
+      "commands": [],
+      "invalidRetirements": [],
+      "sessions": [],
+      "leases": [],
+      "missingDefinitions": [],
+      "transfers": [],
+      "writers": [],
+      "allocations": [],
+      "managedRunners": []
+    },
+    "scope": "Read-only repeatable-read preview. Regenerate after maintenance and fresh verified backup; this preview authorizes no live mutation."
+  },
+  "validation": {
+    "application": {
+      "tests": 1012,
+      "passed": 1011,
+      "failed": 0,
+      "skipped": 1,
+      "skip": "Linux subreaper test on macOS"
+    },
+    "deployment": {
+      "tests": 77,
+      "passed": 77,
+      "failed": 0
+    },
+    "recovery": {
+      "tests": 30,
+      "passed": 30,
+      "failed": 0
+    },
+    "backendBuild": "passed",
+    "uiBuild": "passed",
+    "releaseDryRun": "passed",
+    "logs": {
+      "application": {
+        "path": "/tmp/merv-native-final-suite.log",
+        "sha256": "3535179608b7f8b399f020d65929bb56b01d55af0e8e59d01ae3abc3641d6bef"
+      },
+      "deployment": {
+        "path": "/tmp/merv-native-final-deploy-tests.log",
+        "sha256": "568ea3653c82897df940197a49ae26fd2a2f9fed7df54632f82d2fbfa3df8c91"
+      },
+      "recovery": {
+        "path": "/tmp/merv-recovery-review-final.log",
+        "sha256": "6ade8d331e7c343f712a6a6156d3960b638a81b427d73070cc212a613813618c"
+      },
+      "backendBuild": {
+        "path": "/tmp/merv-native-final-build.log",
+        "sha256": "fbf368a21484ec78beefa04e13d70c5ae47f8ca53737bd691c711f56fce17f4f"
+      },
+      "uiBuild": {
+        "path": "/tmp/merv-native-final-ui-build.log",
+        "sha256": "8fc7959af64b212ce6a73e081fea4fc3b0d7ce908641889eaddf58f9f8180dc1"
+      },
+      "releaseDryRun": {
+        "path": "/tmp/merv-native-release-dry-run.log",
+        "sha256": "0527e1b51c0afffd8e0fac89cad9ec618ff496bf017b3ad89881d036a12260e6"
+      }
+    }
+  },
+  "independentReview": {
+    "migration": "replay/immutability and successor-upload provenance gaps fixed and regression-tested",
+    "recovery": "nested verification database storage-path gap fixed and regression-tested",
+    "rollback": "immutable previous-image capability check replaces database-state inference",
+    "wholeCandidate": "parent chat owns final independent review against the exact commit"
+  },
+  "recoveryRehearsal": {
+    "operation": "installed-recovery-verify",
+    "snapshot": "20261020T040557Z-3f4618afb38e45539e09c0891c048652",
+    "startedAt": "2026-10-21T10:23:17.250563+00:00",
+    "finishedAt": "2026-10-21T10:27:46.048991+00:00",
+    "exit": 0,
+    "result": "verified",
+    "repositories": 61,
+    "network": "none",
+    "mainContainerId": "163002b82b1dc4cee5d1bedf7e8ebdd470e1741071a7c55a99a13497f1b25686",
+    "mainImage": "sha256:7f7b6177a78023f4e3b954b8f28466fb1b622c26509fcf9370502b17b9c730a4",
+    "mainStartedAt": "2026-10-21T07:02:44.724215975Z",
+    "mainUnchanged": true,
+    "mainHealth": "healthy",
+    "mainRestarts": 0,
+    "cleanup": {
+      "verificationRecordExists": false,
+      "remainingVerifierContainers": [],
+      "stagingFiles": []
+    },
+    "limits": [
+      "Existing snapshot only; no fresh backup created",
+      "Snapshot completed 2026-10-20 and fails the configured freshness gate",
+      "Verifies Merv schema and server Code, not external blobs or runner-local files",
+      "No live database writes, Main restart, deployment or configuration changes"
+    ]
+  },
+  "requiredBeforeRelease": [
+    "Integrate parent OAuth/plugin changes and boot-maintenance fence; no independent deployment from this branch",
+    "Fresh matched stopped-Main DB/Code snapshot, COMPLETE checksums and isolated restore verification; retain external objects separately",
+    "Review and apply final offline plan; retain immutable audit receipt; use no-rollback at the legacy boundary",
+    "Deploy exact compatible Main and hosted code.git.1 image under maintenance",
+    "Run public Git, actual Pi/Fleet frozen-review/approval/shutdown, lost-acknowledgment and external-terminal Claude/Codex acceptance in production"
+  ]
+}
