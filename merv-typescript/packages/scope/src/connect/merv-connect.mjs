@@ -1,11 +1,6 @@
 #!/usr/bin/env node
-// Merv's agent connector, stamped by one Merv server at /connect: a dependency-free stdio MCP
-// server forwarding to it, and the command line that signs in, out and registers with clients.
-//
-// The key lives in ~/.merv/connect/<host>/credentials.json (0600). It is never printed, never in a
-// tool result, and never in this program's output: every line it prints, on either stream, passes
-// through say(), which redacts it as a backstop. Any process running as this person can still read
-// that file.
+// Stamped stdio MCP proxy and sign-in CLI. Keys stay in private credentials.json;
+// all output passes through say() for redaction. Same-user processes can read the file.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -34,7 +29,6 @@ function redact(value) {
     );
   return value;
 }
-/** The one way out: every line on stdout or stderr, text or a JSON-RPC message, is redacted. */
 function say(value, stream = process.stdout) {
   const clean = redact(value);
   stream.write(`${typeof clean === 'string' ? clean : JSON.stringify(clean)}\n`);
@@ -49,7 +43,6 @@ const origin = new URL(ORIGIN);
 const loopback = ['127.0.0.1', '[::1]', 'localhost'].includes(origin.hostname);
 if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && loopback))
   fail('This connector was stamped with an origin it refuses (https only).');
-// The host, `_` and the port: an IPv6 literal without brackets, a `_` for each colon.
 const HOSTDIR = origin.host.replace(/[[\]]/g, '').replaceAll(':', '_');
 if (!/^[a-z0-9._-]+$/.test(HOSTDIR)) fail('This connector was stamped with an invalid origin.');
 
@@ -69,8 +62,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class Refusal extends Error {}
 
-/** Refuses what another user placed or can change: a link, the wrong kind, not this person's (HOME
- *  may be root's), or open to others beyond `mask`. */
+/** Refuse symlinks, wrong types/owners and permissions beyond mask; HOME may be root-owned. */
 function check(path, stat, kind, mask, owners = [uid]) {
   if (stat.isSymbolicLink()) throw new Refusal(`Refusing ${path}: it is a symlink.`);
   if (kind === 'dir' ? !stat.isDirectory() : !stat.isFile())
@@ -80,8 +72,7 @@ function check(path, stat, kind, mask, owners = [uid]) {
   if (stat.mode & mask)
     throw new Refusal(`Refusing ${path}: it is open to other users (chmod go-w,go-r).`);
 }
-/** HOME and each directory below it to `dirs`' last: missing ones made 0700; none writable by
- *  anyone else, so no one else can swap a name inside. Ours are kept 0700. */
+/** Check HOME and create private descendants; no directory may be writable by others. */
 function ensureDir(dirs = [MERV, CONNECT, DIR]) {
   check(HOME, fs.statSync(HOME), 'dir', 0o022, [uid, 0]);
   for (const dir of dirs) {
@@ -91,8 +82,7 @@ function ensureDir(dirs = [MERV, CONNECT, DIR]) {
     if (dir !== MERV && stat.mode & 0o077) fs.chmodSync(dir, 0o700);
   }
 }
-/** A file's text through one descriptor, opened without following a link and checked there as
- *  this person's own regular file closed to others; undefined when absent. */
+/** No-follow descriptor read, checked for ownership/type/mode; undefined when absent. */
 function readPrivate(path, mask = 0o077, snapshot = false) {
   let fd;
   try {
@@ -119,10 +109,7 @@ function readFile(name) {
   ensureDir();
   return readPrivate(join(DIR, name));
 }
-function readJson(name) {
-  const text = readFile(name);
-  return text === undefined ? undefined : parse(text);
-}
+const readJson = (name) => parse(readFile(name));
 /** A temp file created exclusively beside the target, then renamed over it. */
 function writeAtomic(dir, name, text, mode = 0o600) {
   const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
@@ -163,7 +150,6 @@ const parse = (text) => {
     return undefined;
   }
 };
-/** A lock's holder, or `{ stale: true }` once it is dead, older than 120 s, or unreadable and old. */
 function lockState(path) {
   let text;
   let stat;
@@ -185,8 +171,7 @@ function lockState(path) {
   return { text, stale: !alive || Date.now() - at > 120_000 };
 }
 
-/** One holder at a time per origin. A stale lock is removed only under a second, short-lived lock,
- *  and only if it is still the very lock judged stale, so two waiters never both take over. */
+/** Break stale locks under a second lock, rechecking identity before removal. */
 async function withLock(fn, path = join(DIR, 'lock')) {
   ensureDir();
   const token = randomUUID();
@@ -237,10 +222,10 @@ async function api(path, { method = 'GET', body, key, timeout = 30_000 } = {}) {
     redirect: 'error',
     signal: AbortSignal.timeout(timeout),
     headers: {
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...(key ? { authorization: `Bearer ${key}` } : {}),
+      ...(body !== undefined && { 'content-type': 'application/json' }),
+      ...(key && { authorization: `Bearer ${key}` }),
     },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body !== undefined && { body: JSON.stringify(body) }),
   });
   return { status: response.status, value: await response.json().catch(() => undefined) };
 }
@@ -254,8 +239,7 @@ function credential() {
   return stored;
 }
 
-/** After a 401 for `keyId`, with the lock held: delete that exact key if it is still the stored
- *  one, and return whatever other credential another process stored meanwhile. */
+/** Under lock after 401: delete only that key, or return a concurrently replaced credential. */
 function dropKey(keyId) {
   const stored = readJson('credentials.json');
   if (stored?.keyId === keyId) remove('credentials.json');
@@ -302,8 +286,8 @@ const statusLine = (value) =>
 const already = (stored) =>
   `Already signed in as ${stored.email} (${stored.label}). To switch accounts, the person runs \`merv-connect logout\` in a terminal first.`;
 
-async function startLogin(email, client, next) {
-  return await withLock(async () => {
+const startLogin = (email, client, next) =>
+  withLock(async () => {
     const stored = await liveCredential();
     if (stored) throw new Refusal(already(stored));
     const secret = randomBytes(32).toString('base64url');
@@ -323,10 +307,8 @@ async function startLogin(email, client, next) {
     writeJson('pending.json', { generation: randomUUID(), loginId, verifier: secret, expiresAt });
     return `Code sent if ${email} is a Merv account in a project. Request: ${phrase}. Tell the person to check that the email shows the same words, then ${next}.`;
   });
-}
-
-async function finishLogin(code) {
-  return await withLock(async () => {
+const finishLogin = (code) =>
+  withLock(async () => {
     const pending = readJson('pending.json');
     if (!pending || Date.parse(pending.expiresAt) <= Date.now())
       throw new Refusal('No sign-in is waiting, or it expired. Start again with login <email>.');
@@ -356,8 +338,6 @@ async function finishLogin(code) {
     verifier = undefined;
     return statusLine({ signedIn: true, email, projects, ...key });
   });
-}
-
 async function status() {
   const stored = credential();
   if (!stored) return { signedIn: false };
@@ -377,8 +357,8 @@ async function status() {
   };
 }
 /** Under the lock, so a sign-in started earlier can never complete after it: its verifier goes. */
-async function logout() {
-  return await withLock(async () => {
+const logout = () =>
+  withLock(async () => {
     remove('pending.json');
     remove('tools.json');
     const stored = readJson('credentials.json');
@@ -391,8 +371,6 @@ async function logout() {
       return `Signed out of Merv; the key for ${stored.label} is revoked.`;
     return `Signed out here, but Merv could not be reached: the key stays live until you revoke it on the Keys page: ${KEYS_PAGE}`;
   });
-}
-
 const onPath = (name) =>
   (process.env.PATH ?? '').split(delimiter).some((dir) => {
     try {
@@ -417,7 +395,6 @@ const removeFromClaude = () => {
 };
 const connectorOf = (settings) =>
   /\.merv\/connect\/([^/\s"']+)\/bin\/merv-connect/.exec(settings ?? '')?.[1];
-/** Another Merv server's connector under this name is that server's: left alone. */
 function foreign(client, settings) {
   const other = connectorOf(settings);
   if (other === undefined || other === HOSTDIR) return false;
@@ -446,8 +423,7 @@ const clientEnv = { ...process.env };
 if (clientEnv.CODEX_HOME) clientEnv.CODEX_HOME = codexDir;
 if (clientEnv.CLAUDE_CONFIG_DIR) clientEnv.CLAUDE_CONFIG_DIR = claudeDir;
 
-/** Check every directory down from HOME (or the filesystem root for a custom location), before
- *  creating anything. Client files may be readable, but never writable by another user. */
+/** Check ancestors before creating; client files may be readable, never writable by others. */
 function clientPath(dir, name, create = false) {
   const parents = [];
   for (let at = dir; ; at = dirname(at)) {
@@ -509,9 +485,7 @@ async function editClientConfig(client, dir, name, change, save = false) {
   );
 }
 
-/** Let Codex remove its table in a private copy, append a complete replacement, and have Codex
- *  parse and verify it before committing. Never search TOML text for a header. */
-/** The Codex table this connector writes, exactly, so it can be found and cut out again. */
+/** Exact table text for uninstall without reserializing unrelated TOML. */
 const merv = (eol) =>
   `${eol}[mcp_servers.${JSON.stringify(SERVER_NAME)}]${eol}command = ${JSON.stringify(SHIM)}${eol}` +
   `args = []${eol}default_tools_approval_mode = "approve"${eol}`;
@@ -528,9 +502,8 @@ async function codexApproval(installing, had) {
         // Codex serializes LF; normalize first so restoring CRLF cannot double a string's CR.
         fs.writeFileSync(file, before.replace(/\r\n/g, '\n'), { mode: 0o600 });
         const env = { ...process.env, CODEX_HOME: stage };
-        // Codex rewrites every server's table when it removes one (an empty enabled_tools list is
-        // lost, re-enabling that server's tools), so the table this connector wrote is cut out
-        // exactly; only an older registration falls back to codex mcp remove.
+        // Cut our exact table; Codex removal can drop other servers’ empty enabled_tools lists.
+        // Only legacy registrations fall back to codex mcp remove.
         const eol = lineEnding(before);
         const ours = merv(eol);
         if (before.includes(ours))
@@ -565,16 +538,14 @@ async function codexApproval(installing, had) {
   if (installing) replacing('Codex', had, committed?.copy);
 }
 
-/** Claude Code asks before each MCP tool it has not been told to allow. Only an entry this
- *  installer added is removed again; one the person had stays theirs. */
+/** Remove only permissions this installer added; preexisting permissions stay. */
 async function claudeApproval(installing) {
-  const dir = claudeDir;
-  const path = join(dir, 'settings.json');
+  const path = join(claudeDir, 'settings.json');
   const owned = 'claude-approval.json';
   const permission = `mcp__${SERVER_NAME}`;
   const committed = await editClientConfig(
     'claude',
-    dir,
+    claudeDir,
     'settings.json',
     (before) => {
       if (!installing && readJson(owned)?.path !== path) return;
@@ -583,9 +554,7 @@ async function claudeApproval(installing) {
         throw new Refusal(`Claude Code: invalid JSON settings in ${path}; left alone.`);
       const allow = config.permissions?.allow ?? [];
       if (!Array.isArray(allow))
-        throw new Refusal(
-          `Claude Code: permissions.allow in ${join(dir, 'settings.json')} is not a list; left alone.`,
-        );
+        throw new Refusal(`Claude Code: permissions.allow in ${path} is not a list; left alone.`);
       if (installing === allow.includes(permission)) return;
       config.permissions = {
         ...config.permissions,
@@ -622,8 +591,7 @@ async function cursor(change) {
   );
 }
 
-/** Places this file, as read and checked through one descriptor (and, from the installer, whose
- *  digest matches again), and a shim that runs it with `node`; then registers it with each client. */
+/** Install a descriptor-checked, digest-verified self-read and Node shim, then register clients. */
 async function install(sha, node = process.execPath) {
   validateClients();
   ensureDir([MERV, CONNECT, DIR, BIN]);
@@ -753,7 +721,6 @@ const listed = new Map();
 let calls = 0;
 
 class Unreadable extends Error {}
-/** One JSON-RPC call to Merv's /mcp, which answers JSON (never SSE) for this connector. */
 async function forward(method, params, key) {
   const id = `merv-connect-${++calls}`;
   const response = await fetch(`${ORIGIN}/mcp`, {
@@ -800,7 +767,6 @@ async function signedIn(method, params) {
   return { unauthorized: true };
 }
 
-/** What to say about a failure; a forwarded call that got no answer may still have run. */
 const failure = (error, forwarded = false) =>
   error instanceof Unreadable
     ? UNDERSTOOD
@@ -844,11 +810,10 @@ async function connectorTool(name, input) {
   const { email, code, ...rest } = input ?? {};
   if (Object.keys(rest).length || (email === undefined) === (code === undefined))
     return text('Call connector.login with exactly one of {email} or {code}.', true);
-  if (email !== undefined) {
+  if (email !== undefined)
     return text(
       await startLogin(String(email), client, 'call connector.login with {code} when they give it'),
     );
-  }
   const done = await finishLogin(code);
   // Claude Code lists the tools again; Codex will not until it restarts.
   say({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
@@ -917,7 +882,6 @@ function serve() {
         say({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
         continue;
       }
-      // Requests are answered concurrently; notifications and responses need nothing.
       if (message && typeof message.method === 'string' && message.id !== undefined)
         void handle(message);
     }

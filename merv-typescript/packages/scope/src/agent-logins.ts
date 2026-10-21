@@ -16,7 +16,6 @@ import {
 import type { Memberships } from './memberships.js';
 import type { UserKeys } from './user-keys.js';
 
-/** One stored request for an emailed code. Only digests of the email, address, verifier and code. */
 export interface LoginRow {
   id: string;
   email_hash: string;
@@ -57,18 +56,15 @@ const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 const TTL = 10 * MINUTE;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
-/** Equal digests, compared in constant time. */
 const same = (a: string, b: string) =>
   a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const verifierDigest = (verifier: string) =>
   createHash('sha256').update(verifier).digest('base64url');
 const codeDigest = (id: string, code: string) => digest(`${id}:${code}`);
 export const emailDigest = (email: string) => digest(email.trim().toLowerCase());
-/** The digests a start is counted by: its email, its address and its network. */
 type Hashes = [email: string, ip: string | null, network: string | null];
 const iso = (ms: number) => new Date(ms).toISOString();
 const untilTomorrow = (now: number) => Math.ceil((DAY - (now % DAY)) / 1000);
-/** 429 past a sign-in limit: `login_capacity` for Merv's own caps, else `login_rate_limited`. */
 export const tooMany = (
   code: 'login_capacity' | 'login_rate_limited',
   seconds: number,
@@ -83,7 +79,6 @@ const invalid = () =>
     400,
   );
 
-/** Whether the directory vouches for this account as the one the code was requested for. */
 const eligible = (user: DirectoryUser | null, emailHash: string): user is DirectoryUser =>
   !!user &&
   !user.anonymous &&
@@ -92,13 +87,9 @@ const eligible = (user: DirectoryUser | null, emailHash: string): user is Direct
   !user.deleted &&
   same(emailDigest(user.email), emailHash);
 
-/**
- * Agent sign-in by an emailed code. The stored rows are the only limits and the audit trail: each
- * start is counted as a row against its email, address and network inside the writer transaction, before
- * any directory call or email; the caps in all count only the sends a delivery reserved, by the time
- * it reserved them, checked again in the transaction that reserves, so no flood of other starts can
- * spend them and a held start is counted when it goes out.
- */
+/** Starts count transactionally by email/address/network before directory access.
+ * Global caps count reserved sends at reservation time, excluding failed sends.
+ * Check again inside each transaction so concurrent starts/reservations cannot exceed caps. */
 export class AgentLogins implements ScopeAgentLogins {
   constructor(
     private readonly state: State,
@@ -107,8 +98,7 @@ export class AgentLogins implements ScopeAgentLogins {
     private readonly keys: UserKeys,
   ) {}
 
-  /** Refuses a start past a limit on its email, address or network, or once the caps in all are spent.
-   *  Each count reads an index range no longer than its own limit. */
+  /** Check per-identity start limits and global send capacity. */
   private async admit(
     sql: Sql,
     [emailHash, ipHash, netHash]: Hashes,
@@ -142,8 +132,7 @@ export class AgentLogins implements ScopeAgentLogins {
     await this.capacity(sql, now, limits);
   }
 
-  /** Refuses past the caps in all on codes sent: only sends reserved and not failed count, by when
-   *  they were reserved, and a partial index holds those alone. */
+  /** Count reserved, nonfailed sends using their reservation timestamps and partial index. */
   private async capacity(sql: Sql, now: number, limits: AgentLoginLimits): Promise<void> {
     const today = now - (now % DAY);
     const sent = await sql.get<Record<string, string | number>>(
@@ -269,7 +258,6 @@ export class AgentLogins implements ScopeAgentLogins {
     }
   }
 
-  /** A wrong try against a login: counted, and at the limit (or when `lock`) that login locks. */
   private async fail(id: string, limits: AgentLoginLimits, lock = false): Promise<void> {
     await this.state.transaction((tx) =>
       tx.run(
@@ -289,7 +277,6 @@ export class AgentLogins implements ScopeAgentLogins {
     directory: AgentLoginDirectory,
     notify: (notice: AgentLoginNotice) => Promise<void>,
   ): Promise<AgentLoginIssued> {
-    // An id this store could not have made costs no read.
     if (!/^login_[A-Za-z0-9_-]{22}$/.test(loginId)) throw invalid();
     const read = (sql: Sql) => sql.get<LoginRow>('SELECT * FROM agent_logins WHERE id=?', loginId);
     // Only the connector that started a login gets past here, so other traffic never writes.

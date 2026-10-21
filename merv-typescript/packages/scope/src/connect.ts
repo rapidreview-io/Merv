@@ -23,15 +23,12 @@ const cidr = z.string().refine((value) => {
 }, 'Expected an address range such as 172.18.0.1/32');
 export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .extend({
-    // The origin stamped into the page, installer and connector: https, or http on loopback.
     publicOrigin: origin(loopback),
-    /** The MCP server name each client registers: `merv-staging` on staging. */
     serverName: z
       .string()
       .regex(/^[a-z][a-z0-9-]{0,31}$/)
       .default('merv'),
-    /** Proxies whose X-Forwarded-For is believed. The host's Caddy reaches a published Docker
-     *  port from the bridge gateway, so a deployment names that gateway's own address (a /32). */
+    /** Trusted X-Forwarded-For sources; Docker deployments name Caddy’s bridge gateway /32. */
     trustedProxies: z.array(cidr).max(32).default(['127.0.0.1/32', '::1/128']),
     /** Hard ceilings, like five tries a login: a deployment may lower them, never raise them. */
     keyDays: count(90, 90),
@@ -59,8 +56,7 @@ export const agentLoginSchema = mailSchema('Agent sign-in emails')
   .strict();
 export type AgentLoginConfig = z.input<typeof agentLoginSchema>;
 
-/** What the connector sends, and nothing a mail client could render as a link or reorder: letters,
- *  digits, `_` and `-`, in words a single space apart (the host is one word). */
+/** Mail-safe labels: letters/digits/_/-, single-spaced words; hosts allow only one word. */
 const label = (max: number, words: boolean) =>
   z
     .string()
@@ -154,9 +150,7 @@ export function proxyList(ranges: readonly string[]): BlockList {
   return list;
 }
 
-/** Background delivery, after the reply: a few jobs at a time, the rest held oldest first and
- *  started as each one ends, so a flood delays codes and never refuses a start. A held job is
- *  dropped once its sign-in has expired, and past `capacity` held the oldest is dropped. */
+/** Bounded FIFO delivery after reply; expire jobs and drop the oldest past capacity. */
 export class Deliveries {
   private readonly running = new Set<Promise<void>>();
   private readonly waiting: { until: number; job: () => Promise<void> }[] = [];
@@ -186,15 +180,13 @@ export class Deliveries {
   }
 }
 
-/** One spelling per address, as Node prints it: an IPv4-mapped one, dotted or hex, as IPv4. */
 export function canonicalIp(ip: string): string {
   if (!isIPv6(ip)) return ip;
   const address = new SocketAddress({ address: ip, family: 'ipv6' }).address;
   return address.startsWith('::ffff:') && isIPv4(address.slice(7)) ? address.slice(7) : address;
 }
 
-/** Where an address counts: itself for IPv4; for IPv6 its /64, since one subscriber holds a whole
- *  /64 and could otherwise rotate through it, or its /48, the most a site is usually given. */
+/** IPv4 counts per address; IPv6 per /64 subscriber or /48 site to resist rotation. */
 export function addressBucket(ip: string | null, bits: 48 | 64 = 64): string {
   ip = ip && canonicalIp(ip);
   if (!ip || !isIPv6(ip)) return ip ?? '';
@@ -213,14 +205,9 @@ export function addressBucket(ip: string | null, bits: 48 | 64 = 64): string {
     .join(':')}::/${bits}`;
 }
 
-/**
- * Verify admission in fixed one-minute windows, constant work a request: per address (an IPv4
- * address or IPv6 /64) and per network (an IPv6 /48; an IPv4 address is its own network, one
- * bucket), with no cap on all callers, so no network can spend another's attempts. A window
- * tracks at most `ceiling` buckets: past it a request in an untracked bucket is admitted without
- * being tracked, since a verify costs one bounded read and each sign-in locks after its tries;
- * a new window drops the table whole. In process: a restart forgets it.
- */
+/** Per-address and network minute windows; no shared cap can exhaust another network.
+ * At the memory ceiling, admit untracked buckets: verification still has per-login limits.
+ * A new window or process restart forgets all counts. */
 export class Admission {
   private start = -Infinity;
   private counts = new Map<string, number>();
