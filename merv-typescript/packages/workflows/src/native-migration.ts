@@ -48,6 +48,60 @@ export interface NativeMigrationRow {
   updated_at: string;
 }
 
+/** Read-only source evidence for an offline plan, before the migration ledger exists. */
+export async function nativeAdmissionSnapshot(
+  sql: Sql,
+  projectId: string,
+  instanceIds: readonly string[],
+) {
+  if (!instanceIds.length) return { blockers: [], starts: [], limits: {} };
+  const placeholders = instanceIds.map(() => '?').join(',');
+  const blockers = await sql.all<{
+    instance_id: string;
+    provider: string;
+    blocker_key: string;
+    revision: number | null;
+    code: string;
+    since: string;
+    updated_at: string;
+  }>(
+    `SELECT * FROM wf_blockers WHERE project_id=? AND instance_id IN (${placeholders}) ORDER BY instance_id,provider,blocker_key`,
+    projectId,
+    ...instanceIds,
+  );
+  const starts = await sql.all(
+    `SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id IN (${placeholders}) ORDER BY instance_id,revision`,
+    projectId,
+    ...instanceIds,
+  );
+  const limits: Record<string, { count: number; hash: string }> = {};
+  for (const [name, order] of [
+    ['wf_history', 'instance_id,revision'],
+    ['wf_limit_grants', 'instance_id,request_id'],
+  ] as const) {
+    const rows = await sql.all(
+      `SELECT * FROM ${name} WHERE project_id=? AND instance_id IN (${placeholders}) ORDER BY ${order}`,
+      projectId,
+      ...instanceIds,
+    );
+    limits[name] = { count: rows.length, hash: digest(rows) };
+  }
+  return {
+    limits,
+    blockers: blockers.map((row) => ({
+      instanceId: row.instance_id,
+      provider: row.provider,
+      key: row.blocker_key,
+      revision: row.revision,
+      code: row.code,
+      since: row.since,
+      updatedAt: row.updated_at,
+      hash: digest(row),
+    })),
+    starts,
+  };
+}
+
 /** Only idle producing nodes, or customer requests that have not started execution. */
 export function nativeMigrationTarget(
   row: Pick<NativeMigrationRow, 'workflow' | 'version' | 'state'>,

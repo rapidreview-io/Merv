@@ -17,6 +17,7 @@ import {
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import { INQUIRY_CAPABILITY } from '@merv/sessions/rules';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import type {
   ManagedRunnerBindingIdentity,
   Sessions,
@@ -427,23 +428,38 @@ export class FleetWorkflowAdapter implements FleetOwner {
   /** The latest retry grant of each revision in these projects, in one indexed read. */
   private async retryGrants(projectIds: string[]): Promise<Map<string, RetryGrant>> {
     if (!projectIds.length) return new Map();
-    const rows = await this.state.read((sql) =>
-      sql.all<RetryGrant>(
+    return await this.state.read(async (sql) => {
+      const rows = await sql.all<RetryGrant>(
         `SELECT DISTINCT ON (project_id, instance_id, expected_revision) * FROM fleet_workflow_retry_grants
          WHERE project_id IN (${projectIds.map(() => '?').join(',')})
          ORDER BY project_id, instance_id, expected_revision, id DESC`,
         ...projectIds,
-      ),
-    );
-    return new Map(
-      rows.map((row) => [
-        grantKey(
-          row.project_id,
-          targetId({ instanceId: row.instance_id, expectedRevision: row.expected_revision }),
+      );
+      const continuity = new Map(
+        await Promise.all(
+          projectIds.map(
+            async (projectId) =>
+              [projectId, await nativeRevisionContinuity(sql, projectId)] as const,
+          ),
         ),
-        row,
-      ]),
-    );
+      );
+      const grants = new Map<string, RetryGrant>();
+      for (const row of rows) {
+        // A protocol migration keeps the same rental window. A later administrator grant
+        // at the current revision supersedes it; immutable historical grants stay untouched.
+        const id = grantKey(
+          row.project_id,
+          targetId({
+            instanceId: row.instance_id,
+            expectedRevision: continuity
+              .get(row.project_id)!
+              .current(row.instance_id, Number(row.expected_revision)),
+          }),
+        );
+        if (Number(row.id) > Number(grants.get(id)?.id ?? 0)) grants.set(id, row);
+      }
+      return grants;
+    });
   }
   /**
    * The machines since a revision's latest grant that no session claimed, newest first, up to

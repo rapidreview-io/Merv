@@ -9,6 +9,7 @@ import {
 } from '@merv/contracts';
 import type { MervRunScope, SbxMerv } from '@sandboxes/merv-host/types';
 import { computeEpoch, computeProfile } from '@merv/sessions/compute';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import type { NativeMcpConnection, WorkSession } from '@merv/sessions/types';
 
 export const sandboxRunMigrations = {
@@ -76,7 +77,16 @@ export class SandboxRuns {
     if (!(await tx.get(`SELECT 1 FROM sandbox_run_intents ${where}`, ...work))) return;
     // Its work ended (3) or moved to another attempt (2); else only a closed session's 1 stays.
     const i = (await this.workflows.relations(event.projectId, event.subjectId, tx))?.instance;
-    const epoch = i && !i.terminal ? computeEpoch(i.data, i.revision) : null;
+    const epoch =
+      i && !i.terminal
+        ? computeEpoch(
+            i.data,
+            (await nativeRevisionContinuity(tx, event.projectId)).source(
+              event.subjectId,
+              i.revision,
+            ),
+          )
+        : null;
     await tx.run(
       `UPDATE sandbox_run_intents SET target=CASE WHEN ?::text IS NULL THEN 3
         WHEN attempt_ref<>? THEN 2 ELSE LEAST(target,1) END ${where}`,
@@ -122,7 +132,13 @@ export class SandboxRuns {
         linked.namespace,
         linked.account_id,
         session.instanceId,
-        computeEpoch(instance.data, instance.revision),
+        computeEpoch(
+          instance.data,
+          (await nativeRevisionContinuity(tx, session.projectId)).source(
+            session.instanceId,
+            instance.revision,
+          ),
+        ),
       );
       const run = (await this.row(tx, session.id))!;
       check(run.target === 0, 'session_closed', 'The sandbox run has ended', 409);

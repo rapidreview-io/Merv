@@ -12,6 +12,7 @@ import {
   nativeMigrationSchema,
   nativeMigrationTarget,
   migrateNativeWorkflow,
+  nativeAdmissionSnapshot as workflowAdmission,
 } from '@merv/workflows/native-migration';
 import { EXPERIMENT_WORKFLOW, activeStates } from '@merv/experiments/program';
 import { execution } from '@merv/experiments/execution-policy';
@@ -20,6 +21,8 @@ import { taskExecutionPolicy } from '@merv/tasks/execution-policy';
 import { SERVICE_EXPERIMENT } from '@merv/customer-experiments/program';
 import { serviceExecution } from '@merv/customer-experiments/execution';
 import { gitCutover } from '@merv/code-work/cutover';
+import { nativeAdmissionSnapshot as sessionAdmission } from '@merv/sessions/native-admission';
+import { nativeAdmissionSnapshot as fleetAdmission } from '@merv/fleet/native-admission';
 import { deploymentSchema } from './schema.mjs';
 
 export const nativeContracts = () =>
@@ -233,8 +236,18 @@ async function inventory(sql, schema, retireCommands) {
   // Hash the dependencies and immutable Code declarations too; they must not drift between plan and apply.
   const dependencies = await sql.all('SELECT * FROM wf_dependencies ORDER BY source_id,target_id');
   const code = await sql.all('SELECT * FROM code_units ORDER BY project_id,unit_id');
+  const admission = [];
+  for (const projectId of [...new Set(workflows.map((row) => row.projectId))].sort()) {
+    const ids = workflows.filter((row) => row.projectId === projectId).map((row) => row.instanceId);
+    admission.push({
+      projectId,
+      workflows: await workflowAdmission(sql, projectId, ids),
+      sessions: await sessionAdmission(sql, projectId, ids),
+      fleet: await fleetAdmission(sql, projectId, ids),
+    });
+  }
   const body = {
-    format: 1,
+    format: 2,
     schema,
     database: (await sql.get('SELECT current_database() AS name')).name,
     contractHash: digest(nativeContracts()),
@@ -242,6 +255,7 @@ async function inventory(sql, schema, retireCommands) {
     commands,
     dependenciesHash: digest(dependencies),
     codeDeclarationsHash: digest(code),
+    admission,
     blockers,
   };
   return {
@@ -383,6 +397,7 @@ export async function applyMigration(client, schema, plan, approval) {
       planHash: hash,
       appliedAt: now(),
       approval,
+      admission: plan.admission,
       migrated: plan.workflows.filter((row) => row.toVersion).length,
       retainedArtifactReviews: final.retainedArtifactReviews,
       retiredCommands: plan.commands.map((row) => row.id),

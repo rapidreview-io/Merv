@@ -8,6 +8,8 @@ import { ProjectScope } from '@merv/scope';
 import { sessionsPlugin } from '@merv/sessions';
 import type { WorkSession } from '@merv/sessions/types';
 import { WorkflowsService } from '@merv/workflows';
+import { initializeNativeMigrations } from '@merv/workflows/native-migration';
+import { scopedKey } from '@sandboxes/kernel/principal';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { MervRunScope, MervWorkScope, SbxMerv } from '@sandboxes/merv-host/types';
 import type { SbxPipelines } from '@sandboxes/pipelines';
@@ -26,9 +28,13 @@ async function fixture(t: TestContext) {
   const state = await openState();
   t.after(() => state.close());
   await state.migrate('sandbox-runs', sandboxRunMigrations);
+  await initializeNativeMigrations(state);
   await state.transaction(async (tx) => {
     await tx.run(
       'CREATE TABLE work(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,state TEXT NOT NULL,data_json TEXT NOT NULL)',
+    );
+    await tx.run(
+      "CREATE VIEW wf_instances AS SELECT *, 'project'::text AS project_id, 46 AS version FROM work",
     );
     await tx.run(
       "INSERT INTO work VALUES('work',1,'open',?)",
@@ -286,6 +292,47 @@ test('a visit that ends to wait for its compute retires only its own connection:
     [[woken.id, 'attempt-1']],
   );
   assert.equal(f.retired.length, 1);
+});
+
+test('a recorded protocol migration preserves fallback compute scope and idempotency without admitting the old session revision', async (t) => {
+  const f = await fixture(t);
+  await f.state.transaction((tx) => tx.run("UPDATE work SET data_json='{}'"));
+  const first = await f.session();
+  await f.runs.launchConnections(first);
+  const original = [...f.tokens.values()][0]!;
+  assert.equal(original.attemptRef, '1');
+  await f.close(first.id);
+  await f.runs.reconcile();
+  await f.state.transaction(async (tx) => {
+    await tx.run(`INSERT INTO wf_protocol_migrations(project_id,instance_id,source_revision,source_version,target_revision,target_version,source_json,source_hash,actor_id,reason,created_at)
+      VALUES('project','work',1,44,2,46,'{}','fixture','operator','Protocol migration','2026-10-21T00:00:00.000Z')`);
+    await tx.run('UPDATE work SET revision=2');
+  });
+  await assert.rejects(f.runs.launchConnections(await f.session('stale', 1)), {
+    code: 'execution_replaced',
+  });
+  const resumed = await f.session('run-2', 2);
+  await f.runs.launchConnections(resumed);
+  const current = [...f.tokens.values()][0]!;
+  assert.equal(current.attemptRef, original.attemptRef);
+  const key = (attempt_ref: string) =>
+    scopedKey({ attempt_ref } as Parameters<typeof scopedKey>[0], 'retained-job');
+  assert.equal(key(current.attemptRef), key(original.attemptRef));
+  await f.event('workflow.transition', 'work');
+  await f.runs.reconcile();
+  assert.deepEqual(
+    f.retired.map((call) => call.kind),
+    ['run'],
+  );
+
+  // A subsequent ordinary revision ends this equivalence and retires the old attempt.
+  await f.state.transaction((tx) => tx.run('UPDATE work SET revision=3'));
+  await f.event('workflow.transition', 'work');
+  await f.runs.reconcile();
+  assert.ok(f.retired.some((call) => call.kind === 'attempt'));
+  await f.runs.launchConnections(await f.session('run-3', 3));
+  assert.equal([...f.tokens.values()][0]!.attemptRef, '3');
+  assert.notEqual(key('3'), key(original.attemptRef));
 });
 
 test('crash recovery cleans the recorded scope after relinking and retries work finalization', async (t) => {
