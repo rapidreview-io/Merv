@@ -1,30 +1,28 @@
 import { z } from 'zod';
 import { idSchema, visible, parsed } from '@merv/contracts';
 const id = idSchema;
-export const createSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200).refine(visible),
-    dependsOn: z.array(id).max(100).default([]),
-    // Optional with no default, so the stored input of a request made before it existed still replays.
-    previousCycleId: id
-      .optional()
-      .describe(
-        "A complete, abandoned or failed cycle this one follows; its digest is carried into this cycle's reflection",
-      ),
-    automatic: z
-      .boolean()
-      .optional()
-      .describe('Automatically advance this cycle and its approved next waves'),
-    maxCycles: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .optional()
-      .describe('Automatic run limit, including this cycle; default 10'),
-    requestId: id,
-  })
-  .strict();
+export const createSchema = z.strictObject({
+  name: z.string().trim().min(1).max(200).refine(visible),
+  dependsOn: z.array(id).max(100).default([]),
+  // Optional with no default, so the stored input of a request made before it existed still replays.
+  previousCycleId: id
+    .optional()
+    .describe(
+      "A complete, abandoned or failed cycle this one follows; its digest is carried into this cycle's reflection",
+    ),
+  automatic: z
+    .boolean()
+    .optional()
+    .describe('Automatically advance this cycle and its approved next waves'),
+  maxCycles: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe('Automatic run limit, including this cycle; default 10'),
+  requestId: id,
+});
 const commandSchema = z.object({
   researchId: id,
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),

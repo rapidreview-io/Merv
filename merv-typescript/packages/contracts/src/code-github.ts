@@ -10,9 +10,9 @@ import type {
 } from './github-models.js';
 export type { GitHubRepository, GitHubRepositoryInput, GitHubStatus } from './github-models.js';
 
-export const githubRevisionSchema = z
-  .object({ expectedRevision: z.number().int().nonnegative() })
-  .strict();
+export const githubRevisionSchema = z.strictObject({
+  expectedRevision: z.number().int().nonnegative(),
+});
 export const githubRepositoryInputSchema = githubRevisionSchema
   .extend({
     installationId: z.number().int().positive().safe().nullable(),

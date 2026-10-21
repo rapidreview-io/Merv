@@ -19,21 +19,21 @@ const message = z
   .min(1)
   .max(2000)
   .refine((value) => visible(value) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value));
-export const codeCommitInputSchema = z
-  .object({ expectedHead: oid, message, requestId: id })
-  .strict();
+export const codeCommitInputSchema = z.strictObject({ expectedHead: oid, message, requestId: id });
 export const codeMergeInputSchema = codeCommitInputSchema
   .extend({ operation: z.enum(['start', 'complete']) })
   .strict();
 export type CodeMergeInput = z.infer<typeof codeMergeInputSchema>;
-export const codeCommandControlSchema = z
-  .object({ sessionId: id, runnerId: id, hostRef: id })
-  .strict();
+export const codeCommandControlSchema = z.strictObject({
+  sessionId: id,
+  runnerId: id,
+  hostRef: id,
+});
 /** The request id a runner asks its nth periodic checkpoint under, by which Code Work tells one. */
 export const checkpointRequestId = (count: number) => `checkpoint-${count}`;
 export const isCheckpointRequestId = (requestId: string) => /^checkpoint-\d+$/.test(requestId);
 export const codeCommitCommandSchema = z
-  .object({
+  .strictObject({
     id,
     projectId: id,
     sessionId: id,
@@ -48,10 +48,9 @@ export const codeCommitCommandSchema = z
     createdAt: z.string().datetime(),
     merge: z.enum(['start', 'complete']).optional(),
   })
-  .strict()
   .refine((value) => value.expectedHead.length === value.workspace.baseOid.length);
 const codeCommitReceiptSchema = z
-  .object({
+  .strictObject({
     commandId: id,
     repositoryId: id,
     workspaceId: id,
@@ -59,11 +58,13 @@ const codeCommitReceiptSchema = z
     parentOid: oid,
     headOid: oid,
     treeOid: oid,
-    stats: z
-      .object({ commitCount: count, filesChanged: count, insertions: count, deletions: count })
-      .strict(),
+    stats: z.strictObject({
+      commitCount: count,
+      filesChanged: count,
+      insertions: count,
+      deletions: count,
+    }),
   })
-  .strict()
   .refine((value) =>
     [value.parentOid, value.headOid, value.treeOid].every((x) => x.length === value.baseOid.length),
   );
@@ -74,7 +75,7 @@ export const codeCommandCompletionSchema = z.union([
     .strict(),
 ]);
 export const codeCommandRecordSchema = z
-  .object({
+  .strictObject({
     command: codeCommitCommandSchema,
     status: z.enum(['queued', 'dispatched', 'succeeded', 'failed', 'cancelled']),
     receipt: codeCommitReceiptSchema.nullable(),
@@ -83,7 +84,6 @@ export const codeCommandRecordSchema = z
       .regex(/^[a-z][a-z0-9_]{0,99}$/)
       .nullable(),
   })
-  .strict()
   .refine((value) =>
     value.status === 'succeeded'
       ? value.receipt !== null && value.error === null

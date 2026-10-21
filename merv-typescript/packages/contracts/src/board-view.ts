@@ -1,34 +1,28 @@
 import { z } from 'zod';
 export const viewSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('fit') }).strict(),
-  z
-    .object({
-      action: z.literal('region'),
-      x: z.number().finite().min(-100000).max(100000),
-      y: z.number().finite().min(-100000).max(100000),
-      width: z.number().min(1).max(100000),
-      height: z.number().min(1).max(100000),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('pan'),
-      dx: z.number().finite().min(-100000).max(100000),
-      dy: z.number().finite().min(-100000).max(100000),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('zoom'),
-      factor: z.number().min(0.25).max(4),
-      center: z
-        .tuple([
-          z.number().finite().min(-100000).max(100000),
-          z.number().finite().min(-100000).max(100000),
-        ])
-        .optional(),
-    })
-    .strict(),
+  z.strictObject({
+    action: z.literal('region'),
+    x: z.number().finite().min(-100000).max(100000),
+    y: z.number().finite().min(-100000).max(100000),
+    width: z.number().min(1).max(100000),
+    height: z.number().min(1).max(100000),
+  }),
+  z.strictObject({
+    action: z.literal('pan'),
+    dx: z.number().finite().min(-100000).max(100000),
+    dy: z.number().finite().min(-100000).max(100000),
+  }),
+  z.strictObject({
+    action: z.literal('zoom'),
+    factor: z.number().min(0.25).max(4),
+    center: z
+      .tuple([
+        z.number().finite().min(-100000).max(100000),
+        z.number().finite().min(-100000).max(100000),
+      ])
+      .optional(),
+  }),
 ]);
 export type View = z.infer<typeof viewSchema>;
 export interface Region {

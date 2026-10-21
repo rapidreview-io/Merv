@@ -97,30 +97,26 @@ export interface FeasibilityStatement {
 }
 const quantity = z.number().finite().nonnegative();
 const line = (max: number) => z.string().max(max).refine(visible);
-const feasibilitySchema = z
-  .object({
-    formatVersion: z.literal(1),
-    resources: z
-      .array(
-        z
-          .object({
-            kind: z.enum(['data', 'compute', 'time']),
-            name: line(200),
-            unit: line(64),
-            required: quantity,
-            available: quantity,
-            basis: line(2000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(50),
-    dependencies: z
-      .array(z.object({ name: line(200), present: z.boolean(), basis: line(2000) }).strict())
-      .max(50),
-    blockers: z.array(line(2000)).max(20),
-  })
-  .strict();
+const feasibilitySchema = z.strictObject({
+  formatVersion: z.literal(1),
+  resources: z
+    .array(
+      z.strictObject({
+        kind: z.enum(['data', 'compute', 'time']),
+        name: line(200),
+        unit: line(64),
+        required: quantity,
+        available: quantity,
+        basis: line(2000),
+      }),
+    )
+    .min(1)
+    .max(50),
+  dependencies: z
+    .array(z.object({ name: line(200), present: z.boolean(), basis: line(2000) }).strict())
+    .max(50),
+  blockers: z.array(line(2000)).max(20),
+});
 
 /** Checks the shape of a feasibility statement only; whether it admits the design is a separate question. */
 export function parseFeasibility(text: string): FeasibilityStatement {

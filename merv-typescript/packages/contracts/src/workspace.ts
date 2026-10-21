@@ -23,15 +23,13 @@ export const gitBranchSchema = (maxLength: number) =>
         value.split('/').every((part) => !part.startsWith('.') && !part.endsWith('.lock')),
     );
 /** The frozen merge and admitted checkpoint carried by a Code workspace. */
-export const codePendingMergeSchema = z
-  .object({
-    plan: z.string().regex(/^[0-9a-f]{64}$/),
-    firstParent: oid,
-    secondParent: oid,
-    checkpoint: oid,
-    firstMerge: oid.nullable(),
-  })
-  .strict();
+export const codePendingMergeSchema = z.strictObject({
+  plan: z.string().regex(/^[0-9a-f]{64}$/),
+  firstParent: oid,
+  secondParent: oid,
+  checkpoint: oid,
+  firstMerge: oid.nullable(),
+});
 
 const fields = ['repositoryId', 'workspaceId', 'mode', 'branch', 'baseOid', 'headOid', 'stats'];
 const stats = ['commitCount', 'filesChanged', 'insertions', 'deletions'];
@@ -81,7 +79,7 @@ export const sessionWorkspaceSchema = z
   })
   .pipe(
     z
-      .object({
+      .strictObject({
         repositoryId: label,
         workspaceId: label,
         mode: z.enum(['ephemeral', 'persistent']),
@@ -90,11 +88,13 @@ export const sessionWorkspaceSchema = z
         headOid: oid,
         treeOid: oid.optional(),
         pendingMerge: codePendingMergeSchema.optional(),
-        stats: z
-          .object({ commitCount: count, filesChanged: count, insertions: count, deletions: count })
-          .strict(),
+        stats: z.strictObject({
+          commitCount: count,
+          filesChanged: count,
+          insertions: count,
+          deletions: count,
+        }),
       })
-      .strict()
       .refine(
         (value) =>
           value.baseOid.length === value.headOid.length &&

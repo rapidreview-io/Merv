@@ -12,23 +12,19 @@ export const profiledCreateInput = createInput
   })
   .strict();
 
-const profileDefinition = z
-  .object({
-    id,
-    version: z.number().int().positive(),
-    model: z
-      .object({
-        id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/),
-        effort: z.enum(['none', 'low', 'medium']),
-      })
-      .strict(),
-    instructions: z.string().trim().min(1).max(32_000),
-    // A tool name (all its actions) or an address `tool:action` (that action only).
-    tools: z.array(z.string().regex(address)).max(64),
-    // Absent for a role without one, so earlier definitions keep their hash.
-    shell: z.literal(true).optional(),
-  })
-  .strict();
+const profileDefinition = z.strictObject({
+  id,
+  version: z.number().int().positive(),
+  model: z.strictObject({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/),
+    effort: z.enum(['none', 'low', 'medium']),
+  }),
+  instructions: z.string().trim().min(1).max(32_000),
+  // A tool name (all its actions) or an address `tool:action` (that action only).
+  tools: z.array(z.string().regex(address)).max(64),
+  // Absent for a role without one, so earlier definitions keep their hash.
+  shell: z.literal(true).optional(),
+});
 
 /** In-memory registrations deliberately fail closed when their owning plugin unloads. A
  * stored conversation also refuses a different definition registered under its old version. */

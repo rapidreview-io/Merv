@@ -15,19 +15,17 @@ export const subject = {
 };
 export const openSchema = z.object(subject).strict();
 export const writeSchema = z
-  .object({
+  .strictObject({
     ...subject,
     expectedRevision: revision,
     requestId,
     /** Replace these sections' bodies (text under the `## Name` heading). */
     sections: z
       .array(
-        z
-          .object({
-            name: z.string().trim().min(1).max(40),
-            content: z.string().max(MAX_SOURCE_BYTES),
-          })
-          .strict(),
+        z.strictObject({
+          name: z.string().trim().min(1).max(40),
+          content: z.string().max(MAX_SOURCE_BYTES),
+        }),
       )
       .max(20)
       .optional(),
@@ -38,17 +36,14 @@ export const writeSchema = z
     /** Add or replace data files charts name by {file}; null removes one. */
     files: z
       .array(
-        z
-          .object({
-            name: z.string().regex(/^[\w.-]{1,80}\.(csv|json)$/),
-            content: z.string().max(MAX_FILE_BYTES).nullable(),
-          })
-          .strict(),
+        z.strictObject({
+          name: z.string().regex(/^[\w.-]{1,80}\.(csv|json)$/),
+          content: z.string().max(MAX_FILE_BYTES).nullable(),
+        }),
       )
       .max(MAX_FILES)
       .optional(),
   })
-  .strict()
   .refine((v) => v.sections || v.frontMatter !== undefined || v.source !== undefined || v.files, {
     message: 'Give sections, frontMatter, source or files to change',
   })
@@ -57,26 +52,21 @@ export const writeSchema = z
   });
 export const clearSchema = z.object({ ...subject, expectedRevision: revision, requestId }).strict();
 export const checkSchema = openSchema;
-export const reviewVisualSchema = z
-  .object({
-    ...subject,
-    chartId: z
-      .string()
-      .regex(/^[a-z0-9][a-z0-9-]{0,40}$/)
-      .optional(),
-  })
-  .strict();
-export const approveVisualSchema = z
-  .object({
-    ...subject,
-    chartId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/),
-    expectedRevision: revision,
-    requestId,
-  })
-  .strict();
+export const reviewVisualSchema = z.strictObject({
+  ...subject,
+  chartId: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,40}$/)
+    .optional(),
+});
+export const approveVisualSchema = z.strictObject({
+  ...subject,
+  chartId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/),
+  expectedRevision: revision,
+  requestId,
+});
 export const renderSchema = z
-  .object({ ...subject, final: z.boolean().default(false), requestId: requestId.optional() })
-  .strict()
+  .strictObject({ ...subject, final: z.boolean().default(false), requestId: requestId.optional() })
   .refine((v) => !v.final || v.requestId, { message: 'A final render needs a requestId' });
 
 export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>

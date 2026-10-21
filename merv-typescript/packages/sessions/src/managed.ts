@@ -37,15 +37,13 @@ import {
 import { lostAfterMs } from './runners.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
-const huggingFaceBinding = z
-  .object({
-    sessionId: z.string().min(1).max(200),
-    runnerId: z.string().min(1).max(200),
-    allocationId: z.string().min(1).max(200),
-    epoch: z.number().int().safe().nonnegative(),
-    hostRef: z.string().min(1).max(512),
-  })
-  .strict();
+const huggingFaceBinding = z.strictObject({
+  sessionId: z.string().min(1).max(200),
+  runnerId: z.string().min(1).max(200),
+  allocationId: z.string().min(1).max(200),
+  epoch: z.number().int().safe().nonnegative(),
+  hostRef: z.string().min(1).max(512),
+});
 export type HuggingFaceBinding = z.infer<typeof huggingFaceBinding>;
 
 /** What a relay's check reads of a bound session (ManagedRunnerBindings.boundSession). */
@@ -61,25 +59,23 @@ type BoundRow = Record<
  *  host) its runner's own: two index lookups, never a scan of every one. */
 export const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
   UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?)`;
-const enrollment = z
-  .object({
-    allocationId: z.string().min(1).max(200),
-    workInstanceId: z.string().min(1).max(200),
-    stepSeconds: z.number().int().min(60).max(86400),
-    epoch: z.number().int().safe().nonnegative(),
-    source: z
-      .object({
-        actorId: z.string().min(1),
-        projectId: z.string().min(1),
-        kind: z.enum(['actor', 'human', 'key', 'service']),
-      })
-      .passthrough(),
-    runtimeProfileId: z.string().min(1).max(200),
-    platform: profile,
-    capabilities: capabilities.optional(),
-    expiresAt: z.string().datetime({ offset: true }),
-  })
-  .strict();
+const enrollment = z.strictObject({
+  allocationId: z.string().min(1).max(200),
+  workInstanceId: z.string().min(1).max(200),
+  stepSeconds: z.number().int().min(60).max(86400),
+  epoch: z.number().int().safe().nonnegative(),
+  source: z
+    .object({
+      actorId: z.string().min(1),
+      projectId: z.string().min(1),
+      kind: z.enum(['actor', 'human', 'key', 'service']),
+    })
+    .passthrough(),
+  runtimeProfileId: z.string().min(1).max(200),
+  platform: profile,
+  capabilities: capabilities.optional(),
+  expiresAt: z.string().datetime({ offset: true }),
+});
 
 /** A hosted machine, a work host's reuse included, waits this long for a transcript its runner
  *  declared before its release, capture and upload included: a runner that gives up on one
@@ -278,8 +274,7 @@ export class ManagedRunnerBindings {
   ): Promise<{ controlToken: string }> {
     this.available();
     const parsed = z
-      .object({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
-      .strict()
+      .strictObject({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
       .safeParse(input);
     check(
       parsed.success,

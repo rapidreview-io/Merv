@@ -61,18 +61,17 @@ import * as budgets from './budgets.js';
 import * as runners from './runners.js';
 import * as stuck from './stuck.js';
 
-const demandSchema = z
-  .object({ platform: runnerPlatformSchema, capabilities: heartbeatSchema.shape.capabilities })
-  .strict();
-const leaseSchema = z
-  .object({
-    runnerId: label,
-    requestId: z.string().trim().min(1).max(256),
-    secret: z.string().regex(sessionSecretPattern),
-    platform: runnerPlatformSchema.pick({ name: true, harness: true, model: true, effort: true }),
-    hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
-  })
-  .strict();
+const demandSchema = z.strictObject({
+  platform: runnerPlatformSchema,
+  capabilities: heartbeatSchema.shape.capabilities,
+});
+const leaseSchema = z.strictObject({
+  runnerId: label,
+  requestId: z.string().trim().min(1).max(256),
+  secret: z.string().regex(sessionSecretPattern),
+  platform: runnerPlatformSchema.pick({ name: true, harness: true, model: true, effort: true }),
+  hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
+});
 /**
  * How long an answered question, or a settled wait for compute, still withholds its work for the
  * conversation of the visit that ended for it: its runner declares it when its process ends,
@@ -115,14 +114,12 @@ const uncountedOfferCodes = new Set([
   'invalid_deadline',
   'nested_session_offer',
 ]);
-export const releaseHoldSchema = z
-  .object({
-    instanceId: z.string().min(1).max(200),
-    expectedRevision: z.number().int().safe().nonnegative(),
-    reason: z.string().min(1).max(500).refine(visible),
-    requestId: z.string().min(1),
-  })
-  .strict();
+export const releaseHoldSchema = z.strictObject({
+  instanceId: z.string().min(1).max(200),
+  expectedRevision: z.number().int().safe().nonnegative(),
+  reason: z.string().min(1).max(500).refine(visible),
+  requestId: z.string().min(1),
+});
 export interface HoldRow {
   instance_id: string;
   revision: number;

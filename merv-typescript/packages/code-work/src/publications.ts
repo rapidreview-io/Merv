@@ -31,9 +31,9 @@ import {
 } from './publication-host.js';
 import type { CodePublicationApi, CodePublicationMerge } from './types.js';
 
-export const codePublicationIdSchema = z
-  .object({ proposalId: z.string().regex(/^codeprop_[A-Za-z0-9_-]+$/) })
-  .strict();
+export const codePublicationIdSchema = z.strictObject({
+  proposalId: z.string().regex(/^codeprop_[A-Za-z0-9_-]+$/),
+});
 export const codePublicationMergeSchema = codePublicationIdSchema
   .extend({
     expectedHead: z.string().regex(/^[0-9a-f]{40}$/),

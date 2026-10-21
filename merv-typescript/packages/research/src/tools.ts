@@ -18,6 +18,7 @@ export const researchToolsPlugin = {
       ctx.tools.noun('research.read', {
         tier: 'core',
         readOnly: true,
+        summary: 'Read research cycles and lineage.',
         description:
           'Read research cycles: list (every cycle and the work it waits on), get (one cycle, its accepted definition, gate and child workflow IDs) and lineage (the cycles it follows, with each one’s digest).',
         actions: {
@@ -47,10 +48,13 @@ export const researchToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('research.write', {
         tier: 'core',
+        summary: 'Create, replan, advance or end research cycles.',
         description:
           'Change research cycles: create (start one around existing work), replan (reselect the work it waits on), advance (take its current gate) and end (abandon or fail it).',
         actions: {
           create: {
+            summary:
+              'Start over existing workflow IDs: definition/research/reflection. No Git: completes after reflection approval; hosted: consolidation integrates accepted code until main holds it. Before long hosted cycles, inspect code.status and tell operator of automation/canary blockers (operator-only attestation; no live-rule verification); research can proceed. previousCycleId must be complete/abandoned/failed; digest is supplied to reflection, one successor only. Paper edits get scientific review. automatic:true advances on events/creates approved waves; maxCycles default 10. Failed/abandoned work reaches reflection.',
             description:
               "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Before a long hosted cycle, read code.read status for known publication blockers and tell the operator about any repository automation or canary setup it needs; research can proceed while publication waits, and only the operator can attest a canary. This preflight does not verify live GitHub rules. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
             input: createSchema,
@@ -66,6 +70,8 @@ export const researchToolsPlugin = {
           },
           advance: {
             act: { title: 'Start next step' },
+            summary:
+              'Advance after selected work ends (including failure/abandonment); scientific approvals required. Post-reflection: no Git completes; hosted waits for consolidation acceptance/publication until main holds code. Moved main injects successor; retryIntegration:true retries unaccepted task. Children are atomic/replay-safe. Continuing structured plan requires nextWave:create (tasks/experiments/cycle under you) or skip; text specs create nothing. Retry same requestId/expectedRevision.',
             description:
               'Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.',
             input: advanceSchema,

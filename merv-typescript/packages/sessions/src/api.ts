@@ -43,9 +43,10 @@ type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
 // Sessions parses every other body. A project halt refuses a body sessionId, which would halt
 // one session and leave dispatch on.
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
-const messageInput = z
-  .object({ body: z.string().min(1).max(8000), requestId: z.string().min(1).max(200) })
-  .strict();
+const messageInput = z.strictObject({
+  body: z.string().min(1).max(8000),
+  requestId: z.string().min(1).max(200),
+});
 /** A session's own lease controls, whose bodies take the server's limit. */
 const leaseControls = new Set(['attach', 'workspace-result', 'heartbeat', 'release']);
 

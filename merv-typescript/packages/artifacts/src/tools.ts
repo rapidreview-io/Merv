@@ -89,36 +89,37 @@ export const artifactToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('artifact.write', {
         tier: 'core',
+        summary: 'Store immutable project files, inline or by upload.',
         description:
           'Store project files: create (a finished file given inline, up to 2 MB), and upload_begin, upload_resume and upload_complete (a file on disk, up to 512 MiB, PUT to a signed URL).',
         actions: {
           create: {
+            summary:
+              'Store immutable inline content ≤2 MB: utf8 text/Markdown or base64 binary; returns artifact ID. On-disk files: use artifact.upload_begin and curl PUT (≤512 MiB), never paste/base64 into content. Same requestId/input safely replays after uncertain responses.',
             description:
               'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Pass a requestId so a retry after an uncertain result (a timeout, an HTTP 502) is safe: the same call returns the artifact already stored.',
-            input: z
-              .object({
-                title: z.string().min(1).max(300),
-                content: z.string().min(1).max(2_700_000),
-                mediaType: z.string().optional(),
-                encoding: z.enum(['utf8', 'base64']).optional(),
-                requestId,
-              })
-              .strict(),
+            input: z.strictObject({
+              title: z.string().min(1).max(300),
+              content: z.string().min(1).max(2_700_000),
+              mediaType: z.string().optional(),
+              encoding: z.enum(['utf8', 'base64']).optional(),
+              requestId,
+            }),
             was: ['artifact.create'],
             handler: async (c, i) => await store.create(c, i),
           },
           upload_begin: {
+            summary:
+              'Upload ≤512 MiB from disk. Measure exact bytes (wc -c < FILE) and SHA-256 (sha256sum FILE or shasum -a 256 FILE); never estimate/reuse metadata; keep unchanged through completion. At most one URL, valid 1 hour: curl -fsS -T FILE to parts[0].url with exactly parts[0].headers (checksum and If-None-Match); other bytes are refused. Empty parts/HTTP 412 means already stored. Then artifact.upload_complete. Retry uncertain begin with same requestId.',
             description:
               "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
-            input: z
-              .object({
-                title: z.string().min(1).max(300),
-                size: z.number().int().positive().max(MAX_OBJECT_BYTES),
-                sha256: z.string().regex(/^[0-9a-f]{64}$/),
-                mediaType: z.string().min(3).max(150),
-                requestId,
-              })
-              .strict(),
+            input: z.strictObject({
+              title: z.string().min(1).max(300),
+              size: z.number().int().positive().max(MAX_OBJECT_BYTES),
+              sha256: z.string().regex(/^[0-9a-f]{64}$/),
+              mediaType: z.string().min(3).max(150),
+              requestId,
+            }),
             was: ['artifact.upload_begin'],
             handler: async (c, i) => await store.uploadBegin(c, i),
           },
@@ -148,6 +149,7 @@ export const artifactToolsPlugin = {
       ctx.tools.noun('artifact.read', {
         tier: 'core',
         readOnly: true,
+        summary: 'Read project files and collection members.',
         description:
           "Read project files: list (newest first, a page at a time), get (one file's metadata, a collection's members a page at a time), content (text or base64, whole or by range), download (private URLs to fetch with curl), storage (whether files up to 512 MiB can be kept), and look (an image in source pixels).",
         legacy: {
@@ -164,12 +166,10 @@ export const artifactToolsPlugin = {
           list: {
             description:
               'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them a page at a time.',
-            input: z
-              .object({
-                before: z.string().min(1).optional(),
-                limit: z.number().int().min(1).max(1000).optional(),
-              })
-              .strict(),
+            input: z.strictObject({
+              before: z.string().min(1).optional(),
+              limit: z.number().int().min(1).max(1000).optional(),
+            }),
             was: ['artifact.list'],
             handler: async (c, i) =>
               (await store.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
@@ -182,14 +182,12 @@ export const artifactToolsPlugin = {
           get: {
             description:
               'Read immutable artifact metadata. For a collection, files lists its members (name, size, SHA-256) in order: limit of them (default 100 for an agent) from offset; fileCount is the total and nextOffset is set when more follow. prefix keeps names starting with it, such as "run-a/"; matchCount counts them.',
-            input: z
-              .object({
-                artifactId: id,
-                prefix: z.string().min(1).max(4096).optional(),
-                offset: z.number().int().min(0).optional(),
-                limit: z.number().int().min(1).max(1000).optional(),
-              })
-              .strict(),
+            input: z.strictObject({
+              artifactId: id,
+              prefix: z.string().min(1).max(4096).optional(),
+              offset: z.number().int().min(0).optional(),
+              limit: z.number().int().min(1).max(1000).optional(),
+            }),
             was: ['artifact.get'],
             handler: async (c, i) => {
               const artifact = await store.get(c, i.artifactId);
@@ -205,7 +203,7 @@ export const artifactToolsPlugin = {
           },
           content: {
             description:
-              'Content: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from the returned offset + content.length. A file of up to 2 MB reads whole; a larger one, up to 16 MiB, only by a range with a length. A collection member is read by fileName, its exact path from get. Leased workers read files over 64,000 bytes only by a range of at most 8192 characters.',
+              'UTF-8 text or base64. offset/length count UTF-16 text units or base64 characters; boundaries advance to whole characters. Returns actual offset/total; continue at offset+content.length. Whole reads ≤2 MB; larger files ≤16 MiB need a length-bounded range. Collection: exact fileName from get. Workers reading >64,000 bytes need ranges ≤8192 characters.',
             input: read,
             // Open world: a stored read's fetch waits holding no reader snapshot, since artifacts
             // runs each database read in a short transaction.
@@ -253,7 +251,7 @@ export const artifactToolsPlugin = {
           },
           download: {
             description:
-              'Private URLs to fetch with curl: of the file, of one collection member by fileName, or of up to 100 members at once by fileNames; for a collection without either, of its manifest.',
+              'Private curl URLs: file, collection fileName, up to 100 fileNames, or collection manifest if neither is given.',
             input: download,
             // Any agent may fetch a signed URL for any project file, as it may read it (founder,
             // 2026-10-20). Open world: signing and the download mirror are storage I/O.

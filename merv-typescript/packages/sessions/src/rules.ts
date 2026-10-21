@@ -35,9 +35,10 @@ export const platformTuning = {
   parallelism: z.number().int().min(1).max(32),
 };
 /** One platform a runner advertises, and the one Fleet enrols a machine it rents with. */
-export const runnerPlatformSchema = z
-  .object({ ...platformTuning, harness: z.enum(RUNNER_HARNESSES) })
-  .strict();
+export const runnerPlatformSchema = z.strictObject({
+  ...platformTuning,
+  harness: z.enum(RUNNER_HARNESSES),
+});
 /** What a machine can do beyond its platforms, as opaque names: at most 16, each once. */
 export const capabilitiesSchema = z
   .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))

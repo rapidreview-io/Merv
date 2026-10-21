@@ -49,15 +49,13 @@ export const PAINTS = {
 const ink = z.union([z.enum(Object.keys(INKS) as [keyof typeof INKS]), hex]);
 export const paint = (palette: Record<string, string>, value: string) => palette[value] ?? value;
 /** One pen stroke of a sketch: an SVG path in the sketch's own coordinates. */
-const stroke = z
-  .object({
-    path: z.string().trim().min(2).max(20_000),
-    color: ink.optional(),
-    /** Filled, a closed stroke is a painted shape; without, it is a pen line. */
-    fill: ink.optional(),
-    width: z.enum(['thin', 'medium', 'bold']).optional(),
-  })
-  .strict();
+const stroke = z.strictObject({
+  path: z.string().trim().min(2).max(20_000),
+  color: ink.optional(),
+  /** Filled, a closed stroke is a painted shape; without, it is a pen line. */
+  fill: ink.optional(),
+  width: z.enum(['thin', 'medium', 'bold']).optional(),
+});
 /** Where a new shape goes: beside a shape, inside a frame, or (neither) the next free place. */
 const place = {
   near: shape.optional(),
@@ -67,140 +65,119 @@ const place = {
   /** Exactly here: the top-left corner in board coordinates, as board.read reports them. */
   at: z.tuple([z.number().finite(), z.number().finite()]).optional(),
 };
-const node = z
-  .object({
-    key: name,
-    text,
-    shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
-    color: color.optional(),
-  })
-  .strict();
-const edge = z
-  .object({
-    from: z.string().min(1).max(40),
-    to: z.string().min(1).max(40),
-    label: text.optional(),
-  })
-  .strict();
+const node = z.strictObject({
+  key: name,
+  text,
+  shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
+  color: color.optional(),
+});
+const edge = z.strictObject({
+  from: z.string().min(1).max(40),
+  to: z.string().min(1).max(40),
+  label: text.optional(),
+});
 
 export const opSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('note'), key, text, color: color.optional(), ...place }).strict(),
-  z
-    .object({
-      op: z.literal('box'),
-      key,
-      text: z
+  z.strictObject({
+    op: z.literal('box'),
+    key,
+    text: z
+      .string()
+      .trim()
+      .max(2_000)
+      .refine((value) => value === '' || visible(value)),
+    width: z.number().finite().min(1).max(10_000).optional(),
+    height: z.number().finite().min(1).max(10_000).optional(),
+    fontSize: z.number().finite().min(8).max(96).optional(),
+    shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
+    color: color.optional(),
+    ...place,
+  }),
+  z.strictObject({
+    op: z.literal('text'),
+    key,
+    color: ink.optional(),
+    text,
+    size: z.enum(['s', 'm', 'l']).optional(),
+    fontSize: z.number().finite().min(8).max(96).optional(),
+    ...place,
+  }),
+  z.strictObject({
+    op: z.literal('link'),
+    key,
+    /** A Merv record's id, or a web address. */
+    target: z.union([
+      id,
+      z
         .string()
-        .trim()
+        .url()
         .max(2_000)
-        .refine((value) => value === '' || visible(value)),
-      width: z.number().finite().min(1).max(10_000).optional(),
-      height: z.number().finite().min(1).max(10_000).optional(),
-      fontSize: z.number().finite().min(8).max(96).optional(),
-      shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
-      color: color.optional(),
-      ...place,
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('text'),
-      key,
-      color: ink.optional(),
-      text,
-      size: z.enum(['s', 'm', 'l']).optional(),
-      fontSize: z.number().finite().min(8).max(96).optional(),
-      ...place,
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('link'),
-      key,
-      /** A Merv record's id, or a web address. */
-      target: z.union([
-        id,
-        z
-          .string()
-          .url()
-          .max(2_000)
-          .refine((v) => /^https?:\/\//.test(v)),
-      ]),
-      text,
-      /** Optional readable content kept with the reference. Preview metadata is caller supplied. */
-      details: z
-        .object({
-          title: z.string().max(300).optional(),
-          text: z.string().max(20000).optional(),
-          preview: z
-            .object({ title: z.string().max(300), description: z.string().max(2000).optional() })
-            .strict()
-            .optional(),
-          artifactId: id.optional(),
-        })
-        .strict()
-        .optional(),
-      ...place,
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('arrow'),
-      key,
-      from: shape,
-      to: shape,
-      label: z.union([z.literal(''), text]).optional(),
-      fontSize: z.number().finite().min(8).max(96).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('frame'),
-      key,
-      title,
-      holds: z.array(shape).max(200).optional(),
-      near: shape.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('flow'),
-      key,
-      nodes: z.array(node).min(1).max(40),
-      edges: z.array(edge).max(80).default([]),
-      direction: z.enum(['right', 'down']).optional(),
-      ...place,
-    })
-    .strict(),
-  z
-    .object({
-      op: z.literal('edit'),
-      id: shape,
-      text: text.optional(),
-      color: color.optional(),
-      ink: ink.optional(),
-    })
-    .strict(),
+        .refine((v) => /^https?:\/\//.test(v)),
+    ]),
+    text,
+    /** Optional readable content kept with the reference. Preview metadata is caller supplied. */
+    details: z
+      .strictObject({
+        title: z.string().max(300).optional(),
+        text: z.string().max(20000).optional(),
+        preview: z
+          .strictObject({
+            title: z.string().max(300),
+            description: z.string().max(2000).optional(),
+          })
+          .optional(),
+        artifactId: id.optional(),
+      })
+      .optional(),
+    ...place,
+  }),
+  z.strictObject({
+    op: z.literal('arrow'),
+    key,
+    from: shape,
+    to: shape,
+    label: z.union([z.literal(''), text]).optional(),
+    fontSize: z.number().finite().min(8).max(96).optional(),
+  }),
+  z.strictObject({
+    op: z.literal('frame'),
+    key,
+    title,
+    holds: z.array(shape).max(200).optional(),
+    near: shape.optional(),
+  }),
+  z.strictObject({
+    op: z.literal('flow'),
+    key,
+    nodes: z.array(node).min(1).max(40),
+    edges: z.array(edge).max(80).default([]),
+    direction: z.enum(['right', 'down']).optional(),
+    ...place,
+  }),
+  z.strictObject({
+    op: z.literal('edit'),
+    id: shape,
+    text: text.optional(),
+    color: color.optional(),
+    ink: ink.optional(),
+  }),
   z.object({ op: z.literal('move'), id: shape, ...place }).strict(),
   z.object({ op: z.literal('delete'), ids: z.array(shape).min(1).max(200) }).strict(),
-  z
-    .object({
-      op: z.literal('sketch'),
-      key,
-      strokes: z.array(stroke).min(1).max(80),
-      size: z.enum(['s', 'm', 'l', 'native']).optional(),
-      ...place,
-    })
-    .strict(),
+  z.strictObject({
+    op: z.literal('sketch'),
+    key,
+    strokes: z.array(stroke).min(1).max(80),
+    size: z.enum(['s', 'm', 'l', 'native']).optional(),
+    ...place,
+  }),
 ]);
 export type DrawOp = z.infer<typeof opSchema>;
-export const drawSchema = z
-  .object({
-    board: id.optional(),
-    title: title.optional(),
-    ops: z.array(opSchema).max(100).default([]),
-  })
-  .strict();
+export const drawSchema = z.strictObject({
+  board: id.optional(),
+  title: title.optional(),
+  ops: z.array(opSchema).max(100).default([]),
+});
 export type DrawInput = z.input<typeof drawSchema>;
 
 /** Shapes a page may save. Images, embeds and iframes load outside the board, and are not taken. */
@@ -240,12 +217,12 @@ export const elementSchema = z
   .passthrough()
   // Every read of a board holds all of it; an agent's longest sketch stroke is about 150 KiB.
   .refine((el) => jsonBytes(el) <= 256 * 1024, 'A shape is at most 256 KiB');
-export const saveSchema = z
-  .object({ id, elements: z.array(elementSchema).min(1).max(500) })
-  .strict();
-export const setSchema = z
-  .object({ id, title: title.optional(), archived: z.boolean().optional() })
-  .strict();
+export const saveSchema = z.strictObject({ id, elements: z.array(elementSchema).min(1).max(500) });
+export const setSchema = z.strictObject({
+  id,
+  title: title.optional(),
+  archived: z.boolean().optional(),
+});
 
 export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>
   parsed(schema, value, 'invalid_board_input', { nodes: 200_000, depth: 10, bytes: 4_000_000 });

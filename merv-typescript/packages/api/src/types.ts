@@ -13,6 +13,8 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   /** Object-producing schema; discovery unwraps it, runtime validation does not. */
   input: S;
   description: string;
+  /** Concise noun discovery text; retired aliases retain description verbatim. */
+  summary?: string;
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
   /** Script output declaration only, never a runtime validator. */
   output?: ZodTypeAny;
@@ -29,11 +31,13 @@ export type NounActions = Record<string, NounAction>;
 export type NounDefinition = Pick<
   ToolDefinition,
   'tier' | 'readOnly' | 'description' | 'for' | 'removed' | 'legacy' | 'conversationProfile'
-> & { actions: NounActions };
+> & { actions: NounActions; summary?: string };
 
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
+  /** Concise outside-agent discovery text; other descriptions stay original. */
+  summary?: string;
   inputSchema: S;
   /** Optional public argument schema when Zod conversion loses constraints. Runtime parsing still
    *  uses inputSchema. Object branches must be inline and use properties/required rather than
@@ -204,11 +208,12 @@ export interface Tools {
   /** Builds and registers one noun tool, with its actions' retired names as hidden aliases. */
   noun(name: string, definition: NounDefinition): () => Promise<void>;
   /** Detached discovery metadata, curated without granting authority. Agents see core/deferred
-   * reads as permitted and granted mounts; projectless excludes mounts. names adds aliases. */
+   * reads as permitted and granted mounts; projectless excludes mounts. names adds aliases.
+   * compact:false retains original metadata for tools that generate declarations. */
   describe(
     caller?: Caller,
     agent?: boolean,
-    options?: { projectless?: boolean; names?: readonly string[] },
+    options?: { projectless?: boolean; names?: readonly string[]; compact?: boolean },
   ): Promise<ToolDescription[]>;
   /** Trusted in-process listing without a caller; names adds explicitly requested aliases. */
   list(names?: readonly string[]): Promise<ListedTool[]>;

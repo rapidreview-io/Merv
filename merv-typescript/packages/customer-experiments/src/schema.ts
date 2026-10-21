@@ -4,55 +4,51 @@ import type { ExperimentPlan, ValidatedDataset } from './types.js';
 
 const text = z.string().trim().min(1).max(12000);
 const names = z.array(z.string().min(1).max(120)).max(100);
-export const dataRequirementSchema = z
-  .object({
-    id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-    label: text,
-    role: z.enum(['training', 'validation', 'evaluation', 'reference']),
-    format: z.enum(['csv', 'jsonl']),
-    columns: names.min(1),
-    labelColumn: z.string().min(1).max(120).optional(),
-    minRows: z.number().int().min(1).max(100000),
-  })
-  .strict();
-export const planSchema = z
-  .object({
-    title: text.max(160),
-    question: text,
-    decision: text,
-    rationale: text,
-    hypothesis: text,
-    method: z.array(text).min(1).max(20),
-    baseline: text,
-    metric: text,
-    successCriteria: z.array(text).min(1).max(20),
-    research: z.array(z.object({ title: text, url: z.string().url().max(2000) }).strict()).max(30),
-    code: z
-      .object({ repository: z.string().url(), revision: z.string().regex(/^[a-fA-F0-9]{40,64}$/) })
-      .strict()
-      .nullable(),
-    models: z.array(z.object({ name: text, revision: text }).strict()).max(20),
-    dataRequirements: z.array(dataRequirementSchema).max(10),
-    /** Customer-facing execution bounds. Hardware selection belongs to Merv's executing agent. */
-    limits: z
-      .object({
-        wallMinutes: z.number().int().min(1).max(1440),
-        maxTokens: z.number().int().min(1000).max(500_000_000),
-        maxAttempts: z.number().int().min(1).max(2),
-      })
-      .strict(),
-    turnaround: text,
-    deliverables: z.array(text).min(1).max(20),
-    executionSpec: text,
-    feasibility: text,
-  })
-  .strict();
+export const dataRequirementSchema = z.strictObject({
+  id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+  label: text,
+  role: z.enum(['training', 'validation', 'evaluation', 'reference']),
+  format: z.enum(['csv', 'jsonl']),
+  columns: names.min(1),
+  labelColumn: z.string().min(1).max(120).optional(),
+  minRows: z.number().int().min(1).max(100000),
+});
+export const planSchema = z.strictObject({
+  title: text.max(160),
+  question: text,
+  decision: text,
+  rationale: text,
+  hypothesis: text,
+  method: z.array(text).min(1).max(20),
+  baseline: text,
+  metric: text,
+  successCriteria: z.array(text).min(1).max(20),
+  research: z.array(z.object({ title: text, url: z.string().url().max(2000) }).strict()).max(30),
+  code: z
+    .strictObject({
+      repository: z.string().url(),
+      revision: z.string().regex(/^[a-fA-F0-9]{40,64}$/),
+    })
+    .nullable(),
+  models: z.array(z.object({ name: text, revision: text }).strict()).max(20),
+  dataRequirements: z.array(dataRequirementSchema).max(10),
+  /** Customer-facing execution bounds. Hardware selection belongs to Merv's executing agent. */
+  limits: z.strictObject({
+    wallMinutes: z.number().int().min(1).max(1440),
+    maxTokens: z.number().int().min(1000).max(500_000_000),
+    maxAttempts: z.number().int().min(1).max(2),
+  }),
+  turnaround: text,
+  deliverables: z.array(text).min(1).max(20),
+  executionSpec: text,
+  feasibility: text,
+});
 export const limitsSchema = planSchema.shape.limits;
 /** A v3 plan document: free Markdown the customer and the intake agent co-edit. */
 export const planDocumentSchema = z.string().max(200_000);
 /** plan_verify's input: one object (tool inputs are objects), its fields required per decision. */
 export const planVerifySchema = z
-  .object({
+  .strictObject({
     id: z.string(),
     revision: z.number().int().positive(),
     decision: z.enum(['accept', 'changes_requested']),
@@ -61,7 +57,6 @@ export const planVerifySchema = z
     criteria: z.array(text).min(1).max(20).optional(),
     limits: limitsSchema.optional(),
   })
-  .strict()
   .superRefine((value, ctx) => {
     const required =
       value.decision === 'accept' ? (['question', 'criteria', 'limits'] as const) : ['feedback'];
@@ -83,60 +78,52 @@ export type PlanVerification =
       limits: ExperimentPlan['limits'];
     }
   | { revision: number; decision: 'changes_requested'; feedback: string };
-export const datasetSchema = z
-  .object({
-    requirementId: z.string().min(1),
-    artifactId: z.string().min(1),
-    bucket: z.string().min(1),
-    key: z.string().min(1),
-    filename: z.string().min(1),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    size: z
-      .number()
-      .int()
-      .min(1)
-      .max(20 * 1024 * 1024),
-    rows: z.number().int().positive(),
-    columns: names,
-    validationId: z.string().min(1),
-    validatedAt: z.string().datetime(),
-  })
-  .strict();
+export const datasetSchema = z.strictObject({
+  requirementId: z.string().min(1),
+  artifactId: z.string().min(1),
+  bucket: z.string().min(1),
+  key: z.string().min(1),
+  filename: z.string().min(1),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z
+    .number()
+    .int()
+    .min(1)
+    .max(20 * 1024 * 1024),
+  rows: z.number().int().positive(),
+  columns: names,
+  validationId: z.string().min(1),
+  validatedAt: z.string().datetime(),
+});
 /** One customer-visible progress line from the executing worker. */
-export const progressSchema = z
-  .object({
-    id: z.string().min(1),
-    text: z.string().trim().min(1).max(200),
-    /** A finished item's score, e.g. one model's correct answers out of the cases. */
-    result: z
-      .object({
-        name: z.string().trim().min(1).max(80),
-        score: z.number().finite(),
-        total: z.number().finite().positive(),
-      })
-      .strict()
-      .optional(),
-    /** How far through the planned items the run is. */
-    step: z
-      .object({ done: z.number().int().min(0), total: z.number().int().positive() })
-      .strict()
-      .optional(),
-  })
-  .strict();
+export const progressSchema = z.strictObject({
+  id: z.string().min(1),
+  text: z.string().trim().min(1).max(200),
+  /** A finished item's score, e.g. one model's correct answers out of the cases. */
+  result: z
+    .strictObject({
+      name: z.string().trim().min(1).max(80),
+      score: z.number().finite(),
+      total: z.number().finite().positive(),
+    })
+    .optional(),
+  /** How far through the planned items the run is. */
+  step: z
+    .strictObject({ done: z.number().int().min(0), total: z.number().int().positive() })
+    .optional(),
+});
 
-export const submitResultsSchema = z
-  .object({
-    id: z.string().min(1),
-    expectedRevision: z.number().int().nonnegative(),
-    artifactIds: z.array(z.string().min(1)).max(30).default([]),
-    /** service_experiment@2: the Markdown artifact report.render(final) returned; its PDF and
-     *  pages join the results. */
-    reportArtifactId: z.string().min(1).optional(),
-    /** Defaults to the report's answer and the description under its result chart. */
-    summary: text.optional(),
-    requestId: z.string().min(1).max(200),
-  })
-  .strict();
+export const submitResultsSchema = z.strictObject({
+  id: z.string().min(1),
+  expectedRevision: z.number().int().nonnegative(),
+  artifactIds: z.array(z.string().min(1)).max(30).default([]),
+  /** service_experiment@2: the Markdown artifact report.render(final) returned; its PDF and
+   *  pages join the results. */
+  reportArtifactId: z.string().min(1).optional(),
+  /** Defaults to the report's answer and the description under its result chart. */
+  summary: text.optional(),
+  requestId: z.string().min(1).max(200),
+});
 
 export function validateAgreement(plan: ExperimentPlan, datasets: ValidatedDataset[]): void {
   planSchema.parse(plan);

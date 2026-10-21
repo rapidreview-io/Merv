@@ -21,15 +21,13 @@ export const reflectionToolsPlugin = {
       {
         name: 'reflection.submit',
         description: `Submit your immutable synthesis report and change specification for independent review. The reviewer owns Methods/Results edits through review.submit.paperChanges. A change specification with mediaType application/json is validated as a structured next-wave plan (an experiment item’s name, like experiment.create’s, is ${EXPERIMENT_NAME_RULE}, with no spaces), reviewed item by item, and created as tasks and experiments only when the research owner chooses that in research.advance; a text change specification is accepted as before and creates no work. Review rejections return to synthesis or require five new lenses.`,
-        inputSchema: z
-          .object({
-            reflectionId: id,
-            reportArtifactId: id,
-            changeSpecArtifactId: id,
-            expectedRevision,
-            requestId,
-          })
-          .strict(),
+        inputSchema: z.strictObject({
+          reflectionId: id,
+          reportArtifactId: id,
+          changeSpecArtifactId: id,
+          expectedRevision,
+          requestId,
+        }),
         handler: (caller, input) => ctx.reflections.submit(caller, input),
       },
     ];
@@ -39,6 +37,7 @@ export const reflectionToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('reflection.read', {
         readOnly: true,
+        summary: 'Read reflection waves and individual lens outputs.',
         description:
           'Read reflection waves: list (every wave and its stage), get (one wave, its lens submissions and synthesis review) and lens (one lens assignment and its own output).',
         actions: {
@@ -67,32 +66,29 @@ export const reflectionToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.noun('reflection.write', {
+        summary: 'Start or end five-lens reflection waves.',
         description:
           'Start or end reflection waves: create (five independent lenses over the live research, pausing new work until approval) and end (abandon a wave that cannot finish).',
         actions: {
           create: {
             description:
               'Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.',
-            input: z
-              .object({
-                title: z.string().trim().min(1).max(300).refine(visible).optional(),
-                requestId,
-              })
-              .strict(),
+            input: z.strictObject({
+              title: z.string().trim().min(1).max(300).refine(visible).optional(),
+              requestId,
+            }),
             was: ['reflection.create'],
             handler: (caller, input) => ctx.reflections.create(caller, input),
           },
           end: {
             description:
               'Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.',
-            input: z
-              .object({
-                reflectionId: id,
-                expectedRevision,
-                reason: z.string().trim().min(1).max(16000),
-                requestId,
-              })
-              .strict(),
+            input: z.strictObject({
+              reflectionId: id,
+              expectedRevision,
+              reason: z.string().trim().min(1).max(16000),
+              requestId,
+            }),
             was: ['reflection.end'],
             handler: (caller, input) => ctx.reflections.end(caller, input),
           },

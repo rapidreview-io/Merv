@@ -23,6 +23,7 @@ import { code, fixture } from './fixtures/pi.js';
 import { fixtureAccess } from './fixtures/access.js';
 import { deferred } from './fixtures/deferred.js';
 import { openState } from './fixtures/state.js';
+import { expanded } from './fixtures/tool-schema.js';
 
 const owner: Caller = { projectId: 'project_1', actorId: 'owner' };
 const reader: Caller = { projectId: 'project_1', actorId: 'reader' };
@@ -197,26 +198,27 @@ test('a noun call takes its action and that action’s object, and names what it
   assert.deepEqual(await tools.call('code.write:base_retry', owner, body), nouned);
 });
 
-test('a noun tool is described as one object root, every action object whole, core loaded up front', async () => {
+test('a noun tool describes every action through lossless schemas, core loaded up front', async () => {
   const { tools } = registry();
   const described = new Map((await tools.describe(owner, true)).map((tool) => [tool.name, tool]));
   assert.deepEqual([...described.keys()], ['code.read', 'code.write']);
   for (const tool of described.values()) {
-    const schema = tool.inputSchema as Record<string, any>;
+    const schema = expanded(tool.inputSchema);
     assert.equal(schema.type, 'object');
     assert.equal(schema.anyOf, undefined, `${tool.name} has no top-level anyOf`);
     assert.deepEqual(schema.required, ['action']);
     for (const action of schema.properties.action.enum as string[]) {
       const object = schema.properties[action];
       assert.equal(object.type, 'object', `${tool.name} ${action}`);
-      assert.match(object.description, new RegExp(`^Required when action is "${action}"; omit`));
+      assert.ok(object.description.length > 0);
+      assert.doesNotMatch(object.description, /Required when action/);
     }
     assert.ok(tool.description!.length <= 600, `${tool.name}'s summary is at most 600 characters`);
     assert.match(tool.description!, /\{"action":"x","x":\{…\}\}/);
     // A noun's requestId is inside its actions, so it claims no idempotence.
     assert.equal(tool.annotations?.idempotentHint, undefined);
   }
-  const write = described.get('code.write')!.inputSchema as Record<string, any>;
+  const write = expanded(described.get('code.write')!.inputSchema);
   // Its own required list, nested enums and the refined input's fields.
   assert.deepEqual(write.properties.base_retry.required, ['key', 'reason', 'requestId']);
   assert.deepEqual(write.properties.repository_import.properties.source.enum, ['bundle', 'github']);
@@ -231,8 +233,8 @@ test('a noun tool is described as one object root, every action object whole, co
       ? 1 + Math.max(0, ...Object.values(value).map((entry) => depth(entry)))
       : 0;
   for (const [name, bytes, nesting] of [
-    ['code.read', 8_000, 6],
-    ['code.write', 20_000, 13],
+    ['code.read', 3_500, 8],
+    ['code.write', 10_500, 13],
   ] as const) {
     const tool = described.get(name)!;
     assert.ok(JSON.stringify(tool).length <= bytes, `${name} within ${bytes} bytes`);

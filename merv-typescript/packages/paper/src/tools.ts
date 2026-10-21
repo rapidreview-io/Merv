@@ -59,6 +59,8 @@ export const paperToolsPlugin = {
       ctx.tools.noun('paper.read', {
         tier: 'core',
         readOnly: true,
+        summary:
+          'Read current/published paper documents, citations, contributions and retained revisions.',
         description:
           "Read the living project paper: get (every document, citations and contributions), document (one kind, current and newest published, or a retained revision), outline (its sections' ids and lengths), history (its retained revisions) and section (one section, or part of it by offset and length).",
         legacy: {
@@ -99,8 +101,7 @@ export const paperToolsPlugin = {
               shown('current' in (result as object) ? unrepeated(result as PaperDocument) : result),
           },
           outline: {
-            description:
-              "A document's sections: each id, title and length, without content; revision outlines a retained revision.",
+            description: 'Section id/title/length, no content; revision selects retained revision.',
             input: at,
             handler: async (caller, { kind, revision }) => {
               const { read, found } = await document(caller, kind, revision);
@@ -122,7 +123,7 @@ export const paperToolsPlugin = {
           },
           section: {
             description:
-              'One section, of a retained revision by revision; offset and length read part of it, in characters, giving offset and total. paper.write patch changes part of a section with edits [{find, replace}] instead of resending it whole.',
+              'Read section, optionally at revision or character offset/length; returns offset/total. paper.patch edits [{find,replace}] without resending whole section.',
             input: sectionInput,
             handler: async (caller, input) => {
               const { found } = await document(caller, input.kind, input.revision);
@@ -146,10 +147,13 @@ export const paperToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('paper.write', {
         tier: 'core',
+        summary: 'Edit paper sections and citations.',
         description:
           'Change the living paper: patch (edit, add, move or remove sections of one document at the revision read) and cite (create or revise one literature citation).',
         actions: {
           patch: {
+            summary:
+              'Main agent: edit any paper document at expectedRevision. Stale revisions merge linewise; conflicting sections must be reread. New sections need title/content; existing sections take replacement content or sequential edits [{find,replace}], each find unique in the current section (also when replaying a stale edit). afterId:null moves first; afterId moves below that section; remove:true deletes unreferenced sections. Problem keys: problem/scope/goals/constraints. Cite [Experiment name](/experiments/EXPERIMENT_ID) with actual name and stable ID. Assigned experiment/reflection reviewers use review.submit.paperChanges for Methods/Results; producers cannot edit.',
             description:
               'The main agent can directly edit any living-paper document with expectedRevision, the revision it read: an edit made against an earlier revision is merged line by line with the edits made since, and refused only where both changed the same lines, naming the sections to read again. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual experiment name as the visible label and a stable ID in the link destination. New sections require title/content. An existing section takes content, which replaces it whole, or edits: [{find, replace}], made in turn, each find quoting text that occurs exactly once in the section as it then stands, so a sentence added to a long section is sent alone; an edit made at an earlier revision applies wherever each find still occurs once. afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Assigned experiment and reflection reviewers submit Methods/Results edits in review.submit.paperChanges; producer assignments cannot edit the paper.',
             input: patchSchema,
@@ -157,6 +161,8 @@ export const paperToolsPlugin = {
             handler: async (caller, input) => await paper.patch(caller, input),
           },
           cite: {
+            summary:
+              'Create/revise a citation: identifier (doi:…/arxiv:…), bibliography, existing literature sectionIds and project artifact:<id> refs. New entry: expectedRevision 0. Nisa records supply identifier/title/authors/year/url; fetch nisa.paper first if more_authors or a truncated title.',
             description:
               'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic_search, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.',
             input: citeSchema,

@@ -183,14 +183,12 @@ interface CodeBaseHooks {
   message?(sql: Sql, projectId: string, key: string): Promise<string | null>;
 }
 
-export const baseControlSchema = z
-  .object({
-    key: z.string().regex(/^[0-9a-f]{64}$/),
-    action: z.enum(['retry', 'suspend', 'resume', 'cancel', 'quarantine', 'release', 'repair']),
-    reason: z.string().trim().min(1).max(2000),
-    requestId: z.string().min(1).max(200),
-  })
-  .strict();
+export const baseControlSchema = z.strictObject({
+  key: z.string().regex(/^[0-9a-f]{64}$/),
+  action: z.enum(['retry', 'suspend', 'resume', 'cancel', 'quarantine', 'release', 'repair']),
+  reason: z.string().trim().min(1).max(2000),
+  requestId: z.string().min(1).max(200),
+});
 export type CodeBaseControl = z.infer<typeof baseControlSchema>;
 const CONTROL = 'A leased worker cannot control server work';
 /** Written by propagation, never by an operator, so a released quarantine knows what to retract. */

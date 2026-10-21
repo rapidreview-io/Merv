@@ -10,57 +10,50 @@ export const id = z
   .regex(/^[A-Za-z0-9_-]+$/);
 /** What a conversation is called until Pi names it after its first answer. */
 export const defaultTitle = 'New conversation';
-export const createInput = z
-  .object({ requestId: id, title: z.string().trim().min(1).max(200).default(defaultTitle) })
-  .strict();
+export const createInput = z.strictObject({
+  requestId: id,
+  title: z.string().trim().min(1).max(200).default(defaultTitle),
+});
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
 const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 /** pi.send; `model` is the one the page shows, which must still be the conversation's. */
-export const sendInput = z
-  .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
-  .strict();
+export const sendInput = z.strictObject({
+  commandId: id,
+  text: z.string().trim().min(1).max(32_000),
+  model: modelId.optional(),
+});
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
 /** screen.show: what the agent puts on the person's screen: one record, or one page, and the
  * part of the page to bring into view, as the page names its parts (a board's shape or frame). */
-export const showInput = z
-  .object({
-    record: idSchema.optional(),
-    page: z.string().trim().min(1).max(100).optional(),
-    focus: z.string().trim().min(1).max(200).optional(),
-  })
-  .strict();
+export const showInput = z.strictObject({
+  record: idSchema.optional(),
+  page: z.string().trim().min(1).max(100).optional(),
+  focus: z.string().trim().min(1).max(200).optional(),
+});
 /** screen.look: what the agent wants to know about the person's screen. */
-export const lookInput = z
-  .object({
-    question: z.string().max(1_000).default(''),
-    /** A record or page the person is not on: their page draws it out of sight to look at it. */
-    at: showInput.optional(),
-    view: viewSchema.optional(),
-  })
-  .strict();
+export const lookInput = z.strictObject({
+  question: z.string().max(1_000).default(''),
+  /** A record or page the person is not on: their page draws it out of sight to look at it. */
+  at: showInput.optional(),
+  view: viewSchema.optional(),
+});
 /** pi.screen: the person's page answers what was asked of it: a look with a snapshot of itself,
  * a show with where it went or why it could not. */
-export const screenInput = z
-  .object({
-    id,
-    askId: id,
-    shot: z
-      .object({
-        path: z.string().max(2_000),
-        html: z.string().min(1).max(2_500_000),
-        width: z.number().int().min(200).max(8_000),
-        height: z.number().int().min(200).max(8_000),
-      })
-      .strict()
-      .optional(),
-    opened: z
-      .object({ path: z.string().max(2_000), title: z.string().max(500) })
-      .strict()
-      .optional(),
-    missing: z.string().max(2_000).optional(),
-  })
-  .strict();
+export const screenInput = z.strictObject({
+  id,
+  askId: id,
+  shot: z
+    .strictObject({
+      path: z.string().max(2_000),
+      html: z.string().min(1).max(2_500_000),
+      width: z.number().int().min(200).max(8_000),
+      height: z.number().int().min(200).max(8_000),
+    })
+    .optional(),
+  opened: z.strictObject({ path: z.string().max(2_000), title: z.string().max(500) }).optional(),
+  missing: z.string().max(2_000).optional(),
+});
 /** pi.model.set */
 export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
@@ -71,9 +64,10 @@ export const machineKey = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
 /** pi.machine.set */
 export const machineInput = z.object({ machine: machineKey }).strict();
 /** machine.switch, the agent's switch_machine. */
-export const switchMachineInput = z
-  .object({ machine: machineKey, reason: z.string().trim().min(10).max(300) })
-  .strict();
+export const switchMachineInput = z.strictObject({
+  machine: machineKey,
+  reason: z.string().trim().min(10).max(300),
+});
 const workerInput = z.object({ workerId: id }).strict();
 /** /next; the probe is HMAC-SHA256 base64url. */
 export const nextInput = workerInput
@@ -97,17 +91,16 @@ export const failInput = workerInput
       .optional(),
   })
   .strict();
-export const message = z
-  .object({ role: z.enum(['user', 'assistant']), text: z.string().max(messageChars) })
-  .strict();
-export const outcome = z
-  .object({
-    callId: id,
-    name: z.string().min(1).max(128),
-    input: z.record(z.unknown()),
-    output: z.unknown(),
-  })
-  .strict();
+export const message = z.strictObject({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().max(messageChars),
+});
+export const outcome = z.strictObject({
+  callId: id,
+  name: z.string().min(1).max(128),
+  input: z.record(z.unknown()),
+  output: z.unknown(),
+});
 export const completionInput = commandInput
   .extend({
     messages: z.array(message).min(1).max(128),
@@ -116,118 +109,106 @@ export const completionInput = commandInput
     checkpointHash: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
-export const piConfig = z
-  .object({
-    baseUrl: z.string().url().optional(),
-    /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
-     * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
-     * for reasoning on any model. The picker shows labels only. */
-    models: z
-      .array(
-        z
-          .object({
-            id: modelId,
-            label: z.string().trim().min(1).max(24),
-            effort: z.enum(['none', 'low', 'medium']),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(8)
-      .refine((all) => new Set(all.map((m) => m.id)).size === all.length, 'Model ids repeat')
-      .default([
-        { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'low' },
-        { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
-      ]),
-    secretEnv: envVar.describe('Agent machine tokens · signing secret').default('MERV_PI_SECRET'),
-    modelResponsesUrl: z
-      .string()
-      .url()
-      .refine((url) => {
-        const parsed = new URL(url);
-        return (
-          parsed.protocol === 'https:' &&
-          !parsed.username &&
-          !parsed.password &&
-          !parsed.search &&
-          !parsed.hash
-        );
-      })
-      .default('https://api.openai.com/v1/responses'),
-    modelIdPrefix: z
-      .string()
-      .regex(/^[A-Za-z0-9._-]*\/?$/)
-      .default(''),
-    modelApiKeyEnv: envVar
-      .describe('Agent model calls · provider API key')
-      .default('MERV_PI_MODEL_API_KEY'),
-    /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
-    dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
-    /** How long a turn may go without progress: to reach its machine, then between any two signs
-     * of work (its claim, a streamed word, a tool call). Its one ceiling is turnCeilingMs. */
-    turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
-    idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
-    pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),
-    /** The operator's Pi host project (MERV_PI_HOST_PROJECT_ID), whose service key rents every
-     * host slot; credentialEnv names the variable holding it. */
-    host: z
-      .object({
-        projectId: id,
-        credentialEnv: envVar
-          .describe('Agent machine rental · Merv host project key')
-          .default('MERV_PI_HOST_KEY'),
-      })
-      .strict(),
-    /** From MERV_FLEET_RUNTIMES, keyed like the Sandboxes runtime profiles; the first is the
-     * default. `agent` lets the agent move to it. */
-    machines: z
-      .array(
-        z
-          .object({
-            key: machineKey,
-            label: z.string().trim().min(1).max(40),
-            slots: z.number().int().min(1).max(8),
-            agent: z.boolean().default(false),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(8)
-      .refine((all) => new Set(all.map((m) => m.key)).size === all.length, 'Machine keys repeat')
-      .default([{ key: 'standard', label: 'Standard', slots: 3, agent: false }]),
-    /** MERV_PI_AGENT_MOVES: offer switch_machine at all. */
-    agentMoves: z.boolean().default(false),
-    /** Voice: the GPT-Live session Main opens for a person's browser, on the model key. */
-    voice: z
-      .object({
-        url: z.string().url().default('https://api.openai.com/v1/live/sessions'),
-        model: z.string().min(1).default('gpt-live-1'),
-        voice: z.string().min(1).default('marin'),
-      })
-      .strict()
-      .default({}),
-    /** Seeing the screen: Cloudflare's headless browser draws the person's page snapshot. */
-    screen: z
-      .object({
-        url: z
-          .string()
-          .url()
-          .default(
-            'https://api.cloudflare.com/client/v4/accounts/{account}/browser-run/screenshot',
-          ),
-        tokenEnv: envVar
-          .describe('Agent screen reading · Cloudflare Browser Rendering token')
-          .default('MERV_BROWSER_RENDER_TOKEN'),
-        accountEnv: envVar
-          .describe('Agent screen reading · Cloudflare Browser Rendering account')
-          .default('MERV_BROWSER_RENDER_ACCOUNT'),
-        /** How long the person's page has to answer a look. */
-        waitMs: z.number().int().min(1_000).max(60_000).default(12_000),
-      })
-      .strict()
-      .default({}),
-  })
-  .strict();
+export const piConfig = z.strictObject({
+  baseUrl: z.string().url().optional(),
+  /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
+   * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
+   * for reasoning on any model. The picker shows labels only. */
+  models: z
+    .array(
+      z.strictObject({
+        id: modelId,
+        label: z.string().trim().min(1).max(24),
+        effort: z.enum(['none', 'low', 'medium']),
+      }),
+    )
+    .min(1)
+    .max(8)
+    .refine((all) => new Set(all.map((m) => m.id)).size === all.length, 'Model ids repeat')
+    .default([
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'low' },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
+    ]),
+  secretEnv: envVar.describe('Agent machine tokens · signing secret').default('MERV_PI_SECRET'),
+  modelResponsesUrl: z
+    .string()
+    .url()
+    .refine((url) => {
+      const parsed = new URL(url);
+      return (
+        parsed.protocol === 'https:' &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.search &&
+        !parsed.hash
+      );
+    })
+    .default('https://api.openai.com/v1/responses'),
+  modelIdPrefix: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]*\/?$/)
+    .default(''),
+  modelApiKeyEnv: envVar
+    .describe('Agent model calls · provider API key')
+    .default('MERV_PI_MODEL_API_KEY'),
+  /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
+  dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
+  /** How long a turn may go without progress: to reach its machine, then between any two signs
+   * of work (its claim, a streamed word, a tool call). Its one ceiling is turnCeilingMs. */
+  turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
+  idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
+  pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),
+  /** The operator's Pi host project (MERV_PI_HOST_PROJECT_ID), whose service key rents every
+   * host slot; credentialEnv names the variable holding it. */
+  host: z.strictObject({
+    projectId: id,
+    credentialEnv: envVar
+      .describe('Agent machine rental · Merv host project key')
+      .default('MERV_PI_HOST_KEY'),
+  }),
+  /** From MERV_FLEET_RUNTIMES, keyed like the Sandboxes runtime profiles; the first is the
+   * default. `agent` lets the agent move to it. */
+  machines: z
+    .array(
+      z.strictObject({
+        key: machineKey,
+        label: z.string().trim().min(1).max(40),
+        slots: z.number().int().min(1).max(8),
+        agent: z.boolean().default(false),
+      }),
+    )
+    .min(1)
+    .max(8)
+    .refine((all) => new Set(all.map((m) => m.key)).size === all.length, 'Machine keys repeat')
+    .default([{ key: 'standard', label: 'Standard', slots: 3, agent: false }]),
+  /** MERV_PI_AGENT_MOVES: offer switch_machine at all. */
+  agentMoves: z.boolean().default(false),
+  /** Voice: the GPT-Live session Main opens for a person's browser, on the model key. */
+  voice: z
+    .strictObject({
+      url: z.string().url().default('https://api.openai.com/v1/live/sessions'),
+      model: z.string().min(1).default('gpt-live-1'),
+      voice: z.string().min(1).default('marin'),
+    })
+    .default({}),
+  /** Seeing the screen: Cloudflare's headless browser draws the person's page snapshot. */
+  screen: z
+    .strictObject({
+      url: z
+        .string()
+        .url()
+        .default('https://api.cloudflare.com/client/v4/accounts/{account}/browser-run/screenshot'),
+      tokenEnv: envVar
+        .describe('Agent screen reading · Cloudflare Browser Rendering token')
+        .default('MERV_BROWSER_RENDER_TOKEN'),
+      accountEnv: envVar
+        .describe('Agent screen reading · Cloudflare Browser Rendering account')
+        .default('MERV_BROWSER_RENDER_ACCOUNT'),
+      /** How long the person's page has to answer a look. */
+      waitMs: z.number().int().min(1_000).max(60_000).default(12_000),
+    })
+    .default({}),
+});
 export type PiConfig = z.input<typeof piConfig>;
 
 export const migration = {

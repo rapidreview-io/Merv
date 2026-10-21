@@ -71,6 +71,7 @@ export const reportsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('report.read', {
         readOnly: true,
+        summary: 'Check report drafts and rendered charts.',
         description:
           'Check a report draft: check (every problem in its structure, front matter, references and charts) and review_visual (one chart rendered at its final size, with its section and automatic checks).',
         actions: {

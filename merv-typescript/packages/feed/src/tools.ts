@@ -18,13 +18,11 @@ export const feedToolsPlugin = {
           post: {
             description:
               'Post an immutable project message with up to 10 artifact attachments. Producers, reviewers, and operators may post. An identical requestId retry returns the original post.',
-            input: z
-              .object({
-                body: z.string().min(1).max(8000).refine(visible, 'Post body must be nonblank'),
-                artifactIds: z.array(z.string().min(1)).max(10).optional(),
-                requestId: z.string().min(1).max(200),
-              })
-              .strict(),
+            input: z.strictObject({
+              body: z.string().min(1).max(8000).refine(visible, 'Post body must be nonblank'),
+              artifactIds: z.array(z.string().min(1)).max(10).optional(),
+              requestId: z.string().min(1).max(200),
+            }),
             was: ['feed.post'],
             handler: async (caller, input) => await feed.post(caller, input),
           },

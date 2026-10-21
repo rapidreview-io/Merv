@@ -14,24 +14,22 @@ const text = z.string().max(relayRequestBytes);
 const identifier = z.string().min(1).max(128);
 const toolName = z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/);
 
-export const piRelayGrantSchema = z
-  .object({
-    // `conversation:command:epoch`, whose command id pi.send takes up to 200 characters.
-    id: z.string().min(1).max(256),
-    userId: identifier,
-    projectId: identifier,
-    conversationId: identifier,
-    commandId: id,
-    runtimeId: identifier,
-    epoch: z.number().int().nonnegative(),
-    expiresAt: z.string().datetime({ offset: true }),
-    model: identifier,
-    toolNames: z
-      .array(toolName)
-      .max(128)
-      .refine((names) => new Set(names).size === names.length),
-  })
-  .strict();
+export const piRelayGrantSchema = z.strictObject({
+  // `conversation:command:epoch`, whose command id pi.send takes up to 200 characters.
+  id: z.string().min(1).max(256),
+  userId: identifier,
+  projectId: identifier,
+  conversationId: identifier,
+  commandId: id,
+  runtimeId: identifier,
+  epoch: z.number().int().nonnegative(),
+  expiresAt: z.string().datetime({ offset: true }),
+  model: identifier,
+  toolNames: z
+    .array(toolName)
+    .max(128)
+    .refine((names) => new Set(names).size === names.length),
+});
 
 // Built once: a union made in the lazy getter was rebuilt at every node of every tool schema.
 const json: z.ZodType<unknown> = z.lazy(() => node);
@@ -40,33 +38,31 @@ const node = z.union([...scalars, z.array(json), z.record(json)]);
 
 const input = z.discriminatedUnion('type', [
   z.object({ type: z.literal('input_text'), text }).strict(),
-  z
-    .object({
-      type: z.literal('input_image'),
-      image_url: z
-        .string()
-        .max(1000000)
-        .regex(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
-      detail: z.enum(['auto', 'low', 'high']).optional(),
-    })
-    .strict(),
+  z.strictObject({
+    type: z.literal('input_image'),
+    image_url: z
+      .string()
+      .max(1000000)
+      .regex(/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
+    detail: z.enum(['auto', 'low', 'high']).optional(),
+  }),
 ]);
-const output = z
-  .object({ type: z.literal('output_text'), text, annotations: z.array(z.never()).max(0) })
-  .strict();
+const output = z.strictObject({
+  type: z.literal('output_text'),
+  text,
+  annotations: z.array(z.never()).max(0),
+});
 const message = z.union([
   z.object({ role: z.enum(['system', 'developer']), content: text }).strict(),
   z.object({ role: z.literal('user'), content: z.array(input).min(1).max(64) }).strict(),
-  z
-    .object({
-      type: z.literal('message'),
-      role: z.literal('assistant'),
-      id: identifier.optional(),
-      status: z.literal('completed').optional(),
-      phase: z.enum(['final_answer', 'commentary']).optional(),
-      content: z.array(output).min(1).max(64),
-    })
-    .strict(),
+  z.strictObject({
+    type: z.literal('message'),
+    role: z.literal('assistant'),
+    id: identifier.optional(),
+    status: z.literal('completed').optional(),
+    phase: z.enum(['final_answer', 'commentary']).optional(),
+    content: z.array(output).min(1).max(64),
+  }),
   // Replayed verbatim from checkpoints: unknown fields are dropped rather than failing every turn.
   z.object({
     type: z.literal('reasoning'),
@@ -80,58 +76,49 @@ const message = z.union([
     status: z.enum(['in_progress', 'completed', 'incomplete']).optional(),
   }),
   // A model's call to an undeclared tool is only history: the agent answered it with an error.
-  z
-    .object({
-      type: z.literal('function_call'),
-      id: identifier.optional(),
-      call_id: identifier,
-      name: identifier,
-      arguments: text,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal('function_call_output'),
-      call_id: identifier,
-      output: z.union([text, z.array(input).min(1).max(8)]),
-    })
-    .strict(),
+  z.strictObject({
+    type: z.literal('function_call'),
+    id: identifier.optional(),
+    call_id: identifier,
+    name: identifier,
+    arguments: text,
+  }),
+  z.strictObject({
+    type: z.literal('function_call_output'),
+    call_id: identifier,
+    output: z.union([text, z.array(input).min(1).max(8)]),
+  }),
 ]);
 
-export const piResponsesSchema = z
-  .object({
-    model: identifier,
-    input: z.array(message).min(1).max(512),
-    store: z.literal(false),
-    stream: z.literal(true),
-    max_output_tokens: z.number().int().min(16).optional(),
-    prompt_cache_key: z.string().min(1).max(64).optional(),
-    temperature: z.number().min(0).max(2).optional(),
-    reasoning: z
-      .object({
-        effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']),
-        summary: reasoningSummary.optional(),
-      })
-      .strict()
-      .optional(),
-    include: z.tuple([z.literal('reasoning.encrypted_content')]).optional(),
-    tools: z
-      .array(
-        z
-          .object({
-            type: z.literal('function'),
-            name: toolName,
-            description: text.optional(),
-            parameters: z.record(json),
-            strict: z.boolean().optional(),
-          })
-          .strict(),
-      )
-      .max(128)
-      .optional(),
-    tool_choice: toolChoice.optional(),
-  })
-  .strict();
+export const piResponsesSchema = z.strictObject({
+  model: identifier,
+  input: z.array(message).min(1).max(512),
+  store: z.literal(false),
+  stream: z.literal(true),
+  max_output_tokens: z.number().int().min(16).optional(),
+  prompt_cache_key: z.string().min(1).max(64).optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  reasoning: z
+    .strictObject({
+      effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']),
+      summary: reasoningSummary.optional(),
+    })
+    .optional(),
+  include: z.tuple([z.literal('reasoning.encrypted_content')]).optional(),
+  tools: z
+    .array(
+      z.strictObject({
+        type: z.literal('function'),
+        name: toolName,
+        description: text.optional(),
+        parameters: z.record(json),
+        strict: z.boolean().optional(),
+      }),
+    )
+    .max(128)
+    .optional(),
+  tool_choice: toolChoice.optional(),
+});
 
 export function validPiPayload(
   payload: z.infer<typeof piResponsesSchema>,

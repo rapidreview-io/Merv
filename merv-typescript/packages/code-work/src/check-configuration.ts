@@ -29,37 +29,31 @@ export const CODE_CHECK_SOURCE_MAX_BYTES = 128 * 1024 * 1024;
  */
 export const CODE_CHECK_SLACK_SECONDS = 1500;
 
-export const codeCheckSpecSchema = z
-  .object({
-    command: z.string().trim().min(1).max(4000),
-    timeoutSeconds: z.number().int().min(30).max(3600),
-    image: z
-      .object({
-        provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
-        offerId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
-        snapshotId: z
-          .string()
-          .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
-          .nullable(),
-      })
-      .strict(),
-  })
-  .strict() satisfies z.ZodType<CodeCheckSpec>;
+export const codeCheckSpecSchema = z.strictObject({
+  command: z.string().trim().min(1).max(4000),
+  timeoutSeconds: z.number().int().min(30).max(3600),
+  image: z.strictObject({
+    provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+    offerId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+    snapshotId: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+      .nullable(),
+  }),
+}) satisfies z.ZodType<CodeCheckSpec>;
 
 const { denyGlobs, secretExemptGlobs } = codeAdmissionLimitsSchema.shape;
-export const codeRepositoryConfigureInputSchema = z
-  .object({
-    denyGlobs,
-    secretExemptGlobs,
-    /**
-     * Stated on every call, never defaulted: the lists here replace what was set, so a check
-     * that could be left out would let an operator editing one glob switch verification off
-     * and have every later base seal unchecked without anybody having typed that.
-     */
-    check: codeCheckSpecSchema.nullable(),
-    requestId: idSchema,
-  })
-  .strict() satisfies z.ZodType<CodeRepositoryConfigureInput>;
+export const codeRepositoryConfigureInputSchema = z.strictObject({
+  denyGlobs,
+  secretExemptGlobs,
+  /**
+   * Stated on every call, never defaulted: the lists here replace what was set, so a check
+   * that could be left out would let an operator editing one glob switch verification off
+   * and have every later base seal unchecked without anybody having typed that.
+   */
+  check: codeCheckSpecSchema.nullable(),
+  requestId: idSchema,
+}) satisfies z.ZodType<CodeRepositoryConfigureInput>;
 
 export async function initializeCheckConfiguration(state: State): Promise<void> {
   await migrateCommands(state);

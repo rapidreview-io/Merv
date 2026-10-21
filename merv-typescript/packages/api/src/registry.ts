@@ -44,6 +44,7 @@ import type { ValidateFunction } from 'ajv';
 import { cloneJson, compileSchema } from './schema.js';
 import { toolsGuide } from './guide.js';
 import { validated } from './errors.js';
+import { compactTool } from './publication.js';
 
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
   tool: T,
@@ -742,7 +743,11 @@ export class ToolRegistry implements Tools {
   async describe(
     caller?: Caller,
     agent = false,
-    { projectless = false, names }: { projectless?: boolean; names?: readonly string[] } = {},
+    {
+      projectless = false,
+      names,
+      compact = true,
+    }: { projectless?: boolean; names?: readonly string[]; compact?: boolean } = {},
   ): Promise<ToolDescription[]> {
     const renamed = caller?.session ? undefined : this.renaming();
     const entries = await this.visible(caller, agent && !caller?.session, names);
@@ -750,7 +755,9 @@ export class ToolRegistry implements Tools {
       .filter((entry) => !projectless || !entry.remote)
       .map((entry) => {
         // Workers keep old descriptions; other callers see noun action names.
-        const description = structuredClone((caller?.session && entry.flat) || entry.description);
+        let description = structuredClone((caller?.session && entry.flat) || entry.description);
+        if (compact && agent && !caller?.session && !entry.remote)
+          description = compactTool(description, entry.definition as ToolDefinition);
         if (renamed && !entry.remote) renamed(description);
         // Session projects are fixed by lease, so omit their project selector.
         if (caller?.session && !entry.remote)
@@ -808,7 +815,8 @@ export class ToolRegistry implements Tools {
       );
       // Build before withdrawing the old registration; failed contributions change nothing.
       const description = parts.map((part) => part.description).join(' ');
-      const built = first && noun(name, { ...first, description, actions });
+      const summary = parts.map((part) => part.summary ?? part.description).join(' ');
+      const built = first && noun(name, { ...first, description, summary, actions });
       const drained = this.nouns.get(name)?.dispose();
       const dispose = built ? this.register(built) : async () => {};
       this.nouns.set(name, { parts, dispose });

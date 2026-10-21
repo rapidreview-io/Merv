@@ -3,92 +3,83 @@ import { allowedOrigin, envName } from '@merv/contracts';
 
 const origin = z.string().refine(allowedOrigin, 'Expected an https origin or a loopback one');
 
-export const webConfig = z
-  .object({
-    // Tavily's key is read from this variable on every call.
-    keyEnv: envName
-      .describe('Web search for agents · Tavily API key')
-      .default('MERV_TAVILY_API_KEY'),
-    origin: origin.default('https://api.tavily.com'),
-    // OpenAI's hosted web search, used when Tavily has no key or refuses it (Nisa's fallback).
-    fallback: z
-      .object({
-        keyEnv: envName.describe('Web search fallback for agents · OpenAI API key'),
-        // Nisa's fallback runs on its Luna deployment.
-        model: z
-          .string()
-          .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
-          .default('gpt-6-luna'),
-        origin: origin.default('https://api.openai.com'),
-        // Nisa gives its grounded call 90 s. The longest call (queue, Tavily and this) must end
-        // inside the 180 s a Codex worker waits on a tool (packages/runner/src/profiles.ts).
-        timeoutMs: z.number().int().min(1000).max(90_000).default(90_000),
-      })
-      .strict()
-      .optional(),
-    // Deadline for one Tavily call, its retries included.
-    timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
-    // A larger answer is refused, whatever its Content-Length says.
-    maxResponseBytes: z
-      .number()
-      .int()
-      .min(1024)
-      .max(32 * 1024 * 1024)
-      .default(8 * 1024 * 1024),
-    /** Calls this process has in flight at once. */
-    maxInFlight: z.number().int().min(1).max(64).default(8),
-    /** Half of maxInFlight when unset. */
-    maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
-    /** How long a call past either in-flight limit waits for its turn before web_busy. */
-    queueMs: z.number().int().min(0).max(15_000).default(15_000),
-    // Calls per UTC day; the next is refused with web_budget_exhausted.
-    dailyCallsPerProject: z.number().int().min(1).max(100_000).default(200),
-    // Projects cost nothing to make, so each one's day bounds nothing alone: the deployment's
-    // day does, and its fallback searches, which spend a model's tokens, have a smaller one.
-    dailyCalls: z.number().int().min(1).max(1_000_000).default(1000),
-    fallbackDailyCalls: z.number().int().min(1).max(1_000_000).default(200),
-  })
-  .strict();
+export const webConfig = z.strictObject({
+  // Tavily's key is read from this variable on every call.
+  keyEnv: envName.describe('Web search for agents · Tavily API key').default('MERV_TAVILY_API_KEY'),
+  origin: origin.default('https://api.tavily.com'),
+  // OpenAI's hosted web search, used when Tavily has no key or refuses it (Nisa's fallback).
+  fallback: z
+    .strictObject({
+      keyEnv: envName.describe('Web search fallback for agents · OpenAI API key'),
+      // Nisa's fallback runs on its Luna deployment.
+      model: z
+        .string()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+        .default('gpt-6-luna'),
+      origin: origin.default('https://api.openai.com'),
+      // Nisa gives its grounded call 90 s. The longest call (queue, Tavily and this) must end
+      // inside the 180 s a Codex worker waits on a tool (packages/runner/src/profiles.ts).
+      timeoutMs: z.number().int().min(1000).max(90_000).default(90_000),
+    })
+    .optional(),
+  // Deadline for one Tavily call, its retries included.
+  timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
+  // A larger answer is refused, whatever its Content-Length says.
+  maxResponseBytes: z
+    .number()
+    .int()
+    .min(1024)
+    .max(32 * 1024 * 1024)
+    .default(8 * 1024 * 1024),
+  /** Calls this process has in flight at once. */
+  maxInFlight: z.number().int().min(1).max(64).default(8),
+  /** Half of maxInFlight when unset. */
+  maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
+  /** How long a call past either in-flight limit waits for its turn before web_busy. */
+  queueMs: z.number().int().min(0).max(15_000).default(15_000),
+  // Calls per UTC day; the next is refused with web_budget_exhausted.
+  dailyCallsPerProject: z.number().int().min(1).max(100_000).default(200),
+  // Projects cost nothing to make, so each one's day bounds nothing alone: the deployment's
+  // day does, and its fallback searches, which spend a model's tokens, have a smaller one.
+  dailyCalls: z.number().int().min(1).max(1_000_000).default(1000),
+  fallbackDailyCalls: z.number().int().min(1).max(1_000_000).default(200),
+});
 export type WebSettings = z.infer<typeof webConfig>;
 
 // Loose on purpose, as Nisa's are: a value the model gets slightly wrong is fixed and reported
 // in normalization_note rather than refused. Descriptions name no address (the Pi relay refuses
 // a schema that does).
 const choice = (description: string) => z.string().max(40).nullish().describe(description);
-export const searchInput = z
-  .object({
-    query: z
-      .union([z.string().max(400), z.array(z.string().max(400)).max(8)])
-      .describe(
-        'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 queries runs each as its own search, and each result names the query that found it.',
-      ),
-    max_results: z.number().nullish().describe('Number of results to return (1-20, default 5).'),
-    search_depth: choice('"basic" (fast, 1 credit) or "advanced" (deeper, 2 credits).'),
-    topic: choice('"general", "news", or "finance".'),
-    time_range: choice('Optional recency filter: "day", "week", "month" or "year".'),
-  })
-  .strict();
-export const extractInput = z
-  .object({
-    url: z.string().max(2048).describe('The page to read: an absolute http or https address.'),
-    extract_depth: choice('"basic" (fast) or "advanced" (handles tables, embedded content).'),
-    start_text: z
-      .string()
-      .max(500)
-      .nullish()
-      .describe(
-        'Text marking the start of the section to return, copied from the page; alone, the page from there on.',
-      ),
-    end_text: z
-      .string()
-      .max(500)
-      .nullish()
-      .describe('Text marking the end of the section; alone, the page up to there.'),
-    offset: z
-      .number()
-      .nullish()
-      .describe(
-        'Characters of the text to skip, to read on past a cut: the next_offset an earlier answer gave, with the same url and markers.',
-      ),
-  })
-  .strict();
+export const searchInput = z.strictObject({
+  query: z
+    .union([z.string().max(400), z.array(z.string().max(400)).max(8)])
+    .describe(
+      'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 queries runs each as its own search, and each result names the query that found it.',
+    ),
+  max_results: z.number().nullish().describe('Number of results to return (1-20, default 5).'),
+  search_depth: choice('"basic" (fast, 1 credit) or "advanced" (deeper, 2 credits).'),
+  topic: choice('"general", "news", or "finance".'),
+  time_range: choice('Optional recency filter: "day", "week", "month" or "year".'),
+});
+export const extractInput = z.strictObject({
+  url: z.string().max(2048).describe('The page to read: an absolute http or https address.'),
+  extract_depth: choice('"basic" (fast) or "advanced" (handles tables, embedded content).'),
+  start_text: z
+    .string()
+    .max(500)
+    .nullish()
+    .describe(
+      'Text marking the start of the section to return, copied from the page; alone, the page from there on.',
+    ),
+  end_text: z
+    .string()
+    .max(500)
+    .nullish()
+    .describe('Text marking the end of the section; alone, the page up to there.'),
+  offset: z
+    .number()
+    .nullish()
+    .describe(
+      'Characters of the text to skip, to read on past a cut: the next_offset an earlier answer gave, with the same url and markers.',
+    ),
+});

@@ -23,9 +23,11 @@ import { workBranch } from '@merv/code/store/refs';
 import type { CodeWriterService } from '@merv/code/writers';
 
 /** The session a machine names as its own; an export is read only by the machine that runs it. */
-const codeWorkspaceManifestInputSchema = z
-  .object({ sessionId: id, runnerId: id, hostRef: id.optional() })
-  .strict();
+const codeWorkspaceManifestInputSchema = z.strictObject({
+  sessionId: id,
+  runnerId: id,
+  hostRef: id.optional(),
+});
 const codeUploadBeginSchema = codeUploadFenceSchema
   .extend({ kind: z.literal('checkpoint'), commandId: id, requestId: id })
   .strict();

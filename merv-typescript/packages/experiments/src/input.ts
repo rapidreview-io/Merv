@@ -29,21 +29,19 @@ const experimentPathSchema = z
     'Use a relative evidence path without traversal, empty segments or special characters',
   );
 
-export const experimentCreateSchema = z
-  .object({
-    name: experimentName(z.string().trim()),
-    intent: prose(1),
-    details: prose().default(''),
-    dependsOn: ids.default([]),
-    workspace: z.enum(['none', 'git']).optional(),
-    requestId,
-  })
-  .strict();
+export const experimentCreateSchema = z.strictObject({
+  name: experimentName(z.string().trim()),
+  intent: prose(1),
+  details: prose().default(''),
+  dependsOn: ids.default([]),
+  workspace: z.enum(['none', 'git']).optional(),
+  requestId,
+});
 export const experimentListSchema = z.object({}).strict();
 export const experimentGetSchema = z.object({ experimentId: idSchema }).strict();
 export const experimentExhibitSchema = experimentGetSchema;
 export const experimentAttachSchema = z
-  .object({
+  .strictObject({
     experimentId: idSchema,
     artifactId: idSchema,
     role: z.enum(['plan', 'result', 'report', 'feasibility']),
@@ -53,7 +51,6 @@ export const experimentAttachSchema = z
     requestId,
     resultFormat: z.enum(['json', 'qualitative']).optional(),
   })
-  .strict()
   .superRefine((input, ctx) => {
     if (input.role !== 'result' && input.resultFormat !== undefined)
       ctx.addIssue({
@@ -69,7 +66,7 @@ export const experimentAttachSchema = z
   );
 
 export const experimentTransitionSchema = z
-  .object({
+  .strictObject({
     experimentId: idSchema,
     transition: z.enum([
       'submit_design',
@@ -81,14 +78,12 @@ export const experimentTransitionSchema = z
     expectedRevision: revision,
     requestId,
     evidence: z
-      .object({ reason: prose(1).optional(), detail: prose().optional() })
-      .strict()
+      .strictObject({ reason: prose(1).optional(), detail: prose().optional() })
       .optional()
       .describe(
         'Only for retry_running, abandon and mark_failed, which require evidence.reason. Omit it for submit_design and submit_results: a submission seals the artifacts attached with experiment.attach.',
       ),
   })
-  .strict()
   .superRefine((input, ctx) => {
     if (
       ['abandon', 'mark_failed', 'retry_running'].includes(input.transition) &&

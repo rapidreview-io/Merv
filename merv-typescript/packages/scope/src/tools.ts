@@ -28,6 +28,7 @@ export const scopeToolsPlugin = {
       ctx.tools.noun('project.read', {
         tier: 'core',
         readOnly: true,
+        summary: 'Read project identity/paper; brief first.',
         description:
           'Read the project: brief (who you are, the project, today and its paper now; your first read), get (its id and name), whoami (your actor), actors (operators: its actors), list (the projects you can work in).',
         actions: {

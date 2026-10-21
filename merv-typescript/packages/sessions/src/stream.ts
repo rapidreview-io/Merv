@@ -35,28 +35,32 @@ const id = z.string().max(200);
 const words = z.string().max(AGENT_EVENT_TEXT);
 const cut = z.number().int().positive().safe().optional();
 const eventSchema: z.ZodType<AgentEvent> = z.discriminatedUnion('kind', [
-  z
-    .object({ kind: z.literal('thinking'), id, delta: words, done: z.boolean().optional(), cut })
-    .strict(),
-  z
-    .object({ kind: z.literal('text'), id, delta: words, done: z.boolean().optional(), cut })
-    .strict(),
-  z
-    .object({ kind: z.literal('tool_call'), id, name: z.string().max(200), input: words, cut })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('tool_result'),
-      id,
-      output: words,
-      error: z.boolean().optional(),
-      cut,
-    })
-    .strict(),
+  z.strictObject({
+    kind: z.literal('thinking'),
+    id,
+    delta: words,
+    done: z.boolean().optional(),
+    cut,
+  }),
+  z.strictObject({ kind: z.literal('text'), id, delta: words, done: z.boolean().optional(), cut }),
+  z.strictObject({
+    kind: z.literal('tool_call'),
+    id,
+    name: z.string().max(200),
+    input: words,
+    cut,
+  }),
+  z.strictObject({
+    kind: z.literal('tool_result'),
+    id,
+    output: words,
+    error: z.boolean().optional(),
+    cut,
+  }),
   z.object({ kind: z.literal('status'), id, text: words }).strict(),
 ]);
 const batchSchema = z
-  .object({
+  .strictObject({
     sessionId: z.string().min(1).max(200),
     runnerId: z.string().min(1).max(200),
     hostRef: z.string().min(1).max(512),
@@ -64,7 +68,6 @@ const batchSchema = z
     to: offset,
     events: z.array(eventSchema).max(20_000),
   })
-  .strict()
   .refine((batch) => batch.to >= batch.from);
 
 type Row = { seq: number | string; at: string; event: string };

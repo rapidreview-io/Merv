@@ -21,33 +21,30 @@ export const CODE_BUNDLE_MAX_BYTES = 512 * 1024 * 1024;
 /** The largest body of one part; a server may ask for less. */
 export const CODE_PART_MAX_BYTES = 4 * 1024 * 1024;
 
-const bundle = z
-  .object({ sha256, bytes: z.number().int().positive().max(CODE_BUNDLE_MAX_BYTES) })
-  .strict();
+const bundle = z.strictObject({
+  sha256,
+  bytes: z.number().int().positive().max(CODE_BUNDLE_MAX_BYTES),
+});
 
 /** What admission found wrong in a transfer. It names the place and never the matched text. */
-const codeFindingSchema = z
-  .object({
-    rule: z.string().regex(/^[a-z][a-z0-9_@.]{0,59}$/),
-    path: z.string().max(4096).nullable(),
-    oid: oid.nullable(),
-  })
-  .strict();
+const codeFindingSchema = z.strictObject({
+  rule: z.string().regex(/^[a-z][a-z0-9_@.]{0,59}$/),
+  path: z.string().max(4096).nullable(),
+  oid: oid.nullable(),
+});
 export type CodeFinding = z.infer<typeof codeFindingSchema>;
 
 /** Admission policy for incoming Git histories. */
-export const codeAdmissionLimitsSchema = z
-  .object({
-    format: z.literal(1),
-    denyGlobs: z.array(glob).max(64),
-    secretExemptGlobs: z.array(glob).max(64),
-  })
-  .strict();
+export const codeAdmissionLimitsSchema = z.strictObject({
+  format: z.literal(1),
+  denyGlobs: z.array(glob).max(64),
+  secretExemptGlobs: z.array(glob).max(64),
+});
 export type CodeAdmissionLimits = z.infer<typeof codeAdmissionLimitsSchema>;
 
 /** One object rather than a union, because a tool's input is described as a single object. */
 export const codeRepositoryImportInputSchema = z
-  .object({
+  .strictObject({
     source: z.enum(['bundle', 'github']),
     /** Bundle: the one commit it delivers; the bundle's own ref name authorises nothing. */
     tip: oid.optional(),
@@ -65,16 +62,14 @@ export const codeRepositoryImportInputSchema = z
     expectedHead: oid.optional(),
     /** Freeze the selected GitHub connection when preparation spans retries. */
     githubBinding: z
-      .object({
+      .strictObject({
         revision: z.number().int().nonnegative(),
         repositoryId: z.number().int().positive(),
         baseBranch: gitBranchSchema(200),
       })
-      .strict()
       .optional(),
     requestId: id,
   })
-  .strict()
   .refine(
     (value) =>
       value.source === 'bundle'
@@ -160,27 +155,24 @@ export interface CodeMirrorStatus {
   }[];
 }
 
-export const codeWorkspaceManifestSchema = z
-  .object({
-    projectRef: id,
-    repositoryId: id,
-    objectFormat: z.enum(['sha1', 'sha256']),
-    unitId: id,
-    generation: z.number().int().positive().safe().nullable(),
-    mode: z.enum(['write', 'read']),
-    head: oid,
-    base: oid,
-    branch: z.string().min(1).max(512).nullable(),
-    prerequisites: z.array(oid).max(256),
-    pendingMerge: codePendingMergeSchema.optional(),
-  })
-  .strict();
+export const codeWorkspaceManifestSchema = z.strictObject({
+  projectRef: id,
+  repositoryId: id,
+  objectFormat: z.enum(['sha1', 'sha256']),
+  unitId: id,
+  generation: z.number().int().positive().safe().nullable(),
+  mode: z.enum(['write', 'read']),
+  head: oid,
+  base: oid,
+  branch: z.string().min(1).max(512).nullable(),
+  prerequisites: z.array(oid).max(256),
+  pendingMerge: codePendingMergeSchema.optional(),
+});
 export type CodeWorkspaceManifest = z.infer<typeof codeWorkspaceManifestSchema>;
 
 /** The writer fence an upload is made under; Code checks all of it, whatever carried it here. */
 export const codeUploadFenceSchema = z
-  .object({ sessionId: id, runnerId: id, hostRef: id })
-  .strict()
+  .strictObject({ sessionId: id, runnerId: id, hostRef: id })
   .extend({
     unitId: id,
     generation: z.number().int().positive().safe(),
@@ -196,9 +188,11 @@ export type CodeUpload = z.infer<typeof codeUploadFenceSchema> &
   ({ kind: 'checkpoint'; commandId: string; requestId: string } | { kind: 'final' });
 
 export const codeUnitFenceInputSchema = z.object({ unitId: id, requestId: id }).strict();
-export const codeMirrorRetryInputSchema = z
-  .object({ operationId: id, acknowledgeRemote: oid.optional(), requestId: id })
-  .strict();
+export const codeMirrorRetryInputSchema = z.strictObject({
+  operationId: id,
+  acknowledgeRemote: oid.optional(),
+  requestId: id,
+});
 
 /**
  * Who may advance a unit's branch in Code's repository. A generation belongs to one leased

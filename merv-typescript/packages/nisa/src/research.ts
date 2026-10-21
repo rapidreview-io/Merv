@@ -5,33 +5,27 @@ import { clip, type Caller } from '@merv/contracts';
 const id = z.string().regex(/^(?:op_|qa_)[a-f0-9]{32}$/);
 const requestId = z.string().trim().min(1).max(128);
 export const researchInput = z.discriminatedUnion('action', [
-  z
-    .object({
-      action: z.literal('start'),
-      brief: z.string().trim().min(1).max(16000),
-      request_id: requestId,
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('follow_up'),
-      brief: z.string().trim().min(1).max(16000),
-      request_id: requestId,
-      conversation_id: id,
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('status'),
-      operation_id: id,
-      answer_offset: z.number().int().min(0).max(2000000).default(0),
-    })
-    .strict(),
+  z.strictObject({
+    action: z.literal('start'),
+    brief: z.string().trim().min(1).max(16000),
+    request_id: requestId,
+  }),
+  z.strictObject({
+    action: z.literal('follow_up'),
+    brief: z.string().trim().min(1).max(16000),
+    request_id: requestId,
+    conversation_id: id,
+  }),
+  z.strictObject({
+    action: z.literal('status'),
+    operation_id: id,
+    answer_offset: z.number().int().min(0).max(2000000).default(0),
+  }),
   z.object({ action: z.literal('cancel'), operation_id: id, request_id: requestId }).strict(),
 ]);
 /** Flat published object for Merv's native tool catalog; the action union validates each call. */
 export const researchToolInput = z
-  .object({
+  .strictObject({
     action: z.enum(['start', 'follow_up', 'status', 'cancel']),
     brief: z.string().trim().min(1).max(16000).optional(),
     request_id: requestId.optional(),
@@ -39,7 +33,6 @@ export const researchToolInput = z
     operation_id: id.optional(),
     answer_offset: z.number().int().min(0).max(2000000).optional(),
   })
-  .strict()
   .superRefine((value, ctx) => {
     const parsed = researchInput.safeParse(value);
     if (!parsed.success) for (const issue of parsed.error.issues) ctx.addIssue(issue);

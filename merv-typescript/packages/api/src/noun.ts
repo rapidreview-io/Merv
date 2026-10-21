@@ -48,9 +48,7 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
         .optional(),
     ]),
   );
-  const object = z
-    .object({ action: z.enum(names as [string, ...string[]]), ...properties })
-    .strict();
+  const object = z.strictObject({ action: z.enum(names as [string, ...string[]]), ...properties });
   // JSON Schema cannot express the required chosen object or forbid other action objects.
   return z.preprocess((value, ctx) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
@@ -86,13 +84,15 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
   }, object);
 }
 
-const RULE =
-  ' Pass action and that action’s arguments under its own name, {"action":"x","x":{…}}; omit the other actions’ keys.';
+const RULE = ' Use {"action":"x","x":{…}} only; x optional if all its fields are optional.';
 
 /** Nouns dispatch nested actions; workers keep legacy flat names through registry aliases. */
 export function noun(name: string, definition: NounDefinition): ToolDefinition {
   const { actions, legacy } = definition;
-  const description = definition.description + RULE;
+  const description =
+    definition.description +
+    ' Pass action and that action’s arguments under its own name, {"action":"x","x":{…}}; omit the other actions’ keys.';
+  const summary = (definition.summary ?? definition.description) + RULE;
   if (description.length > 600)
     throw new MervError('invalid_tool', `${name}'s summary is over 600 characters`);
   const openWorld = Object.values(actions).some((action) => action.openWorld);
@@ -103,6 +103,7 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   return {
     name,
     description,
+    summary,
     inputSchema: nounInput(actions, legacy),
     readOnly,
     ...(!readOnly &&

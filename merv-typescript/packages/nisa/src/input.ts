@@ -2,36 +2,34 @@ import { z } from 'zod';
 import { allowedOrigin, envName } from '@merv/contracts';
 
 /** Configuration names the key's environment variable and never carries the key. */
-export const nisaConfig = z
-  .object({
-    origin: z
-      .string()
-      .refine(allowedOrigin, 'Expected an https origin or a loopback one')
-      .default('https://api.rapidreview.io'),
-    // Holds the deployment's rr_sk_ key, read on every call.
-    keyEnv: envName
-      .describe('Literature search for agents · Nisa API key')
-      .default('MERV_NISA_API_KEY'),
-    // A paper, excerpts or related call, headers and body; Nisa's paper routes wait 10 s.
-    timeoutMs: z.number().int().min(1000).max(60_000).default(15_000),
-    // Nisa's keyword search waits 30 s on its index and retries it; the semantic one embeds first.
-    searchTimeoutMs: z.number().int().min(1000).max(120_000).default(40_000),
-    // A larger answer is refused, whatever its Content-Length says.
-    maxResponseBytes: z
-      .number()
-      .int()
-      .min(1024)
-      .max(8 * 1024 * 1024)
-      .default(2 * 1024 * 1024),
-    // Nisa serves every user from one worker: Merv keeps its own share of it small.
-    maxInFlight: z.number().int().min(1).max(64).default(4),
-    /** Half of maxInFlight when unset, so one project's sweep leaves the others a turn. */
-    maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
-    /** How long a call past maxInFlight waits for its turn before nisa_busy. */
-    // With a search's deadline, inside the 180 s a Codex worker waits on a tool.
-    queueMs: z.number().int().min(0).max(15_000).default(15_000),
-  })
-  .strict();
+export const nisaConfig = z.strictObject({
+  origin: z
+    .string()
+    .refine(allowedOrigin, 'Expected an https origin or a loopback one')
+    .default('https://api.rapidreview.io'),
+  // Holds the deployment's rr_sk_ key, read on every call.
+  keyEnv: envName
+    .describe('Literature search for agents · Nisa API key')
+    .default('MERV_NISA_API_KEY'),
+  // A paper, excerpts or related call, headers and body; Nisa's paper routes wait 10 s.
+  timeoutMs: z.number().int().min(1000).max(60_000).default(15_000),
+  // Nisa's keyword search waits 30 s on its index and retries it; the semantic one embeds first.
+  searchTimeoutMs: z.number().int().min(1000).max(120_000).default(40_000),
+  // A larger answer is refused, whatever its Content-Length says.
+  maxResponseBytes: z
+    .number()
+    .int()
+    .min(1024)
+    .max(8 * 1024 * 1024)
+    .default(2 * 1024 * 1024),
+  // Nisa serves every user from one worker: Merv keeps its own share of it small.
+  maxInFlight: z.number().int().min(1).max(64).default(4),
+  /** Half of maxInFlight when unset, so one project's sweep leaves the others a turn. */
+  maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
+  /** How long a call past maxInFlight waits for its turn before nisa_busy. */
+  // With a search's deadline, inside the 180 s a Codex worker waits on a tool.
+  queueMs: z.number().int().min(0).max(15_000).default(15_000),
+});
 export type NisaSettings = z.infer<typeof nisaConfig>;
 
 const modern = /^\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}$/;
@@ -102,7 +100,7 @@ export const SEARCH_OFFSETS = 500;
 export const SEMANTIC_OFFSETS = 200;
 
 export const searchInput = z
-  .object({
+  .strictObject({
     query: phrasings(
       8,
       'Plain keywords, no operators or quotes; or a list of up to 8 phrasings searched together and merged',
@@ -121,14 +119,13 @@ export const searchInput = z
     date_from: date.optional().describe('Earliest publication: YYYY, YYYY-MM or YYYY-MM-DD'),
     date_to: date.optional().describe('Latest publication: YYYY, YYYY-MM or YYYY-MM-DD'),
   })
-  .strict()
   .refine(
     ({ date_from, date_to }) =>
       !date_from || !date_to || month(date_from, true) <= month(date_to, false),
     { message: 'date_from is after date_to', path: ['date_to'] },
   );
 export const semanticInput = z
-  .object({
+  .strictObject({
     query: phrasings(
       4,
       'A natural-language description of the papers wanted, or a list of up to 4 paraphrases searched together',
@@ -145,24 +142,21 @@ export const semanticInput = z
     year_min: year.optional().describe('Earliest publication year'),
     year_max: year.optional().describe('Latest publication year'),
   })
-  .strict()
   .refine(
     ({ year_min, year_max }) =>
       year_min === undefined || year_max === undefined || year_min <= year_max,
     { message: 'year_min is after year_max', path: ['year_max'] },
   );
 export const paperInput = z.object({ arxiv_id: arxivId }).strict();
-export const excerptsInput = z
-  .object({
-    arxiv_id: arxivId,
-    query: text(1000).describe('The terms to find in the paper'),
-    max_excerpts: z
-      .number()
-      .int()
-      .min(1)
-      .max(20)
-      .default(5)
-      .describe('Passages to return (1-20, default 5)'),
-  })
-  .strict();
+export const excerptsInput = z.strictObject({
+  arxiv_id: arxivId,
+  query: text(1000).describe('The terms to find in the paper'),
+  max_excerpts: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .default(5)
+    .describe('Passages to return (1-20, default 5)'),
+});
 export const relatedInput = z.object({ arxiv_id: arxivId, max_results: results(10) }).strict();

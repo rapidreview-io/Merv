@@ -16,6 +16,8 @@ export const knowledgeToolsPlugin = {
           'records (an index of every task and experiment, or some whole) and references (record ids resolved to their labels and states).',
         actions: {
           records: {
+            summary:
+              'Index all tasks/experiments including terminal work. ids (≤20) returns whole records with attempts/evidence/submissions/delivery confirmations; unknown IDs: missing. task.get/experiment.get_state reads one. Introduction: paper.read Problem. No artifact bytes or transitions. project.references resolves IDs; workflow.status_and_next gives gates/blockers/actions.',
             description:
               'Index the project: its id and name, then one short entry per task and experiment (state, review, deliveries, conclusion), terminal work included. Pass ids (up to 20 task or experiment ids) to get those records whole instead, with every attempt, evidence association, submission and delivery confirmation; ids that are neither come back in missing. task.get and experiment.get_state read one record whole. The project Introduction is the Problem of the paper, which paper.read returns. Does not read artifact bytes or advance workflows. To resolve other ids to labels and states use project.references; gate, blockers and next actions use workflow.status_and_next.',
             input: knowledgeRecordsSchema,

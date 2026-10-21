@@ -8,15 +8,13 @@ import type { Code } from './types.js';
 type PreparationHost = Pick<Code, 'github' | 'importRepository'>;
 
 const oid = oidSchema;
-export const repositoryPrepareSchema = z
-  .object({
-    expectedRevision: z.number().int().nonnegative(),
-    baseBranch: githubBranchSchema,
-    headOid: oid,
-    expectedMainOid: oid.optional(),
-    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/),
-  })
-  .strict();
+export const repositoryPrepareSchema = z.strictObject({
+  expectedRevision: z.number().int().nonnegative(),
+  baseBranch: githubBranchSchema,
+  headOid: oid,
+  expectedMainOid: oid.optional(),
+  requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/),
+});
 
 /**
  * Import the selected branch into the project's hosted repository, then integrate it. Retries

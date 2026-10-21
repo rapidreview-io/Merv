@@ -7,7 +7,7 @@ import type { SessionUsageReport } from './sessions-models.js';
  * can accept what another would refuse.
  */
 export const sessionUsageReportSchema: z.ZodType<SessionUsageReport> = z
-  .object({
+  .strictObject({
     inputTokens: z.number().int().min(0).max(1e12),
     outputTokens: z.number().int().min(0).max(1e12),
     // Older runners and a launch's own usage file may carry a cost; it is accepted and dropped.
@@ -19,5 +19,4 @@ export const sessionUsageReportSchema: z.ZodType<SessionUsageReport> = z
       .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value))
       .optional(),
   })
-  .strict()
   .transform(({ costUsd: _costUsd, ...report }) => report);

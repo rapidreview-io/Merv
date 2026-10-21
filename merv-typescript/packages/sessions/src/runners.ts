@@ -22,24 +22,20 @@ const platformsSchema = z
     (items) => new Set(items.map((item) => item.name)).size === items.length,
     'Platform names must be distinct',
   );
-const settingsSchema = z
-  .object({
-    platforms: z
-      .array(z.object(platformTuning).strict())
-      .max(32)
-      .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
-  })
-  .strict();
-export const heartbeatSchema = z
-  .object({
-    runnerId: label,
-    machine: z.object({ hostname: label, system: label, architecture: label }).strict(),
-    platforms: platformsSchema,
-    capacity: z.number().int().min(0).max(256),
-    appliedVersion: z.number().int().nonnegative().safe().optional(),
-    capabilities: capabilitiesSchema.optional(),
-  })
-  .strict();
+const settingsSchema = z.strictObject({
+  platforms: z
+    .array(z.object(platformTuning).strict())
+    .max(32)
+    .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
+});
+export const heartbeatSchema = z.strictObject({
+  runnerId: label,
+  machine: z.object({ hostname: label, system: label, architecture: label }).strict(),
+  platforms: platformsSchema,
+  capacity: z.number().int().min(0).max(256),
+  appliedVersion: z.number().int().nonnegative().safe().optional(),
+  capabilities: capabilitiesSchema.optional(),
+});
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
 /** How long a rented machine's runner may be silent before its live visit is lost: a healthy

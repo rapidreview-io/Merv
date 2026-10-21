@@ -25,7 +25,7 @@ function scriptable(
 }
 
 async function offered(tools: Tools, caller: Caller) {
-  return (await tools.describe(caller, true)).flatMap((description) => {
+  return (await tools.describe(caller, true, { compact: false })).flatMap((description) => {
     const tool = tools.tool(description.name);
     return tool
       ? {
@@ -63,19 +63,15 @@ function answer({ format, value }: { format: string; value: unknown }): unknown 
   }
 }
 
-const toolsInput = z
-  .object({
-    query: z.string().max(200).optional(),
-    names: z.array(z.string().max(128)).max(25).optional(),
-    limit: z.number().int().min(1).max(25).optional(),
-  })
-  .strict();
-const runInput = z
-  .object({
-    code: z.string().min(1).max(20_000),
-    timeoutMs: z.number().int().min(1000).max(30_000).optional(),
-  })
-  .strict();
+const toolsInput = z.strictObject({
+  query: z.string().max(200).optional(),
+  names: z.array(z.string().max(128)).max(25).optional(),
+  limit: z.number().int().min(1).max(25).optional(),
+});
+const runInput = z.strictObject({
+  code: z.string().min(1).max(20_000),
+  timeoutMs: z.number().int().min(1000).max(30_000).optional(),
+});
 const words = (text = '') =>
   new Set(
     text

@@ -15,19 +15,21 @@ export const workflowToolsPlugin = {
       ctx.tools.noun('workflow.read', {
         tier: 'core',
         readOnly: true,
+        summary: 'Read workflow guidance; status first to start/resume.',
         description:
           'Read workflow guidance: status (start or resume here: a work item’s gate, next action, blockers and limits, or the project overview), assignment (your node assignment), process (one instance’s process graph) and catalog (the deployed workflow definitions).',
         actions: {
           status: {
+            summary:
+              'Start/resume here. instanceId is the work-item ID: gate, caller-specific next action, blockers, refs, revision and limits with from-state/used/remaining rounds. loop_limit_reached stops dispatch and escalates to owner for manual decision/extra rounds. Omit ID for project overview (escalated includes these). Preflight action from actions[].action, not a tool name, with proposed input; it executes/reserves nothing and returns the tool to call. Commands recheck rules; mutations need stable requestId.',
             description:
               'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action (a name from actions[].action, never a tool name) with proposed input; this never executes it or reserves permission, and the answer’s preflight says which tool takes it. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
             input: z
-              .object({
+              .strictObject({
                 instanceId: z.string().min(1).optional(),
                 action: z.string().min(1).optional(),
                 input: z.record(z.unknown()).optional(),
               })
-              .strict()
               .refine((i) => i.action === undefined || i.instanceId !== undefined, {
                 message: 'action requires instanceId',
               })
@@ -77,33 +79,32 @@ export const workflowToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.noun('workflow.write', {
+        summary: 'Begin interactive work or extend exhausted loops.',
         description:
           'Move workflow instances: begin (record the first start of interactive node work and return its assignment) and extend_limit (a project admin allows an instance more rounds of an exhausted loop limit).',
         actions: {
           begin: {
             description:
               'Before beginning interactive node work, pass its instanceId and current expectedRevision. Rechecks your assignment and records its first start once per revision, then returns the assignment. Retries preserve the first start without changing workflow state or revision. No requestId is needed. This does not create a worker lease or claim a review.',
-            input: z
-              .object({
-                instanceId: z.string().min(1),
-                expectedRevision: z.number().int().nonnegative(),
-              })
-              .strict(),
+            input: z.strictObject({
+              instanceId: z.string().min(1),
+              expectedRevision: z.number().int().nonnegative(),
+            }),
             was: ['workflow.begin'],
             handler: async (caller, input) => await workflows.begin(caller, input),
           },
           extend_limit: {
+            summary:
+              'Admin only, no worker: extend an exhausted loop (loop_limit_reached) using limit name from status_and_next limits, additional returns, reason/stable requestId. Grants accumulate; state/revision unchanged. Each return permits one more pass. additional:0 only resumes work suspended before exhaustion.',
             description:
               'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop. additional 0 adds no round and only resumes work suspended before its rounds were used up.',
-            input: z
-              .object({
-                instanceId: z.string().min(1),
-                limit: z.string().min(1),
-                additional: z.number().int().min(0).max(100),
-                reason: z.string().trim().min(1).max(500),
-                requestId: z.string().min(1).max(256),
-              })
-              .strict(),
+            input: z.strictObject({
+              instanceId: z.string().min(1),
+              limit: z.string().min(1),
+              additional: z.number().int().min(0).max(100),
+              reason: z.string().trim().min(1).max(500),
+              requestId: z.string().min(1).max(256),
+            }),
             was: ['workflow.extend_limit'],
             handler: async (caller, input) => await workflows.extendLimit(caller, input),
           },

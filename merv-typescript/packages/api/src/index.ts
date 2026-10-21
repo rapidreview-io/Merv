@@ -51,7 +51,7 @@ export const toolsPlugin = {
 export const apiPlugin = {
   name: 'merv-api',
   Config: z
-    .object({
+    .strictObject({
       host: z
         .string()
         .refine((host) => visible(host), 'API host must be nonblank')
@@ -74,7 +74,6 @@ export const apiPlugin = {
         )
         .optional(),
     })
-    .strict()
     .default({}),
   inject: ['scope', 'tools', 'identity'],
   async apply(ctx: Context, config: HttpOptions = {}) {

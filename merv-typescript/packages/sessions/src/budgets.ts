@@ -9,12 +9,11 @@ import type { DispatchContext } from './dispatch.js';
 // The project's dispatch switch, its budgets and halt. SessionDispatch (dispatch.ts) runs these
 // with itself as their context.
 export const budgetSchema = z
-  .object({
+  .strictObject({
     instanceId: z.string().min(1).max(200).optional(),
     maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
     maxTokens: z.number().int().min(1).max(1e13).nullable().optional(),
   })
-  .strict()
   .refine((input) => input.maxWallMinutes !== undefined || input.maxTokens !== undefined);
 /**
  * A budget stops new automatic offers when a bound is reached, and also when a token
@@ -24,14 +23,11 @@ export const withholds = (budget: { exceeded: unknown[]; unavailable: unknown[] 
   budget.exceeded.length > 0 || budget.unavailable.length > 0;
 /** session.dispatch: whether automatic work runs, and whether only on the project's own machines. */
 export const dispatchSchema = z
-  .object({ enabled: z.boolean().optional(), ownMachines: z.boolean().optional() })
-  .strict()
+  .strictObject({ enabled: z.boolean().optional(), ownMachines: z.boolean().optional() })
   .refine((input) => input.enabled !== undefined || input.ownMachines !== undefined);
 export type DispatchChange = z.infer<typeof dispatchSchema>;
 /** session.halt: one session, or every one in the project with automatic dispatch off. */
-export const haltSchema = z
-  .object({ sessionId: label.optional(), reason: label.optional() })
-  .strict();
+export const haltSchema = z.strictObject({ sessionId: label.optional(), reason: label.optional() });
 interface DispatchRow {
   enabled: number;
   own_machines: number;

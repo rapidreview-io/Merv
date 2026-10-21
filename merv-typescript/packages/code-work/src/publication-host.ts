@@ -35,14 +35,13 @@ export const publicationApproval = {
 };
 
 export const publicationControlSchema = z
-  .object({
+  .strictObject({
     action: z.enum(['acknowledge_rules', 'record_canary', 'clear']),
     reason: z.string().trim().min(1).max(4000),
     /** The release operator attests the result of the deliberately stale merge attempt. */
     staleMerged: z.boolean().optional(),
     requestId: idSchema,
   })
-  .strict()
   .refine((v) => (v.action === 'record_canary') === (v.staleMerged !== undefined));
 export class PublicationIncident extends MervError {
   constructor(readonly observation: { commitSha: string; tree: string; parents: string[] }) {
