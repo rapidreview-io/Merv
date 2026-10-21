@@ -1,0 +1,312 @@
+[
+  {
+    "id": "setup-url",
+    "areas": [],
+    "prompt": "Start with only the supplied /connect/agent.md URL. Follow the published agent guide to install the persistent native Merv plugin. Record installed package/version and connection count without reading tokens. Browser sign-in/account creation/project selection requires the human; stop there for interactive completion. Do not silently use legacy connector or direct bearer configuration.",
+    "checks": [
+      "published_guide",
+      "native_plugin_installed",
+      "browser_consent",
+      "project_selected",
+      "single_connection"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "website",
+    "areas": [],
+    "prompt": "Inspect the published human setup instructions and compare their commands, browser sign-in, new account/project and fresh-chat instructions with the agent guide. Record visible evidence. The human must perform actual website onboarding; do not claim success from text inspection.",
+    "checks": [
+      "website_instructions",
+      "new_account_or_invitation",
+      "project_creation",
+      "consent_identity_matches"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "fresh-chat",
+    "areas": [
+      "project",
+      "actor",
+      "workflow"
+    ],
+    "prompt": "Use Merv. Discover tools and installed skills. List available projects, read the selected project brief and workflow status. Recover one existing record and its reference/history using only saved configuration; do not reinstall. Record exact tool/action names and project/actor role.",
+    "checks": [
+      "saved_connection",
+      "skill_discovery",
+      "project_brief",
+      "workflow_context",
+      "live_tool_inventory"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "permissions",
+    "areas": [
+      "actor",
+      "credential",
+      "project"
+    ],
+    "prompt": "Read your role and permitted projects. Using a separately prepared reader identity in this synthetic project, attempt one harmless write and verify server denial with unchanged state. Check inaccessible synthetic project isolation. Do not change roles or create credentials yourself.",
+    "checks": [
+      "reader_write_denied",
+      "project_isolation",
+      "unchanged_state"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "auth-lifecycle",
+    "areas": [],
+    "prompt": "With operator-coordinated expiry/revocation of this test OAuth grant only, verify refresh and then revoked access failure. Reconnect through genuine browser consent. Verify fresh-process reuse and one connection. Do not read token files or force expiry by altering credentials.",
+    "checks": [
+      "refresh",
+      "revocation_denial",
+      "reconsent",
+      "fresh_process",
+      "unrelated_config_preserved"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "migration",
+    "areas": [],
+    "prompt": "Inspect whether legacy Merv registration exists without reading credentials. Follow published migration for this isolated client only after operator preparation. Verify unrelated sentinel configuration remains, one Merv server, saved fresh chat, and no connector daemon.",
+    "checks": [
+      "legacy_removed",
+      "single_connection",
+      "unrelated_config_preserved",
+      "fresh_chat"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "experiment",
+    "areas": [
+      "experiment",
+      "report",
+      "artifact",
+      "review",
+      "workflow"
+    ],
+    "prompt": "Create or recover a tiny seeded CPU experiment with explicit intent and details: test whether the sample mean minimizes empirical squared error compared with fixed zero on the exact fixture sample. Attach a plan specifying seed 1729, n=64, exact comparison, no population generalization. Follow workflow guidance through independent design review, execution, results/artifacts/report and independent result review. Stop at gates requiring an authorized independent worker. Never act as your own reviewer. Use fixture actual output including its caveats.",
+    "checks": [
+      "intent_details",
+      "plan_retained",
+      "independent_design_review",
+      "actual_execution",
+      "metrics_report_artifacts",
+      "independent_result_review",
+      "terminal_state"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "task",
+    "areas": [
+      "task",
+      "review",
+      "workflow",
+      "artifact"
+    ],
+    "prompt": "Create or recover a small task to run the fixture and retain its output plus a README explaining empirical versus population claims. Done-when: exact seed/n, computed metric comparison, reproducible command and caveat retained. Follow assignment, submit real evidence for each check, and wait for genuinely independent task review. Do not self-approve.",
+    "checks": [
+      "brief_checks",
+      "assignment",
+      "execution",
+      "delivery_evidence",
+      "independent_task_review",
+      "terminal_state"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "revision-resume",
+    "areas": [
+      "workflow",
+      "review",
+      "task",
+      "experiment"
+    ],
+    "prompt": "Use an operator-designated existing synthetic task with intentionally missing reproducibility evidence. Have an independent reviewer inspect and return it for changes. Read rejection/revision, repair missing evidence, resubmit and independently review. Check dependency blocking before prerequisite completion and release afterward. Never duplicate task on timeout or fake a review verdict.",
+    "checks": [
+      "independent_rejection",
+      "revision_fence",
+      "dependency_block",
+      "repair_resubmit",
+      "resume_same_record",
+      "dependency_release"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "storage",
+    "areas": [
+      "artifact"
+    ],
+    "prompt": "Create one small artifact from the actual fixture output, read exact contents and metadata, and verify hash/bytes. Exercise supported upload begin/resume/complete on a tiny local file through documented tools, record storage status and immutable IDs. Signed URLs must not appear in evidence. Do not upload private files.",
+    "checks": [
+      "create_read",
+      "hash_bytes",
+      "upload_resume_complete",
+      "immutable_version",
+      "storage_status"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "knowledge",
+    "areas": [
+      "paper",
+      "research",
+      "claim",
+      "reference",
+      "nisa",
+      "web",
+      "project",
+      "reflection"
+    ],
+    "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise the supported research/reflection cycle with five independent lens contributions, independent reflection review and code consolidation review if exposed. Stop when authorized workers are unavailable.",
+    "checks": [
+      "paper_context",
+      "claim_evidence",
+      "real_reference",
+      "research_cycle",
+      "five_lenses",
+      "reflection_review",
+      "consolidation_review"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "feed-board",
+    "areas": [
+      "feed",
+      "board"
+    ],
+    "prompt": "If enabled, post a concise synthetic fixture result to the project feed and read it back; create a tiny board linking its artifact and verify the retained scene. If disabled, record capability/configuration evidence as blocked, never fabricate a pass.",
+    "checks": [
+      "feed_write_read",
+      "board_write_read",
+      "artifact_link"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "compute",
+    "areas": [
+      "sandbox",
+      "sandboxes",
+      "fleet",
+      "session",
+      "job",
+      "storage",
+      "pipeline",
+      "access",
+      "registry"
+    ],
+    "prompt": "Inspect configured compute/dispatch/status using normal tools. Use only an already-authorized bounded CPU worker allocated for this test. Dispatch the tiny fixture, observe session/receipt and output, cancel a separate harmless waiting job, confirm cleanup and no active compute. Do not provision paid resources or enable dispatch. Record blockers explicitly.",
+    "checks": [
+      "dispatch",
+      "hosted_execution_receipt",
+      "status_observation",
+      "cancel",
+      "cleanup_no_active_compute"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "git",
+    "areas": [
+      "code"
+    ],
+    "prompt": "After successful native plugin OAuth setup, follow only the published optional ordinary Git setup path. OAuth tokens are MCP-resource-bound: never reuse them for Git or silently inject a test API key. The human obtains a project-scoped user/machine key through Settings \u2192 Keys, selects a short expiry and stores it through an ordinary Git credential manager (never chat, URL, argv, transcript or a custom Merv helper). Record actual user steps, required current project role, scope/expiry metadata and native credential-manager choice without reading secrets. Use the exact remote URL from the Code page; clone/fetch, restart and fetch using persisted credentials. An authorized project administrator may push a tiny fixture README to an ordinary user branch; user keys must be denied pushes to merv-main and merv/* reserved branches. Separately verify a genuinely leased hosted worker can push its assigned branch and is denied another assigned branch. Verify immutable submission and independent review/approval commit lifecycle through normal workflow. Finally have the human revoke ONLY the dedicated Git test key and verify a fresh Git request fails while MCP OAuth still works. Never force-push, modify the default branch or provision workers. Missing published setup instructions or unaffordable permissions are blockers.",
+    "checks": [
+      "published_optional_setup",
+      "human_key_creation",
+      "credential_scope_role_expiry",
+      "ordinary_credential_manager_no_merv_helper",
+      "persisted_clone_fetch",
+      "owner_user_branch_push",
+      "owner_reserved_branch_denied",
+      "worker_assigned_branch",
+      "worker_wrong_branch_denied",
+      "immutable_submission",
+      "approval_commit",
+      "git_revocation_denial",
+      "oauth_still_works"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "pi",
+    "areas": [
+      "pi",
+      "session",
+      "workflow"
+    ],
+    "prompt": "Using the already configured internal Pi, ask it to read this synthetic project status and execute the small task through supported assignment and independent review. Record Pi/session identity, actual tool evidence, hosted execution receipt and terminal workflow. Check stop/resume and tool/context recovery. Do not warm/provision a new machine without operator allocation.",
+    "checks": [
+      "pi_context",
+      "pi_actual_tools",
+      "hosted_worker",
+      "independent_review",
+      "stop_resume",
+      "cleanup"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "cleanup",
+    "areas": [
+      "session",
+      "sandbox",
+      "fleet",
+      "workflow"
+    ],
+    "prompt": "Read all retained acceptance record IDs and running sessions for this run. Cancel only its disposable jobs and stop only its allocated test machines using normal tools after confirming ownership. Preserve artifacts/reviews/Git receipts. Report exact remaining resources and any required manual cleanup; never bulk-delete a project.",
+    "checks": [
+      "owned_resources_only",
+      "no_running_jobs",
+      "no_allocated_compute",
+      "evidence_retained"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "operations",
+    "areas": [
+      "system",
+      "usage",
+      "script",
+      "screen",
+      "history"
+    ],
+    "prompt": "Inspect system status, usage and supported scripts, screen/context and history using exposed read tools. Run only a documented harmless local arithmetic script if permitted. Budget changes require explicit operator authorization and must target this synthetic project. Record disabled or retired surfaces as blocked with discovery evidence.",
+    "checks": [
+      "system_status",
+      "usage_read",
+      "script_discovery",
+      "safe_script",
+      "history_context",
+      "budget_permission_boundary"
+    ],
+    "initialStatus": "not_run"
+  },
+  {
+    "id": "public-intake",
+    "areas": [
+      "customer_experiment"
+    ],
+    "prompt": "Inspect the published /start/agent.md public experiment intake, distinct from account plugin setup. Use only an operator-created synthetic intake assignment. Read intent/files/progress and submit actual fixture results through supported assigned worker tools. Do not create a customer request or impersonate a worker. Stop if no assignment is available.",
+    "checks": [
+      "public_guide",
+      "assigned_identity",
+      "files_progress",
+      "actual_results",
+      "owner_visible_receipt"
+    ],
+    "initialStatus": "not_run"
+  }
+]
