@@ -21,6 +21,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectServer, issuer } from './fixtures/agent-login.js';
+import { codexStandIn } from './fixtures/connect-clients.js';
+import { parse as parseToml } from 'smol-toml';
 
 type Server = Awaited<ReturnType<typeof connectServer>>;
 
@@ -673,16 +675,18 @@ const path = require('node:path');
 const args = process.argv.slice(2);
 const had = ${JSON.stringify(join(state, `${client}-had`))};
 fs.appendFileSync(${JSON.stringify(join(state, 'log'))}, '${client} ' + args.join(' ') + '\\n');
+${
+  client === 'codex'
+    ? `
+if (args.includes('--json') && process.env.FAKE_CODEX_FAILURE === 'invalid-json') { process.stdout.write('invalid'); process.exit(0); }
+if (args.includes('--json') && process.env.FAKE_CODEX_FAILURE === 'wrong-command') { process.stdout.write(JSON.stringify({ transport: { type: 'stdio', command: 'wrong', args: [] } })); process.exit(0); }
+if (args[1] === 'remove' && process.env.FAKE_CODEX_FAILURE === 'failed-remove') process.exit(1);
+if (args[0] === 'mcp' && (args[1] !== 'get' || args.includes('--json') || !fs.existsSync(had))) { ${codexStandIn()} }`
+    : ''
+}
 if (args[0] === 'mcp' && args[1] === 'get') {
   if (!fs.existsSync(had)) process.exit(1);
   process.stdout.write(fs.readFileSync(had));
-}
-if (args[0] === 'mcp' && args[1] === 'add') {
-  const dir = process.env.CODEX_HOME || path.join(process.env.HOME, '.codex');
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'config.toml');
-  if (!fs.existsSync(file)) fs.writeFileSync(file, '[mcp_servers.' + args[2] + ']\\n', { mode: 0o600 });
-  fs.writeFileSync(had, 'command: ' + args[4]);
 }
 if (args[0] === 'mcp' && args[1] === 'add-json')
   fs.writeFileSync(had, 'Command: ' + JSON.parse(args[3]).command);
@@ -707,6 +711,286 @@ if (args[0] === 'mcp' && args[1] === 'add-json')
   };
 }
 
+/** Inject filesystem events at the actual write boundary, without adding production test hooks. */
+function configHook(c: Awaited<ReturnType<typeof connector>>, body: string) {
+  const hook = join(c.home, 'config-hook.cjs');
+  writeFileSync(
+    hook,
+    `
+const fs = require('node:fs');
+const write = fs.writeFileSync;
+const rename = fs.renameSync;
+${body}
+require('node:module').syncBuiltinESMExports();
+`,
+  );
+  return { NODE_OPTIONS: `--require=${hook}` };
+}
+
+test('config commits retry concurrent content and identity changes without losing edits', async (t) => {
+  const f = await server(t);
+  for (const client of ['claude', 'codex']) {
+    for (const identityOnly of [false, true]) {
+      const c = await connector(t, f);
+      const dir = join(c.home, `.${client}`);
+      mkdirSync(dir);
+      const name = client === 'claude' ? 'settings.json' : 'config.toml';
+      const file = join(dir, name);
+      const initial = client === 'claude' ? '{}' : '# original\n';
+      const edited = identityOnly
+        ? initial
+        : client === 'claude'
+          ? JSON.stringify({ theme: 'dark', permissions: { deny: ['Bash'] } })
+          : '# concurrent edit\n[mcp_servers.other]\ncommand = "other"\n';
+      writeFileSync(file, initial);
+      const count = join(c.home, 'attempts');
+      const clients = fakeClients(
+        t,
+        c,
+        configHook(
+          c,
+          `
+let attempts = 0;
+fs.writeFileSync = function(path, ...args) {
+  const result = write.call(this, path, ...args);
+  if (String(path).startsWith(${JSON.stringify(join(dir, `.${name}.`))})) {
+    write(${JSON.stringify(count)}, String(++attempts));
+    if (attempts === 1) {
+      write(${JSON.stringify(file + '.edit')}, ${JSON.stringify(edited)});
+      rename(${JSON.stringify(file + '.edit')}, ${JSON.stringify(file)});
+    }
+  }
+  return result;
+};`,
+        ),
+      );
+      const result = await clients.run('install');
+      assert.equal(result.code, 0, result.out);
+      assert.equal(readFileSync(count, 'utf8'), '2');
+      if (client === 'claude') {
+        const settings = JSON.parse(readFileSync(file, 'utf8'));
+        assert.deepEqual(settings.permissions.allow, ['mcp__merv']);
+        if (!identityOnly) {
+          assert.equal(settings.theme, 'dark');
+          assert.deepEqual(settings.permissions.deny, ['Bash']);
+        }
+      } else assert.ok(readFileSync(file, 'utf8').startsWith(edited));
+    }
+  }
+});
+
+test('persistent concurrent changes exhaust retries and leave the last edit untouched', async (t) => {
+  const f = await server(t);
+  for (const client of ['claude', 'codex']) {
+    const c = await connector(t, f);
+    const dir = join(c.home, `.${client}`);
+    mkdirSync(dir);
+    const name = client === 'claude' ? 'settings.json' : 'config.toml';
+    const file = join(dir, name);
+    writeFileSync(file, client === 'claude' ? '{}' : '# original\n');
+    const clients = fakeClients(
+      t,
+      c,
+      configHook(
+        c,
+        `
+let attempts = 0;
+fs.writeFileSync = function(path, ...args) {
+  const result = write.call(this, path, ...args);
+  if (String(path).startsWith(${JSON.stringify(join(dir, `.${name}.`))}))
+    write(${JSON.stringify(file)}, ${client === 'claude' ? "JSON.stringify({ edit: ++attempts, permissions: { deny: ['Bash'] } })" : "'# edit ' + ++attempts"});
+  return result;
+};`,
+      ),
+    );
+    const result = await clients.run('install');
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /kept changing; no edit committed/);
+    assert.equal(
+      readFileSync(file, 'utf8'),
+      client === 'claude'
+        ? JSON.stringify({ edit: 3, permissions: { deny: ['Bash'] } })
+        : '# edit 3',
+    );
+    assert.deepEqual(readdirSync(dir), [name]);
+    if (client === 'claude') assert.equal(c.has('claude-approval.json'), false);
+  }
+});
+
+test('unsafe config files and parent directories are refused before any client command', async (t) => {
+  const f = await server(t);
+  for (const client of ['claude', 'codex']) {
+    for (const kind of [
+      'file-link',
+      'file-writable',
+      'dir-link',
+      'dir-writable',
+      'ancestor-writable',
+    ]) {
+      const c = await connector(t, f);
+      const parent = join(c.home, 'parent');
+      const dir = join(parent, 'config');
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, client === 'claude' ? 'settings.json' : 'config.toml');
+      const original = client === 'claude' ? '{}' : '# keep\n';
+      writeFileSync(file, original);
+      let target = file;
+      if (kind === 'file-link') {
+        target = file + '.real';
+        renameSync(file, target);
+        symlinkSync(target, file);
+      } else if (kind === 'dir-link') {
+        renameSync(dir, dir + '.real');
+        symlinkSync(dir + '.real', dir);
+      } else
+        chmodSync(kind === 'file-writable' ? file : kind === 'dir-writable' ? dir : parent, 0o770);
+      const clients = fakeClients(t, c, {
+        [client === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME']: dir,
+      });
+      const result = await clients.run('install');
+      assert.equal(result.code, 1, result.out);
+      assert.match(result.out, /Refusing .* (symlink|open to other users)/);
+      assert.equal(clients.log(), '');
+      assert.equal(readFileSync(target, 'utf8'), original);
+      assert.equal(existsSync(join(c.dir, 'bin')), false);
+    }
+  }
+});
+
+test('a symlink substituted at open is refused without following it', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const dir = join(c.home, '.claude');
+  mkdirSync(dir);
+  const file = join(dir, 'settings.json');
+  const target = join(c.home, 'other-settings');
+  writeFileSync(file, '{}');
+  writeFileSync(target, '{}');
+  const clients = fakeClients(
+    t,
+    c,
+    configHook(
+      c,
+      `
+const open = fs.openSync;
+fs.openSync = function(path, ...args) {
+  if (path === ${JSON.stringify(file)}) {
+    fs.unlinkSync(path);
+    fs.symlinkSync(${JSON.stringify(target)}, path);
+  }
+  return open.call(this, path, ...args);
+};`,
+    ),
+  );
+  const result = await clients.run('install');
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /it is a symlink/);
+  assert.equal(clients.log(), '');
+  assert.equal(readFileSync(target, 'utf8'), '{}');
+});
+
+test('multiline TOML header lookalikes are untouched and both clients keep CRLF', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const clients = fakeClients(t, c);
+  mkdirSync(join(c.home, '.codex'));
+  mkdirSync(join(c.home, '.claude'));
+  const file = join(c.home, '.codex', 'config.toml');
+  const other =
+    "[mcp_servers.other]\r\ncommand = \"other\"\r\nargs = ['''\r\n[mcp_servers.merv]\r\nleave this alone\r\n''']\r\n";
+  writeFileSync(
+    file,
+    other +
+      '[mcp_servers.merv]\r\ncommand = "old"\r\nargs = []\r\ndefault_tools_approval_mode = "prompt"\r\n',
+  );
+  const settings = join(c.home, '.claude', 'settings.json');
+  writeFileSync(settings, '{\r\n  "permissions": {"deny": ["Bash"]}\r\n}\r\n');
+  const result = await clients.run('install');
+  assert.equal(result.code, 0, result.out);
+  const after = readFileSync(file, 'utf8');
+  assert.ok(after.startsWith(other));
+  assert.equal((parseToml(after).mcp_servers as any).merv.default_tools_approval_mode, 'approve');
+  for (const path of [file, settings]) assert.doesNotMatch(readFileSync(path, 'utf8'), /(?<!\r)\n/);
+});
+
+test('failed Codex verification leaves the original file and identity untouched', async (t) => {
+  const f = await server(t);
+  for (const bad of ['invalid-json', 'wrong-command', 'failed-remove']) {
+    const c = await connector(t, f);
+    mkdirSync(join(c.home, '.codex'));
+    const file = join(c.home, '.codex', 'config.toml');
+    const before = '[mcp_servers.merv]\ncommand = "old"\n';
+    writeFileSync(file, before);
+    const ino = statSync(file).ino;
+    const clients = fakeClients(t, c, { FAKE_CODEX_FAILURE: bad });
+    const result = await clients.run('install');
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /Codex: could not (verify|remove).*config left untouched/);
+    assert.doesNotMatch(result.out, /Codex: Merv's tools run without asking/);
+    assert.equal(readFileSync(file, 'utf8'), before);
+    assert.equal(statSync(file).ino, ino);
+  }
+});
+
+test('Claude marker follows a successful commit, records its path, and never claims failed edits', async (t) => {
+  const f = await server(t);
+  for (const failure of ['backup', 'rename', 'json', 'none']) {
+    const c = await connector(t, f);
+    const dir = join(c.home, '.claude');
+    mkdirSync(dir);
+    const file = join(dir, 'settings.json');
+    const before = failure === 'json' ? '{invalid secret text' : '{}';
+    writeFileSync(file, before);
+    const marker = join(c.dir, 'claude-approval.json');
+    const clients = fakeClients(
+      t,
+      c,
+      configHook(
+        c,
+        `
+fs.writeFileSync = function(path, ...args) {
+  if (${JSON.stringify(failure)} === 'backup' && String(path).startsWith(${JSON.stringify(file + '.bak-')}))
+    throw Object.assign(new Error('backup failed'), { code: 'EACCES', syscall: 'open', path });
+  return write.call(this, path, ...args);
+};
+fs.renameSync = function(from, to) {
+  if (to === ${JSON.stringify(file)}) {
+    if (fs.existsSync(${JSON.stringify(marker)})) throw new Error('marker written too early');
+    if (${JSON.stringify(failure)} === 'rename')
+      throw Object.assign(new Error('commit failed'), { code: 'EIO', syscall: 'rename', path: to });
+  }
+  return rename.call(this, from, to);
+};`,
+      ),
+    );
+    const result = await clients.run('install');
+    assert.equal(result.code, failure === 'none' ? 0 : 1, result.out);
+    if (failure === 'none') assert.deepEqual(c.read('claude-approval.json'), { path: file });
+    else {
+      assert.equal(c.has('claude-approval.json'), false);
+      assert.equal(readFileSync(file, 'utf8'), before);
+      assert.match(result.out, failure === 'json' ? /invalid JSON settings/ : /Filesystem error/);
+      assert.doesNotMatch(result.out, /Merv could not be reached|invalid secret text/);
+    }
+  }
+});
+
+test('Claude uninstall does not remove a permission from a different settings path', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  const clients = fakeClients(t, c);
+  assert.equal((await clients.run('install')).code, 0);
+  writeFileSync(
+    join(c.dir, 'claude-approval.json'),
+    JSON.stringify({ path: '/somewhere/else/settings.json' }),
+  );
+  assert.equal((await clients.run('uninstall')).code, 0);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(c.home, '.claude', 'settings.json'), 'utf8')).permissions.allow,
+    ['mcp__merv'],
+  );
+});
+
 test('install grants only this server approval, is idempotent, and uninstall removes the grants', async (t) => {
   for (const [name, header] of [
     ['merv', '[mcp_servers.merv]'],
@@ -728,7 +1012,7 @@ test('install grants only this server approval, is idempotent, and uninstall rem
     const config = join(codexDir, 'config.toml');
     const settings = join(claudeDir, 'settings.json');
     const otherName = name === 'merv' ? 'merv-staging' : 'merv';
-    const before = `# keep formatting\nmodel = "test"\n[mcp_servers.other]\ndefault_tools_approval_mode = "prompt"\n\n${header} # Merv\ncommand = "shim"\nargs = []\n\n[mcp_servers."${name}".env]\nKEEP = "yes"\n[mcp_servers.${otherName}]\ndefault_tools_approval_mode = "approve"\n`;
+    const before = `# keep formatting\nmodel = "test"\n[mcp_servers.other]\ndefault_tools_approval_mode = "prompt"\n\n${header} # Merv\ncommand = "shim"\nargs = []\ndefault_tools_approval_mode = "prompt"\n\n[mcp_servers."${name}".env]\nKEEP = "yes"\n[mcp_servers.${otherName}]\ndefault_tools_approval_mode = "approve"\n`;
     const initial = {
       theme: 'dark',
       permissions: {
@@ -755,13 +1039,18 @@ test('install grants only this server approval, is idempotent, and uninstall rem
         result.out,
       );
       const after = readFileSync(config, 'utf8');
-      assert.equal(
-        after,
-        before.replace(
-          `${header} # Merv\n`,
-          `${header} # Merv\ndefault_tools_approval_mode = "approve"\n`,
-        ),
+      const parsed = parseToml(after) as any;
+      assert.deepEqual(
+        { ...parsed.mcp_servers[name] },
+        {
+          command: join(c.dir, 'bin', 'merv-connect'),
+          args: [],
+          default_tools_approval_mode: 'approve',
+        },
       );
+      assert.equal(parsed.mcp_servers.other.default_tools_approval_mode, 'prompt');
+      assert.equal(parsed.mcp_servers[otherName].default_tools_approval_mode, 'approve');
+      assert.ok(after.startsWith('# keep formatting\nmodel = "test"\n'));
       if (attempt) assert.equal(after, installed);
       installed = after;
       assert.equal(statSync(config).mode & 0o777, 0o640);
@@ -850,7 +1139,7 @@ test('install replaces an earlier key-based Merv without printing its settings, 
   assert.ok(
     log.includes(`claude mcp add-json merv {"type":"stdio","command":"${shim}","args":[]} -s user`),
   );
-  assert.ok(log.includes(`codex mcp add merv -- ${shim}`));
+  assert.ok(log.includes('codex mcp get merv --json'));
   assert.deepEqual(
     JSON.parse(readFileSync(join(c.home, '.cursor', 'mcp.json'), 'utf8')).mcpServers.merv,
     {

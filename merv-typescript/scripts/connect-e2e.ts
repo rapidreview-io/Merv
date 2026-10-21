@@ -25,6 +25,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectServer } from '../tests/fixtures/agent-login.js';
+import { codexStandIn } from '../tests/fixtures/connect-clients.js';
+import { parse as parseToml } from 'smol-toml';
 
 const sh = (command: string, env: Record<string, string>) =>
   new Promise<{ code: number; stdout: string; stderr: string }>((resolve) =>
@@ -69,16 +71,19 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
   const log = join(home, 'clients.log');
   mkdirSync(bin);
   for (const name of ['claude', 'codex']) {
-    writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $*" >> "${log}"\nexit 0\n`);
+    writeFileSync(
+      join(bin, name),
+      `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, '${name} ' + args.join(' ') + '\\n');
+${name === 'codex' ? codexStandIn() : ''}
+`,
+    );
     chmodSync(join(bin, name), 0o755);
   }
   mkdirSync(join(home, '.cursor'));
-  // The Codex stand-in logs registration; supply the tables that the real CLI would create.
-  mkdirSync(join(home, '.codex'));
-  writeFileSync(
-    join(home, '.codex', 'config.toml'),
-    '[mcp_servers.merv]\n[mcp_servers."merv-staging"]\n',
-  );
   const env = {
     HOME: home,
     PATH: `${bin}:${join(process.execPath, '..')}:/usr/bin:/bin`,
@@ -104,16 +109,25 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
       `claude mcp remove ${name} -s user`,
       `claude mcp add-json ${name} ${entry} -s user`,
       `codex mcp remove ${name}`,
-      `codex mcp add ${name} -- ${shim(server.url)}`,
+      `codex mcp get ${name} --json`,
     ])
       assert.ok(calls.includes(call), `${call}\n${calls.join('\n')}`);
     assert.ok(existsSync(shim(server.url)));
   }
   assert.notEqual(shim(prod.url), shim(staging.url));
-  assert.equal(
-    readFileSync(join(home, '.codex', 'config.toml'), 'utf8'),
-    '[mcp_servers.merv]\ndefault_tools_approval_mode = "approve"\n[mcp_servers."merv-staging"]\ndefault_tools_approval_mode = "approve"\n',
-  );
+  const codex = parseToml(readFileSync(join(home, '.codex', 'config.toml'), 'utf8')) as any;
+  for (const [name, url] of [
+    ['merv', prod.url],
+    ['merv-staging', staging.url],
+  ])
+    assert.deepEqual(
+      { ...codex.mcp_servers[name!] },
+      {
+        command: shim(url!),
+        args: [],
+        default_tools_approval_mode: 'approve',
+      },
+    );
   assert.deepEqual(
     JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).permissions.allow,
     ['mcp__merv', 'mcp__merv-staging'],

@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ORIGIN = '__MERV_ORIGIN__';
@@ -93,7 +93,7 @@ function ensureDir(dirs = [MERV, CONNECT, DIR]) {
 }
 /** A file's text through one descriptor, opened without following a link and checked there as
  *  this person's own regular file closed to others; undefined when absent. */
-function readPrivate(path) {
+function readPrivate(path, mask = 0o077, snapshot = false) {
   let fd;
   try {
     fd = fs.openSync(
@@ -107,8 +107,10 @@ function readPrivate(path) {
     throw error;
   }
   try {
-    check(path, fs.fstatSync(fd), 'file', 0o077);
-    return fs.readFileSync(fd, 'utf8');
+    const stat = fs.fstatSync(fd);
+    check(path, stat, 'file', mask);
+    const text = fs.readFileSync(fd, 'utf8');
+    return snapshot ? { text, stat } : text;
   } finally {
     fs.closeSync(fd);
   }
@@ -400,15 +402,18 @@ const onPath = (name) =>
       return false;
     }
   });
-const run = (command, args) =>
-  spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: 'pipe' });
+const run = (command, args, env = clientEnv) =>
+  spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: 'pipe', env });
 const entry = { type: 'stdio', command: SHIM, args: [] };
 const registered = (client) => {
   const got = run(client, ['mcp', 'get', SERVER_NAME]);
   return got.status === 0 ? got.stdout : undefined;
 };
 const removeFromClaude = () => {
-  for (const scope of ['local', 'user']) run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+  for (const scope of ['local', 'user']) {
+    validateClients();
+    run('claude', ['mcp', 'remove', SERVER_NAME, '-s', scope]);
+  }
 };
 const connectorOf = (settings) =>
   /\.merv\/connect\/([^/\s"']+)\/bin\/merv-connect/.exec(settings ?? '')?.[1];
@@ -435,70 +440,154 @@ function backup(file) {
   return copy;
 }
 
-/** Client settings may be readable by others; keep their mode and serialize our edits. */
+const codexDir = resolve(process.env.CODEX_HOME || join(HOME, '.codex'));
+const claudeDir = resolve(process.env.CLAUDE_CONFIG_DIR || join(HOME, '.claude'));
+const clientEnv = { ...process.env };
+if (clientEnv.CODEX_HOME) clientEnv.CODEX_HOME = codexDir;
+if (clientEnv.CLAUDE_CONFIG_DIR) clientEnv.CLAUDE_CONFIG_DIR = claudeDir;
+
+/** Check every directory down from HOME (or the filesystem root for a custom location), before
+ *  creating anything. Client files may be readable, but never writable by another user. */
+function clientPath(dir, name, create = false) {
+  const parents = [];
+  for (let at = dir; ; at = dirname(at)) {
+    parents.unshift(at);
+    if (at === HOME || dirname(at) === at) break;
+  }
+  for (const path of parents) {
+    const stat = fs.lstatSync(path, { throwIfNoEntry: false });
+    if (stat)
+      check(
+        path,
+        stat,
+        'dir',
+        0o022,
+        path === dir || path === HOME || path.startsWith(`${HOME}/`) ? [uid] : [uid, 0],
+      );
+    else if (create) fs.mkdirSync(path, { mode: 0o700 });
+  }
+  return readPrivate(join(dir, name), 0o022, true);
+}
+const sameConfig = (a, b) =>
+  a?.text === b?.text &&
+  ['dev', 'ino', 'uid', 'mode', 'mtimeMs', 'ctimeMs'].every((key) => a?.stat[key] === b?.stat[key]);
+const lineEnding = (text) => (text?.includes('\r\n') ? '\r\n' : '\n');
+
+/** Keep our lock as well as checking for outside writers immediately before the rename. */
 async function editClientConfig(client, dir, name, change, save = false) {
-  await withLock(
+  return await withLock(
     () => {
       const file = join(dir, name);
-      const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-      if (stat) check(file, stat, 'file', 0o022);
-      const before = stat ? fs.readFileSync(file, 'utf8') : undefined;
-      const after = change(before);
-      if (after === undefined || after === before) return;
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      if (save) backup(file);
-      writeAtomic(dir, name, after, stat ? stat.mode & 0o777 : 0o600);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const before = clientPath(dir, name);
+        const after = change(before?.text);
+        if (after === undefined || after === before?.text) return;
+        clientPath(dir, name, true);
+        const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
+        let copy;
+        try {
+          const mode = before ? before.stat.mode & 0o777 : 0o600;
+          fs.writeFileSync(temp, after, { flag: 'wx', mode });
+          fs.chmodSync(temp, mode);
+          if (save && before) {
+            copy = `${file}.bak-${Date.now()}`;
+            fs.writeFileSync(copy, before.text, { flag: 'wx', mode: 0o600 });
+          }
+          if (!sameConfig(before, clientPath(dir, name))) {
+            if (copy) fs.unlinkSync(copy);
+            continue;
+          }
+          fs.renameSync(temp, file);
+          return { copy };
+        } finally {
+          fs.rmSync(temp, { force: true });
+        }
+      }
+      throw new Refusal(`${client}: ${file} kept changing; no edit committed. Try again.`);
     },
     join(CONNECT, `${client}.lock`),
   );
 }
 
-/** Codex asks before each call to a tool not marked read-only unless the server's table says
- *  otherwise. `codex mcp add` has just written that table; `codex mcp remove` drops it whole. */
-async function codexApproval() {
-  const dir = process.env.CODEX_HOME || join(HOME, '.codex');
-  await editClientConfig('codex', dir, 'config.toml', (before = '') => {
-    const lines = before.split('\n');
-    const headers = [SERVER_NAME, `"${SERVER_NAME}"`, `'${SERVER_NAME}'`].map(
-      (n) => `[mcp_servers.${n}]`,
-    );
-    const at = lines.findIndex((line) => headers.includes(line.replace(/#.*/, '').trim()));
-    if (at < 0) throw new Refusal(`Codex: no [mcp_servers.${SERVER_NAME}] table to configure.`);
-    const key = 'default_tools_approval_mode = "approve"';
-    if (lines[at + 1]?.trim() === key) return;
-    lines.splice(at + 1, 0, key);
-    return lines.join('\n');
-  });
+/** Let Codex remove its table in a private copy, append a complete replacement, and have Codex
+ *  parse and verify it before committing. Never search TOML text for a header. */
+async function codexApproval(installing, had) {
+  const committed = await editClientConfig(
+    'codex',
+    codexDir,
+    'config.toml',
+    (before = '') => {
+      const stage = fs.mkdtempSync(join(CONNECT, 'codex-config-'));
+      try {
+        const file = join(stage, 'config.toml');
+        // Codex serializes LF; normalize first so restoring CRLF cannot double a string's CR.
+        fs.writeFileSync(file, before.replace(/\r\n/g, '\n'), { mode: 0o600 });
+        const env = { ...process.env, CODEX_HOME: stage };
+        if (run('codex', ['mcp', 'remove', SERVER_NAME], env).status !== 0)
+          throw new Refusal('Codex: could not remove the old registration; config left untouched.');
+        const eol = lineEnding(before);
+        let after = readPrivate(file).replace(/\r?\n/g, eol);
+        if (installing) {
+          after =
+            after.trimEnd() +
+            eol +
+            eol +
+            `[mcp_servers.${JSON.stringify(SERVER_NAME)}]${eol}` +
+            `command = ${JSON.stringify(SHIM)}${eol}args = []${eol}` +
+            `default_tools_approval_mode = "approve"${eol}`;
+          fs.writeFileSync(file, after, { mode: 0o600 });
+          const got = run('codex', ['mcp', 'get', SERVER_NAME, '--json'], env);
+          const transport = parse(got.stdout)?.transport;
+          if (
+            got.status !== 0 ||
+            transport?.type !== 'stdio' ||
+            transport.command !== SHIM ||
+            !Array.isArray(transport.args) ||
+            transport.args.length !== 0
+          )
+            throw new Refusal('Codex: could not verify Merv’s command; config left untouched.');
+        }
+        return after;
+      } finally {
+        fs.rmSync(stage, { recursive: true, force: true });
+      }
+    },
+    installing,
+  );
+  if (installing) replacing('Codex', had, committed?.copy);
 }
 
 /** Claude Code asks before each MCP tool it has not been told to allow. Only an entry this
  *  installer added is removed again; one the person had stays theirs. */
 async function claudeApproval(installing) {
-  const dir = process.env.CLAUDE_CONFIG_DIR || join(HOME, '.claude');
+  const dir = claudeDir;
+  const path = join(dir, 'settings.json');
   const owned = 'claude-approval.json';
   const permission = `mcp__${SERVER_NAME}`;
-  await editClientConfig(
+  const committed = await editClientConfig(
     'claude',
     dir,
     'settings.json',
     (before) => {
-      if (!installing && !readJson(owned)) return;
-      const config = before === undefined ? {} : JSON.parse(before);
+      if (!installing && readJson(owned)?.path !== path) return;
+      const config = before === undefined ? {} : parse(before);
+      if (!config || typeof config !== 'object' || Array.isArray(config))
+        throw new Refusal(`Claude Code: invalid JSON settings in ${path}; left alone.`);
       const allow = config.permissions?.allow ?? [];
       if (!Array.isArray(allow))
         throw new Refusal(
           `Claude Code: permissions.allow in ${join(dir, 'settings.json')} is not a list; left alone.`,
         );
       if (installing === allow.includes(permission)) return;
-      if (installing) writeJson(owned, {});
       config.permissions = {
         ...config.permissions,
         allow: installing ? [...allow, permission] : allow.filter((item) => item !== permission),
       };
-      return `${JSON.stringify(config, null, 2)}\n`;
+      return `${JSON.stringify(config, null, 2)}\n`.replace(/\n/g, lineEnding(before));
     },
     true,
   );
+  if (installing && committed) writeJson(owned, { path });
   if (!installing) remove(owned);
 }
 
@@ -528,6 +617,7 @@ async function cursor(change) {
 /** Places this file, as read and checked through one descriptor (and, from the installer, whose
  *  digest matches again), and a shim that runs it with `node`; then registers it with each client. */
 async function install(sha, node = process.execPath) {
+  validateClients();
   ensureDir([MERV, CONNECT, DIR, BIN]);
   const self = readPrivate(fileURLToPath(import.meta.url));
   if (sha && createHash('sha256').update(self).digest('hex') !== sha)
@@ -543,6 +633,7 @@ async function install(sha, node = process.execPath) {
     if (!foreign('Claude Code', had)) {
       replacing('Claude Code', had);
       removeFromClaude();
+      validateClients();
       const added = run('claude', [
         'mcp',
         'add-json',
@@ -567,16 +658,8 @@ async function install(sha, node = process.execPath) {
     found = true;
     const had = registered('codex');
     if (!foreign('Codex', had)) {
-      const config = join(process.env.CODEX_HOME || join(HOME, '.codex'), 'config.toml');
-      replacing('Codex', had, had !== undefined && !connectorOf(had) ? backup(config) : undefined);
-      run('codex', ['mcp', 'remove', SERVER_NAME]);
-      const added = run('codex', ['mcp', 'add', SERVER_NAME, '--', SHIM]);
-      if (added.status === 0) await codexApproval();
-      say(
-        added.status === 0
-          ? `Codex: Merv's tools run without asking (default_tools_approval_mode = "approve").`
-          : `Codex: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
-      );
+      await codexApproval(true, had);
+      say(`Codex: Merv's tools run without asking (default_tools_approval_mode = "approve").`);
     }
   }
   await cursor((servers, save) => {
@@ -594,14 +677,25 @@ async function install(sha, node = process.execPath) {
   say('Restart the client to load Merv.');
 }
 
+function validateClients() {
+  if (onPath('codex')) clientPath(codexDir, 'config.toml');
+  if (onPath('claude')) {
+    clientPath(claudeDir, 'settings.json');
+    // Claude's user MCP registration is separate from its permissions settings.
+    clientPath(claudeDir, '.claude.json');
+    clientPath(HOME, '.claude.json');
+  }
+}
+
 async function uninstall() {
+  validateClients();
   // Only this origin's registration: never another server's, nor one a person made by hand.
   const ours = (client) => onPath(client) && connectorOf(registered(client)) === HOSTDIR;
   if (ours('claude')) {
     await claudeApproval(false);
     removeFromClaude();
   }
-  if (ours('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
+  if (ours('codex')) await codexApproval(false);
   await cursor((servers) => {
     if (servers[SERVER_NAME]?.command !== SHIM) return undefined;
     delete servers[SERVER_NAME];
@@ -704,9 +798,13 @@ const failure = (error, forwarded = false) =>
     ? UNDERSTOOD
     : error instanceof Refusal
       ? error.message
-      : forwarded
-        ? `Merv could not be reached or did not answer within ${Math.ceil(TIMEOUT / 1000)} s. The call may still have taken effect; check before repeating it.`
-        : `Merv could not be reached at ${ORIGIN}. Check the network, then try again.`;
+      : error.syscall
+        ? `Filesystem error (${error.code}) during ${error.syscall}${error.path ? ` at ${error.path}` : ''}.`
+        : error instanceof SyntaxError
+          ? 'Invalid JSON in local configuration.'
+          : forwarded
+            ? `Merv could not be reached or did not answer within ${Math.ceil(TIMEOUT / 1000)} s. The call may still have taken effect; check before repeating it.`
+            : `Merv could not be reached at ${ORIGIN}. Check the network, then try again.`;
 
 /** The client's own tools/list, forwarded as asked; each project selection is listed apart. */
 async function listTools(params = {}) {
