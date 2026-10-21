@@ -56,16 +56,18 @@ WORKER_TESTS = 'tests/pi-worker.test.ts tests/pi-worker-relay-protocol.test.ts t
 # All a worker-lane release may change in the image: the Pi worker bundle and its compile cache.
 WORKER_FILES = ('/opt/merv/pi/worker-main.mjs', '/opt/merv/pi/compile-cache/')
 LANES = ('none', 'worker', 'boundary')
+# The root launcher creates a private read-only mount before dropping every assignment cap.
+REVIEW_MOUNTS = ['--cap-add', 'SYS_ADMIN']
 GATES = {  # name: (docker run flags, mount targets, command, expected gate, report lines)
     'linux-pi-gate.py': (['--cap-add', 'SYS_PTRACE', '--tmpfs', '/run/merv-runtime:mode=0700',
                           '--entrypoint', '/usr/bin/python3.11'],
                          ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-pi-protected-launch', 2),
-    'linux-workflow-gate.py': (['--tmpfs', '/run/merv-runtime:mode=0700', '--entrypoint', '/usr/bin/python3.11'],
+    'linux-workflow-gate.py': ([*REVIEW_MOUNTS, '--tmpfs', '/run/merv-runtime:mode=0700', '--entrypoint', '/usr/bin/python3.11'],
                                ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-workflow-dispatch', 1),
     'linux-isolation-probe-gate.mjs': (['--entrypoint', '/usr/local/bin/node'],
                                        ['/opt/merv/runner/supervisor.mjs', '/opt/merv/runner/smoke-supervisor.mjs'],
                                        '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry', 1),
-    'linux-review-gate.py': (['--cap-add', 'SYS_ADMIN', '--security-opt', 'seccomp=unconfined', '--entrypoint', '/usr/bin/python3.11'],
+    'linux-review-gate.py': ([*REVIEW_MOUNTS, '--entrypoint', '/usr/bin/python3.11'],
                               ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-review-readonly', 1),
 }
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
@@ -125,6 +127,41 @@ process.stdout.write(JSON.stringify({projectId,actorId:issued.actor.id,credentia
 def need(ok, reason):
     if not ok:
         raise RuntimeError(reason)
+
+
+@contextlib.contextmanager
+def gate_environment(boundary):
+    """An unattached AppArmor profile for these disposable containers, never production ones.
+
+    Docker's default profile denies the root mount; plain unconfined on Ubuntu denies
+    Codex's child user namespace. A named profile permits both, retaining Docker seccomp
+    and the launcher's irreversible capability drop. No sysctl or boot policy changes.
+    """
+    if not boundary:
+        yield None
+        return
+    name = 'merv-hosted-gate-' + secrets.token_hex(8)
+    source = f'abi <abi/4.0>,\nprofile {name} flags=(unconfined) {{\n  userns,\n}}\n'.encode()
+    parser = ['apparmor_parser', '--skip-cache']
+    need(not any(line.startswith(name + ' (') for line in
+                 Path('/sys/kernel/security/apparmor/profiles').read_text().splitlines()),
+         'gate AppArmor profile already exists: ' + name)
+    need(not run(['docker', 'ps', '-a', '--filter', 'name=^/' + name + '$', '--format', '{{.ID}}']).strip(),
+         'gate container already exists: ' + name)
+    print('Disposable gate container/AppArmor profile: ' + name, file=sys.stderr, flush=True)
+    run([*parser, '--add'], payload=source)
+    try:
+        yield name
+    finally:
+        # Killing a timed-out Docker client does not stop its container. Remove this
+        # exact container before unloading its profile; retain the profile if removal fails.
+        try:
+            removed = subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=30)
+            need(removed.returncode == 0 or b'No such container:' in removed.stderr,
+                 'container removal failed')
+            run([*parser, '--remove'], payload=source)
+        except Exception as error:
+            raise RuntimeError(f'gate cleanup failed; remove container then AppArmor profile: {name}') from error
 
 
 def sha(raw):
@@ -898,14 +935,18 @@ class Step:
         """The Linux gates of the lane this host decided, against the exact candidate, failing closed."""
         build = read(self.run / 'build.json')
         results = {}
-        for name in LANE_GATES[build['lane']]:
-            flags, targets, command, expected, lines = GATES[name]
-            gate = self.run / 'source/scripts/hosted-runner' / name
-            mounts = [part for target in targets for part in ('-v', f'{gate}:{target}:ro')]
-            out = run(['docker', 'run', '--rm', '--network', 'none', *flags, *mounts, build['candidate'], command],
-                      timeout=300, log=self.run / f'gate-{name}.log').decode()
-            need(gate_passed(out, expected, lines), 'gate_failed: ' + name)
-            results[name] = 'pass'
+        with gate_environment(build['lane'] == 'boundary') as profile:
+            for name in LANE_GATES[build['lane']]:
+                flags, targets, command, expected, lines = GATES[name]
+                environment = ['--name', profile] if profile else []
+                if profile and 'SYS_ADMIN' in flags:
+                    environment += ['--security-opt', 'apparmor=' + profile]
+                gate = self.run / 'source/scripts/hosted-runner' / name
+                mounts = [part for target in targets for part in ('-v', f'{gate}:{target}:ro')]
+                out = run(['docker', 'run', '--rm', '--network', 'none', *environment, *flags, *mounts,
+                           build['candidate'], command], timeout=300, log=self.run / f'gate-{name}.log').decode()
+                need(gate_passed(out, expected, lines), 'gate_failed: ' + name)
+                results[name] = 'pass'
         return results
 
     def push(self, arg):

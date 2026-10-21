@@ -168,6 +168,104 @@ test('a gate passes only when every report line passes', () => {
   assert.equal(passed(workflow({ workHostStepRan: false }), dispatch), false);
 });
 
+test('inquiry and review gates allow root mount setup while retaining Docker seccomp', () => {
+  for (const name of ['linux-workflow-gate.py', 'linux-review-gate.py']) {
+    const flags = py('print(json.dumps(vm.GATES[i][0]))', name);
+    assert.equal(flags[flags.indexOf('--cap-add') + 1], 'SYS_ADMIN');
+    assert.ok(!flags.includes('--privileged'));
+    assert.ok(!flags.includes('seccomp=unconfined'));
+  }
+});
+
+test('boundary gate profile is unattached, selected only for mount gates, and removed after its container', () => {
+  const calls = py(`calls=[]
+vm.Path.read_text=lambda path:''
+vm.read=lambda path:{'lane':'boundary','candidate':'sha256:candidate'}
+vm.gate_passed=lambda *args:True
+def run(command,payload=None,**kwargs):
+    calls.append([command,payload.decode() if payload else None]);return b''
+vm.run=run
+def remove(command,**kwargs):
+    calls.append([command,None]);return type('Result',(),{'returncode':1,'stderr':b'No such container: gone'})()
+vm.subprocess.run=remove
+vm.Step(vm.Path('/run/gate'),{}).gates(None)
+print(json.dumps(calls))`);
+  const [inspect, add, ...rest] = calls;
+  assert.deepEqual(add[0], ['apparmor_parser', '--skip-cache', '--add']);
+  const profile = add[1].match(/profile (merv-hosted-gate-[a-f0-9]{16}) flags=/)[1];
+  assert.deepEqual(inspect[0], [
+    'docker',
+    'ps',
+    '-a',
+    '--filter',
+    `name=^/${profile}$`,
+    '--format',
+    '{{.ID}}',
+  ]);
+  assert.equal(add[1], `abi <abi/4.0>,\nprofile ${profile} flags=(unconfined) {\n  userns,\n}\n`);
+  const gates = rest.slice(0, 4).map(([command]) => command);
+  assert.equal(gates.length, 4);
+  for (const command of gates) {
+    assert.equal(command[command.indexOf('--name') + 1], profile);
+    assert.equal(command.includes(`apparmor=${profile}`), command.includes('SYS_ADMIN'));
+    assert.ok(!command.includes('--privileged') && !command.includes('seccomp=unconfined'));
+  }
+  assert.deepEqual(rest.slice(4), [
+    [['docker', 'rm', '-f', profile], null],
+    [['apparmor_parser', '--skip-cache', '--remove'], add[1]],
+  ]);
+});
+
+test('gate failure cleans up; a container removal failure retains its AppArmor profile', () => {
+  for (const cleanupFails of [false, true]) {
+    const result = py(
+      `calls=[]
+vm.Path.read_text=lambda path:''
+vm.run=lambda command,**kwargs:calls.append(command) or b''
+def remove(command,**kwargs):
+    calls.append(command);return type('Result',(),{'returncode':1 if i else 0,'stderr':b'daemon unavailable'})()
+vm.subprocess.run=remove
+try:
+    with vm.gate_environment(True): raise RuntimeError('original gate failure')
+except RuntimeError as error: reason=str(error)
+print(json.dumps({'calls':calls,'reason':reason}))`,
+      cleanupFails,
+    );
+    assert.equal(result.calls.length, cleanupFails ? 3 : 4);
+    assert.match(result.reason, cleanupFails ? /gate cleanup failed/ : /original gate failure/);
+    if (cleanupFails) assert.ok(result.reason.includes(result.calls[2].at(-1)));
+  }
+  assert.deepEqual(
+    py(`vm.run=lambda *args,**kwargs:(_ for _ in ()).throw(Exception('must not load'))
+with vm.gate_environment(False) as profile: print(json.dumps(profile))`),
+    null,
+  );
+});
+
+test('gate profile collision refuses to replace existing host policy', () => {
+  const result = python(`vm.secrets.token_hex=lambda size:'a'*16
+vm.Path.read_text=lambda path:'merv-hosted-gate-aaaaaaaaaaaaaaaa (unconfined)\\n'
+vm.run=lambda *args,**kwargs:(_ for _ in ()).throw(Exception('must not load'))
+with vm.gate_environment(True): pass`);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /gate AppArmor profile already exists/);
+  assert.doesNotMatch(result.stderr, /must not load/);
+});
+
+test('gate container collision refuses without loading a profile or removing the existing container', () => {
+  const result = py(`calls=[]
+vm.Path.read_text=lambda path:''
+vm.run=lambda command,**kwargs:calls.append(command) or b'existing-container'
+vm.subprocess.run=lambda *args,**kwargs:(_ for _ in ()).throw(Exception('must not remove'))
+try:
+    with vm.gate_environment(True): pass
+except RuntimeError as error: reason=str(error)
+print(json.dumps({'calls':calls,'reason':reason}))`);
+  assert.equal(result.calls.length, 1);
+  assert.deepEqual(result.calls[0].slice(0, 3), ['docker', 'ps', '-a']);
+  assert.match(result.reason, /gate container already exists/);
+});
+
 test('every boundary image must prove it can be a work host before its release switches', () => {
   // Main rents every workflow machine as a work host. The workflow gate, run against the exact
   // candidate, enrols the image's supervisor with a work-host bootstrap and runs Codex steps on

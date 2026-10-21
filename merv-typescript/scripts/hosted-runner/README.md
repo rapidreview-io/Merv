@@ -65,6 +65,13 @@ where the CPU features differ from the build host's.
 
 `GATES` in `deploy/hosted-release-vm.py` holds the exact `docker run` flags for each probe
 against a built combined image; the release runs them with the probe scripts from its archive.
+Boundary gates create one temporary, unattached AppArmor profile: Docker's default
+profile denies the root read-only mount, while Ubuntu restricts unprivileged user
+namespaces under plain `unconfined`. Only workflow/review containers select the named
+profile, which permits user namespaces and retains Docker seccomp. The gate runner
+logs its unique container/profile name and removes the container before the profile,
+including on gate failure. If cleanup fails or the host stops, remove that exact
+container before removing its profile; never replace existing policy or change sysctls.
 
 `SYS_PTRACE` is for the root test inspector only; the Pi worker and assignment
 probe must have zero effective, permitted, inheritable, bounding and ambient
