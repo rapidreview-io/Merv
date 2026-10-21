@@ -96,7 +96,15 @@ test('native inventory proves empty despite positive healthy summary and reads e
       return Response.json(pages.shift());
     },
   });
-  assert.deepEqual(actual, { empty: true, instances: 0, durableObjects: 0, pages: 2 });
+  assert.deepEqual(actual, {
+    empty: true,
+    liveEmpty: true,
+    assignedObjects: 0,
+    dormantObjects: 0,
+    instances: 0,
+    durableObjects: 0,
+    pages: 2,
+  });
   assert.ok(calls[1][0].includes('page_token=page2'));
   assert.ok(
     calls.every(
@@ -159,4 +167,64 @@ test('native inventory rejects incomplete, unfamiliar, duplicate and endless pag
       }),
       new RegExp('HTTP ' + status),
     );
+});
+
+test('observed production two-page cursor echo preserves 103 dormant identities without inventing live compute', async () => {
+  const dormant = Array.from({ length: 103 }, (_, i) => ({
+    id: i.toString(16).padStart(64, '0'),
+    name: 'historical-' + i,
+    assigned_at: '2026-10-20T00:00:00Z',
+  }));
+  const run = async (binding = false, echo = 'cursor1') => {
+    const rows = structuredClone(dormant);
+    if (binding) rows[102].deployment_id = 'placement-still-assigned';
+    const pages = [
+      inventoryPage([], rows.slice(0, 100), { per_page: 100, next_page_token: 'cursor1' }),
+      inventoryPage([], rows.slice(100), { per_page: 100, page_token: echo }),
+    ];
+    return applicationInventory(provider, credential, {
+      fetcher: async () => Response.json(pages.shift()),
+    });
+  };
+  assert.deepEqual(await run(), {
+    empty: false,
+    liveEmpty: true,
+    instances: 0,
+    durableObjects: 103,
+    assignedObjects: 0,
+    dormantObjects: 103,
+    pages: 2,
+  });
+  assert.equal((await run(true)).liveEmpty, false);
+  for (const echo of ['wrong', '', null, 17]) await assert.rejects(run(false, echo), /pagination/);
+  await assert.rejects(
+    applicationInventory(provider, credential, {
+      fetcher: async () => Response.json(inventoryPage([], [], { page_token: 'unrequested' })),
+    }),
+    /pagination/,
+  );
+});
+
+test('dormant identities require absent/null deployment and known metadata; malformed or future ownership fails closed', async () => {
+  const run = (row) =>
+    applicationInventory(provider, credential, {
+      fetcher: async () => Response.json(inventoryPage([], [row])),
+    });
+  for (const row of [{ name: 'old' }, { name: 'old', deployment_id: null }])
+    assert.equal((await run(row)).liveEmpty, true);
+  assert.equal(
+    (await run({ name: 'bound', deployment_id: 'instance-not-in-this-page' })).liveEmpty,
+    false,
+  );
+  for (const row of [
+    { name: 'old', deployment_id: '' },
+    { name: 'old', deployment_id: 0 },
+    { name: 'old', deployment_id: false },
+    { name: 'old', deployment_id: {} },
+    { name: 'old', pending: true },
+    { name: 'old', status: 'starting' },
+    { name: 'old', assigned_at: 5 },
+    { name: 'old', id: null },
+  ])
+    await assert.rejects(run(row), /ownership/);
 });

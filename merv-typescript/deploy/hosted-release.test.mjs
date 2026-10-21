@@ -1675,7 +1675,7 @@ test('staging provider census refuses unknown live machines, pending bootstraps 
 queries=[];values=[0,0]
 vm.main_read=lambda q,*a,**k:queries.append([q,a,k]) or {'n':values.pop(0)}
 vm.native=lambda p:{'health':{'errors':[],'instances':dict(active=0,assigned=0,healthy=5,stopped=0,failed=0,scheduling=0,starting=0)}}
-vm.sbx=lambda **k:dict(empty=True,instances=0,durableObjects=0,pages=1)
+vm.sbx=lambda **k:dict(empty=True,liveEmpty=True,instances=0,durableObjects=0,assignedObjects=0,dormantObjects=0,pages=1)
 res={'idle':vm.staging_provider_census()}
 for name,pair in [('machine',[1,0]),('bootstrap',[0,1])]:
     values[:]=pair
@@ -1775,12 +1775,15 @@ print(json.dumps(seen))`);
 test('staging census accepts healthy summary only with concrete empty inventory; all live or unknown states fail closed', () => {
   const out = py(`${scratch}
 counts=dict(active=0,assigned=0,healthy=5,stopped=0,failed=0,scheduling=0,starting=0)
-inventory=dict(empty=True,instances=0,durableObjects=0,pages=1)
+inventory=dict(empty=True,liveEmpty=True,instances=0,durableObjects=0,assignedObjects=0,dormantObjects=0,pages=1)
 status={'health':{'errors':[],'instances':counts}}
 vm.main_read=lambda *a,**k:{'n':0}
 vm.native=lambda _:status
 vm.sbx=lambda **k:inventory
 res={'idle':vm.staging_provider_census(),'denied':[]}
+inventory.update(empty=False,durableObjects=103,dormantObjects=103)
+res['dormant']=vm.staging_provider_census()
+inventory.update(empty=True,durableObjects=0,dormantObjects=0)
 for key in ['active','assigned','starting','scheduling','failed','stopped','unknown']:
     counts[key]=1
     try:vm.staging_provider_census()
@@ -1792,7 +1795,7 @@ for key,value in [('active',False),('assigned','0'),('healthy',-1)]:
     try:vm.staging_provider_census()
     except RuntimeError:res['denied'].append('malformed-'+key)
     counts[key]=saved
-for field in ['instances','durableObjects']:
+for field in ['instances','durableObjects','assignedObjects']:
     inventory[field]=1
     try:vm.staging_provider_census()
     except RuntimeError:res['denied'].append(field)
@@ -1805,6 +1808,7 @@ try:vm.staging_provider_census()
 except RuntimeError:res['denied'].append('health')
 print(json.dumps(res))`);
   assert.equal(out.idle.readOnly, true);
+  assert.equal(out.dormant.readOnly, true);
   assert.deepEqual(out.denied, [
     'active',
     'assigned',
@@ -1818,6 +1822,7 @@ print(json.dumps(res))`);
     'malformed-healthy',
     'instances',
     'durableObjects',
+    'assignedObjects',
     'rollout',
     'health',
   ]);

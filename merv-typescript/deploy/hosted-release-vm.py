@@ -1498,9 +1498,11 @@ def staging_provider_census():
              all(counts[key] == 0 for key in fields - {'healthy'}),
              'staging provider instances are not confirmed empty')
         inventory = sbx(MERV_PROVIDER=provider, MERV_INVENTORY='1')
-        need(isinstance(inventory, dict) and inventory.get('empty') is True and
+        need(isinstance(inventory, dict) and inventory.get('liveEmpty') is True and
              type(inventory.get('instances')) is int and inventory['instances'] == 0 and
-             type(inventory.get('durableObjects')) is int and inventory['durableObjects'] == 0 and
+             type(inventory.get('assignedObjects')) is int and inventory['assignedObjects'] == 0 and
+             type(inventory.get('durableObjects')) is int and inventory['durableObjects'] >= 0 and
+             type(inventory.get('dormantObjects')) is int and inventory['dormantObjects'] == inventory['durableObjects'] and
              type(inventory.get('pages')) is int and 1 <= inventory['pages'] <= 100,
              'staging provider native inventory is not confirmed empty')
     return {'drained': True, 'readOnly': True}

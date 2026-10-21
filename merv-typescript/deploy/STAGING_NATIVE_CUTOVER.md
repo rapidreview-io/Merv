@@ -181,12 +181,31 @@ Credentials remained inside the existing Sandboxes process.
 Cloudflare's [application API reference](https://developers.cloudflare.com/api/resources/containers/subresources/applications/methods/get/)
 defines `active + assigned` as the running Durable-Object-bound count. It does not establish that
 this observed positive `healthy` value represents owned machines; no such interpretation is used.
-The census requires the full native instance/binding inventory to be empty in addition to zero
+The census requires the full native inventory to contain no instance or assigned deployment in addition to zero
 activity counters, no rollout, no health errors, no active staging Sandbox rows and no pending
-bootstrap. Positive `healthy` is accepted only with this independent concrete empty inventory.
+bootstrap. Positive `healthy` is accepted only with this independent concrete live-resource inventory.
 Every page is checked; incomplete data, unfamiliar counter/pagination fields, duplicates, cycles,
-page-limit exhaustion and provider errors refuse preparation. Any actual instance or binding
-blocks, even if its individual state is stopped or unknown. This is deliberately conservative.
+page-limit exhaustion and provider errors refuse preparation. Any actual instance or non-null deployment binding
+blocks, even if its individual state is stopped or unknown. Dormant Durable Object identities are preserved.
 
 The corrected census was executed read-only through `ResearchSuite_Control` on 2026-10-21 and
 returned `{"drained":true,"readOnly":true}`. No gateway/deploy/mutation method was invoked.
+
+### Dormant identities and cursor echoes
+
+Production Standard's actual terminal second page echoes the requested `page_token`; this is
+valid only when it exactly matches that request. Unknown pagination fields, wrong/unrequested
+cursor echoes, cycles and truncation still fail closed. The real two-page response has 103 Durable
+Object identities and zero instances; production Large has 38 identities and zero instances.
+Every observed identity had only `id`, `name`, `assigned_at`, with no `deployment_id`.
+
+The pinned Cloudflare provider (`CloudflarePlugin.verifyRuntimeImage`) associates ownership by
+`durable_objects[].deployment_id -> instances[].id`, then checks the current placement for runtime
+health and Durable Object attachment. An identity without a deployment is not itself a live
+container. Cloudflare's [container API](https://developers.cloudflare.com/containers/api/durable-object-container/#inspect)
+also distinguishes a Durable Object from its running container: inspection can return no container.
+The census now reports `empty` (no identities/resources) separately from `liveEmpty` (no instances
+or assigned deployments), plus total/dormant/assigned counts. Only `liveEmpty` gates the cutover,
+with the existing activity-counter, rollout, DB ownership and bootstrap checks. Null or absent
+`deployment_id` is dormant; malformed values or unfamiliar ownership fields refuse the inventory.
+No identity is deleted, and the absence of a deployment alone never overrides another live signal.

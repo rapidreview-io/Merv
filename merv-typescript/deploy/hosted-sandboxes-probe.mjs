@@ -59,7 +59,8 @@ export async function applicationInventory(
   const { account_id: account, application_id: application } = provider.settings;
   let token,
     instances = 0,
-    durableObjects = 0;
+    durableObjects = 0,
+    assignedObjects = 0;
   const tokens = new Set(),
     ids = new Set(),
     names = new Set();
@@ -99,7 +100,11 @@ export async function applicationInventory(
       throw new Error('Cloudflare instance inventory is incomplete');
     if (
       Object.keys(result).some((key) => !['instances', 'durable_objects'].includes(key)) ||
-      Object.keys(info).some((key) => !['per_page', 'next_page_token'].includes(key)) ||
+      Object.keys(info).some(
+        (key) => !['per_page', 'page_token', 'next_page_token'].includes(key),
+      ) ||
+      (Object.hasOwn(info, 'page_token') &&
+        (typeof info.page_token !== 'string' || !token || info.page_token !== token)) ||
       (info.per_page !== undefined &&
         (!Number.isInteger(info.per_page) || info.per_page < 1 || info.per_page > 100))
     )
@@ -114,12 +119,30 @@ export async function applicationInventory(
         seen.add(row[key]);
       }
     }
+    for (const row of result.durable_objects) {
+      // A Durable Object identity outlives its container. Our provider binds a live runtime by
+      // deployment_id -> instances[].id and then verifies its current placement. A missing/null
+      // deployment_id is dormant metadata, not a machine. Unknown ownership fields fail closed.
+      if (
+        Object.keys(row).some(
+          (key) => !['name', 'id', 'assigned_at', 'deployment_id'].includes(key),
+        ) ||
+        (row.id !== undefined && (typeof row.id !== 'string' || !row.id)) ||
+        (row.assigned_at != null && typeof row.assigned_at !== 'string') ||
+        (row.deployment_id != null && (typeof row.deployment_id !== 'string' || !row.deployment_id))
+      )
+        throw new Error('Cloudflare Durable Object ownership is malformed or unknown');
+      if (row.deployment_id != null) assignedObjects++;
+    }
     instances += result.instances.length;
     durableObjects += result.durable_objects.length;
     const next = info.next_page_token;
     if (next === undefined || next === null)
       return {
         empty: instances === 0 && durableObjects === 0,
+        liveEmpty: instances === 0 && assignedObjects === 0,
+        assignedObjects,
+        dormantObjects: durableObjects - assignedObjects,
         instances,
         durableObjects,
         pages: page,
