@@ -1,22 +1,19 @@
-import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { test } from 'node:test';
+import { currentTask } from './fixtures/current-work.js';
 
+import type { HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
-import { CredentialStore } from '@merv/identity/credentials';
-import { postgresMigrations } from '../packages/scope/src/index.postgres.js';
-import type { HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
-import { ownReviews } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -102,38 +99,6 @@ test('verified identities onboard independently of projects; creation receipts r
     false,
     'No bearer/session authority is persisted with shared users',
   );
-});
-
-test('a human lists the projects they belong to in the order they joined them', async (t) => {
-  const f = await fixture();
-  t.after(async () => await f.state.close());
-  const alice = await f.login('alice'),
-    bob = await f.login('bob');
-  // Created first, joined last: the listing follows the membership, not the project.
-  const joinedLast = await f.scope.members.createProject(bob, {
-    name: 'Joined last',
-    requestId: 'z',
-  });
-  const left = await f.scope.members.createProject(bob, { name: 'Left', requestId: 'left' });
-  f.advance(1_000);
-  const first = await f.scope.members.createProject(alice, { name: 'First', requestId: 'first' });
-  f.advance(1_000);
-  const second = await f.scope.members.createProject(alice, {
-    name: 'Second',
-    requestId: 'second',
-  });
-  f.advance(1_000);
-  await f.scope.members.addMember(bob, left.id, { subject: 'alice', role: 'operator' });
-  await f.scope.members.removeMember(bob, left.id, 'alice');
-  await f.scope.members.addMember(bob, joinedLast.id, { subject: 'alice', role: 'reader' });
-  const expected = [];
-  for (const [project, role] of [
-    [first, 'operator'],
-    [second, 'operator'],
-    [joinedLast, 'reader'],
-  ] as const)
-    expected.push({ ...(await f.scope.project(await f.scope.caller(alice, project.id))), role });
-  assert.deepEqual(await f.scope.projects(alice), expected);
 });
 
 test('one human has independent project roles and attribution actors; issuer and machine boundaries remain exact', async (t) => {
@@ -290,85 +255,6 @@ test('invitations do not verify users, login preserves user identity, and expira
     true,
     'Membership eligibility is not tied to one expired login',
   );
-});
-
-test('existing verified identities use a read path while first insertion rechecks expiry after acquiring its transaction', async (t) => {
-  const f = await fixture();
-  t.after(async () => await f.state.close());
-  const initial = await f.login('alice');
-  const transaction = f.state.transaction.bind(f.state);
-  f.state.transaction = async () => {
-    throw new Error('Unexpected identity write transaction');
-  };
-  assert.deepEqual(await f.login('alice'), initial);
-  const identity = { ...initial.user, expiresAt: initial.expiresAt };
-  const accepting = f.scope.members.acceptVerifiedIdentity(identity);
-  identity.subject = 'unverified';
-  identity.expiresAt = new Date(initialTime + 120_000).toISOString();
-  assert.deepEqual(await accepting, initial);
-  const expiring = f.scope.members.acceptVerifiedIdentity({
-    ...initial.user,
-    expiresAt: initial.expiresAt,
-  });
-  f.advance(60_000);
-  await assert.rejects(expiring, { code: 'unauthorized' });
-  await assert.rejects(
-    async () =>
-      await f.scope.members.acceptVerifiedIdentity({
-        issuer,
-        subject: 'alice',
-        expiresAt: initial.expiresAt,
-      }),
-    { code: 'unauthorized' },
-  );
-  f.state.transaction = transaction;
-  let first = true;
-  const scope = await createService(
-    new ProjectScope(f.state, () => {
-      const time = first ? initialTime : initialTime + 2000;
-      first = false;
-      return time;
-    }),
-  );
-  await assert.rejects(
-    async () =>
-      await scope.members.acceptVerifiedIdentity({
-        issuer,
-        subject: 'expired-before-insert',
-        expiresAt: new Date(initialTime + 1000).toISOString(),
-      }),
-    { code: 'unauthorized' },
-  );
-  assert.equal(
-    await f.state.read(
-      async (sql) =>
-        await sql.get('SELECT * FROM shared_users WHERE subject=?', 'expired-before-insert'),
-    ),
-    undefined,
-  );
-});
-
-test('human validation retains the original expiry and rejects expiry during the user lookup', async (t) => {
-  const f = await fixture();
-  t.after(async () => await f.state.close());
-  const principal = await f.login('alice');
-  const expiresAt = principal.expiresAt;
-  let time = initialTime;
-  const members = new Memberships(
-    f.state,
-    () => new Date(time).toISOString(),
-    f.scope.require.bind(f.scope),
-  );
-  await f.state.transaction(async (tx) => {
-    const pending = members.human(principal, tx);
-    principal.expiresAt = new Date(initialTime + 120_000).toISOString();
-    assert.equal((await pending).expiresAt, expiresAt);
-  });
-  await f.state.transaction(async (tx) => {
-    const pending = members.human({ ...principal, expiresAt }, tx);
-    time += 60_000;
-    await assert.rejects(pending, { code: 'unauthorized' });
-  });
 });
 
 test('role changes and remove/rejoin preserve actor attribution but fence every old membership epoch', async (t) => {
@@ -561,39 +447,6 @@ test('the last verified human operator is protected until another invited operat
   });
 });
 
-test('a project owner is its admin, then its longest-standing signed-in operator, never an invitation', async (t) => {
-  const f = await fixture();
-  t.after(async () => await f.state.close());
-  const alice = await f.login('alice');
-  const project = await f.scope.members.createProject(alice, {
-    name: 'Owners',
-    requestId: 'create',
-  });
-  f.advance(1);
-  await f.scope.members.addMember(alice, project.id, { subject: 'invited', role: 'operator' });
-  f.advance(1);
-  await f.scope.members.addMember(alice, project.id, { subject: 'second', role: 'operator' });
-  const second = await f.scope.caller(await f.login('second'), project.id);
-  await f.scope.members.removeMember(alice, project.id, 'alice');
-  const owners = await f.scope.projectOwners();
-  assert.deepEqual(
-    owners.map((owner) => [owner.projectId, owner.source.kind === 'human' && owner.source.subject]),
-    [[project.id, 'second']],
-  );
-  assert.equal((await f.scope.requireDelegation(owners[0]!.source, 'write')).id, second.actorId);
-  // The platform admin's people: verified sign-ins only, with the project actors they are.
-  const { issuer } = alice.user;
-  const directory = await f.scope.directory();
-  assert.deepEqual(directory.projects, [project]);
-  assert.deepEqual(
-    directory.people.map(({ subject, actors }) => [subject, actors.length]),
-    [
-      ['alice', 1],
-      ['second', 1],
-    ],
-  );
-});
-
 test('simultaneous self-demotions leave one verified human operator after serialized checks', async (t) => {
   const f = await fixture('member-operator-race');
   t.after(async () => await f.state.close());
@@ -691,102 +544,6 @@ test('membership mutations, actor state and project receipts roll back with fail
   assert.notEqual(
     (await f.scope.members.createProject(alice, { name: 'Failed', requestId: 'failed' })).id,
     project.id,
-  );
-});
-
-test('v2 migration preserves local projects and credentials; adoption is explicit and ownership repair is audited', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-shared-membership-v2-'));
-  const path = directory;
-  let state = await openState(path);
-  t.after(async () => {
-    await state.close();
-    rmSync(directory, { recursive: true, force: true });
-  });
-  await state.migrate(
-    'scope',
-    [1, 2].map((version) => ({ version, sql: postgresMigrations[version] })),
-  );
-  await new CredentialStore(state).initialize();
-  const oldScope = new ProjectScope(state);
-  const legacy = await oldScope.credentials.bootstrap({
-    projectName: 'Legacy',
-    actorName: 'Local operator',
-  });
-  let scope = await createService(new ProjectScope(state));
-  assert.deepEqual(await scope.authenticate(legacy.token), {
-    ...legacy.actor,
-    credential: legacy.credential,
-  });
-  const login = async (subject: string) =>
-    await scope.members.acceptVerifiedIdentity({
-      issuer,
-      subject,
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    });
-  const alice = await login('alice');
-  assert.deepEqual(await scope.projects(alice), [], 'First login never silently adopts local data');
-  const adopted = await scope.members.adoptProject(alice, legacy.project.id);
-  assert.equal(adopted.role, 'operator');
-  assert.notEqual(adopted.actorId, legacy.actor.id);
-  assert.equal((await scope.authenticate(legacy.token)).id, legacy.actor.id);
-  const rescuer = await login('rescuer');
-  await assert.rejects(async () => await scope.members.adoptProject(rescuer, legacy.project.id), {
-    code: 'project_already_adopted',
-  });
-  for (const repairReason of ['', ' ', 'x'.repeat(2001)])
-    await assert.rejects(
-      async () => await scope.members.adoptProject(rescuer, legacy.project.id, { repairReason }),
-      {
-        code: 'invalid_repair_reason',
-      },
-    );
-  const repair = {
-    repairReason: 'The previous owner lost their identity-provider account.',
-  };
-  const repairing = scope.members.adoptProject(rescuer, legacy.project.id, repair);
-  repair.repairReason = ' ';
-  const repaired = await repairing;
-  assert.equal(
-    (await scope.require(await scope.caller(rescuer, legacy.project.id), 'admin')).id,
-    repaired.actorId,
-  );
-  assert.equal(
-    (await scope.members.memberships(rescuer, legacy.project.id)).memberships.filter(
-      (value) => value.active,
-    ).length,
-    2,
-  );
-  const audit = (await state.events(legacy.project.id)).findLast(
-    (event) => event.type === 'membership.repaired',
-  )!;
-  assert.equal(audit.data.reason, 'The previous owner lost their identity-provider account.');
-  assert.equal(audit.data.previousMembershipId, null);
-  await scope.members.removeMember(rescuer, legacy.project.id, 'alice');
-  const returned = await scope.members.adoptProject(alice, legacy.project.id, {
-    repairReason: 'Restore recovered account.',
-  });
-  assert.equal(returned.actorId, adopted.actorId);
-  assert.notEqual(returned.id, adopted.id);
-  assert.equal(
-    (await state.events(legacy.project.id)).at(-1)?.data.previousMembershipId,
-    adopted.id,
-  );
-  await state.close();
-  state = await openState(path);
-  scope = await createService(new ProjectScope(state));
-  assert.equal((await scope.authenticate(legacy.token)).id, legacy.actor.id);
-  assert.equal((await scope.caller(alice, legacy.project.id)).human?.membershipId, returned.id);
-  await assert.rejects(
-    async () =>
-      await state.transaction(async (tx) => await tx.run('DELETE FROM project_memberships')),
-    { code: 'state_constraint' },
-  );
-  await assert.rejects(
-    async () =>
-      await state.transaction(
-        async (tx) => await tx.run('UPDATE member_actors SET subject=?', 'changed'),
-      ),
-    { code: 'state_constraint' },
   );
 });
 

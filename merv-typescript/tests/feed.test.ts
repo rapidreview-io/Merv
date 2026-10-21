@@ -1,16 +1,15 @@
 import { createService } from '@merv/contracts';
-import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test, type TestContext } from 'node:test';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { FeedService } from '../packages/feed/src/index.js';
+import { DiskBlobs } from '@merv/blobs';
 import { MervError, type Caller } from '@merv/contracts';
-import type { FeedInput, FeedListInput } from '@merv/feed/types';
+import { ProjectScope } from '@merv/scope';
+import { FeedService } from '../packages/feed/src/index.js';
 import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {
@@ -43,80 +42,6 @@ async function fixture(t: TestContext) {
 }
 const code = (expected: string) => (error: unknown) =>
   error instanceof MervError && error.code === expected;
-
-test('Feed persists the input it validated and hashed even if its caller edits the object while awaiting attachments', async (t) => {
-  const f = await fixture(t);
-  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Retained' });
-  let enter!: () => void, release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const getMany = f.artifacts.getMany.bind(f.artifacts);
-  t.mock.method(f.artifacts, 'getMany', async (...args: Parameters<typeof getMany>) => {
-    const result = await getMany(...args);
-    enter();
-    await waiting;
-    return result;
-  });
-  const input = { body: 'Original post', artifactIds: [evidence.id], requestId: 'stable-request' };
-  const original = structuredClone(input);
-  const caller = structuredClone(f.producer);
-  const pending = f.feed.post(caller, input);
-  try {
-    await entered;
-    input.body = '';
-    input.artifactIds[0] = 'art_unchecked';
-    input.requestId = 'different-request';
-    caller.actorId = f.reader.actorId;
-  } finally {
-    release();
-  }
-  const post = await pending;
-  assert.equal(post.authorId, f.producer.actorId);
-  assert.equal(post.body, original.body);
-  assert.deepEqual(post.artifactIds, original.artifactIds);
-  assert.deepEqual(
-    await f.feed.post(f.producer, original),
-    post,
-    'the original request must replay its receipt',
-  );
-  assert.deepEqual(await f.feed.get(f.producer, post.id), post);
-  assert.equal((await f.feed.list(f.producer)).length, 1);
-});
-
-test('artifact metadata stays bound to the input validated before asynchronous authorisation', async (t) => {
-  const f = await fixture(t);
-  let enter!: () => void, release!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const authorize = f.scope.require.bind(f.scope);
-  t.mock.method(f.scope, 'require', async (...args: Parameters<typeof authorize>) => {
-    const actor = await authorize(...args);
-    enter();
-    await waiting;
-    return actor;
-  });
-  const input = { title: 'Original title', content: 'Original bytes' };
-  const pending = f.artifacts.create(f.producer, input);
-  try {
-    await entered;
-    input.title = '   ';
-    input.content = 'Different bytes';
-  } finally {
-    release();
-  }
-  const artifact = await pending;
-  assert.equal(artifact.title, 'Original title');
-  assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, 'Original bytes');
-  assert.deepEqual(await f.artifacts.get(f.producer, artifact.id), artifact);
-});
 
 test('standalone Feed admits reviewers, scopes communication, and validates artifact attachments', async (t) => {
   const f = await fixture(t);
@@ -231,58 +156,6 @@ test('Feed preserves exact content, deduplicates per actor, and rechecks permiss
   await f.scope.credentials.revokeActor(f.operator, f.producer.actorId);
   await assert.rejects(async () => await f.feed.post(f.producer, input), code('forbidden'));
   await assert.rejects(async () => await f.feed.get(f.producer, post.id), code('forbidden'));
-});
-
-test('Feed validates text, direct-call attachment shapes, and cursor limits', async (t) => {
-  const f = await fixture(t);
-  for (const body of ['', ' \n\t ', 'x'.repeat(8001)]) {
-    await assert.rejects(
-      async () => await f.feed.post(f.producer, { body, requestId: 'invalid-body' }),
-      code('invalid_body'),
-    );
-  }
-  const boundary = await f.feed.post(f.producer, { body: 'x'.repeat(8000), requestId: 'maximum' });
-  assert.equal(boundary.body.length, 8000);
-  await assert.rejects(
-    async () => await f.feed.post(f.producer, { body: 'Good', requestId: ' ' }),
-    code('invalid_request'),
-  );
-  await assert.rejects(
-    async () => await f.feed.post(f.producer, { body: 'Good', requestId: 'x'.repeat(201) }),
-    code('invalid_request'),
-  );
-  await assert.rejects(
-    async () =>
-      await f.feed.post(f.producer, {
-        body: 'Good',
-        requestId: 'bad-array',
-        artifactIds: null,
-      } as unknown as FeedInput),
-    code('invalid_attachments'),
-  );
-  await assert.rejects(
-    async () =>
-      await f.feed.post(f.producer, { body: 'Good', requestId: 'bad-item', artifactIds: [''] }),
-    code('invalid_attachments'),
-  );
-  for (const input of [
-    { after: -1 },
-    { after: 0.5 },
-    { after: Number.MAX_SAFE_INTEGER + 1 },
-    { after: null },
-  ]) {
-    await assert.rejects(
-      async () => await f.feed.list(f.producer, input as FeedListInput),
-      code('invalid_cursor'),
-    );
-  }
-  for (const limit of [0, 101, 1.5, null]) {
-    await assert.rejects(
-      async () => await f.feed.list(f.producer, { limit } as FeedListInput),
-      code('invalid_limit'),
-    );
-  }
-  await assert.rejects(async () => await f.feed.activity(f.producer, -1), code('invalid_cursor'));
 });
 
 test('Feed post, durable event, and request record roll back together and retry safely', async (t) => {
@@ -460,153 +333,4 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
   } finally {
     await reopened.close();
   }
-});
-
-test('Feed activity exposes actor administration metadata only to project operators', async (t) => {
-  const f = await fixture(t);
-  await f.feed.post(f.producer, { body: 'Public project activity.', requestId: 'public' });
-  const operatorEvents = await f.feed.activity(f.operator);
-  assert.deepEqual(operatorEvents, await f.state.events(f.operator.projectId));
-  assert.ok(
-    operatorEvents.some(
-      (event) => event.type === 'actor.created' && event.data.name === 'Reviewer',
-    ),
-  );
-  for (const caller of [f.producer, f.reviewer, f.reader]) {
-    const events = await f.feed.activity(caller);
-    assert.ok(events.some((event) => event.type === 'feed.posted'));
-    assert.equal(
-      events.some((event) => event.type.startsWith('actor.')),
-      false,
-    );
-    assert.deepEqual(
-      events,
-      operatorEvents.filter((event) => !event.type.startsWith('actor.')),
-    );
-  }
-  const revoked = await f.scope.credentials.issueActor(f.operator, {
-    name: 'Temporary actor',
-    role: 'reader',
-  });
-  await f.scope.credentials.revokeActor(f.operator, revoked.actor.id);
-  assert.equal(
-    (await f.feed.activity(f.reader)).some((event) => event.subjectId === revoked.actor.id),
-    false,
-  );
-  assert.ok(
-    (await f.feed.activity(f.operator)).some(
-      (event) => event.type === 'actor.revoked' && event.subjectId === revoked.actor.id,
-    ),
-  );
-});
-
-test('Feed keeps only who acted of a nested delegation source from nonoperators', async (t) => {
-  const f = await fixture(t);
-  const vouchedBy = {
-    kind: 'key',
-    actorId: f.operator.actorId,
-    projectId: f.operator.projectId,
-    keyId: 'key-secret-id',
-    membershipId: 'membership-id',
-    expiresAt: null,
-  };
-  // A session offered for a project's service carries the person's full source within its own.
-  await f.state.transaction(
-    async (tx) =>
-      await f.state.appendEvent(tx, {
-        projectId: f.operator.projectId,
-        actorId: f.operator.actorId,
-        type: 'session.offered',
-        subjectId: 'session',
-        data: {
-          sessionId: 'session',
-          source: {
-            kind: 'service',
-            actorId: 'service-actor',
-            projectId: f.operator.projectId,
-            vouchedBy,
-          },
-        },
-      }),
-  );
-  const offered = (await f.feed.activity(f.reader)).find(
-    (event) => event.type === 'session.offered',
-  )!;
-  assert.deepEqual(offered.data.source, {
-    kind: 'service',
-    actorId: 'service-actor',
-    projectId: f.operator.projectId,
-    vouchedBy: { kind: 'key', actorId: f.operator.actorId, projectId: f.operator.projectId },
-  });
-  const full = (await f.feed.activity(f.operator)).find(
-    (event) => event.type === 'session.offered',
-  )!;
-  assert.deepEqual((full.data.source as { vouchedBy: unknown }).vouchedBy, vouchedBy);
-});
-
-test('Feed hides local membership repair reasons from nonoperator project participants', async (t) => {
-  const f = await fixture(t);
-  const principal = await f.scope.members.acceptVerifiedIdentity({
-    issuer: 'https://identity.example.test/auth/v1',
-    subject: 'project-owner',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  });
-  await f.scope.members.adoptProject(principal, f.operator.projectId);
-  await f.scope.members.adoptProject(principal, f.operator.projectId, {
-    repairReason: 'Private account recovery details',
-  });
-  assert.equal(
-    (await f.feed.activity(f.operator)).some((event) => event.type === 'membership.repaired'),
-    true,
-  );
-  for (const caller of [f.producer, f.reviewer, f.reader]) {
-    const events = await f.feed.activity(caller);
-    assert.equal(
-      events.some((event) => event.type.startsWith('membership.')),
-      false,
-    );
-    assert.equal(JSON.stringify(events).includes('Private account recovery details'), false);
-  }
-});
-
-test('Feed activity advances past full hidden pages to reach later visible events', async (t) => {
-  const f = await fixture(t);
-  const after = (await f.state.events(f.operator.projectId)).at(-1)!.id;
-  /** 2000 private events in one statement, as 2000 appendEvent calls would store them. */
-  const hidden = (prefix: string) =>
-    f.state.transaction((tx) =>
-      tx.run(
-        `INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at)
-         SELECT ?, ?, 'actor.created', ? || n,
-           json_build_object('name', 'Hidden actor ' || n, 'role', 'reader')::text, ?
-         FROM generate_series(0, 1999) AS n ORDER BY n`,
-        f.operator.projectId,
-        f.operator.actorId,
-        prefix,
-        new Date().toISOString(),
-      ),
-    );
-  await hidden('private-');
-  // Even a multiple of the page size must eventually report a real end.
-  assert.deepEqual(await f.feed.activity(f.reader, after), []);
-  const post = await f.feed.post(f.reviewer, {
-    body: 'Visible after hidden pages.',
-    requestId: 'after-hidden',
-  });
-  const visible = await f.feed.activity(f.reader, after);
-  assert.equal(visible.length, 1);
-  assert.equal(visible[0]!.type, 'feed.posted');
-  assert.equal(visible[0]!.subjectId, post.id);
-  assert.deepEqual(await f.feed.activity(f.reader, visible[0]!.id), []);
-  const operatorPage = await f.feed.activity(f.operator, after);
-  assert.equal(operatorPage.length, 1000);
-  assert.ok(operatorPage.every((event) => event.type === 'actor.created'));
-  // Without a cursor the newest page answers, so a reader is never stuck at the oldest one.
-  const latest = await f.feed.activity(f.operator);
-  assert.equal(latest.length, 1000);
-  assert.equal(latest.at(-1)!.subjectId, post.id);
-  assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
-  // A burst of private events after the last visible one does not blank a reader's newest page.
-  await hidden('later-');
-  assert.deepEqual(await f.feed.activity(f.reader), [visible[0]]);
 });

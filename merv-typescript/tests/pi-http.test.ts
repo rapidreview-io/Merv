@@ -1,13 +1,13 @@
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
 import { MervError, type Caller, type Principal, type Scope } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import test, { type TestContext } from 'node:test';
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
-import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
+import { PiHttp } from '../packages/pi/src/api.js';
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
-import { PiStreams } from '../packages/pi/src/stream.js';
 import type { PiService } from '../packages/pi/src/service.js';
+import { PiStreams } from '../packages/pi/src/stream.js';
 import { deferred } from './fixtures/deferred.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */

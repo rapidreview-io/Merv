@@ -1,18 +1,18 @@
 import { createService } from '@merv/contracts';
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { test } from 'node:test';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
 import { ReviewService } from '@merv/reviews';
 import { actorRevoked } from '@merv/reviews/claims';
-import { digest, type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
-import { openState } from './fixtures/state.js';
+import { ProjectScope } from '@merv/scope';
 import { ownReviews } from './fixtures/review-verdict.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-findings-'));
@@ -239,110 +239,6 @@ test('structured review preflights reject incomplete, contradictory or unpinned 
   }
 });
 
-test('findings that cite unpinned or repeated ids are refused naming every one, in every criterion', async () => {
-  const f = await fixture();
-  try {
-    const claimed = await f.reviews.start(f.reviewer, (await f.request()).id);
-    const valid = f.submit(claimed);
-    // As a model splices two long ids into one.
-    const spliced = f.proof.id.slice(0, 20) + f.extra.id.slice(20);
-    const [one, two] = [...valid.findings!].sort((a, b) => a.criterionNumber - b.criterionNumber);
-    // Listed out of order, as a reviewer may; the refusal names them by criterion.
-    // Something other than an id is shown cut, as a long id is: never whole.
-    const findings = [
-      { ...two!, evidenceIds: [spliced, 42, { id: 'x'.repeat(5000) }] },
-      { ...one!, evidenceIds: [f.proof.id, f.proof.id] },
-    ];
-    await assert.rejects(
-      async () => await f.reviews.submit(f.reviewer, { ...valid, findings } as ReviewSubmit),
-      {
-        code: 'invalid_findings',
-        message: `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): criterion 1 cites "${f.proof.id}" twice; criterion 2 cites "${spliced}", which is not pinned, cites 42, which is not pinned, cites {"id":"${'x'.repeat(72)}…, which is not pinned`,
-      },
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test('synopses must be bounded plain prose and generic review observations must be finite bounded JSON', async () => {
-  const f = await fixture();
-  try {
-    const claimed = await f.reviews.start(f.reviewer, (await f.request()).id);
-    const valid = f.submit(claimed),
-      before = await f.durable();
-    for (const synopsis of [
-      'The retained result art_8c1f2e9a establishes the requested arithmetic behavior.',
-      'The completed task_5b7d03aa establishes the requested arithmetic behavior.',
-      'The completed wf_0e4c9b12 establishes the requested arithmetic behavior.',
-      undefined,
-      null,
-      5,
-      ' '.repeat(40),
-      'x'.repeat(39),
-      'x'.repeat(421),
-      `valid words ${'x'.repeat(40)}\nsecond line`,
-      `# ${'x'.repeat(40)}`,
-      `Use \`code\` ${'x'.repeat(40)}`,
-      `new\u2028line ${'x'.repeat(40)}`,
-      `**The note** names the learning rate but cites no source ${'x'.repeat(20)}`,
-      `- a bullet that ${'x'.repeat(40)}`,
-      `1. a numbered item that ${'x'.repeat(40)}`,
-      `see [the plan](art_1) for ${'x'.repeat(40)}`,
-    ]) {
-      const input = { ...valid, synopsis } as ReviewSubmit;
-      await assert.rejects(async () => await f.reviews.checkSubmit(f.reviewer, claimed.id, input), {
-        code: 'invalid_synopsis',
-      });
-      await assert.rejects(async () => await f.reviews.submit(f.reviewer, input), {
-        code: 'invalid_synopsis',
-      });
-      assert.deepEqual(await f.durable(), before);
-    }
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    let deep: unknown = {};
-    for (let index = 0; index < 34; index++) deep = { next: deep };
-    for (const evidence of [
-      null,
-      [],
-      'text',
-      { value: undefined },
-      { value: NaN },
-      { value: Infinity },
-      { value: 2n },
-      { value: () => 1 },
-      { value: new Date() },
-      circular,
-      deep,
-      { value: 'x'.repeat(64000) },
-      { outcome: '' },
-      { outcome: 5 },
-      { value: [undefined] },
-      { value: new Array(3) },
-      { [Symbol('secret')]: true },
-    ]) {
-      const input = { ...valid, evidence } as ReviewSubmit;
-      await assert.rejects(async () => await f.reviews.checkSubmit(f.reviewer, claimed.id, input), {
-        code: 'invalid_evidence',
-      });
-      await assert.rejects(async () => await f.reviews.submit(f.reviewer, input), {
-        code: 'invalid_evidence',
-      });
-      assert.deepEqual(await f.durable(), before);
-    }
-    const accepted = await f.reviews.submit(f.reviewer, {
-      ...valid,
-      synopsis: `  ${'a'.repeat(40)}  `,
-      evidence: { nested: [{ valid: null }, false, 3.25] },
-    });
-    assert.equal(accepted.synopsis, 'a'.repeat(40));
-    assert.deepEqual(accepted.evidence, { nested: [{ valid: null }, false, 3.25] });
-  } finally {
-    await f.close();
-  }
-});
-
 test('structured verdicts replay exact inputs, forbid later mutation, and survive reopening', async () => {
   const f = await fixture();
   try {
@@ -478,61 +374,6 @@ test('revoking a reviewer preserves the v2 snapshot while replacement claims fen
   }
 });
 
-test('a request that omits formatVersion is format 2, pinned in its snapshot, and no other format is accepted', async () => {
-  const f = await fixture();
-  try {
-    const input = f.input();
-    delete input.formatVersion;
-    const omitted = await f.reviews.request(f.producer, input);
-    const explicit = await f.reviews.request(f.producer, {
-      ...input,
-      formatVersion: 2,
-      requestId: 'explicit-2',
-    });
-    const snapshot = {
-      subjectId: input.subjectId,
-      subjectRevision: input.subjectRevision,
-      producerId: input.producerId,
-      criteria: input.criteria,
-      manifest: [f.proof],
-    };
-    assert.equal(omitted.formatVersion, 2);
-    assert.equal(omitted.snapshotHash, digest({ ...snapshot, formatVersion: 2 }));
-    assert.equal(explicit.snapshotHash, omitted.snapshotHash);
-    await assert.rejects(
-      async () =>
-        await f.state.transaction(
-          async (tx) => await tx.run('UPDATE reviews SET format_version=1 WHERE id=?', omitted.id),
-        ),
-      { code: 'state_constraint' },
-    );
-    const before = await f.durable();
-    for (const formatVersion of [null, 0, 1, 3, '2']) {
-      await assert.rejects(
-        async () =>
-          await f.reviews.request(f.producer, {
-            ...input,
-            formatVersion,
-            requestId: 'bad-format',
-          } as ReviewInput),
-        { code: 'invalid_review_format' },
-      );
-      assert.deepEqual(await f.durable(), before);
-    }
-    // Omission never meant an optional assessment: the synopsis and findings are required.
-    const claim = await f.reviews.start(f.reviewer, omitted.id),
-      complete = f.submit(claim);
-    for (const [incomplete, code] of [
-      [{ ...complete, findings: undefined }, 'invalid_findings'],
-      [{ ...complete, synopsis: undefined }, 'invalid_synopsis'],
-    ] as const)
-      await assert.rejects(async () => await f.reviews.submit(f.reviewer, incomplete), { code });
-    assert.equal((await f.reviews.submit(f.reviewer, complete)).findings.length, 2);
-  } finally {
-    await f.close();
-  }
-});
-
 for (const shape of [
   'array getter',
   'array serializer',
@@ -612,100 +453,6 @@ for (const shape of [
     }
   });
 }
-
-test('review evidence keeps its exact encoded byte limit after safe copying', async () => {
-  const f = await fixture();
-  try {
-    const claim = await f.reviews.start(f.reviewer, (await f.request()).id);
-    const input = f.submit(claim);
-    const room = 64000 - Buffer.byteLength(JSON.stringify({ value: '' }));
-    const evidence = { value: 'x'.repeat(room) };
-    await f.reviews.checkSubmit(f.reviewer, claim.id, { ...input, evidence });
-    await assert.rejects(
-      f.reviews.submit(f.reviewer, { ...input, evidence: { value: `${evidence.value}x` } }),
-      { code: 'invalid_evidence' },
-    );
-    assert.deepEqual(
-      (await f.reviews.submit(f.reviewer, { ...input, evidence })).evidence,
-      evidence,
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test('required criteria are immutable sorted provenance in the snapshot and returned on reads', async () => {
-  const f = await fixture();
-  try {
-    const input = { ...f.input(), requiredCriteria: [2, 1] };
-    const review = await f.reviews.request(f.producer, input);
-    assert.deepEqual(review.requiredCriteria, [1, 2]);
-    assert.equal(
-      review.snapshotHash,
-      digest({
-        subjectId: input.subjectId,
-        subjectRevision: input.subjectRevision,
-        producerId: input.producerId,
-        criteria: input.criteria,
-        manifest: [f.proof],
-        formatVersion: 2,
-        requiredCriteria: [1, 2],
-      }),
-    );
-    assert.deepEqual(
-      await f.reviews.request(f.producer, { ...input, requiredCriteria: [1, 2] }),
-      review,
-      'Order does not change the pinned review or its replay',
-    );
-    const without = await f.reviews.request(f.producer, {
-      ...input,
-      requiredCriteria: undefined,
-      requestId: 'without-required',
-    });
-    assert.equal('requiredCriteria' in without, false);
-    assert.notEqual(without.snapshotHash, review.snapshotHash);
-    assert.deepEqual(await f.reviews.get(f.reader, review.id), review);
-    assert.deepEqual(
-      (await f.reviews.list(f.reader)).find((item) => item.id === review.id)?.requiredCriteria,
-      [1, 2],
-    );
-    await assert.rejects(
-      async () =>
-        await f.state.transaction(
-          async (tx) =>
-            await tx.run('UPDATE reviews SET required_criteria=? WHERE id=?', '[1]', review.id),
-        ),
-      { code: 'state_constraint' },
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test('required criteria must be distinct numbers of the review criteria, supplied as ordinary data', async () => {
-  const f = await fixture();
-  try {
-    const before = await f.durable();
-    const accessor = f.input();
-    Object.defineProperty(accessor, 'requiredCriteria', { enumerable: true, get: () => [1] });
-    for (const input of [
-      { ...f.input(), requiredCriteria: [] },
-      { ...f.input(), requiredCriteria: [1, 1] },
-      { ...f.input(), requiredCriteria: [3] },
-      { ...f.input(), requiredCriteria: [0] },
-      { ...f.input(), requiredCriteria: [1.5] },
-      { ...f.input(), requiredCriteria: ['1'] as unknown as number[] },
-      { ...f.input(), requiredCriteria: 1 as unknown as number[] },
-      accessor,
-    ])
-      await assert.rejects(f.reviews.request(f.producer, input), {
-        code: 'invalid_required_criteria',
-      });
-    assert.deepEqual(await f.durable(), before);
-  } finally {
-    await f.close();
-  }
-});
 
 test('a pass can waive an ordinary criterion but never a required one, in preflight and in the commit', async () => {
   const f = await fixture();

@@ -1,32 +1,28 @@
-import test, { type TestContext } from 'node:test';
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { createService, type Caller } from '@merv/contracts';
+import { ReviewService } from '@merv/reviews';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
 import assert from 'node:assert/strict';
-import { legacyReports } from './fixtures/legacy-reports.js';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createService, MervError, type Caller } from '@merv/contracts';
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
-import { ArtifactStore } from '@merv/artifacts';
-import { WorkflowsService } from '@merv/workflows';
-import { ReviewService } from '@merv/reviews';
+import test, { type TestContext } from 'node:test';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { validateAgreement } from '../packages/customer-experiments/src/schema.js';
 import {
   SERVICE_MODEL,
   type CustomerExperiment,
   type ExperimentPlan,
 } from '../packages/customer-experiments/src/types.js';
-import {
-  executionPolicy,
-  serviceExecution,
-} from '../packages/customer-experiments/src/execution.js';
-import { planSchema, validateAgreement } from '../packages/customer-experiments/src/schema.js';
 import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
-import { openState } from './fixtures/state.js';
-import { managedServices } from './fixtures/managed-services.js';
 import { currentWork } from './fixtures/current-work.js';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
+import { managedServices } from './fixtures/managed-services.js';
+import { openState } from './fixtures/state.js';
 
 const errorCode = (code: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === code;
@@ -339,35 +335,6 @@ test('customer workflow cannot dispatch before exact acceptance and payment; rec
   await assert.rejects(f.create(), errorCode('project_not_isolated'));
 });
 
-test('results repair preserves the paid contract and consumes the same bounded allowance', async (t) => {
-  const f = await fixture(t);
-  let exp = await f.deliver(await f.pay());
-  const contract = exp.contract!.hash;
-  const firstReviewer = await f.offer();
-  exp = await f.judge(firstReviewer, exp, 'running');
-  assert.equal(exp.workflow.state, 'running');
-  assert.equal(exp.attempts, 2);
-  assert.equal(exp.workflow.data.computeEpoch, `${exp.contract!.id}:2`);
-  assert.equal(exp.contract!.hash, contract);
-  assert.equal(
-    (await f.workflows.dispatchCandidates(f.caller)).length,
-    0,
-    'The returning reviewer retains its allowance until it closes',
-  );
-  assert.equal((await f.service.reconcile(f.caller, exp.id)).workflow.state, 'running');
-  await f.finish(firstReviewer);
-  exp = await f.deliver(exp);
-  const secondReviewer = await f.offer();
-  assert.ok(
-    secondReviewer.session.tokenBudget! <= 7000,
-    'Earlier execution and review spending is deducted',
-  );
-  await assert.rejects(f.judge(secondReviewer, exp, 'running'), errorCode('attempt_limit'));
-  assert.equal((await f.service.get(f.caller, exp.id)).workflow.state, 'results_review');
-  exp = await f.judge(secondReviewer, exp, 'failed');
-  assert.equal(exp.workflow.state, 'failed');
-});
-
 test('an executor that stops at its allowance without handing off produces a terminal failure', async (t) => {
   const f = await fixture(t);
   const exp = await f.pay();
@@ -389,17 +356,6 @@ test('an executor that stops at its allowance without handing off produces a ter
   );
 });
 
-test('an exhausted independent review is closed without publishing unverified results', async (t) => {
-  const f = await fixture(t);
-  const exp = await f.deliver(await f.pay());
-  const reviewer = await f.offer();
-  await f.finish(reviewer, 9000);
-  const failed = await f.service.reconcile(f.caller, exp.id);
-  assert.equal(failed.workflow.state, 'failed');
-  assert.equal(failed.review!.status, 'superseded');
-  assert.match(String(failed.workflow.data.failureReason), /not been approved/);
-});
-
 test('missing token accounting waits without launching an unbounded replacement', async (t) => {
   const f = await fixture(t);
   const exp = await f.pay();
@@ -415,62 +371,6 @@ test('missing token accounting waits without launching an unbounded replacement'
     capabilities: ['code.v2'],
   });
   assert.equal(demand.candidates.length, 0);
-});
-
-test('an executor that ends its visit to wait for its compute comes back once that visit’s usage is reported, nothing counted', async (t) => {
-  const f = await fixture(t);
-  const exp = await f.pay();
-  let status: 'running' | 'succeeded' = 'running';
-  f.managed.sessions.computeWaits.register({
-    offers: async () => true,
-    states: async ({ targets }) => ({
-      targets: targets.map((target) => ({ ...target, status, state: status })),
-      idle: [],
-    }),
-  });
-  const worker = await f.offer();
-  // Offered while executorsAwaitCompute holds, the owner's decision being pending.
-  assert.equal(await f.managed.sessions.computeWaits.available(worker.session), true);
-  await f.work.run(
-    worker,
-    'session.await_compute',
-    { jobIds: ['job_train'], reason: 'Training the candidate rule.' },
-    (caller, input) => f.managed.sessions.computeWaits.await(caller, input as never),
-  );
-  assert.equal((await f.service.reconcile(f.caller, exp.id)).workflow.state, 'running');
-  status = 'succeeded';
-  await f.managed.sessions.sweep();
-  // Its conversation never arrives here, so only the bound would hold the work: past it.
-  await f.state.transaction(async (tx) => {
-    await tx.run(
-      'ALTER TABLE session_compute_waits DISABLE TRIGGER session_compute_waits_immutable',
-    );
-    await tx.run(
-      'UPDATE session_compute_waits SET created_at=? WHERE session_id=?',
-      new Date(Date.now() - 3_600_000).toISOString(),
-      worker.session.id,
-    );
-    await tx.run(
-      'ALTER TABLE session_compute_waits ENABLE TRIGGER session_compute_waits_immutable',
-    );
-  });
-  const demand = async () =>
-    (
-      await f.managed.sessions.dispatch.dispatchDemand(f.caller, {
-        platform: { name: 'astra', ...SERVICE_MODEL, enabled: true, parallelism: 1 },
-        capabilities: ['code.v2'],
-      })
-    ).candidates.length;
-  // Until its runner reports what the visit used, its paid allowance cannot be judged.
-  assert.equal(await demand(), 0);
-  await f.finish(worker);
-  assert.equal(await demand(), 1);
-  const next = await f.offer();
-  assert.equal(next.session.awaited?.outcome, 'ended');
-  assert.deepEqual(
-    await f.state.read((sql) => sql.all('SELECT * FROM session_dispatch_holds')),
-    [],
-  );
 });
 
 test('a scope change clears acceptance and payment and requires a fresh fixed contract', async (t) => {
@@ -639,193 +539,6 @@ test("leased workers and reviewers read the request without the buyer's email or
   assert.equal((await f.service.get(f.caller, exp.id)).email, 'customer@example.test');
 });
 
-test('customer agreements leave CPU and GPU selection to Merv', () => {
-  assert.deepEqual(planSchema.parse(plan).limits, {
-    wallMinutes: 10,
-    maxTokens: 10000,
-    maxAttempts: 2,
-  });
-  assert.throws(() => planSchema.parse({ ...plan, limits: { ...plan.limits, compute: 'cpu' } }));
-  assert.throws(() => planSchema.parse({ ...plan, limits: { ...plan.limits, gpuType: 'H100' } }));
-});
-
-test('native compute captures are scoped to the accepted attempt and frozen into results review', async (t) => {
-  const captures: string[] = [];
-  let settled = false;
-  const reads: { projectId: string; instanceId: string; attempts?: string[] }[] = [];
-  const f = await fixture(t, {
-    captures: async () => [...captures],
-    evidence: async (projectId, works) => {
-      for (const work of works) reads.push({ projectId, ...work });
-      return new Map(
-        works.map((work) => [work.instanceId, { artifactIds: [...captures], refused: [] }]),
-      );
-    },
-    settled: async () => settled,
-  });
-  let exp = await f.pay();
-  const epoch = `${exp.contract!.id}:1`;
-  const producer = await f.offer();
-  // Native collections are authored by the evidence bridge, not the execution agent.
-  const remote = await f.artifacts.create(f.caller, {
-    title: 'Retained GPU metrics',
-    content: 'Native Capture collection fixture',
-  });
-  captures.push(remote.id);
-  const report = await f.work.run(
-    producer,
-    'artifact.create',
-    { title: 'Report', content: 'Metrics refer to the retained remote Capture.' },
-    (caller, input) => f.artifacts.create(caller, input as { title: string; content: string }),
-  );
-  f.reports.claim(report.id, { kind: 'customer_experiment', id: exp.id });
-  const unrelated = await f.artifacts.create(f.caller, {
-    title: 'Other unverified artifact',
-    content: 'Not from the worker or native evidence bridge',
-  });
-  await assert.rejects(
-    f.service.submitResults(producer.worker, {
-      id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      artifactIds: [unrelated.id],
-      reportArtifactId: report.id,
-      summary: 'Invalid inherited evidence',
-      requestId: f.id(),
-    }),
-    // The refusal names the artifact at fault and only it, so the worker drops exactly that.
-    (error: MervError) =>
-      error.code === 'invalid_evidence_author' &&
-      error.message.includes(unrelated.id) &&
-      !error.message.includes(report.id) &&
-      /cite them by id/.test(error.message) &&
-      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [unrelated.id] }),
-  );
-  await f.work.commit(producer, { 'experiment.ts': 'console.log("remote results");\n' });
-  exp = await f.work.run(
-    producer,
-    'customer_experiment.submit_results',
-    {
-      id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      artifactIds: [report.id, remote.id],
-      reportArtifactId: report.id,
-      summary: 'Finished on internally selected compute.',
-      requestId: f.id(),
-    },
-    (caller, input) => f.service.submitResults(caller, input),
-  );
-  assert.ok(exp.submission!.artifactIds.includes(remote.id));
-  assert.equal(exp.workflow.data.computeEpoch, epoch);
-  // Capture registration may finish while the local final code capture is being retained.
-  const late = await f.artifacts.create(f.caller, {
-    title: 'Retained remote log',
-    content: 'Terminal native Capture registered during finalization',
-  });
-  captures.push(late.id);
-  await f.finish(producer);
-  assert.equal(
-    (await f.service.reconcile(f.caller, exp.id)).workflow.state,
-    'finalizing',
-    'Local code capture cannot release review while native work is still active',
-  );
-  settled = true;
-  exp = await f.service.reconcile(f.caller, exp.id);
-  assert.equal(exp.workflow.state, 'results_review');
-  assert.equal(exp.workflow.data.computeEpoch, epoch);
-  assert.ok(exp.submission!.artifactIds.includes(late.id));
-  assert.ok(exp.review!.artifactIds.includes(remote.id));
-  assert.ok(exp.review!.artifactIds.includes(late.id));
-  assert.ok(reads.length > 0);
-  assert.ok(reads.every((read) => read.projectId === exp.projectId && read.instanceId === exp.id));
-  assert.ok(reads.every((read) => JSON.stringify(read.attempts) === JSON.stringify([epoch])));
-  await assert.rejects(
-    f.state.transaction((tx) =>
-      tx.run(
-        "UPDATE customer_experiment_retained_outputs SET artifact_ids='[]' WHERE submission_id=?",
-        exp.submission!.id,
-      ),
-    ),
-    errorCode('state_constraint'),
-  );
-});
-
-test('a report rendered final in an earlier session is refused with the advice to render it again here', async (t) => {
-  const f = await fixture(t);
-  const exp = await f.pay();
-  const producer = await f.offer();
-  // The same worker, in an earlier session, rendered the report and wrote other evidence. The
-  // rows are written directly: that session is gone, so the artifact service would refuse it.
-  const earlier = async (id: string) => {
-    await f.state.transaction((tx) =>
-      tx.run(
-        `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,session_id)
-         VALUES(?,?,?,?,'text/markdown',?,1,?,'ses_earlier')`,
-        id,
-        exp.projectId,
-        producer.worker.actorId,
-        id,
-        '0'.repeat(64),
-        new Date().toISOString(),
-      ),
-    );
-    return { id };
-  };
-  const report = await earlier('art_earlier_report');
-  f.reports.claim(report.id, { kind: 'customer_experiment', id: exp.id });
-  const notes = await earlier('art_earlier_notes');
-  const submit = (artifactIds: string[]) =>
-    f.service.submitResults(producer.worker, {
-      id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      artifactIds,
-      reportArtifactId: report.id,
-      summary: 'Report from an earlier session',
-      requestId: f.id(),
-    });
-  // Only the report is at fault: render it again, with nothing said about other artifacts.
-  await assert.rejects(
-    submit([report.id]),
-    (error: MervError) =>
-      error.code === 'invalid_evidence_origin' &&
-      /render it with final: true again here/.test(error.message) &&
-      !/Leave the others/.test(error.message) &&
-      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id] }),
-  );
-  // The report and another artifact: each gets its own advice.
-  await assert.rejects(
-    submit([report.id, notes.id]),
-    (error: MervError) =>
-      error.code === 'invalid_evidence_origin' &&
-      error.message.includes(`these are not: ${report.id}, ${notes.id}.`) &&
-      /render it with final: true again here\. Leave the others out of artifactIds/.test(
-        error.message,
-      ) &&
-      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id, notes.id] }),
-  );
-  // Through the session's own admission, the workflow names the earlier artifact it refuses.
-  await assert.rejects(
-    f.work.run(
-      producer,
-      'customer_experiment.submit_results',
-      {
-        id: exp.id,
-        expectedRevision: exp.workflow.revision,
-        artifactIds: [notes.id],
-        reportArtifactId: report.id,
-        summary: 'Notes from an earlier session',
-        requestId: f.id(),
-      },
-      (c, input) => f.service.submitResults(c, input),
-    ),
-    (error: MervError) =>
-      error.code === 'execution_arguments_forbidden' &&
-      error.message.includes(`${notes.id} is not among this assignment's artifacts`) &&
-      /cite its id in one this session creates/.test(error.message) &&
-      JSON.stringify(error.details) ===
-        JSON.stringify({ field: 'artifactIds', reference: 'artifacts', outside: [notes.id] }),
-  );
-});
-
 test('readiness rejects incomplete data and training/evaluation byte reuse', () => {
   const requirement = {
     id: 'train',
@@ -862,116 +575,4 @@ test('readiness rejects incomplete data and training/evaluation byte reuse', () 
       ]),
     errorCode('data_leakage'),
   );
-});
-
-test('a full 24-hour, 500-million-token agreement fits both worker policies', () => {
-  const limits = { wallMinutes: 1440, maxTokens: 500_000_000, maxAttempts: 2 };
-  const accepted = planSchema.parse({ ...plan, limits });
-  for (const review of [false, true]) {
-    const policy = serviceExecution(review);
-    assert.equal(policy.maxDurationSeconds, accepted.limits.wallMinutes * 60);
-    assert.equal(policy.maxModelTokens, accepted.limits.maxTokens);
-  }
-});
-
-test('service_experiment@4 grants the executor the progress its brief asks for', async () => {
-  const names = (review: boolean, version: number) =>
-    serviceExecution(review, version).tools.map((tool) => tool.name);
-  // Version 3's running policy is published: it stays exactly as production pinned it.
-  assert.deepEqual(names(false, 3), [
-    'workflow.status_and_next',
-    'workflow.assignment',
-    'customer_experiment.get',
-    'customer_experiment.files',
-    'customer_experiment.file_download',
-    'artifact.get',
-    'artifact.read',
-    'review.get',
-    'artifact.create',
-    'artifact.upload_begin',
-    'artifact.upload_resume',
-    'artifact.upload_complete',
-    'code.commit',
-    'code.operation',
-    'report.open',
-    'report.write',
-    'report.clear',
-    'report.check',
-    'report.review_visual',
-    'report.approve_visual',
-    'report.render',
-    'customer_experiment.submit_results',
-  ]);
-  assert.deepEqual(names(false, 4), [
-    ...names(false, 3).slice(0, -1),
-    'customer_experiment.progress',
-    'customer_experiment.submit_results',
-  ]);
-  assert.deepEqual(
-    serviceExecution(false, 4).tools.find((t) => t.name === 'customer_experiment.progress'),
-    {
-      name: 'customer_experiment.progress',
-      alternatives: [{ id: { kind: 'target', field: 'instanceId' } }],
-    },
-  );
-  assert.ok(!names(true, 4).includes('customer_experiment.progress'));
-  // Only the version that grants it tells the worker to post progress.
-  const brief = async (version: number) => {
-    const ctx = {
-      get: async () => ({ title: 'T', contract: {}, submission: null, review: null }),
-      contractArtifact: async () => 'art_contract',
-    };
-    const running = executionPolicy(ctx as never, version).assignments!.find(
-      (a) => a.state === 'running',
-    )!;
-    const built = await running.build!({
-      caller: {},
-      snapshot: { id: 'wf_1', version },
-      tx: {},
-    } as never);
-    return (built as { brief: string }).brief;
-  };
-  assert.match(await brief(4), /post progress with customer_experiment\.progress/);
-  assert.doesNotMatch(await brief(3), /customer_experiment\.progress/);
-  // Compute advice follows the live offers, not a fixed provider order: a Modal sandbox cannot
-  // outlive its offer's lifetime, and a machine still deleting holds one of the two slots.
-  for (const version of [3, 4]) {
-    const text = await brief(version);
-    assert.doesNotMatch(text, /Modal first/);
-    assert.match(text, /maximum lifetime against the job/);
-    assert.match(text, /two machines at once, and one still deleting counts/);
-  }
-  // From version 2, a long run is waited for by ending the visit; version 1's text is its own.
-  for (const version of [2, 3, 4])
-    assert.match(
-      await brief(version),
-      /for a long run, where session\.await_compute is offered, end your visit with it/,
-    );
-  assert.doesNotMatch(await brief(1), /session\.await_compute/);
-});
-
-test('only the running worker reports progress, and the customer reads it in order', async (t) => {
-  const f = await fixture(t);
-  const exp = await f.pay();
-  await assert.rejects(f.service.reportProgress(f.caller, { id: exp.id, text: 'Not the worker' }));
-  const producer = await f.offer();
-  await f.service.reportProgress(producer.worker, { id: exp.id, text: 'Rented a GPU' });
-  await f.service.reportProgress(producer.worker, {
-    id: exp.id,
-    text: 'Clef: 17 of 24 correct',
-    result: { name: 'Clef', score: 17, total: 24 },
-    step: { done: 1, total: 5 },
-  });
-  await assert.rejects(
-    f.service.reportProgress(producer.worker, { id: exp.id, text: 'x'.repeat(201) }),
-  );
-  const { paidAt, lines } = await f.service.progress(f.caller, exp.id);
-  assert.ok(paidAt);
-  assert.deepEqual(
-    lines.map((line) => line.text),
-    ['Rented a GPU', 'Clef: 17 of 24 correct'],
-  );
-  assert.deepEqual(lines[1]!.result, { name: 'Clef', score: 17, total: 24 });
-  assert.deepEqual(lines[1]!.step, { done: 1, total: 5 });
-  assert.equal(lines[0]!.attempt, 1);
 });

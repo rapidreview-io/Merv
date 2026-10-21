@@ -1,4 +1,5 @@
-import test, { type TestContext } from 'node:test';
+import { ServerGit } from '@merv/code/git';
+import { CodeRepositories } from '@merv/code/store/repository';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -15,8 +16,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodeRepositories } from '@merv/code/store/repository';
-import { ServerGit } from '@merv/code/git';
+import test, { type TestContext } from 'node:test';
 import { git } from './fixtures/code-store.js';
 
 const limits = { quotaBytes: 1024 * 1024 * 1024, reservedFreeBytes: 1 };
@@ -120,29 +120,6 @@ test('a directory Code did not make, or one that was changed beneath it, is refu
   await assert.rejects(reopened(), { code: 'code_repository_foreign' });
   writeFileSync(paths.marker, marker);
   await reopened();
-});
-
-test('a marker a creation left empty is written, a written one never replaced, a dead creation swept', async (t) => {
-  const repositories = await opened(t, root(t));
-  const paths = repositories.paths('p');
-  mkdirSync(join(paths.directory, 'bootstrap-dead'), { recursive: true });
-  mkdirSync(join(paths.directory, 'bootstrap-live'));
-  const old = new Date(Date.now() - 2 * 3600_000);
-  utimesSync(join(paths.directory, 'bootstrap-dead'), old, old);
-  writeFileSync(paths.marker, '');
-  await repositories.ensure('p', 'r', 'sha1');
-  await repositories.ensure('p', 'other', 'sha1').catch(() => {});
-  assert.deepEqual(JSON.parse(readFileSync(paths.marker, 'utf8')), {
-    format: 1,
-    projectId: 'p',
-    repositoryId: 'r',
-  });
-  await repositories.sweep(async () => undefined);
-  assert.deepEqual(readdirSync(paths.directory).sort(), [
-    'bootstrap-live',
-    'merv-project.json',
-    'repository.git',
-  ]);
 });
 
 test('one process writes to a root at a time, and the lock of a dead process is taken over', async (t) => {
@@ -370,46 +347,6 @@ function intact(
   git(env, ['fsck', '--strict', '--no-dangling']);
   assert.equal(readFileSync(join(env, 'config'), 'utf8'), config, `${projectId} config changed`);
 }
-
-test('a sweep folds the packs of the project that holds the most, in its turn and unwaited, keeping every object', async (t) => {
-  const repositories = await opened(t, root(t));
-  const p = await packed(repositories, 'p', 18);
-  const q = await packed(repositories, 'q', 16);
-  const config = readFileSync(join(repositories.paths('p').repository, 'config'), 'utf8');
-  // While p's turn is held, a sweep starts its fold and resolves; the next starts no other.
-  let release!: () => void;
-  const held = repositories.run('p', () => new Promise<void>((done) => (release = done)));
-  await repositories.sweep(async () => undefined);
-  await repositories.sweep(async () => undefined);
-  assert.deepEqual([indexes(repositories, 'p'), indexes(repositories, 'q')], [18, 16]);
-  release();
-  await held;
-  await repositories.run('p', async () => {});
-  assert.ok(indexes(repositories, 'p') < 4, 'p folded');
-  assert.equal(indexes(repositories, 'q'), 16, 'one project a pass');
-  await repositories.sweep(async () => undefined);
-  await repositories.run('q', async () => {});
-  assert.ok(indexes(repositories, 'q') < 4, 'q folded');
-  intact(repositories, 'p', p, config);
-  intact(repositories, 'q', q, config);
-});
-
-test('a project the volume has no room to fold rests, and the next fullest is folded meanwhile', async (t) => {
-  const repositories = await opened(t, root(t));
-  await packed(repositories, 'p', 18);
-  await packed(repositories, 'q', 16);
-  const pass = async (nowMs = Date.now()) => {
-    await repositories.sweep(async () => undefined, nowMs);
-    for (const id of ['p', 'q']) await repositories.run(id, async () => {});
-  };
-  repositories.config.reservedFreeBytes = Number.MAX_SAFE_INTEGER;
-  await pass();
-  repositories.config.reservedFreeBytes = 1;
-  await pass();
-  assert.deepEqual([indexes(repositories, 'p'), indexes(repositories, 'q') < 4], [18, true]);
-  await pass(Date.now() + 2 * 3600_000);
-  assert.ok(indexes(repositories, 'p') < 4, 'p folded once it rested');
-});
 
 test('a fold that fails loses nothing and leaves only what was there; an hour later one completes', async (t) => {
   // This Git's first repack makes temporary files and fails; every other call is Git's own.

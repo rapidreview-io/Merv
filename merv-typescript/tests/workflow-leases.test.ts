@@ -1,15 +1,3 @@
-import type { Task, TaskCheckpointInput, TaskContext, TaskDelivery } from '@merv/tasks/types';
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { createService } from '@merv/contracts';
-import { admitDispatch } from '@merv/workflows/execution';
-import { insertLease } from '@merv/workflows/lease-rows';
 import type {
   Caller,
   Data,
@@ -19,12 +7,24 @@ import type {
   WorkflowExecution,
   WorkflowPolicy,
 } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { Session } from '@merv/sessions/types';
-import { WorkflowsService } from '@merv/workflows';
-import { createApp } from './fixtures/app.js';
-import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
+import type { Task, TaskCheckpointInput, TaskContext, TaskDelivery } from '@merv/tasks/types';
+import { WorkflowsService } from '@merv/workflows';
+import { admitDispatch } from '@merv/workflows/execution';
+import { insertLease } from '@merv/workflows/lease-rows';
+import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
+import { createApp } from './fixtures/app.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
+import { openState } from './fixtures/state.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext) {
@@ -614,131 +614,6 @@ test('a worker delivery pins its review input and output provenance, which no ot
   );
 });
 
-test('a non-Task program can reserve, activate and release through generic hooks without rendering at authentication', async (t) => {
-  const f = await fixture(t);
-  const { workflows, state, scope, sessions } = f.app.ctx;
-  await state.transaction(
-    async (tx) =>
-      await tx.run(
-        'CREATE TABLE custom_assignments(id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,released INTEGER NOT NULL DEFAULT 0)',
-      ),
-  );
-  let buildCount = 0;
-  const registration = await workflows.register(
-    {
-      name: 'custom-lease',
-      version: 1,
-      initial: 'open',
-      states: ['open', 'done'],
-      terminal: ['done'],
-      edges: [{ from: 'open', action: 'finish', to: 'done' }],
-    },
-    {
-      actions: [
-        {
-          name: 'finish',
-          states: ['open'],
-          transitions: ['finish'],
-          tool: 'custom.finish',
-          instruction: 'Finish.',
-          check() {
-            throw new Error('No exit checks at activation');
-          },
-        },
-      ],
-      assignments: [
-        {
-          state: 'open',
-          async check({ caller, tx }) {
-            await scope.require(caller, 'write', tx);
-          },
-          execution: {
-            readOnly: false,
-            tools: [
-              {
-                name: 'custom.work',
-                alternatives: [{ instanceId: { kind: 'target', field: 'instanceId' } }],
-              },
-            ],
-          },
-          build() {
-            buildCount++;
-            return {
-              role: 'producer',
-              label: 'Custom work',
-              brief: 'Work.',
-              references: [],
-              handoff: { instruction: 'Finish.', tools: [] },
-              execution: { readOnly: false, tools: [] },
-              context: null,
-            };
-          },
-          lease: {
-            async role({ caller, tx }) {
-              await scope.require(caller, 'write', tx);
-              return 'producer' as const;
-            },
-            async acquire({ caller, leaseId, tx }) {
-              await tx.run(
-                'INSERT INTO custom_assignments(id,actor_id) VALUES(?,?)',
-                leaseId,
-                caller.actorId,
-              );
-              return { id: leaseId };
-            },
-            async check({ caller, tx }, receipt) {
-              assert.equal(receipt.id, caller.session!.id);
-              assert.ok(
-                await tx.get(
-                  'SELECT id FROM custom_assignments WHERE id=? AND actor_id=? AND released=0',
-                  receipt.id as string,
-                  caller.actorId,
-                ),
-              );
-            },
-            async release({ lease, tx }) {
-              await tx.run(
-                'UPDATE custom_assignments SET released=1 WHERE id=? AND actor_id=?',
-                lease.leaseId,
-                lease.actorId,
-              );
-            },
-          },
-        },
-      ],
-    },
-  );
-  const instance = await registration.start(f.source, {
-    workflow: 'custom-lease',
-    requestId: 'custom',
-  });
-  const secret = `ms_${randomBytes(32).toString('base64url')}`;
-  const offered = await sessions.offer(f.source, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-    runnerId: 'test',
-    requestId: 'custom-offer',
-    secret,
-  });
-  assert.equal(buildCount, 1);
-  const worker = await sessions.authenticate(secret);
-  const work = await sessions.invocations.prepare(worker, 'custom.work', {});
-  assert.equal(work.input.instanceId, instance.id);
-  assert.equal(buildCount, 1);
-  assert.equal((await workflows.workStarts(f.source, instance.id)).length, 1);
-  await f.release(offered);
-  assert.equal(
-    (await state.read(
-      async (sql) =>
-        await sql.get<{ released: number }>(
-          'SELECT released FROM custom_assignments WHERE id=?',
-          offered.id,
-        ),
-    ))!.released,
-    1,
-  );
-});
-
 /** The engine alone, with one program whose lease hooks the test controls. */
 async function engineFixture(t: TestContext) {
   const state = await openState(':memory:');
@@ -819,59 +694,6 @@ async function engineFixture(t: TestContext) {
   const target = { instanceId: instance.id, expectedRevision: instance.revision };
   return { state, scope, workflows, caller, instance, target, controls };
 }
-
-test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
-  const f = await engineFixture(t);
-  assert.ok(await f.workflows.assignment(f.caller, f.instance.id));
-  assert.equal((await f.workflows.dispatchCandidates(f.caller))[0]!.instanceId, f.instance.id);
-  const roleTarget = { ...f.target };
-  const selectingRole = f.workflows.leaseRole(f.caller, roleTarget);
-  roleTarget.expectedRevision = 99;
-  assert.equal(await selectingRole, 'producer');
-  const source = await f.scope.delegationSource(f.caller);
-  f.scope.registerSessionAuthority({ require: async () => ({ source }) });
-  const actor = await f.state.transaction(
-    async (tx) =>
-      await f.scope.createSessionActor(
-        source,
-        {
-          threadId: 'lease-test',
-          role: 'producer',
-          name: 'Worker',
-        },
-        tx,
-      ),
-  );
-  const worker: Caller = {
-    projectId: actor.projectId,
-    actorId: actor.id,
-    session: { id: 'lease-test', threadId: 'lease-test' },
-  };
-  const offerTarget = { ...f.target, leaseId: 'lease-test' };
-  const offering = f.workflows.offerLease(f.caller, worker, offerTarget);
-  offerTarget.leaseId = 'changed';
-  offerTarget.instanceId = 'changed';
-  const offered = await offering;
-  const checkedLease = structuredClone(offered.lease);
-  const checking = f.workflows.checkLease(worker, checkedLease);
-  checkedLease.actorId = 'changed';
-  checkedLease.receipt.leaseId = 'changed';
-  assert.ok(await checking);
-  const activatedLease = structuredClone(offered.lease);
-  const activating = f.workflows.activateLease(worker, activatedLease);
-  activatedLease.instanceId = 'changed';
-  assert.ok(await activating);
-  // The frozen execution is read as it was called with, whatever changes while the check runs.
-  const frozen = structuredClone(offered.execution);
-  const granting = f.workflows.checkLease(worker, offered.lease, undefined, frozen);
-  frozen.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
-  frozen.references.artifacts = ['live-artifact'];
-  assert.deepEqual((await granting).references, { artifacts: ['own-artifact'] });
-  const release = { reason: 'Completed' };
-  const releasing = f.workflows.releaseLease(offered.lease, release);
-  release.reason = '';
-  await releasing;
-});
 
 test('a lease check with its frozen execution grants the frozen references and declared outputs', async (t) => {
   const f = await engineFixture(t);

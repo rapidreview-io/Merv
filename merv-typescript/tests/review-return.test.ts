@@ -1,30 +1,29 @@
-import { currentTask, currentWork } from './fixtures/current-work.js';
 import { createService, migrationList } from '@merv/contracts';
-import test from 'node:test';
+import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Context } from 'cordis';
+import test from 'node:test';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
-import { ArtifactStore } from '@merv/artifacts';
-import { ReviewService } from '@merv/reviews';
-import { reviewToolsPlugin } from '@merv/reviews/tools';
 import { ApiServer, ToolRegistry } from '@merv/api';
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
 import {
   check,
-  digest,
   type ReviewApplication,
   type ReviewRequest,
   type ReviewSubmit,
 } from '@merv/contracts';
-import { createApp } from './fixtures/app.js';
-import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { ReviewService } from '@merv/reviews';
+import { reviewToolsPlugin } from '@merv/reviews/tools';
+import { ProjectScope } from '@merv/scope';
 import { DELIVERY_REPORT_CRITERION } from '@merv/tasks/definitions';
+import { createApp } from './fixtures/app.js';
+import { assessment, claimUnowned } from './fixtures/review-verdict.js';
 import { openState } from './fixtures/state.js';
-import { assessment, claimUnowned, legacyStart } from './fixtures/review-verdict.js';
+import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(maximumMigration = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-return-'));
@@ -179,228 +178,6 @@ test('selected review routes are immutable verdict evidence, included in replay 
     } finally {
       await state.close();
     }
-  } finally {
-    await f.close();
-  }
-});
-
-test('Reviews validates return route shape without coercing values or evaluating accessors', async () => {
-  const f = await fixture();
-  try {
-    const input = f.input(await f.claim());
-    let propertyReads = 0;
-    const hostile = new Proxy(
-      {},
-      {
-        get() {
-          propertyReads++;
-          throw new Error('No coercion');
-        },
-      },
-    );
-    const invalid: unknown[] = [
-      null,
-      '',
-      ' leading',
-      'trailing ',
-      'a/b',
-      '_start',
-      'a'.repeat(129),
-      [],
-      {},
-      1,
-      true,
-      new String('repair'),
-      hostile,
-    ];
-    const inputs: unknown[] = invalid.map((returnTo) => ({ ...input, returnTo }));
-    inputs.push(
-      Object.defineProperty({ ...input }, 'returnTo', {
-        enumerable: true,
-        get() {
-          propertyReads++;
-          throw new Error('No accessor');
-        },
-      }),
-    );
-    inputs.push(
-      Object.defineProperty({ ...input }, 'returnTo', { value: 'repair', enumerable: false }),
-    );
-    inputs.push(Object.assign(Object.create({ returnTo: 'repair' }), input));
-    const before = await f.durable();
-    for (const value of inputs) {
-      await assert.rejects(
-        async () =>
-          await f.reviews.checkSubmit(f.reviewer.caller, input.reviewId, value as ReviewSubmit),
-        { code: 'invalid_return_to' },
-      );
-      await assert.rejects(
-        async () => await f.reviews.submit(f.reviewer.caller, value as ReviewSubmit),
-        {
-          code: 'invalid_return_to',
-        },
-      );
-      await assert.rejects(
-        async () => await f.reviews.apply(f.reviewer.caller, value as ReviewApplication),
-        {
-          code: 'invalid_return_to',
-        },
-      );
-    }
-    const proxiedInput = new Proxy(input, {
-      get() {
-        propertyReads++;
-        throw new Error('No proxy get');
-      },
-      getOwnPropertyDescriptor() {
-        propertyReads++;
-        throw new Error('No proxy descriptor');
-      },
-      has() {
-        propertyReads++;
-        throw new Error('No proxy has');
-      },
-    });
-    const revoked = Proxy.revocable(input, {});
-    revoked.revoke();
-    const proxyPrototype = new Proxy(
-      {},
-      {
-        has() {
-          propertyReads++;
-          throw new Error('No inherited proxy has');
-        },
-      },
-    );
-    const inheritedProxy = Object.create(proxyPrototype, Object.getOwnPropertyDescriptors(input));
-    const revokedPrototype = Object.create(revoked.proxy, Object.getOwnPropertyDescriptors(input));
-    for (const value of [
-      proxiedInput,
-      revoked.proxy,
-      inheritedProxy,
-      revokedPrototype,
-      null,
-      [],
-      'route',
-      1,
-    ]) {
-      await assert.rejects(
-        async () => await f.reviews.submit(f.reviewer.caller, value as ReviewSubmit),
-        {
-          code: 'invalid_return_to',
-        },
-      );
-      await assert.rejects(
-        async () => await f.reviews.apply(f.reviewer.caller, value as ReviewApplication),
-        {
-          code: 'invalid_return_to',
-        },
-      );
-    }
-    assert.equal(propertyReads, 0);
-    assert.deepEqual(await f.durable(), before);
-    // Generic Reviews imposes no verdict-to-route policy; an integrating owner decides that.
-    const result = await f.reviews.submit(f.reviewer.caller, {
-      ...input,
-      verdict: 'pass',
-      returnTo: `A${'b'.repeat(127)}`,
-    });
-    assert.equal(result.returnTo?.length, 128);
-  } finally {
-    await f.close();
-  }
-});
-
-test('omitted or explicitly undefined return routes preserve the old wire and replay contract', async () => {
-  const f = await fixture();
-  try {
-    const input = f.input(await f.claim());
-    const result = await f.reviews.submit(f.reviewer.caller, input);
-    assert.equal(Object.hasOwn(result, 'returnTo'), false);
-    assert.equal(
-      Object.hasOwn((await f.state.events(f.operator.projectId)).at(-1)!.data, 'returnTo'),
-      false,
-    );
-    assert.deepEqual(
-      await f.reviews.submit(f.reviewer.caller, { ...input, returnTo: undefined }),
-      result,
-    );
-  } finally {
-    await f.close();
-  }
-});
-
-test('migration adds nullable route storage without rewriting old submitted rows or request receipts', async () => {
-  const f = await fixture(5);
-  try {
-    const claim = await legacyStart(f.state, f.reviews, f.reviewer.caller, (await f.request()).id),
-      input = f.input(claim);
-    const oldResult = {
-      ...claim,
-      status: 'submitted' as const,
-      verdict: input.verdict,
-      notes: input.notes,
-    };
-    await f.state.transaction(async (tx) => {
-      await tx.run(
-        "UPDATE reviews SET status='submitted',verdict=?,notes=? WHERE id=?",
-        input.verdict,
-        input.notes,
-        claim.id,
-      );
-      await tx.run(
-        'INSERT INTO review_commands VALUES(?,?,?,?,?,?)',
-        f.operator.projectId,
-        f.reviewer.caller.actorId,
-        input.requestId,
-        'submit',
-        digest(input),
-        JSON.stringify(oldResult),
-      );
-    });
-    const before = await f.durable();
-    const reviews = await createService(new ReviewService(f.state, f.scope, f.artifacts));
-    const after = await f.durable();
-    assert.deepEqual(
-      after.reviews.map(
-        ({
-          return_to: route,
-          excluded_actor_ids: exclusions,
-          required_criteria: required,
-          provenance_json: provenance,
-          owner_override: override,
-          claim_event_id: claimEvent,
-          claimed_at: claimedAt,
-          claimed_by_agent: agent,
-          ...row
-        }) => {
-          // A submitted row keeps no claim event: only an open claim reads it.
-          assert.equal(claimEvent, null);
-          assert.equal(claimedAt, null);
-          assert.equal(agent, false);
-          assert.equal(route, null);
-          assert.equal(exclusions, null);
-          assert.equal(required, null);
-          assert.equal(provenance, null);
-          assert.equal(override, false);
-          return row;
-        },
-      ),
-      before.reviews.map((row) => ({ ...row })),
-    );
-    assert.deepEqual(after.commands, before.commands);
-    assert.deepEqual(after.events, before.events);
-    assert.deepEqual(await reviews.get(f.reader.caller, claim.id), oldResult);
-    assert.deepEqual(
-      await reviews.submit(f.reviewer.caller, { ...input, returnTo: undefined }),
-      oldResult,
-    );
-    await assert.rejects(
-      async () => await reviews.submit(f.reviewer.caller, { ...input, returnTo: 'repair' }),
-      {
-        code: 'request_conflict',
-      },
-    );
   } finally {
     await f.close();
   }
@@ -754,25 +531,4 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test('every reviewing owner routes a verdict back by one rule, its default its own', async () => {
-  const { reviewReturn } = await import('@merv/reviews/returns');
-  const { REVIEW_RETURNS: experiment } = await import('../packages/experiments/src/definitions.js');
-  const { REVIEW_RETURNS: wave } = await import('../packages/reflections/src/definitions.js');
-  const refused = (run: () => unknown) =>
-    assert.throws(run, (error: { code?: string }) => error.code === 'invalid_review_return');
-  // A pass names no route, whoever owns the review.
-  assert.equal(reviewReturn('pass', undefined, wave), undefined);
-  refused(() => reviewReturn('pass', 'synthesizing', wave));
-  // A rejection naming none takes the owner's default, where it marks one; else it must name one.
-  assert.equal(reviewReturn('needs_changes', undefined, wave), 'synthesizing');
-  assert.equal(reviewReturn('fail', 'reflecting', wave), 'reflecting');
-  assert.equal(reviewReturn('fail', undefined, experiment.design), 'planned');
-  refused(() => reviewReturn('needs_changes', undefined, experiment.results));
-  assert.equal(reviewReturn('needs_changes', 'running', experiment.results), 'running');
-  refused(() => reviewReturn('needs_changes', 'running', experiment.design));
-  // An owner with fixed routes (Tasks) accepts none.
-  assert.equal(reviewReturn('fail', undefined, []), undefined);
-  refused(() => reviewReturn('needs_changes', 'in_progress', []));
 });

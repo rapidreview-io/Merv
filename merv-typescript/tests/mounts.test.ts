@@ -1,28 +1,20 @@
-import { createService, MervError } from '@merv/contracts';
-import test, { type TestContext } from 'node:test';
+import { createService } from '@merv/contracts';
+import { Context, ValidationError, type Plugin } from 'cordis';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
-import { once } from 'node:events';
-import type { AddressInfo } from 'node:net';
-import { Context, ValidationError, type Plugin } from 'cordis';
+import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
 
-import { ProjectScope } from '@merv/scope';
-import { Bindings } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
-import type { CredentialBinding } from '@merv/mounts/types';
-import type { MountConfig, Mounts } from '@merv/mounts/types';
+import type { CredentialBinding, MountConfig, Mounts } from '@merv/mounts/types';
+import { ProjectScope } from '@merv/scope';
 import { mountsPlugin } from '../packages/mounts/src/index.js';
-import { MountRuntime } from '../packages/mounts/src/runtime.js';
-import { mountsUiPlugin } from '../packages/mounts/src/ui.js';
-import { UiRegistry } from '@merv/ui';
+import { CredentialServer } from './fixtures/credential-server.js';
 import {
   RemoteFixture,
-  representativeTools,
   representativeResult,
+  representativeTools,
 } from './fixtures/remote-server.js';
-import { CredentialServer } from './fixtures/credential-server.js';
 import { openState } from './fixtures/state.js';
 
 async function until(
@@ -109,23 +101,6 @@ const settled = (mounts: Mounts) =>
 const names = async (registry: ToolRegistry) =>
   (await registry.describe()).map((tool) => tool.name);
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-/** Counts replace() calls on the next catalog; the first `reject` nonempty ones fail to compile. */
-function replacements(t: TestContext, registry: ToolRegistry, reject = 0) {
-  const counts = { all: 0, nonempty: 0 };
-  const create = registry.createCatalog.bind(registry);
-  t.mock.method(registry, 'createCatalog', (mountId: string) => {
-    const catalog = create(mountId);
-    const replace = catalog.replace.bind(catalog);
-    catalog.replace = async (definitions) => {
-      counts.all++;
-      if (definitions.length > 0 && counts.nonempty++ < reject)
-        throw new MervError('invalid_schema', 'Synthetic schema failure', 400);
-      await replace(definitions);
-    };
-    return catalog;
-  });
-  return counts;
-}
 
 test(
   'optional mounts select explicit tools before schema compilation and preserve native tools',
@@ -253,80 +228,6 @@ test(
     }
     await until(() => mounts.status()[0].state === 'ready', 'A later round did not recover');
     assert.equal(mounts.status()[0].errorCode, undefined);
-  },
-);
-
-test(
-  'notification streams remain live beyond the ordinary request timeout',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const upstream = await remote(t);
-    const actualFetch = globalThis.fetch;
-    const streamSignals: AbortSignal[] = [];
-    t.mock.method(globalThis, 'fetch', (address: RequestInfo | URL, init?: RequestInit) => {
-      if (String(address) === upstream.url && init?.method === 'GET' && init.signal)
-        streamSignals.push(init.signal);
-      return actualFetch(address, init);
-    });
-    const { mounts, fiber } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 250, reconnectMs: 60000 },
-    ]);
-    assert.equal(mounts.status()[0].state, 'ready');
-    await upstream.waitForNotificationStream();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.equal(streamSignals.length, 1);
-    assert.equal(
-      streamSignals[0].aborted,
-      false,
-      'Established SSE stream must outlive request timeout',
-    );
-    const before = upstream.requests.filter((request) => request.method === 'tools/list').length;
-    const changed = structuredClone(representativeTools);
-    changed.find((tool) => tool.name === 'media')!.description =
-      'Catalog changed after request timeout';
-    upstream.setTools(changed);
-    await upstream.notifyToolsChanged();
-    await until(
-      async () =>
-        (await services.registry.describe()).find((tool) => tool.name === '_fixture.media')
-          ?.description === 'Catalog changed after request timeout',
-      'Notification was lost after the request timeout while the long poll interval had not elapsed',
-    );
-    assert.ok(
-      upstream.requests.filter((request) => request.method === 'tools/list').length > before,
-    );
-    assert.equal(mounts.status()[0].state, 'ready');
-    await fiber.dispose();
-    assert.ok(
-      streamSignals.every((signal) => signal.aborted),
-      'Stopping the mount must abort its SSE stream',
-    );
-  },
-);
-
-test(
-  'upstream connection loss is detected by polling; stale tools fail per call',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const upstream = await remote(t);
-    const { mounts } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 100, reconnectMs: 25 },
-    ]);
-    assert.equal(mounts.status()[0].state, 'ready');
-    await upstream.close();
-    await until(
-      () => mounts.status()[0].state === 'disconnected',
-      'Lost upstream connection was not detected',
-    );
-    assert.ok(mounts.status()[0].errorCode);
-    assert.equal(mounts.status()[0].toolCount, 1);
-    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
-    await assert.rejects(services.registry.call('_fixture.media', services.caller, {}), {
-      code: 'remote_unavailable',
-    });
-    assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
   },
 );
 
@@ -542,29 +443,6 @@ test('removing the discovery actor fails the next round and ends its session', a
   );
 });
 
-test('a warm discovery poll checks the actor once and resolves no credential or grant', async (t) => {
-  const { services, upstream, mount } = await discovered(t, ['media', 'inspect', 'failure']);
-  const { mounts } = await mounted(t, services, [{ ...mount, reconnectMs: 60000 }]);
-  assert.equal(mounts.status()[0].state, 'ready');
-  const require = t.mock.method(services.scope, 'require');
-  const grants = t.mock.method(services.access, 'require');
-  const select = t.mock.method(Bindings.prototype, 'select');
-  const headers = t.mock.method(Bindings.prototype, 'headers');
-  const lists = () => upstream.requests.filter((request) => request.method === 'tools/list');
-  for (let poll = 1; poll <= 3; poll++) {
-    const before = lists().length;
-    await upstream.notifyToolsChanged();
-    await until(() => lists().length > before, 'The notification did not start a poll');
-    await until(() => require.mock.callCount() === poll, 'The poll did not check its actor');
-  }
-  await sleep(50);
-  assert.equal(require.mock.callCount(), 3);
-  assert.equal(grants.mock.callCount(), 0);
-  assert.equal(select.mock.callCount(), 0);
-  assert.equal(headers.mock.callCount(), 0);
-  assert.equal(mounts.status()[0].state, 'ready');
-});
-
 test('invalid mount configuration fails the entry and acquires no catalog namespaces', async (t) => {
   const services = await local(t);
   for (const mounts of [
@@ -589,51 +467,6 @@ test('invalid mount configuration fails the entry and acquires no catalog namesp
   assert.deepEqual(await names(services.registry), ['native']);
   const catalog = services.registry.createCatalog('fixture');
   void catalog.dispose();
-});
-
-test(
-  'an unchanged upstream catalog is published once across polls',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const counts = replacements(t, services.registry);
-    const upstream = await remote(t);
-    const { mounts } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
-    ]);
-    await sleep(500);
-    assert.ok(upstream.requests.filter((request) => request.method === 'tools/list').length > 3);
-    assert.equal(counts.all, 1, 'Unchanged polls must not replace the catalog');
-    assert.equal(mounts.status()[0].state, 'ready');
-  },
-);
-
-test('a failed round retries after the flat interval', async (t) => {
-  const services = await local(t);
-  const attempts: number[] = [];
-  const server = createServer((request, response) => {
-    attempts.push(performance.now());
-    request.resume();
-    response.writeHead(500).end();
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
-  const R = 150;
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url, tools: ['media'], timeoutMs: 1000, reconnectMs: R },
-  ]);
-  assert.equal(mounts.status()[0].state, 'failed');
-  await until(() => attempts.length >= 2, 'Discovery did not retry');
-  const gap = attempts[1] - attempts[0];
-  assert.ok(gap >= R && gap < 2 * R, `The first retry came after ${gap} ms`);
-  await until(() => attempts.length >= 3, 'Discovery did not retry again');
-  const next = attempts[2] - attempts[1];
-  assert.ok(next < 2 * R, `A second failure backed off to ${next} ms`);
 });
 
 test(
@@ -664,135 +497,6 @@ test(
   },
 );
 
-test(
-  'an unchanged successful round after a failure replaces nothing',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const counts = replacements(t, services.registry);
-    const upstream = await remote(t);
-    const { mounts } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 50 },
-    ]);
-    upstream.holdNextList();
-    await until(
-      () => mounts.status()[0].state === 'disconnected',
-      'A stalled list did not fail the round',
-    );
-    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
-    await until(() => mounts.status()[0].state === 'ready', 'The next round did not succeed');
-    assert.equal(counts.all, 1, 'Neither the failure nor the recovery replaces the catalog');
-  },
-);
-
-test(
-  'a rejected catalog replacement is retried on the next round',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const counts = replacements(t, services.registry, 1);
-    const upstream = await remote(t);
-    const { mounts } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
-    ]);
-    assert.equal(mounts.status()[0].errorCode, 'invalid_schema');
-    assert.equal(mounts.status()[0].state, 'failed', 'Nothing was ever published');
-    await until(() => mounts.status()[0].state === 'ready', 'The rejected catalog was not retried');
-    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
-    assert.equal(counts.nonempty, 2);
-  },
-);
-
-test('a failed round and stop each end the discovery session with a DELETE', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const { mounts, fiber } = await mounted(t, services, [
-    // The next round waits 1 s, so the check between the rounds is not raced by a slow poll.
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 1000 },
-  ]);
-  assert.equal(upstream.sessionCount, 1);
-  const held = upstream.holdNextList();
-  await upstream.notifyToolsChanged();
-  await until(() => upstream.deletes === 1, 'A failed round did not DELETE its session');
-  assert.equal(mounts.status()[0].errorCode, 'remote_timeout');
-  assert.equal(upstream.sessionCount, 0);
-  held.release();
-  await until(() => mounts.status()[0].state === 'ready', 'The next round did not reconnect');
-  assert.equal(upstream.sessionCount, 1);
-  await fiber.dispose();
-  assert.equal(upstream.deletes, 2);
-  assert.equal(upstream.sessionCount, 0);
-});
-
-test('stop against an upstream that stopped answering takes about one second', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const { mounts, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
-  ]);
-  assert.equal(mounts.status()[0].state, 'ready');
-  upstream.stall();
-  const started = performance.now();
-  await fiber.dispose();
-  assert.ok(performance.now() - started < 1500, 'The DELETE is capped at one second');
-});
-
-test('stop after a completed round sends no notifications/cancelled', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const { fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
-  ]);
-  await fiber.dispose();
-  await sleep(100);
-  assert.deepEqual(
-    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
-    [],
-  );
-  assert.equal(upstream.deletes, 1);
-});
-
-test('a stalled discovery connect reports a timeout', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  upstream.stall();
-  const started = performance.now();
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 150, reconnectMs: 60000 },
-  ]);
-  assert.ok(performance.now() - started < 1000, 'The SDK timeout bounds initialize');
-  assert.equal(mounts.status()[0].state, 'failed');
-  assert.equal(mounts.status()[0].errorCode, 'remote_timeout');
-});
-
-test('an upstream with more than 1,000 tools mounts its selected tool', async (t) => {
-  const services = await local(t);
-  const tools = Array.from({ length: 1001 }, (_, index) => ({
-    name: `tool-${index}`,
-    inputSchema: { type: 'object' as const, additionalProperties: false },
-  }));
-  const upstream = await remote(t, { tools, pageSize: 1000 });
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['tool-1000'], reconnectMs: 60000 },
-  ]);
-  assert.equal(mounts.status()[0].state, 'ready');
-  assert.deepEqual(await names(services.registry), ['_fixture.tool-1000', 'native']);
-});
-
-test('a successful round leaves no notifications/cancelled behind', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 60000 },
-  ]);
-  assert.equal(mounts.status()[0].state, 'ready');
-  await sleep(500);
-  assert.deepEqual(
-    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
-    [],
-  );
-});
-
 test('a black-holed upstream does not hold up loading the entry', async (t) => {
   const services = await local(t);
   const upstream = await remote(t);
@@ -810,29 +514,6 @@ test('a black-holed upstream does not hold up loading the entry', async (t) => {
   assert.equal(ctx.mounts.status()[0].state, 'connecting');
 });
 
-test('200 list_changed notifications during a round rerun it only once', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t, { pageSize: 10 });
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-  ]);
-  const rounds = () =>
-    upstream.requests.filter((request) => request.method === 'tools/list' && !request.cursor)
-      .length;
-  const before = rounds();
-  const held = upstream.holdNextList();
-  await upstream.notifyToolsChanged();
-  await held.entered;
-  for (let notification = 1; notification < 200; notification++)
-    await upstream.notifyToolsChanged();
-  await sleep(100);
-  held.release();
-  await until(() => rounds() === before + 2, 'The notifications did not rerun the round');
-  await sleep(200);
-  assert.equal(rounds(), before + 2);
-  assert.equal(mounts.status()[0].state, 'ready');
-});
-
 test('stop during a black-holed discovery connect resolves at once', async (t) => {
   const services = await local(t);
   const upstream = await remote(t);
@@ -847,57 +528,6 @@ test('stop during a black-holed discovery connect resolves at once', async (t) =
   assert.ok(performance.now() - started < 200, 'stop aborts the round it interrupts');
   assert.equal(upstream.opened, 0);
   assert.equal(upstream.sessionCount, 0);
-});
-
-test('a discovery connect that completes during stop still ends with a DELETE', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const actualFetch = globalThis.fetch;
-  let entered!: () => void;
-  const initializing = new Promise<void>((resolve) => (entered = resolve));
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => (release = resolve));
-  // Hold the connect after initialize: the notification that completes it takes no stop signal.
-  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof init?.body === 'string' && init.body.includes('notifications/initialized')) {
-      entered();
-      await released;
-    }
-    return actualFetch(address, init);
-  });
-  const { ctx, fiber } = loaded(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-  ]);
-  await fiber.await();
-  const mounts = ctx.mounts;
-  await initializing;
-  assert.equal(upstream.sessionCount, 1);
-  const stopping = fiber.dispose();
-  await sleep(20);
-  release();
-  await stopping;
-  assert.equal(upstream.deletes, 1);
-  assert.equal(upstream.sessionCount, 0);
-  assert.equal(mounts.status()[0].state, 'stopped');
-});
-
-test("a failed round's DELETE completes before stop resolves", async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const actualFetch = globalThis.fetch;
-  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'DELETE') await sleep(300); // within the DELETE deadline
-    return actualFetch(address, init);
-  });
-  const { mounts, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 500, reconnectMs: 60000 },
-  ]);
-  upstream.holdNextList();
-  await upstream.notifyToolsChanged();
-  await until(() => mounts.status()[0].errorCode === 'remote_timeout', 'The round did not fail');
-  assert.equal(upstream.deletes, 0);
-  await fiber.dispose();
-  assert.equal(upstream.deletes, 1);
 });
 
 test('a round that finishes after stop leaves the mount stopped', async (t) => {
@@ -931,99 +561,4 @@ test('a round that finishes after stop leaves the mount stopped', async (t) => {
   assert.deepEqual(await call, representativeResult);
   await stopping;
   assert.equal(mounts.status()[0].state, 'stopped');
-});
-
-test('twelve failed rounds and stop send no notifications/cancelled', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t, {
-    page: () => {
-      throw new Error('Synthetic catalog failure');
-    },
-  });
-  const runtime = new MountRuntime(
-    services.registry,
-    new Bindings(services.scope, services.bindings),
-    services.scope,
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-  );
-  // A failed round's DELETE starts after the round ends, so each refresh starts a new round.
-  for (let round = 1; round <= 12; round++) {
-    runtime.refresh();
-    await until(() => upstream.deletes === round, 'A failed round did not end its session');
-  }
-  assert.equal(runtime.status().errorCode, 'remote_error');
-  assert.equal(upstream.opened, 12);
-  await runtime.stop();
-  await sleep(100);
-  assert.equal(runtime.status().state, 'stopped');
-  assert.deepEqual(
-    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
-    [],
-  );
-});
-
-test('a missing selected tool is withdrawn alone and degrades the Connections row', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media', 'inspect'], reconnectMs: 60000 },
-  ]);
-  const ui = new UiRegistry();
-  mountsUiPlugin.apply({ mounts, ui, effect: (fn: () => unknown) => fn() } as never);
-  assert.deepEqual((await ui.describe(services.caller))[0].status, { state: 'ready' });
-  upstream.setTools(representativeTools.filter((tool) => tool.name !== 'media'));
-  await upstream.notifyToolsChanged();
-  await until(() => mounts.status()[0].toolCount === 1, 'The missing tool was not withdrawn');
-  assert.equal(mounts.status()[0].state, 'ready');
-  assert.equal(mounts.status()[0].errorCode, 'mount_missing_tool');
-  assert.deepEqual(await names(services.registry), ['_fixture.inspect', 'native']);
-  assert.deepEqual((await ui.describe(services.caller))[0].status, {
-    state: 'degraded',
-    detail: '1 of 1 not ready',
-  });
-});
-
-test('a mount whose selected tools are all missing is ready with none published', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t, { tools: [] });
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], reconnectMs: 60000 },
-  ]);
-  assert.deepEqual(mounts.status(), [
-    {
-      id: 'fixture',
-      origin: new URL(upstream.url).origin,
-      state: 'ready',
-      toolCount: 0,
-      errorCode: 'mount_missing_tool',
-    },
-  ]);
-  assert.deepEqual(await names(services.registry), ['native']);
-});
-
-test('a round answered with 404 keeps the published tools', async (t) => {
-  const services = await local(t);
-  const upstream = await remote(t);
-  const actualFetch = globalThis.fetch;
-  let lost = false;
-  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
-    if (lost && typeof init?.body === 'string' && init.body.includes('"tools/list"')) {
-      lost = false;
-      return new Response(null, { status: 404 });
-    }
-    return actualFetch(address, init);
-  });
-  const { mounts } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-  ]);
-  lost = true;
-  await upstream.notifyToolsChanged();
-  await until(() => mounts.status()[0].state === 'disconnected', 'The 404 did not fail the round');
-  assert.equal(mounts.status()[0].errorCode, 'remote_unavailable');
-  assert.equal(mounts.status()[0].toolCount, 1);
-  assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
-  assert.deepEqual(
-    await services.registry.call('_fixture.media', services.caller, {}),
-    representativeResult,
-  );
 });

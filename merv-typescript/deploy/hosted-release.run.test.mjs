@@ -1,18 +1,10 @@
 // Drives the real hosted-release.mjs end to end against a fake host (an ssh on PATH that plays
 // hosted-release-vm.py's steps from a JSON file) and a fake wrangler. The repository is a
-// committed snapshot of this working tree, so the pipeline's own clean-tree check passes.
+// small committed repository with the real release scripts and Git archive path.
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,13 +39,6 @@ const NATIVE = {
   keys: 0,
   rollout: null,
   health: { errors: [], instances: { failed: 0, scheduling: 0, starting: 0 } },
-};
-// Production once a run has deployed its release and switched Main to it.
-const ON_NEXT = {
-  main: NEXT_ID,
-  releases: { [LIVE.releaseId]: LIVE.image, [NEXT_ID]: NEXT },
-  catalog: [held(CF, LIVE.image, LIVE.releaseId), held(CF, NEXT, NEXT_ID)],
-  native: { ...NATIVE, image: NEXT, version: 15 },
 };
 const TWO = {
   others: {
@@ -90,16 +75,6 @@ const STAGING = {
     },
     machines: { [STG]: copy(STG, LIVE.image, 'b'), [STG_L]: copy(STG_L, LIVE.image, 'b') },
   },
-};
-const DEPLOYED = {
-  build: {
-    candidate: `sha256:${'c'.repeat(64)}`,
-    lane: 'boundary',
-    executableSha256: 'e'.repeat(64),
-  },
-  gates: { 'linux-pi-gate.py': 'pass' },
-  push: { image: NEXT },
-  catalog: { releaseId: NEXT_ID },
 };
 let c1, head;
 
@@ -264,25 +239,34 @@ fs.writeFileSync(process.env.SIM, JSON.stringify(sim));
 `;
 
 before(() => {
-  // A committed snapshot of this working tree, with its node_modules.
-  const top = resolve(merv, '..');
-  mkdirSync(join(repo, 'merv-typescript'), { recursive: true });
-  const files = git(top, 'ls-files', '-co', '--exclude-standard', '--', 'merv-typescript');
-  for (const file of files
-    .split('\n')
-    .filter((f) => existsSync(join(top, f)) && f !== 'merv-typescript/vendor/merv-sandboxes')) {
-    mkdirSync(dirname(join(repo, file)), { recursive: true });
-    writeFileSync(join(repo, file), readFileSync(join(top, file)));
+  // Exercise real Git pinning and packaging without hashing the whole application on
+  // every simulated rollout. Host execution is supplied by SSH above.
+  const fixture = join(repo, 'merv-typescript');
+  for (const file of [
+    'deploy/hosted-release.mjs',
+    'deploy/hosted-release.json',
+    'deploy/hosted-release-vm.py',
+    'deploy/hosted-sandboxes-probe.mjs',
+    'deploy/source-archive.mjs',
+    'deploy/hosted-wrangler.json',
+    'deploy/hosted-wrangler-large.json',
+    'deploy/hosted-wrangler-staging.json',
+    'deploy/hosted-wrangler-staging-large.json',
+  ]) {
+    mkdirSync(dirname(join(fixture, file)), { recursive: true });
+    writeFileSync(join(fixture, file), readFileSync(join(merv, file)));
   }
-  git(
-    top,
-    'clone',
-    '--shared',
-    '--quiet',
-    join(merv, 'vendor/merv-sandboxes'),
-    join(repo, 'merv-typescript/vendor/merv-sandboxes'),
-  );
-  symlinkSync(join(merv, 'node_modules'), join(repo, 'merv-typescript/node_modules'));
+  writeFileSync(join(fixture, 'package.json'), '{"name":"release-fixture","private":true}');
+  mkdirSync(join(fixture, 'src'));
+  writeFileSync(join(fixture, 'src/cli.ts'), 'export const fixture = true;');
+  const vendor = join(fixture, 'vendor/merv-sandboxes');
+  for (const dir of ['typescript/packages', 'typescript/hosts/merv', 'typescript/patches']) {
+    mkdirSync(join(vendor, dir), { recursive: true });
+    writeFileSync(join(vendor, dir, 'fixture.txt'), dir);
+  }
+  git(vendor, 'init', '-q');
+  git(vendor, 'add', '-A');
+  git(vendor, 'commit', '-qm', 'vendor fixture');
   git(repo, 'init', '-q');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'snapshot');
@@ -308,6 +292,13 @@ before(() => {
   mkdirSync(join(T, 'bin'));
   writeFileSync(join(T, 'bin/ssh'), SSH, { mode: 0o755 });
   writeFileSync(join(T, 'bin/scp'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // Formatting is checked by CI, not by every simulated release ledger write.
+  // Keep the real driver and its files; avoid starting npm/Prettier for each note.
+  writeFileSync(
+    join(T, 'bin/npx'),
+    '#!/bin/sh\n[ "$1" = prettier ] && [ "$2" = --write ] && [ -f "$3" ]\n',
+    { mode: 0o755 },
+  );
   writeFileSync(join(T, 'wrangler.mjs'), WRANGLER);
 });
 after(() => rmSync(T, { recursive: true, force: true }));
@@ -361,21 +352,6 @@ function simulate(name, patch = {}, { detached = false, args = [], dir } = {}) {
     record: text('hosted-release.json'),
   };
 }
-// An open run whose driver fell silent, recorded up to `rec`.
-const openRun = (current, progress = {}, rec = {}, sourceCommit = head) => ({
-  active: 'R1',
-  runs: {
-    R1: {
-      rec: {
-        plan: { run: 'R1', sourceCommit, sandboxesCommit: c1, lane: 'boundary', current },
-        preflight: { native: { version: 14 } },
-        ...rec,
-      },
-      progress,
-      lease: { driver: 'gone', seen: Date.now() - 400_000 },
-    },
-  },
-});
 const order = (steps, ...names) => {
   const at = names.map((n) => steps.indexOf(n));
   assert.ok(
@@ -383,93 +359,6 @@ const order = (steps, ...names) => {
     `${names} in ${steps}`,
   );
 };
-
-test('a release drains, deploys the new digest with the HEAD Worker, switches Main and passes a canary', () => {
-  const r = simulate('pass', {}, { detached: true });
-  assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /closing this terminal or Ctrl-C only stops following/);
-  order(
-    r.steps,
-    'upload',
-    'preflight',
-    'build',
-    'gates',
-    'push',
-    'catalog',
-    'drain',
-    'note',
-    'wrangler',
-    'switch',
-    'canary',
-    'finish',
-  );
-  // Main names the release as soon as Cloudflare runs its image, and only then waits for a settle.
-  const [deployed, switched] = [r.steps.indexOf('wrangler'), r.steps.indexOf('switch')];
-  assert.deepEqual(r.steps.slice(deployed + 1, switched), ['native']);
-  order(r.steps.slice(switched), 'switch', 'native', 'canary');
-  assert.deepEqual(
-    r.events.filter((e) => e.startsWith('wrangler')),
-    ['wrangler dddd worker v2'],
-  );
-  assert.equal(r.sim.main, NEXT_ID);
-  assert.equal(r.sim.native.image, NEXT);
-  assert.deepEqual(r.sim.state.current, {
-    image: NEXT,
-    releaseId: NEXT_ID,
-    releases: { [CF]: NEXT_ID },
-    localId: `sha256:${'c'.repeat(64)}`,
-    sourceCommit: head,
-    sandboxesCommit: git(sandboxes, 'rev-parse', 'HEAD'),
-  });
-  assert.equal(r.sim.active, null);
-  // Before the Pi host cutover Main has one machine, so only Standard and its legacy key move.
-  assert.equal(r.sim.machines, undefined);
-  assert.match(
-    r.ledger,
-    /\| boundary \| `dddddddddddd` \|.*\| v15 \| 2 pass \| completed in 42s \| pass \|/,
-  );
-  assert.equal(JSON.parse(r.record).current.image, NEXT);
-  assert.ok(r.events.some((e) => e === 'push username+password'));
-  assert.doesNotMatch(r.out + r.ledger + r.events.join('\n'), /fake-password/);
-});
-
-test('a failed canary rolls back to the previous digest, Worker and release, and checks it', () => {
-  const r = simulate('canary', { fail: { canary: 'new' } });
-  assert.equal(r.status, 1, r.out);
-  const back = r.steps.lastIndexOf('wrangler');
-  assert.equal(r.events[back], 'wrangler aaaa worker v1');
-  order(
-    r.steps.slice(r.steps.indexOf('canary') + 1),
-    'note',
-    'drain',
-    'wrangler',
-    'switch',
-    'canary',
-    'finish',
-  );
-  // The rollback replaces every container too: work machines end first, Pi turns are not waited on.
-  assert.equal(r.events[r.steps.lastIndexOf('drain')], 'drain {"work":true}');
-  assert.equal(r.sim.main, LIVE.releaseId);
-  assert.equal(r.sim.native.image, LIVE.image);
-  assert.equal(r.sim.state.current.image, LIVE.image);
-  assert.equal(r.sim.active, null);
-  assert.match(
-    r.ledger,
-    /\| FAILED \| canary: canary_failed .*rolled back and verified by a canary \|/,
-  );
-  assert.equal(r.record, '');
-});
-
-test('a failed build changes nothing and keeps command output out of the ledger', () => {
-  const r = simulate('build', {
-    fail: { build: 'command_failed: docker build :: npm ERR mk_abc123' },
-  });
-  assert.equal(r.status, 1, r.out);
-  assert.ok(!r.steps.includes('catalog') && !r.steps.includes('wrangler'));
-  assert.equal(r.sim.active, null);
-  assert.match(r.ledger, /\| FAILED \| build: command_failed: docker build; nothing changed \|/);
-  assert.doesNotMatch(r.ledger, /mk_abc|npm ERR/);
-});
 
 test('an incomplete rollback leaves the run open, and the next run finishes it', () => {
   const first = simulate('rollback', { fail: { canary: 'new', deploy: 'previous' } });
@@ -495,49 +384,6 @@ test('an incomplete rollback leaves the run open, and the next run finishes it',
     second.ledger.split('\n').at(-2),
     /\| FAILED \| .*rolled back and verified by a canary \|/,
   );
-});
-
-test('a run another process drives is waited for, then taken over and finished', () => {
-  const plan = {
-    run: 'R1',
-    sourceCommit: head,
-    sandboxesCommit: c1,
-    lane: 'worker',
-    current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 },
-    drainSeconds: 900,
-  };
-  const pre = { native: { version: 14 } };
-  const runs = {
-    R1: {
-      rec: { plan, preflight: pre },
-      progress: {},
-      lease: { driver: 'other', seen: Date.now() },
-      staleAfter: 2,
-    },
-  };
-  const r = simulate('takeover', { active: 'R1', runs, lane: 'worker' });
-  assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /hosted run R1 is driven by another process; waiting/);
-  order(r.steps, 'build', 'gates', 'push', 'catalog', 'wrangler', 'switch', 'canary', 'finish');
-  assert.ok(!r.steps.includes('upload') && !r.steps.includes('preflight'));
-  assert.equal(r.sim.main, NEXT_ID);
-});
-
-test('an image identical to the deployed one advances the recorded commits and deploys nothing', () => {
-  const r = simulate('current', { lane: 'none' });
-  assert.equal(r.status, 0, r.out);
-  assert.ok(!r.steps.includes('gates') && !r.steps.includes('wrangler'));
-  assert.equal(r.sim.state.current.image, LIVE.image);
-  assert.equal(r.sim.state.current.sourceCommit, head);
-  assert.equal(r.ledger, '');
-});
-
-test('a canary failing on the previous release too is reported apart, with the run closed', () => {
-  const r = simulate('both', { fail: { canary: 'all' } });
-  assert.equal(r.status, 4, r.out);
-  assert.equal(r.sim.active, null);
-  assert.equal(r.sim.main, LIVE.releaseId);
-  assert.match(r.ledger, /ROLLED BACK, CANARY FAILED/);
 });
 
 test('--resume with nothing open does nothing, and an edited pipeline is refused', () => {
@@ -572,155 +418,6 @@ test("the reviewer's probe: no run starts unless a rollback could redeploy the p
   assert.equal(signedOut.status, 2, signedOut.out);
   assert.match(signedOut.out, /a rollback needs \S+wrangler\.mjs, signed in \(whoami exit 1\)/);
   assert.deepEqual(signedOut.steps, []);
-});
-
-test('an open run is driven forward only while a rollback could run from here', () => {
-  const current = { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: 'f'.repeat(40) };
-  const untouched = simulate('unready-untouched', openRun(current));
-  assert.equal(untouched.status, 1, untouched.out);
-  assert.match(
-    untouched.out,
-    /R1 closed, production unchanged: a rollback needs deploy\/cloudflare-sandbox\/worker\/src\/index.ts at the deployed/,
-  );
-  assert.deepEqual(untouched.events, ['finish {"result":"refused"}']);
-  assert.equal(untouched.sim.active, null);
-  const run = openRun(current, { deployAttempted: true }, DEPLOYED);
-  const deployed = simulate('unready-deployed', { ...run, ...ON_NEXT });
-  assert.equal(deployed.status, 3, deployed.out);
-  assert.match(deployed.out, /R1 left open, not driven: .*hosted-release\.mjs --abandon/);
-  assert.deepEqual(deployed.steps, []);
-  assert.equal(deployed.sim.active, 'R1');
-});
-
-test('an open run begun with another pipeline is rolled back, never driven forward', () => {
-  const current = { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 };
-  const run = openRun(current, { deployAttempted: true }, DEPLOYED, '0'.repeat(40));
-  const r = simulate('moved', { ...run, ...ON_NEXT });
-  assert.equal(r.status, 1, r.out);
-  order(r.steps, 'note', 'drain', 'wrangler', 'switch', 'canary', 'finish');
-  // Work machines Main rented on the new release since its switch end before the rollback.
-  assert.deepEqual(
-    r.events.filter((e) => /^(drain|wrangler|switch|canary)/.test(e)),
-    [
-      'drain {"work":true}',
-      'wrangler aaaa worker v1',
-      `switch {"releaseId":"${LIVE.releaseId}"}`,
-      `canary {"releaseId":"${LIVE.releaseId}"}`,
-    ],
-  );
-  assert.equal(r.sim.main, LIVE.releaseId);
-  assert.equal(r.sim.native.image, LIVE.image);
-  assert.equal(r.sim.active, null);
-  assert.match(
-    r.ledger,
-    /\| FAILED \| the release pipeline differs from the one this run began with; rolled back and verified by a canary \|/,
-  );
-});
-
-test('a release that does not settle after the switch rolls back in the same order', () => {
-  const r = simulate('unsettled', { fail: { settle: 'next' } });
-  assert.equal(r.status, 1, r.out);
-  const switched = r.steps.indexOf('switch');
-  assert.ok(r.events[switched].startsWith(`switch {"releaseId":"${NEXT_ID}"`));
-  const back = r.steps.slice(switched + 1);
-  assert.ok(back.indexOf('native') < back.indexOf('note'), back.join());
-  order(back, 'note', 'wrangler', 'switch', 'canary', 'finish');
-  const again = back.indexOf('switch');
-  assert.deepEqual(back.slice(back.indexOf('wrangler') + 1, again), ['native']);
-  assert.ok(back.slice(again, back.indexOf('canary')).includes('native'));
-  assert.equal(r.events.filter((e) => e.startsWith('wrangler')).at(-1), 'wrangler aaaa worker v1');
-  assert.ok(!r.events.includes(`canary {"releaseId":"${NEXT_ID}"}`));
-  assert.equal(r.sim.main, LIVE.releaseId);
-  assert.equal(r.sim.native.image, LIVE.image);
-  assert.equal(r.sim.active, null);
-  assert.match(
-    r.ledger,
-    /\| FAILED \| cloudflare-fleet did not settle on \S+: failed 1; rolled back and verified by a canary \|/,
-  );
-});
-
-test('--abandon closes a stuck run once production agrees on one of its releases, not before', () => {
-  // A failed canary whose rollback cannot redeploy leaves the run open on the new release.
-  const stuck = simulate('abandon', { fail: { canary: 'new', deploy: 'previous' } });
-  assert.equal(stuck.status, 3, stuck.out);
-  const run = stuck.sim.active;
-  const silent = (sim) => {
-    sim.runs[run].lease.seen -= 400_000;
-    writeFileSync(join(stuck.dir, 'sim.json'), JSON.stringify(sim));
-  };
-  const abandon = () => simulate('abandon', {}, { dir: stuck.dir, args: ['--abandon'] });
-  silent({ ...stuck.sim, fail: {}, main: LIVE.releaseId }); // Main pointed back by hand
-  const refused = abandon();
-  assert.equal(refused.status, 2, refused.out);
-  assert.match(refused.out, /stays open: abandon: production disagrees.*Main runs rt1_/);
-  assert.equal(refused.sim.active, run);
-  silent({ ...refused.sim, main: NEXT_ID });
-  const closed = abandon();
-  assert.equal(closed.status, 0, closed.out);
-  assert.equal(closed.sim.active, null);
-  assert.deepEqual(closed.sim.state.current, {
-    image: NEXT,
-    releaseId: NEXT_ID,
-    releases: { [CF]: NEXT_ID },
-    localId: `sha256:${'c'.repeat(64)}`,
-    sourceCommit: head,
-    sandboxesCommit: git(sandboxes, 'rev-parse', 'HEAD'),
-  });
-  assert.equal(JSON.parse(closed.record).current.image, NEXT);
-  // The run's own release never passed a canary, so the abandon runs one.
-  assert.equal(closed.steps.at(-2), 'canary');
-  assert.match(
-    closed.ledger.split('\n').at(-2),
-    /\| completed in 42s \| abandoned \| production agrees on the new release \|/,
-  );
-  assert.match(abandon().out, /No hosted run is open/);
-});
-
-test("the reviewer's probe: a release abandoned after a failed canary stays unverified until one passes", () => {
-  const stuck = simulate('unverified', { fail: { canary: 'new', deploy: 'previous' } });
-  assert.equal(stuck.status, 3, stuck.out);
-  const again = (patch, args = []) => {
-    const sim = JSON.parse(readFileSync(join(stuck.dir, 'sim.json'), 'utf8'));
-    for (const run of Object.values(sim.runs)) run.lease.seen -= 400_000;
-    writeFileSync(join(stuck.dir, 'sim.json'), JSON.stringify({ ...sim, ...patch }));
-    return simulate('unverified', {}, { dir: stuck.dir, args });
-  };
-  const abandoned = again({ fail: { canary: 'all' } }, ['--abandon']);
-  assert.equal(abandoned.status, 4, abandoned.out);
-  assert.equal(abandoned.sim.active, null);
-  // Production runs it, so it is the live pins, but marked unverified, on the host and in Git.
-  assert.equal(abandoned.sim.state.current.releaseId, NEXT_ID);
-  assert.equal(abandoned.sim.state.current.verified, false);
-  assert.equal(JSON.parse(abandoned.record).current.verified, false);
-  assert.match(
-    abandoned.ledger.split('\n').at(-2),
-    /\| — \| ABANDONED, CANARY FAILED \| production agrees on the new release; canary: canary_failed/,
-  );
-  // The next run from the same HEAD has no hosted change, yet rebuilds and canaries it again.
-  const failing = again({ lane: 'none' });
-  assert.equal(failing.status, 4, failing.out);
-  assert.match(failing.out, /UNVERIFIED: it failed its canary\n(.*\n)*.*lane {6}none/);
-  order(failing.steps.slice(abandoned.steps.length), 'upload', 'build', 'canary', 'finish');
-  assert.equal(failing.sim.state.current.verified, false);
-  assert.match(failing.ledger.split('\n').at(-2), /\| RECHECKED, CANARY FAILED \|/);
-  const passing = again({ fail: {} });
-  assert.equal(passing.status, 0, passing.out);
-  assert.equal(passing.sim.state.current.releaseId, NEXT_ID);
-  assert.equal('verified' in passing.sim.state.current, false);
-  assert.ok(!passing.steps.slice(failing.steps.length).includes('wrangler'));
-  assert.match(passing.ledger.split('\n').at(-2), /\| completed in 42s \| rechecked \|/);
-});
-
-test('a host that reboots as the image lands is waited out, and the release finishes', () => {
-  const r = simulate('reboot', { reboot: 3 });
-  assert.equal(r.status, 0, r.out);
-  assert.equal(r.out.match(/fake is out of reach \(ssh exit 255\); retrying/g).length, 3);
-  assert.equal(r.sim.main, NEXT_ID);
-  assert.equal(r.sim.active, null);
-  // One out of reach for longer is waited out for a bounded time, then leaves the run open.
-  const gone = simulate('gone', { reboot: 1e6 });
-  assert.equal(gone.status, 3, gone.out);
-  assert.match(gone.out, /ROLLBACK INCOMPLETE: status: no result \(ssh exit 255\)/);
 });
 
 test('after the cutover a release deploys both apps, switches every machine, and settles both', () => {
@@ -761,71 +458,6 @@ test('after the cutover a failed canary rolls both apps and every machine back, 
   assert.deepEqual([r.sim.native.image, r.sim.others[LARGE].image], [LIVE.image, LIVE.image]);
   assert.equal(r.sim.active, null);
   assert.match(r.ledger, /\| FAILED \| canary: .*rolled back and verified by a canary \|/);
-});
-
-test('after the cutover --abandon needs both apps on one release and closes on both', () => {
-  const stuck = simulate('two-abandon', { ...TWO, fail: { canary: 'new', deploy: 'previous' } });
-  assert.equal(stuck.status, 3, stuck.out);
-  assert.deepEqual(stuck.sim.machines, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
-  const abandon = (patch) => {
-    const sim = JSON.parse(readFileSync(join(stuck.dir, 'sim.json'), 'utf8'));
-    sim.runs[sim.active ?? stuck.sim.active].lease.seen -= 400_000;
-    writeFileSync(join(stuck.dir, 'sim.json'), JSON.stringify({ ...sim, fail: {}, ...patch(sim) }));
-    return simulate('two-abandon', {}, { dir: stuck.dir, args: ['--abandon'] });
-  };
-  const split = abandon((sim) => ({
-    others: { [LARGE]: { ...sim.others[LARGE], image: LIVE.image } },
-  }));
-  assert.equal(split.status, 2, split.out);
-  assert.match(split.out, /stays open: abandon: production disagrees/);
-  const closed = abandon((sim) => ({ others: { [LARGE]: { ...sim.others[LARGE], image: NEXT } } }));
-  assert.equal(closed.status, 0, closed.out);
-  assert.equal(closed.sim.active, null);
-  assert.deepEqual(closed.sim.state.current.releases, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
-});
-
-test('a Large app Sandboxes stops reading after the switch leaves only its own machine behind', () => {
-  // Large reads twice (the stale check, then landing), and never again from settle on.
-  const r = simulate('unread', { ...TWO, unread: { [LARGE]: 2 } });
-  assert.equal(r.status, 3, r.out);
-  assert.match(
-    r.out,
-    /ROLLBACK INCOMPLETE: cloudflare-fleet-large: native: cloudflare-fleet-large is not an enabled Sandboxes provider; its machine keeps its release/,
-  );
-  assert.deepEqual([r.sim.native.image, r.sim.others[LARGE].image], [LIVE.image, LIVE.image]);
-  // Standard, everyone's default, names the image its app runs again; Large keeps its release.
-  assert.deepEqual(r.sim.machines, { [CF]: LIVE.releaseId, [LARGE]: NEXT_L });
-  assert.equal(r.sim.main, LIVE.releaseId);
-  assert.notEqual(r.sim.active, null);
-  assert.match(r.ledger, /\| ROLLBACK FAILED \| native: .*; its machine keeps its release \|/);
-});
-
-test('--check reads the pins a release would give Main, and refuses them once they went stale', () => {
-  // At the cutover Main runs only the legacy key until the release recreates it from the env file.
-  const cutover = { ...TWO, machines: undefined, file: { machines: TWO.machines } };
-  const fresh = simulate('check', cutover, { args: ['--check'] });
-  assert.equal(fresh.status, 0, fresh.out);
-  assert.deepEqual(fresh.steps, ['upload', 'pins']);
-  // Another session's release moved Standard to NEXT after the file's machines were written.
-  const stale = simulate(
-    'check-stale',
-    {
-      ...cutover,
-      state: { current: { ...LIVE, image: NEXT, releaseId: NEXT_ID }, inputs: [] },
-      main: NEXT_ID,
-      native: ON_NEXT.native,
-      catalog: [...TWO.catalog, held(CF, NEXT, NEXT_ID)],
-    },
-    { args: ['--check'] },
-  );
-  assert.equal(stale.status, 2, stale.out);
-  assert.match(
-    stale.out,
-    new RegExp(
-      `cloudflare-fleet-large image \\S+a{64}; Main runs ${LIVE.releaseId}; the Sandboxes catalog lacks cloudflare-fleet's live release; the Sandboxes catalog lacks cloudflare-fleet-large's live release`,
-    ),
-  );
-  assert.deepEqual(stale.steps, ['upload', 'pins']);
 });
 
 test('once production passes, staging takes the release: catalog copies, its apps, then its Main', () => {

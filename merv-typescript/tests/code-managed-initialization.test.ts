@@ -1,19 +1,19 @@
-import { CodeService as CoreCodeService } from '@merv/code/service';
-import assert from 'node:assert/strict';
-import { legacyReports } from './fixtures/legacy-reports.js';
-import test from 'node:test';
-import { join } from 'node:path';
-import { createService } from '@merv/contracts';
-import { PaperService } from '@merv/paper';
-import { ExperimentService } from '@merv/experiments';
 import { CodeService } from '@merv/code-work/service';
+import { CodeService as CoreCodeService } from '@merv/code/service';
+import { createService } from '@merv/contracts';
+import { ExperimentService } from '@merv/experiments';
+import { PaperService } from '@merv/paper';
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import test from 'node:test';
 import {
   declareManagedProject,
   initializeManagedProjects,
   managedRoot,
 } from '../packages/code/src/store/managed.js';
-import { resolutionFixture } from './fixtures/resolution.js';
 import { git } from './fixtures/code-store.js';
+import { legacyReports } from './fixtures/legacy-reports.js';
+import { resolutionFixture } from './fixtures/resolution.js';
 
 async function fixture(t: Parameters<typeof resolutionFixture>[0]) {
   const f = await resolutionFixture(t);

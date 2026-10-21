@@ -1,6 +1,3 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { z } from 'zod';
 import {
   createService,
   type Actor,
@@ -8,6 +5,9 @@ import {
   type ConversationAuthority,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { z } from 'zod';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { managedRunnerRules } from '../packages/sessions/src/managed.js';

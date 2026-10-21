@@ -1,15 +1,15 @@
-import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-import test, { type TestContext } from 'node:test';
 import type { Caller, ReviewApplication, RunningBoard, Verdict } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
 import type { Task } from '@merv/tasks/types';
 import { LIMIT_ASK } from '@merv/workflows/evaluation';
+import assert from 'node:assert/strict';
+import { rmSync } from 'node:fs';
+import test, { type TestContext } from 'node:test';
+import { feasibilityStatement } from './feasibility-fixture.js';
 import { httpApp } from './fixtures/app.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
-import { feasibilityStatement } from './feasibility-fixture.js';
 
 /**
  * Nothing is silently stuck at review: once a gate's rounds are used up, the desk offers only

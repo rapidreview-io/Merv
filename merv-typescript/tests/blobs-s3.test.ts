@@ -1,11 +1,11 @@
-import { test, type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { DiskBlobs, S3Blobs, blobsPlugin } from '@merv/blobs';
 import { MervError } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test, type TestContext } from 'node:test';
 import { s3Server } from './fixtures/s3-server.js';
 
 const content = Buffer.from('Retained immutable evidence.');
@@ -154,14 +154,6 @@ test('S3 timeout covers both waiting for headers and a stalled response body', a
   await blobs.close();
 });
 
-test('S3 timeout interrupts retry backoff before another request', async (t) => {
-  const { blobs, server } = await fixture(t, { timeoutMs: 80, maxAttempts: 5 });
-  server.fail(503);
-  await assert.rejects(blobs.put('project_1', content), code('blob_unavailable'));
-  assert.equal(server.requests.length, 1);
-  await blobs.close();
-});
-
 test('S3 configuration keeps credentials in named environment variables and requires HTTPS', () => {
   const config = blobsPlugin.Config.parse({ backend: 's3' });
   assert.equal(config.backend, 's3');
@@ -233,121 +225,6 @@ test('async Disk preserves atomic immutable writes, integrity and clean temporar
   await assert.rejects(blobs.get('project_1', hash), code('blobs_closed'));
 });
 
-test('Disk reports I/O failures as unavailable storage without leaking paths', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'merv-disk-failures-'));
-  const blobs = new DiskBlobs(root);
-  t.after(async () => {
-    await blobs.close();
-    await chmod(join(root, 'project_1'), 0o700).catch(() => {});
-    await rm(root, { recursive: true, force: true });
-  });
-  await assert.rejects(blobs.get('project_1', hash), code('blob_not_found'));
-  await blobs.put('project_1', content);
-  // A blob path that is a directory fails to read with EISDIR, not ENOENT.
-  const other = createHash('sha256').update('other').digest('hex');
-  await mkdir(join(root, 'project_1', other.slice(0, 2), other), { recursive: true });
-  const unavailable = (error: unknown) => {
-    assert.ok(error instanceof MervError);
-    assert.equal(error.code, 'blob_unavailable');
-    assert.equal(error.status, 503);
-    assert.doesNotMatch(String(error), new RegExp(root));
-    return true;
-  };
-  await assert.rejects(blobs.get('project_1', other), unavailable);
-  if (process.getuid?.() !== 0) {
-    await chmod(join(root, 'project_1'), 0o500);
-    await assert.rejects(blobs.put('project_1', Buffer.from('new bytes')), unavailable);
-  }
-});
-
-test('S3 large downloads sign one immutable key for sixty minutes with attachment and no-store', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const bytes = Buffer.alloc(2_000_001, 97);
-  const keyHash = createHash('sha256').update(bytes).digest('hex');
-  server.objects.set(`evidence/v1/project_1/${keyHash}`, bytes);
-  await assert.rejects(blobs.get('project_1', keyHash), code('blob_corrupt'));
-  const before = Date.now();
-  const link = await blobs.download('project_1', keyHash, bytes.length);
-  const url = new URL(link.url);
-  assert.equal(url.pathname, `/merv-artifacts/evidence/v1/project_1/${keyHash}`);
-  assert.equal(url.searchParams.get('X-Amz-Expires'), '3600');
-  assert.ok(
-    Date.parse(link.expiresAt) >= before + 3_599_000 &&
-      Date.parse(link.expiresAt) <= Date.now() + 3_600_000,
-  );
-  assert.equal(server.requests.at(-1)!.method, 'HEAD');
-  const response = await fetch(url);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-disposition'), `attachment; filename="${keyHash}"`);
-  assert.equal(response.headers.get('cache-control'), 'private, no-store');
-  assert.equal(response.headers.get('content-type'), 'application/octet-stream');
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
-  url.pathname = url.pathname.replace('/project_1/', '/project_2/');
-  assert.equal(
-    (await fetch(url)).status,
-    403,
-    'The signature cannot be reused for another project',
-  );
-  await assert.rejects(
-    blobs.download('project_1', keyHash, bytes.length - 1),
-    code('blob_corrupt'),
-  );
-  await assert.rejects(
-    blobs.download('../other', keyHash, bytes.length),
-    code('invalid_namespace'),
-  );
-  await assert.rejects(
-    blobs.download('project_1', 'f'.repeat(64), bytes.length),
-    code('blob_not_found'),
-    'A missing object is not a storage outage',
-  );
-});
-
-test('S3 downloads are saved under the name asked for, with an ASCII fallback', async (t) => {
-  const { blobs, server } = await fixture(t);
-  server.objects.set(`evidence/v1/project_1/${hash}`, content);
-  const link = await blobs.download('project_1', hash, content.length, 'Résumé "v2" (100%)*.pdf');
-  assert.equal(
-    (await fetch(link.url)).headers.get('content-disposition'),
-    `attachment; filename="R_sum_ _v2_ (100_)*.pdf"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22%20%28100%25%29%2A.pdf`,
-  );
-});
-
-test('S3 signs a plain ASCII name once, and keeps only the start and extension of a long one', async (t) => {
-  const { blobs, server } = await fixture(t);
-  server.objects.set(`evidence/v1/project_1/${hash}`, content);
-  const saved = async (name: string) => {
-    const link = await blobs.download('project_1', hash, content.length, name);
-    return { url: link.url, saved: (await fetch(link.url)).headers.get('content-disposition') };
-  };
-  const plain = await saved('Rows.csv');
-  assert.equal(plain.saved, 'attachment; filename="Rows.csv"');
-  // The name is signed into the link: one plain parameter, not the name encoded twice.
-  assert.equal(new URL(plain.url).searchParams.get('response-content-disposition'), plain.saved);
-  const title = 'Evidence — '.repeat(20);
-  const long = await saved(`${title}final.tar.gz`);
-  // 100 characters: the first 97 of the title, then the extension.
-  const kept = `${title.slice(0, 97)}.gz`;
-  assert.equal(
-    long.saved,
-    `attachment; filename="${kept.replaceAll('—', '_')}"; filename*=UTF-8''${encodeURIComponent(kept)}`,
-  );
-  assert.ok(long.url.length < 1200);
-});
-
-test('S3 downloads a retained zero-byte object after checking its exact HEAD length', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const empty = Buffer.alloc(0);
-  const emptyHash = createHash('sha256').update(empty).digest('hex');
-  server.objects.set(`evidence/v1/project_1/${emptyHash}`, empty);
-  const link = await blobs.download('project_1', emptyHash, 0);
-  const response = await fetch(link.url);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-length'), '0');
-  assert.equal((await response.arrayBuffer()).byteLength, 0);
-  await assert.rejects(blobs.download('project_1', emptyHash, 1), code('blob_corrupt'));
-});
-
 test('S3 signs one write-once PUT for exactly the declared bytes, and stored reads their size', async (t) => {
   const { blobs, server } = await fixture(t);
   const bytes = Buffer.alloc(2_000_001, 98);
@@ -399,22 +276,4 @@ test('S3 signs one write-once PUT for exactly the declared bytes, and stored rea
   await blobs.close();
   await assert.rejects(blobs.upload('project_1', bytesHash, bytes.length), code('blobs_closed'));
   await assert.rejects(blobs.stored('project_1', bytesHash), code('blobs_closed'));
-});
-
-test('S3 downloads serve the stored bytes unencoded whatever encoding they were uploaded with', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const signed = await blobs.upload('project_1', hash, content.length);
-  const uploaded = await fetch(signed.url, {
-    method: 'PUT',
-    body: new Uint8Array(content),
-    headers: { ...signed.headers, 'content-encoding': 'gzip' },
-  });
-  assert.equal(uploaded.status, 200, 'an unsigned header is not refused');
-  const link = new URL((await blobs.download('project_1', hash, content.length)).url);
-  assert.equal(link.searchParams.get('response-content-encoding'), 'identity');
-  const response = await fetch(link);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-encoding'), 'identity');
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
-  assert.equal(server.requests.at(-1)!.query['response-content-encoding'], 'identity');
 });

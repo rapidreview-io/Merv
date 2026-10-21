@@ -1,6 +1,3 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { z } from 'zod';
 import {
   check,
   type Actor,
@@ -8,6 +5,9 @@ import {
   type SessionToolInvocation,
   type SessionToolPolicy,
 } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { z } from 'zod';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 
 const caller: Caller = { projectId: 'project', actorId: 'worker', session: { id: 'session' } };

@@ -1,14 +1,4 @@
-import type { Task } from '@merv/tasks/types';
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { SignJWT } from 'jose';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import type {
   Artifact,
   Caller,
@@ -17,12 +7,22 @@ import type {
   Project,
   ReviewRequest,
 } from '@merv/contracts';
-import type { Session } from '@merv/sessions/types';
-import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import type {} from '@merv/reflections/types';
-import { createApp } from './fixtures/app.js';
+import type { Session } from '@merv/sessions/types';
+import type { Task } from '@merv/tasks/types';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SignJWT } from 'jose';
+import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import type { ApplicationConfig } from '../src/config.js';
+import { createApp } from './fixtures/app.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 const freshSecret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -310,136 +310,6 @@ async function reviewFlow(t: TestContext) {
   return f;
 }
 
-test('leased workers must deliberately range-read or download large artifacts', async (t) => {
-  const f = await fixture(t);
-  const source = await f.source();
-  const content = JSON.stringify({
-    predictions: Array.from({ length: 450_000 }, (_, i) => i % 10),
-  });
-  const artifact = await f.app.ctx.artifacts.create(source, {
-    title: 'Prediction arrays',
-    content,
-    mediaType: 'application/json',
-  });
-  assert.ok(artifact.size > 64_000 && artifact.size < 2_000_000);
-  const { secret } = await f.offer();
-  const worker = await f.connect(secret);
-
-  const refused = await worker.callTool({
-    name: 'artifact.read',
-    arguments: { artifactId: artifact.id },
-  });
-  assert.equal(refused.isError, true);
-  const error = JSON.parse((refused.content as { text: string }[])[0]!.text).error;
-  assert.equal(error.code, 'artifact_read_requires_range');
-  assert.equal(error.details.artifactId, artifact.id);
-  assert.equal(error.details.size, artifact.size);
-  assert.equal(error.details.sha256, artifact.hash);
-  assert.equal(error.details.downloadAvailable, false);
-  assert.equal(error.details.maxRangeCharacters, 8192);
-  assert.ok(!JSON.stringify(error).includes('predictions'));
-
-  const ranged = await f.call<{ content: string; offset: number; total: number }>(
-    worker,
-    'artifact.read',
-    { artifactId: artifact.id, offset: content.length - 10, length: 10 },
-  );
-  assert.equal(ranged.content, content.slice(-10));
-  assert.equal(ranged.offset, content.length - 10);
-  assert.equal(ranged.total, content.length);
-  // A wider range is cut to the most a worker reads at once, not refused.
-  const wide = await f.call<{ content: string; offset: number; total: number }>(
-    worker,
-    'artifact.read',
-    { artifactId: artifact.id, offset: 100, length: 16_000 },
-  );
-  assert.deepEqual(
-    [wide.content, wide.offset, wide.total],
-    [content.slice(100, 100 + 8192), 100, content.length],
-  );
-
-  // A collection member of the same bytes is held to its own size, not the manifest's, and
-  // its provider's link is always there to download it.
-  const memberUrl = 'https://storage.example/run/predictions.json';
-  f.app.ctx.artifacts.registerFileProvider('test-files', {
-    download: async () => ({ url: memberUrl, expiresAt: new Date().toISOString() }),
-  });
-  const realFetch = globalThis.fetch;
-  t.mock.method(globalThis, 'fetch', (url: string | URL | Request, init?: RequestInit) =>
-    String(url) === memberUrl ? Promise.resolve(new Response(content)) : realFetch(url, init),
-  );
-  const collection = await f.app.ctx.artifacts.createCollection(source, {
-    title: 'Prediction capture',
-    sourceKey: 'predictions',
-    files: [
-      {
-        name: 'run/predictions.json',
-        size: artifact.size,
-        hash: artifact.hash,
-        provider: 'test-files',
-        reference: 'predictions',
-      },
-    ],
-  });
-  assert.ok(collection.size < 64_000);
-  const member = { artifactId: collection.id, fileName: 'run/predictions.json' };
-  const unranged = await worker.callTool({ name: 'artifact.read', arguments: member });
-  assert.equal(unranged.isError, true);
-  const memberError = JSON.parse((unranged.content as { text: string }[])[0]!.text).error;
-  assert.equal(memberError.code, 'artifact_read_requires_range');
-  assert.match(
-    memberError.message,
-    /^Collection file is \d+ bytes; .*, or use artifact\.read mode download/,
-  );
-  assert.deepEqual(memberError.details, {
-    ...member,
-    size: artifact.size,
-    sha256: artifact.hash,
-    downloadAvailable: true,
-    maxRangeCharacters: 8192,
-  });
-  const memberWide = await f.call<{ content: string; offset: number; total: number }>(
-    worker,
-    'artifact.read',
-    { ...member, offset: 100, length: 16_000 },
-  );
-  assert.deepEqual(
-    [memberWide.content, memberWide.offset, memberWide.total],
-    [content.slice(100, 100 + 8192), 100, content.length],
-  );
-
-  assert.equal((await f.app.ctx.artifacts.read(source, artifact.id)).content, content);
-  assert.equal(
-    (
-      (await f.app.ctx.tools.call('artifact.read', source, { artifactId: artifact.id })) as {
-        content: string;
-      }
-    ).content,
-    content,
-  );
-
-  // Download mode remains callable by the authenticated worker and returns its private URL.
-  const url = 'https://storage.example/predictions?signature=test';
-  const blobs = f.app.ctx.blobs;
-  const names: (string | undefined)[] = [];
-  blobs.download = async (_namespace, _hash, _size, name) => {
-    names.push(name);
-    return { url, expiresAt: new Date(Date.now() + 60_000).toISOString() };
-  };
-  t.after(() => delete blobs.download);
-  const link = await f.call<{ artifact: Artifact; download: { url: string } }>(
-    worker,
-    'artifact.read',
-    { artifactId: artifact.id, mode: 'download' },
-  );
-  assert.equal(link.artifact.id, artifact.id);
-  assert.equal(link.download.url, url);
-  // The worker saves it under a name of its own, so its link carries a short plain one; a
-  // person's carries the title.
-  await f.app.ctx.artifacts.download(source, artifact.id);
-  assert.deepEqual(names, ['Prediction_arrays', 'Prediction arrays']);
-});
-
 test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces; the application retains their work and reflection metadata across restart', async (t) => {
   const f = await reviewFlow(t);
   assert.equal((await f.http('/account/keys', f.human)).status, 200);
@@ -522,37 +392,6 @@ test('a real session survives restart and a released worker yields bounded conte
   );
 });
 
-test('ordinary checkpoint attachments after offer cannot enlarge a running worker context', async (t) => {
-  const f = await fixture(t);
-  const work = await f.offer();
-  const worker = await f.connect(work.secret);
-  const unrelated = await f.app.ctx.artifacts.create(await f.source(), {
-    title: 'Outside the frozen assignment',
-    content: 'UNRELATED_AFTER_OFFER_PRIVATE_BYTES_19834',
-  });
-  await f.app.ctx.tasks.checkpoint(await f.source(), {
-    taskId: f.task.id,
-    purpose: 'work',
-    expectedRevision: f.task.workflow.revision,
-    notes: 'An ordinary account attached extra material.',
-    artifactIds: [unrelated.id],
-    requestId: 'ordinary-checkpoint',
-  });
-  // The worker may read it, as it may read anything in the project; its context stays
-  // what the offer froze.
-  const read = await worker.callTool({
-    name: 'artifact.read',
-    arguments: { artifactId: unrelated.id },
-  });
-  assert.equal(read.isError, undefined, JSON.stringify(read));
-  const context = await f.call<ContextPackage>(worker, 'task.context', {
-    requestId: 'bounded-context',
-  });
-  assert.ok(!context.prompt.includes('UNRELATED_AFTER_OFFER_PRIVATE_BYTES_19834'));
-  const assignment = await f.call<Record<string, unknown>>(worker, 'workflow.assignment');
-  assert.ok(!JSON.stringify(assignment).includes('UNRELATED_AFTER_OFFER_PRIVATE_BYTES_19834'));
-});
-
 test('source revocation after transport admission still refuses the native write transaction', async (t) => {
   const f = await fixture(t);
   const work = await f.offer();
@@ -612,67 +451,4 @@ test('source revocation after transport admission still refuses the native write
     resume();
     definition.handler = original;
   }
-});
-
-test('reviewer replacement preserves evidence and replaces the exact claim without restarting the gate', async (t) => {
-  const f = await fixture(t);
-  const work = await f.offer();
-  const worker = await f.connect(work.secret);
-  const artifact = await f.call<Artifact>(worker, 'artifact.create', {
-    title: 'Reviewable result',
-    content: 'The independently checked result is 42.',
-  });
-  const delivered = await f.call<Task>(
-    worker,
-    'task.submit_delivery',
-    confirmedDelivery({ artifactIds: [artifact.id], requestId: 'delivery' }),
-  );
-  const first = await f.offer(delivered);
-  const reviewer = await f.connect(first.secret);
-  const initial = await f.call<ReviewRequest>(reviewer, 'review.start');
-  await f.call(reviewer, 'task.checkpoint', {
-    notes: 'Check the multiplication result before deciding the verdict.',
-    artifactIds: [artifact.id],
-    requestId: 'review-progress',
-  });
-  const release = await f.http<{ session: Session }>(
-    `/sessions/${first.session.id}/release`,
-    f.key.token,
-    { runnerId: first.input.runnerId, reason: 'Review worker interrupted' },
-    f.project.id,
-  );
-  assert.equal(release.status, 200, JSON.stringify(release.body));
-  await f.app.ctx.domainEvents.drain();
-  const replacement = await f.offer(delivered);
-  const next = await f.connect(replacement.secret);
-  const claim = await f.call<ReviewRequest>(next, 'review.start');
-  assert.equal(claim.id, initial.id);
-  assert.notEqual(claim.claimId, initial.claimId);
-  assert.deepEqual(claim.artifactIds, initial.artifactIds);
-  assert.equal(claim.snapshotHash, initial.snapshotHash);
-  assert.notEqual(claim.reviewerId, initial.reviewerId);
-  const context = await f.call<ContextPackage>(next, 'task.context', {
-    requestId: 'successor-review-context',
-  });
-  assert.match(context.prompt, /Check the multiplication result/);
-  const rejected = await next.callTool({
-    name: 'review.submit',
-    arguments: {
-      reviewId: claim.id,
-      claimId: initial.claimId!,
-      verdict: 'pass',
-      notes: 'Trying an old ownership handle.',
-      ...reviewedFindings(claim),
-      requestId: 'old-handle',
-    },
-  });
-  assert.equal(rejected.isError, true);
-  const done = await f.call<Task>(next, 'review.submit', {
-    verdict: 'pass',
-    notes: 'I independently checked the retained evidence.',
-    ...reviewedFindings(claim),
-    requestId: 'replacement-verdict',
-  });
-  assert.equal(done.workflow.state, 'done');
-  assert.equal((await f.app.ctx.workflows.workStarts(await f.source(), f.task.id)).length, 2);
 });

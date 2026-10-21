@@ -78,16 +78,16 @@ jobs:
       - name: Build
         run: npm run build
 
-  # The full server suite, split into 4 shards by scripts/test-shard.mjs; each file runs in exactly
+  # The full server suite, split into 2 shards by scripts/test-shard.mjs; each file runs in exactly
   # one shard, and each shard has its own PostgreSQL.
   test:
-    name: test (${{ matrix.shard }}/4)
+    name: test (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,11 +146,11 @@ jobs:
           echo 'PostgreSQL did not accept connections' >&2
           exit 1
 
-      - name: Prepare offline board renderer when this shard exercises vision
+      - name: Prepare Chromium for the report integration test
         run: |
-          if node scripts/test-shard.mjs ${{ matrix.shard }} 4 | grep -Eq '^tests/(board-(vision|reload)|tool-compat)\.test\.ts$'; then
+          if node scripts/test-shard.mjs ${{ matrix.shard }} 2 | grep -Eq '^tests/(experiments|tool-compat)\.test\.ts$'; then
             npm run build:board-renderer
-            npx playwright-core install --with-deps chromium-headless-shell
+            npx playwright-core install --with-deps chromium
           fi
 
       # Agent sign-in end to end: the served installer, the connector and an emailed code.
@@ -159,10 +159,10 @@ jobs:
         run: npm run test:connect
 
       # Runs this shard's files exactly as npm test runs them all (scripts/test-shard.mjs).
-      - name: Run test shard ${{ matrix.shard }} of 4
+      - name: Run test shard ${{ matrix.shard }} of 2
         run: |
           set -euo pipefail
-          mapfile -t files < <(node scripts/test-shard.mjs ${{ matrix.shard }} 4)
+          mapfile -t files < <(node scripts/test-shard.mjs ${{ matrix.shard }} 2)
           # With no files, node --test would run its default patterns instead.
           (( ${#files[@]} > 0 )) || { echo 'Shard ${{ matrix.shard }} has no test files' >&2; exit 1; }
           echo "${#files[@]} test files"

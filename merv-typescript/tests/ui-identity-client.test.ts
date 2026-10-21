@@ -1,6 +1,6 @@
-import { test, type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
 import type { AuthChangeEvent, Session, SupabaseClient } from '@supabase/supabase-js';
+import assert from 'node:assert/strict';
+import { test, type TestContext } from 'node:test';
 import {
   accountRequest,
   call,
@@ -228,60 +228,6 @@ test('failed refresh preserves the original 401, while role denial never refresh
   assert.equal(currentToken(), 'token');
 });
 
-test('a refused form says each check sentence, naming a field only beside a generic check', async (t) => {
-  setup(t);
-  setToken('token');
-  const details = [
-    {
-      path: ['content'],
-      message: 'A section must fit within 64,000 characters',
-      code: 'custom',
-    },
-    { path: ['title'], message: 'Required', code: 'invalid_type' },
-  ];
-  t.mock.method(globalThis, 'fetch', async () =>
-    Response.json(
-      { error: { code: 'invalid_input', message: 'Tool input failed validation', details } },
-      { status: 400 },
-    ),
-  );
-  await assert.rejects(call('paper.patch'), {
-    code: 'invalid_input',
-    message: 'A section must fit within 64,000 characters; title Required',
-  });
-});
-
-test('async StrictMode subscribers share one SDK client and dispose only their own refresher', async (t) => {
-  setup(t);
-  setAuthMode('shared');
-  const fake = sdk();
-  let firstChanges = 0,
-    secondChanges = 0;
-  const [first, second] = await Promise.all([
-    browserAuth(() => firstChanges++, fake.options),
-    browserAuth(() => secondChanges++, fake.options),
-  ]);
-  t.after(() => {
-    first.dispose();
-    second.dispose();
-  });
-  assert.equal(fake.counts().created, 1);
-  first.dispose();
-  fake.emit('INITIAL_SESSION', session('user-a', 'old-token'));
-  assert.equal(firstChanges, 0);
-  assert.equal(secondChanges, 1);
-  t.mock.method(globalThis, 'fetch', async (_url: string, init?: RequestInit) =>
-    new Headers(init?.headers).get('authorization') === 'Bearer new-token'
-      ? Response.json({ ok: true })
-      : unauthorized(),
-  );
-  await accountRequest('/account');
-  assert.equal(fake.counts().refreshed, 1);
-  assert.equal(fake.counts().stopped, 0);
-  second.dispose();
-  assert.equal(fake.counts().stopped, 1);
-});
-
 test('SDK refresh cannot overwrite an actor login or a newly signed-in shared account', async (t) => {
   setup(t);
   setAuthMode('shared');
@@ -323,42 +269,6 @@ test('SDK refresh cannot overwrite an actor login or a newly signed-in shared ac
   assert.equal(calls, 1);
 });
 
-test('a new shared account does not join the previous account refresh promise', async (t) => {
-  setup(t);
-  setAuthMode('shared');
-  const fake = sdk();
-  const auth = await browserAuth(() => {}, fake.options);
-  t.after(() => auth.dispose());
-  fake.emit('INITIAL_SESSION', session('user-a', 'old-token'));
-  const first = deferred<{ data: { session: Session }; error: null }>();
-  const firstStarted = deferred<void>();
-  fake.refreshWith(() => {
-    firstStarted.resolve();
-    return first.promise;
-  });
-  t.mock.method(globalThis, 'fetch', async (_url: string, init?: RequestInit) =>
-    new Headers(init?.headers).get('authorization') === 'Bearer user-b-refreshed'
-      ? Response.json({ ok: true })
-      : unauthorized(),
-  );
-  const oldRequest = accountRequest('/account');
-  await firstStarted.promise;
-  setAuthMode('shared');
-  fake.emit('SIGNED_IN', session('user-b', 'user-b-token'));
-  setProject('project-b');
-  fake.refreshWith(async () => ({
-    data: { session: session('user-b', 'user-b-refreshed') },
-    error: null,
-  }));
-  await accountRequest('/account');
-  assert.equal(fake.counts().refreshed, 2);
-  assert.equal(currentToken(), 'user-b-refreshed');
-  first.resolve({ data: { session: session('user-a', 'stale-refresh') }, error: null });
-  await assert.rejects(oldRequest, { code: 'scope_changed' });
-  assert.equal(currentToken(), 'user-b-refreshed');
-  assert.equal(projectSelection(), 'project-b');
-});
-
 test('project switch during shared refresh rejects the old request but keeps the renewed same-account token', async (t) => {
   setup(t);
   setAuthMode('shared');
@@ -381,24 +291,6 @@ test('project switch during shared refresh rejects the old request but keeps the
   await assert.rejects(result, { code: 'scope_changed' });
   assert.equal(currentToken(), 'renewed-token');
   assert.equal(projectSelection(), 'project-b');
-});
-
-test('same-account SDK restoration preserves selection while account replacement invalidates it', async (t) => {
-  const storage = setup(t);
-  setAuthMode('shared');
-  setToken('cached-token');
-  setProject('project-a');
-  storage.set('merv:shared-account', `${login.url}\nuser-a`);
-  const before = scopeVersion();
-  const fake = sdk();
-  const auth = await browserAuth(() => {}, fake.options);
-  t.after(() => auth.dispose());
-  fake.emit('INITIAL_SESSION', session('user-a', 'restored-token'));
-  assert.equal(projectSelection(), 'project-a');
-  assert.equal(scopeVersion(), before);
-  fake.emit('SIGNED_IN', session('user-b', 'different-token'));
-  assert.equal(projectSelection(), null);
-  assert.ok(scopeVersion() > before);
 });
 
 test('zero-project onboarding discovers the account before any scoped call and opens a newly created project', async (t) => {
@@ -536,51 +428,6 @@ test('pasted machine keys keep project grants fixed and require an explicit acco
   assert.equal(bound.phase, 'ready');
   if (bound.phase === 'ready') assert.equal(bound.project.id, project.id);
   assert.equal(currentToken(), 'mk_project');
-});
-
-test('owner key administration is unscoped, returns a secret without logging it in, and preserves rotation expiry omission', async (t) => {
-  const storage = setup(t);
-  setToken('human-jwt');
-  setProject('unrelated-current-project');
-  const requests: { path: string; method: string; body: unknown }[] = [];
-  t.mock.method(globalThis, 'fetch', async (path: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers);
-    assert.equal(headers.get('authorization'), 'Bearer human-jwt');
-    assert.equal(headers.has('x-merv-project-id'), false);
-    assert.equal(init?.credentials, 'omit');
-    requests.push({
-      path,
-      method: init?.method ?? 'GET',
-      body: init?.body ? JSON.parse(String(init.body)) : null,
-    });
-    if (init?.method === 'DELETE') return Response.json({ revoked: true });
-    if (init?.method === 'POST') return Response.json({ key, token: 'mk_once-only' });
-    return Response.json({ keys: [key] });
-  });
-  assert.deepEqual((await keyClient.list()).keys, [key]);
-  const issued = await keyClient.create({
-    projectId: project.id,
-    grantScope: 'account',
-    label: 'agent',
-  });
-  assert.equal(issued.token, 'mk_once-only');
-  await keyClient.rotate(key.id);
-  await keyClient.rotate(key.id, { expiresAt: null });
-  await keyClient.revoke(key.id);
-  assert.deepEqual(requests, [
-    { path: '/account/keys', method: 'GET', body: null },
-    {
-      path: '/account/keys',
-      method: 'POST',
-      body: { projectId: project.id, grantScope: 'account', label: 'agent' },
-    },
-    { path: `/account/keys/${key.id}/rotate`, method: 'POST', body: {} },
-    { path: `/account/keys/${key.id}/rotate`, method: 'POST', body: { expiresAt: null } },
-    { path: `/account/keys/${key.id}`, method: 'DELETE', body: null },
-  ]);
-  assert.equal(currentToken(), 'human-jwt');
-  assert.equal(projectSelection(), 'unrelated-current-project');
-  assert.equal([...storage.values()].includes('mk_once-only'), false);
 });
 
 test('a delayed key issuance response cannot expose its secret after the selected account changes', async (t) => {

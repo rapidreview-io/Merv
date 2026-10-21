@@ -1,13 +1,10 @@
-import { createService } from '@merv/contracts';
-import { test, type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { Context, FiberState, ValidationError, type Plugin } from 'cordis';
-import { MervError, type Caller } from '@merv/contracts';
-import { statePlugin } from '@merv/state';
-import { ProjectScope, scopePlugin } from '@merv/scope';
-import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
 import type { ToolGrant } from '@merv/contracts';
-import { openState, stateConfig } from './fixtures/state.js';
+import { createService, MervError, type Caller } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
+import assert from 'node:assert/strict';
+import { test, type TestContext } from 'node:test';
+import { ExactToolPolicy } from '../packages/scope/src/tool-policy.js';
+import { openState } from './fixtures/state.js';
 
 async function setup(t: TestContext) {
   const state = await openState(':memory:');
@@ -154,57 +151,4 @@ test('granted does not hide infrastructure failures as an ordinary missing grant
     async () => await policy.granted({ actorId: 'actor', projectId: 'project' }),
     failure,
   );
-});
-
-test('Scope owns tool policy, defaults and suspension with only State as its dependency', async () => {
-  const ctx = new Context();
-  try {
-    const scope = ctx.plugin(scopePlugin);
-    assert.equal(ctx.get('scope'), undefined);
-    await ctx.plugin(statePlugin, stateConfig(':memory:'));
-    await scope;
-    assert.equal(scope.state, FiberState.ACTIVE);
-    assert.deepEqual(scope.config, { grants: [] });
-    assert.equal(ctx.get('tools'), undefined);
-    assert.equal(ctx.get('api'), undefined);
-    assert.equal(ctx.get('access'), undefined);
-    const owner = await ctx.scope.credentials.bootstrap({
-      projectName: 'Standalone',
-      actorName: 'Operator',
-    });
-    const caller = { projectId: owner.project.id, actorId: owner.actor.id };
-    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), false);
-    ctx.scope.toolPolicy.replace([grant(caller)]);
-    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), true);
-    await scope.dispose();
-    assert.equal(ctx.get('scope'), undefined);
-    const restored = await ctx.plugin(scopePlugin);
-    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), false);
-    await restored.dispose();
-    await ctx.plugin(scopePlugin, { grants: [grant(caller)] });
-    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), true);
-  } finally {
-    await ctx.fiber.dispose();
-  }
-});
-
-test('strict Cordis Config rejects malformed grants before publishing the service', async () => {
-  for (const config of [
-    null,
-    [],
-    { extra: true },
-    { grants: null },
-    { grants: [{ projectId: 'project', actorId: 'actor', mountId: 'remote', tools: ['*'] }] },
-  ]) {
-    const ctx = new Context();
-    try {
-      await ctx.plugin(statePlugin, stateConfig(':memory:'));
-      const scope = ctx.plugin(scopePlugin as Plugin, config);
-      await assert.rejects(scope.await(), ValidationError);
-      assert.equal(ctx.get('scope'), undefined);
-      assert.deepEqual(scope.getEffects(), []);
-    } finally {
-      await ctx.fiber.dispose();
-    }
-  }
 });

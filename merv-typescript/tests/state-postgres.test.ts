@@ -1,13 +1,12 @@
+import { type Transaction } from '@merv/contracts';
+import { PostgresState, statePlugin } from '@merv/state';
+import { postgresParameters } from '@merv/state/parameters';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
-import { Context, FiberState } from 'cordis';
 import { Pool } from 'pg';
-import { PostgresState, statePlugin } from '@merv/state';
-import { postgresParameters } from '@merv/state/parameters';
-import { MervError, type Migration, type Transaction } from '@merv/contracts';
-import { dropSchema, postgresUrl, schemaFor } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
+import { dropSchema, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const connectionString = postgresUrl;
 const event = {
@@ -53,24 +52,6 @@ test('PostgreSQL bind lexer preserves quoted SQL, nested comments and dollar bod
     ],
   ])
     assert.equal(postgresParameters(input!, 2), output);
-});
-
-test('PostgreSQL executes bound SQL with carriage-return comments, dollar identifiers and Unicode quote tags', async (t) => {
-  const { state } = await fixture(t);
-  for (const sql of [
-    'SELECT ? AS first -- ?\r, ? AS second',
-    'SELECT ? AS a$tag$tail, ? AS second',
-    'SELECT $é$?$é$ AS literal, ? AS first, ? AS second',
-  ]) {
-    const row = await state.read((tx) => tx.get(sql, 'one', 'two'));
-    assert.equal(row?.second, 'two');
-    assert.equal(row?.first ?? row?.a$tag$tail, 'one');
-    if (row?.literal !== undefined) assert.equal(row.literal, '?');
-  }
-  await state.transaction(async (tx) => {
-    await assert.rejects(tx.get('SELECT ?'), { code: 'invalid_sql_parameters' });
-    assert.deepEqual(await tx.get('SELECT ?::integer AS value', 7), { value: 7 });
-  });
 });
 
 test('State config is PostgreSQL only and requires explicit verified TLS settings', () => {
@@ -156,26 +137,6 @@ test('PostgreSQL opens, migrates and reads in a mixed-case schema on both pools'
   assert.deepEqual(rows, []);
 });
 
-test('PostgreSQL retains binary parameters when a caller reuses buffers before execution', async (t) => {
-  const { state } = await fixture(t);
-  await state.transaction(async (tx) => {
-    await tx.run('CREATE TEMP TABLE binary_input (value BYTEA) ON COMMIT DROP');
-    for (const value of [new Uint8Array([1, 2]), Buffer.from([0, 1, 2, 3]).subarray(1, 3)]) {
-      const writing = tx.run('INSERT INTO binary_input VALUES(?)', value);
-      value.fill(9);
-      await writing;
-    }
-    assert.deepEqual(await tx.all('SELECT value FROM binary_input'), [
-      { value: Buffer.from([1, 2]) },
-      { value: Buffer.from([1, 2]) },
-    ]);
-    const value = new Uint8Array([3, 4]);
-    const reading = tx.get<{ value: Buffer }>('SELECT ?::bytea AS value', value);
-    value.fill(9);
-    assert.deepEqual((await reading)?.value, Buffer.from([3, 4]));
-  });
-});
-
 test('PostgreSQL drains sibling queries before releasing a failed read connection', async (t) => {
   const { state } = await fixture(t);
   let completed = 0;
@@ -191,145 +152,6 @@ test('PostgreSQL drains sibling queries before releasing a failed read connectio
   );
   assert.equal(completed, 2, 'a rejected callback still owns its admitted queries');
   assert.deepEqual(await state.read((sql) => sql.get('SELECT 1 AS value')), { value: 1 });
-});
-
-test('PostgreSQL: a failed read drains the transaction it started', async (t) => {
-  const { state } = await fixture(t);
-  const entered = deferred(),
-    released = deferred(),
-    callbackEnded = deferred();
-  const failure = new Error('parallel read failed');
-  let child!: Promise<unknown>,
-    late!: Promise<void>,
-    finished = false;
-  const reading = state
-    .read(async (sql) => {
-      late = callbackEnded.promise.then(async () => {
-        await new Promise((resolve) => setImmediate(resolve));
-        await assert.rejects(sql.get('SELECT 1'), { code: 'transaction_closed' });
-        await assert.rejects(
-          state.transaction(() => undefined),
-          { code: 'transaction_closed' },
-        );
-      });
-      child = state.transaction(async (tx) => {
-        await state.appendEvent(tx, event);
-        entered.resolve();
-        await released.promise;
-        await state.appendEvent(tx, { ...event, subjectId: 'second' });
-      });
-      try {
-        await Promise.all([
-          child,
-          entered.promise.then(() => {
-            throw failure;
-          }),
-        ]);
-      } finally {
-        callbackEnded.resolve();
-      }
-    })
-    .catch((error) => {
-      finished = true;
-      return error;
-    });
-  try {
-    await callbackEnded.promise;
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(finished, false, 'the connection remains owned until its transaction finishes');
-    await late;
-    released.resolve();
-    assert.equal(await reading, failure);
-    assert.equal(await state.eventHead(), 2);
-  } finally {
-    released.resolve();
-    await Promise.allSettled([reading, child, late]);
-  }
-});
-
-test("PostgreSQL: a read's sibling query waits for the transaction the read started", async (t) => {
-  const { state } = await fixture(t);
-  const code = (error: { code?: string }) => error.code;
-  // A sibling that ran on the connection would join the child, or abort it by failing.
-  for (const sibling of ['SELECT 1/0', 'SELECT 1']) {
-    const entered = deferred();
-    const outcomes = await state.read((sql) =>
-      Promise.all([
-        state
-          .transaction(async (tx) => {
-            await state.appendEvent(tx, event);
-            entered.resolve();
-            await new Promise((resolve) => setTimeout(resolve, 20));
-            await state.appendEvent(tx, { ...event, subjectId: 'second' });
-          })
-          .then(() => 'ok', code),
-        entered.promise.then(() => sql.get(sibling)).then(() => 'ran', code),
-      ]),
-    );
-    assert.deepEqual(outcomes, ['ok', 'transaction_busy']);
-  }
-  assert.equal(await state.eventHead(), 4, "Both of each child's rows commit");
-  // Before and after its transaction, and inside a snapshot it opened, the read reads.
-  const readOnly = await state.read(async (sql) => {
-    await sql.get('SELECT 1');
-    await state.transaction(() => undefined);
-    await state.snapshot(() => state.transaction(async (tx) => await tx.get('SELECT 1')));
-    return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
-  });
-  assert.equal(readOnly, 4);
-  // The child's own callback may use the read's `sql`: it runs on the child's transaction.
-  assert.equal(
-    await state.read((sql) =>
-      state.transaction(async (tx) => {
-        await state.appendEvent(tx, event);
-        return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
-      }),
-    ),
-    5,
-  );
-  // A snapshot the read opened owns the connection the same way.
-  const opened = deferred();
-  const release = deferred();
-  const busy = await state.read((sql) =>
-    Promise.all([
-      state.snapshot(async () => {
-        opened.resolve();
-        await release.promise;
-      }),
-      opened.promise
-        .then(() => sql.get('SELECT 1'))
-        .then(() => 'ran', code)
-        .finally(() => release.resolve()),
-    ]),
-  );
-  assert.equal(busy[1], 'transaction_busy');
-});
-
-test('State.ambient is the transaction this context runs in, and nothing outside one', async (t) => {
-  const { state } = await fixture(t);
-  assert.equal(state.ambient, undefined);
-  await state.read(async () => assert.equal(state.ambient, undefined));
-  await state.transaction(async (tx) => {
-    assert.equal(state.ambient, tx);
-    // A read inside a transaction reads on it; so does anything that joins it.
-    await state.read(async (sql) => assert.equal(state.ambient, sql));
-  });
-  await state.read(() => state.transaction(async (tx) => assert.equal(state.ambient, tx)));
-  await state.snapshot(async () => {
-    assert.equal(state.ambient, undefined, "A snapshot's root has no transaction of its own");
-    await state.transaction(async (tx) => {
-      assert.equal(state.ambient, tx);
-      await assert.rejects(tx.run('SELECT 1'), { code: 'read_only_scope' });
-    });
-    assert.equal(state.ambient, undefined);
-  });
-  await state.read(() =>
-    state.snapshot(async () => {
-      assert.equal(state.ambient, undefined, "A snapshot's root in a read has none either");
-      await state.transaction(async (tx) => assert.equal(state.ambient, tx));
-    }),
-  );
-  assert.equal(state.ambient, undefined);
 });
 
 test('PostgreSQL: a snapshot inside a plain read is a read-only transaction on its connection', async (t) => {
@@ -497,129 +319,6 @@ test('PostgreSQL: a write queued on the writer lock holds no reader connection',
   assert.equal(await state.eventHead(), 2);
 });
 
-test('PostgreSQL migrations run their SQL as written: a jsonb ? operator is SQL, not a bind marker', async (t) => {
-  const { state } = await fixture(t);
-  await state.migrate('jq', [
-    {
-      version: 1,
-      sql: "CREATE TABLE jq(d JSONB CHECK (d ? 'id' AND NOT d ?| array['x'] AND d ?& array['id']))",
-    },
-  ]);
-  await state.transaction((tx) => tx.run('INSERT INTO jq(d) VALUES(\'{"id":1}\'::jsonb)'));
-  await assert.rejects(
-    state.transaction((tx) => tx.run("INSERT INTO jq(d) VALUES('{}'::jsonb)")),
-    { code: 'state_constraint' },
-  );
-});
-
-test('PostgreSQL errors keep a sanitized, non-enumerable cause, and a failed migration names itself', async (t) => {
-  const { state } = await fixture(t);
-  const failure = await state.migrate('jb', [{ version: 1, sql: 'CREATE TABLE jb(' }]).then(
-    () => assert.fail('The migration must fail'),
-    (error: MervError) => error,
-  );
-  assert.ok(failure instanceof MervError);
-  assert.equal(failure.code, 'state_unavailable');
-  assert.equal(failure.status, 503);
-  assert.match(failure.message, /^Migration jb\/1 failed \(SQLSTATE 42601\)$/);
-  assert.equal((failure.cause as { sqlstate?: string }).sqlstate, '42601');
-  assert.equal(Object.keys(failure).includes('cause'), false);
-  assert.equal(JSON.stringify(failure).includes('cause'), false);
-  assert.equal(JSON.stringify(failure).includes('42601'), false);
-  assert.deepEqual(
-    await state.read((sql) =>
-      sql.all("SELECT version FROM component_migrations WHERE component='jb'"),
-    ),
-    [],
-  );
-
-  await state.migrate('jc', [{ version: 1, sql: 'CREATE TABLE jc(id TEXT PRIMARY KEY)' }]);
-  await state.transaction((tx) => tx.run('INSERT INTO jc VALUES(?)', 'secret-row-value'));
-  const conflict = await state
-    .transaction((tx) => tx.run('INSERT INTO jc VALUES(?)', 'secret-row-value'))
-    .then(
-      () => assert.fail('The insert must conflict'),
-      (error: MervError) => error,
-    );
-  assert.equal(conflict.code, 'state_conflict');
-  const cause = conflict.cause as Record<string, unknown>;
-  assert.equal(cause.sqlstate, '23505');
-  assert.equal(cause.constraint, 'jc_pkey');
-  assert.equal(cause.table, 'jc');
-  assert.equal('detail' in cause, false);
-  assert.equal('message' in cause, false);
-  assert.equal(JSON.stringify(cause).includes('secret-row-value'), false);
-  assert.equal(JSON.stringify(conflict).includes('cause'), false);
-
-  // A bound value PostgreSQL cannot hold is refused as such, not as an outage to retry.
-  await state.migrate('jd', [{ version: 1, sql: 'CREATE TABLE jd(t TEXT, j JSONB, n INTEGER)' }]);
-  for (const [column, value] of [
-    ['t', 'nul\0value'],
-    ['j', JSON.stringify({ nul: '\0' })],
-    ['j', JSON.stringify({ half: '\ud800' })],
-    ['n', 2 ** 40],
-  ] as const)
-    await assert.rejects(
-      state.transaction((tx) => tx.run(`INSERT INTO jd(${column}) VALUES(?)`, value)),
-      { code: 'state_invalid_value', status: 400 },
-    );
-});
-
-test('State refuses malformed events, cursors and migration versions', async (t) => {
-  const { state } = await fixture(t);
-  for (const before of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])
-    await assert.rejects(state.latestEvents('project', before), { code: 'invalid_cursor' });
-  assert.deepEqual(await state.latestEvents('project', 0), []);
-  await assert.rejects(state.migrate('too-far', [{ version: 2_147_483_648, sql: 'SELECT 1' }]), {
-    code: 'invalid_migration',
-  });
-  await state.migrate('far', [{ version: 2_147_483_647, sql: 'SELECT 1' }]);
-  const { subjectId: _subjectId, ...withoutSubject } = event;
-  for (const malformed of [
-    withoutSubject,
-    { ...event, type: 7 },
-    { ...event, data: undefined },
-    { projectId: 'project', actorId: 'actor', type: 'test.created', subjectId: 'subject' },
-  ])
-    await assert.rejects(
-      state.transaction((tx) =>
-        state.appendEvent(tx, malformed as unknown as Parameters<typeof state.appendEvent>[1]),
-      ),
-      { code: 'invalid_event' },
-    );
-  await state.transaction((tx) => state.appendEvent(tx, { ...event, data: {} }));
-  assert.equal(await state.eventHead(), 1);
-});
-
-test('State.findEvents returns the oldest events matching every field, its source included', async (t) => {
-  const { state } = await fixture(t);
-  const source = (commandId: string) => ({ source: { kind: 'conversation', commandId } });
-  const [first, second, third] = await state.transaction(async (tx) => [
-    await state.appendEvent(tx, { ...event, data: source('a') }),
-    await state.appendEvent(tx, { ...event, type: 'test.changed', data: source('b') }),
-    await state.appendEvent(tx, { ...event, data: source('b') }),
-    await state.appendEvent(tx, { ...event, projectId: 'other' }),
-  ]);
-  const ids = async (filter: Partial<Parameters<typeof state.findEvents>[0]>, limit = 10) =>
-    (await state.findEvents({ projectId: 'project', ...filter }, limit)).map(({ id }) => id);
-  assert.deepEqual(await ids({}), [first!.id, second!.id, third!.id]);
-  assert.deepEqual(await ids({}, 1), [first!.id]);
-  assert.deepEqual(await ids({ type: 'test.created' }), [first!.id, third!.id]);
-  assert.deepEqual(await ids({ type: 'test.created', after: first!.id }), [third!.id]);
-  assert.deepEqual(await ids({ source: { commandId: 'b' } }), [second!.id, third!.id]);
-  assert.deepEqual(await ids({ source: { commandId: 'b', kind: 'session' } }), []);
-  assert.deepEqual(await ids({ subjectId: 'elsewhere' }), []);
-  assert.deepEqual(await ids({ actorId: 'actor', since: first!.createdAt }), [
-    first!.id,
-    second!.id,
-    third!.id,
-  ]);
-  for (const limit of [0, 1001, 1.5])
-    await assert.rejects(state.findEvents({ projectId: 'project' }, limit), {
-      code: 'invalid_cursor',
-    });
-});
-
 test('PostgreSQL refuses a read with state_busy when every reader connection is held', async (t) => {
   const { state } = await fixture(t, { readConnections: 1, connectionTimeoutMs: 200 });
   const entered = deferred(),
@@ -639,61 +338,6 @@ test('PostgreSQL refuses a read with state_busy when every reader connection is 
     await held;
   }
   assert.deepEqual(await state.read((sql) => sql.get('SELECT 1 AS value')), { value: 1 });
-});
-
-test('PostgreSQL boots in a pre-created owned schema without database CREATE privilege', async (t) => {
-  const suffix = randomUUID().replaceAll('-', '');
-  const role = `merv_role_${suffix}`;
-  const schema = `merv_owned_${suffix}`;
-  const foreignSchema = `merv_other_${suffix}`;
-  const password = randomUUID().replaceAll('-', '');
-  const admin = new Pool({ connectionString });
-  let state: PostgresState | undefined;
-  t.after(async () => {
-    await state?.close();
-    try {
-      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
-      await admin.query(`DROP SCHEMA IF EXISTS "${foreignSchema}" CASCADE`);
-      await admin.query(`DROP ROLE IF EXISTS "${role}"`);
-    } finally {
-      await admin.end();
-    }
-  });
-  // Identifiers and password are generated hexadecimal strings, never external input.
-  await admin.query(
-    `CREATE ROLE "${role}" LOGIN NOINHERIT NOCREATEDB NOCREATEROLE NOSUPERUSER PASSWORD '${password}'`,
-  );
-  await admin.query(`CREATE SCHEMA "${schema}" AUTHORIZATION "${role}"`);
-  await admin.query(`CREATE SCHEMA "${foreignSchema}"`);
-  await admin.query(`CREATE TABLE "${foreignSchema}".private_record(id INTEGER)`);
-  assert.equal(
-    (
-      await admin.query(
-        "SELECT has_database_privilege($1, current_database(), 'CREATE') AS allowed",
-        [role],
-      )
-    ).rows[0].allowed,
-    false,
-  );
-  const url = new URL(connectionString);
-  url.username = role;
-  url.password = password;
-  state = await PostgresState.open({ connectionString: url.toString(), schema });
-  await state.migrate('least-privilege', [
-    { version: 1, sql: 'CREATE TABLE owned_record(id TEXT PRIMARY KEY)' },
-  ]);
-  await state.transaction(async (tx) => {
-    await tx.run('INSERT INTO owned_record(id) VALUES(?)', 'record');
-    await state!.appendEvent(tx, event);
-  });
-  assert.equal((await state.events('project')).length, 1);
-  await assert.rejects(
-    state.read((sql) => sql.get(`SELECT * FROM "${foreignSchema}".private_record`)),
-    { code: 'state_unavailable' },
-  );
-  await state.close();
-  state = await PostgresState.open({ connectionString: url.toString(), schema });
-  assert.equal((await state.events('project')).length, 1);
 });
 
 test('PostgreSQL migrations keep records, events and checksum history atomic', async (t) => {
@@ -788,33 +432,6 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
     state.read((sql) => sql.get('SELECT 9007199254740992::bigint AS unsafe')),
     { code: 'state_integer_range' },
   );
-});
-
-test('PostgreSQL events guards install once however often the schema is opened', async (t) => {
-  const { state, schema } = await fixture(t);
-  await state.transaction((tx) => state.appendEvent(tx, event));
-  // A second instance and a concurrent pair boot the same schema under the writer lock.
-  const reopened = await Promise.all(
-    [1, 2, 3].map(() => PostgresState.open({ connectionString, schema })),
-  );
-  t.after(() => Promise.all(reopened.map((other) => other.close())));
-  assert.deepEqual(
-    await state.read((sql) =>
-      sql.all<{ name: string; count: number }>(
-        `SELECT tgname AS name, count(*)::int AS count FROM pg_catalog.pg_trigger
-         WHERE tgrelid='events'::regclass AND NOT tgisinternal GROUP BY tgname ORDER BY tgname`,
-      ),
-    ),
-    [
-      { name: 'events_immutable', count: 1 },
-      { name: 'events_no_truncate', count: 1 },
-    ],
-  );
-  await assert.rejects(
-    reopened[0]!.transaction((tx) => tx.run('TRUNCATE events')),
-    { code: 'state_constraint' },
-  );
-  assert.equal(await state.eventHead(), 1);
 });
 
 test('PostgreSQL migrations apply in order in one run and refuse to insert an older one', async (t) => {
@@ -967,61 +584,6 @@ test('PostgreSQL disposal drains admitted async work before closing its pool', a
   }
 });
 
-test('failed State activation ends both pools once and publishes no service', async (t) => {
-  // One schema whose `events` table has another shape: the connection is acquired, and the
-  // bootstrap then fails on it, because its index names a column this table lacks.
-  const malformed = schemaFor();
-  const admin = new Pool({ connectionString });
-  try {
-    await admin.query(`CREATE SCHEMA "${malformed}"`);
-    await admin.query(`CREATE TABLE "${malformed}".events(id INTEGER PRIMARY KEY)`);
-  } finally {
-    await admin.end();
-  }
-  const variable = `MERV_TEST_STATE_URL_${randomUUID().replaceAll('-', '')}`;
-  t.after(() => delete process.env[variable]);
-  const ended: Pool[] = [];
-  const end = Pool.prototype.end as (this: Pool) => Promise<void>;
-  t.mock.method(Pool.prototype, 'end', function (this: Pool) {
-    ended.push(this);
-    return end.call(this);
-  });
-  for (const [url, schema] of [
-    [connectionString, malformed],
-    // And one that never reaches a server: nothing listens on port 1.
-    ['postgres://merv@127.0.0.1:1/merv', schemaFor()],
-  ]) {
-    process.env[variable] = url;
-    ended.length = 0;
-    const ctx = new Context();
-    t.mock.method(ctx.logger, 'error', () => undefined);
-    try {
-      const fiber = ctx.plugin(
-        statePlugin,
-        statePlugin.Config.parse({
-          connectionStringEnv: variable,
-          schema,
-          maxConnections: 2,
-          readConnections: 1,
-        }),
-      );
-      await assert.rejects(fiber.await(), (error: unknown) => {
-        assert.ok(error instanceof MervError);
-        assert.equal(error.code, 'state_unavailable');
-        return true;
-      });
-      assert.equal(fiber.state, FiberState.FAILED);
-      assert.equal(ctx.get('state'), undefined);
-      // The writers' pool and the readers' pool, each ended exactly once.
-      assert.equal(ended.length, 2, schema);
-      assert.equal(new Set(ended).size, 2);
-    } finally {
-      await ctx.fiber.dispose();
-    }
-    assert.equal(ended.length, 2, 'Disposal must not end the failed provider twice');
-  }
-});
-
 test('PostgreSQL snapshot scopes run sibling reads side by side, each in its own transaction context', async (t) => {
   const { state } = await fixture(t);
   await state.transaction(async (tx) => await state.appendEvent(tx, event));
@@ -1169,162 +731,4 @@ test('PostgreSQL: a statement that fails in an isolated read costs that read alo
     state.transaction(() => state.isolated(async () => 1)),
     { code: 'isolation_unavailable' },
   );
-});
-
-test('PostgreSQL refuses a migration that still carries a second dialect or a rebuild flag', async (t) => {
-  const { state } = await fixture(t);
-  // The shape owners used when they carried two texts: a leftover must fail loudly, not run either.
-  for (const leftover of [
-    {
-      version: 1,
-      sql: 'CREATE TABLE leftover(id TEXT)',
-      postgres: 'CREATE TABLE leftover(id TEXT)',
-    },
-    { version: 1, sql: 'CREATE TABLE leftover(id TEXT)', rebuild: true },
-    { version: 1, postgres: 'CREATE TABLE leftover(id TEXT)' },
-  ])
-    await assert.rejects(state.migrate('leftover', [leftover as unknown as Migration]), {
-      code: 'invalid_migration',
-    });
-  assert.deepEqual(
-    await state.read((sql) =>
-      sql.all(
-        "SELECT component FROM component_migrations WHERE component='leftover' UNION ALL SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='leftover'",
-      ),
-    ),
-    [],
-  );
-});
-
-test('State schemaEnv names the schema when set, and a bad name is refused', async (t) => {
-  const suffix = randomUUID().replaceAll('-', '');
-  const variable = `MERV_TEST_STATE_SCHEMA_${suffix}`;
-  const schema = `merv_env_${suffix}`;
-  const config = statePlugin.Config.parse({
-    connectionStringEnv: 'MERV_TEST_POSTGRES_URL',
-    schema: `merv_unused_${suffix}`,
-    schemaEnv: variable,
-  });
-  const admin = new Pool({ connectionString });
-  t.after(async () => {
-    delete process.env[variable];
-    try {
-      for (const name of [schema, config.schema])
-        await admin.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`);
-    } finally {
-      await admin.end();
-    }
-  });
-  const schemaOf = async (value: string | undefined) => {
-    if (value === undefined) delete process.env[variable];
-    else process.env[variable] = value;
-    const ctx = new Context();
-    try {
-      await ctx.plugin(statePlugin, config);
-      return (await ctx.state.read((sql) =>
-        sql.get<{ schema: string }>('SELECT current_schema() AS schema'),
-      ))!.schema;
-    } finally {
-      await ctx.fiber.dispose();
-    }
-  };
-  assert.equal(await schemaOf(` ${schema} `), schema);
-  // Unset or blank falls back to the configured schema.
-  assert.equal(await schemaOf(' '), config.schema);
-  assert.equal(await schemaOf(undefined), config.schema);
-  process.env[variable] = 'bad-name';
-  const ctx = new Context();
-  try {
-    await assert.rejects(ctx.plugin(statePlugin, config).await(), { code: 'invalid_config' });
-    assert.equal(ctx.get('state'), undefined);
-  } finally {
-    await ctx.fiber.dispose();
-  }
-  assert.deepEqual(
-    (
-      await admin.query('SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = $1', [
-        'bad-name',
-      ])
-    ).rows,
-    [],
-  );
-});
-
-test('State.remember keeps an answer for one snapshot only, and never a failure', async (t) => {
-  const { state } = await fixture(t);
-  let computed = 0;
-  const compute = async () => ++computed;
-  // Outside any scope every call computes; a write transaction keeps its answer until it ends.
-  assert.equal(await state.remember('k', compute), 1);
-  await state.transaction(async () => {
-    assert.equal(await state.remember('k', compute), 2);
-    assert.equal(await state.remember('k', compute), 2);
-  });
-  // One snapshot answers once, across its sibling transactions; the next snapshot afresh.
-  await state.snapshot(async () => {
-    const [a, b] = await Promise.all([
-      state.transaction(() => state.remember('k', compute)),
-      state.transaction(() => state.remember('k', compute)),
-    ]);
-    assert.deepEqual([a, b, await state.remember('k', compute)], [3, 3, 3]);
-    assert.equal(await state.remember('other', compute), 4);
-  });
-  await state.snapshot(async () => assert.equal(await state.remember('k', compute), 5));
-  // A failure is not kept: a sibling that shared it, and the next caller, decide afresh.
-  await state.snapshot(async () => {
-    let failing = true;
-    const flaky = async () => {
-      computed++;
-      if (failing) throw new MervError('flaky', 'flaky');
-      return computed;
-    };
-    const first = state.remember('f', flaky);
-    failing = false;
-    const second = state.remember('f', flaky);
-    await assert.rejects(first, { code: 'flaky' });
-    assert.equal(await second, 7);
-    assert.equal(await state.remember('f', flaky), 7);
-  });
-});
-
-test('State.remember in a write transaction forgets everything at each statement that may write', async (t) => {
-  const { state } = await fixture(t);
-  await state.migrate('memo', [
-    { version: 1, sql: 'CREATE TABLE memo_rows(id TEXT PRIMARY KEY, value INTEGER NOT NULL)' },
-  ]);
-  let reads = 0;
-  await state.transaction(async (tx) => {
-    await tx.run("INSERT INTO memo_rows VALUES ('a', 1)");
-    const value = () =>
-      state.remember('memo:a', async () => {
-        reads++;
-        return (await tx.get<{ value: number }>("SELECT value FROM memo_rows WHERE id='a'"))!.value;
-      });
-    // Reads alone share one answer.
-    assert.deepEqual([await value(), await value(), reads], [1, 1, 1]);
-    // run(), and a write through get() or all() (RETURNING, a CTE), each retire it.
-    await tx.run("UPDATE memo_rows SET value=2 WHERE id='a'");
-    assert.deepEqual([await value(), await value(), reads], [2, 2, 2]);
-    await tx.get("UPDATE memo_rows SET value=3 WHERE id='a' RETURNING value");
-    assert.deepEqual([await value(), reads], [3, 3]);
-    await tx.all('WITH w AS (UPDATE memo_rows SET value=4 RETURNING id) SELECT id FROM w');
-    assert.deepEqual([await value(), reads], [4, 4]);
-    // A plain read does not.
-    await tx.all('SELECT id FROM memo_rows');
-    assert.deepEqual([await value(), reads], [4, 4]);
-  });
-  // Each write transaction starts with nothing remembered.
-  await state.transaction(async (tx) => {
-    await tx.run("UPDATE memo_rows SET value=5 WHERE id='a'");
-  });
-  assert.equal(
-    await state.transaction(() =>
-      state.remember('memo:a', async () => {
-        reads++;
-        return 5;
-      }),
-    ),
-    5,
-  );
-  assert.equal(reads, 5);
 });

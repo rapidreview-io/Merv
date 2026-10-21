@@ -1,15 +1,15 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { createService, canonical, now } from '@merv/contracts';
 import { CodeService } from '@merv/code/service';
 import { CodeMirrorService, enqueueMirror } from '@merv/code/store/mirror';
+import { canonical, createService, now } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { openState } from './fixtures/state.js';
-import { codeStoreFixture, gitSource, maintainStore } from './fixtures/code-store.js';
-import { codeConfig } from './fixtures/code-binding.js';
+import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
+import { codeConfig } from './fixtures/code-binding.js';
+import { codeStoreFixture, gitSource, maintainStore } from './fixtures/code-store.js';
+import { openState } from './fixtures/state.js';
 
 test('retention refuses impossible transport before persisting an obligation', async (t) => {
   const state = await openState();

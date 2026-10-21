@@ -1,20 +1,20 @@
-import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
-import test from 'node:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { currentTask } from './fixtures/current-work.js';
 
+import type { Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { ToolRegistry } from '../packages/api/src/registry.js';
 import { ApiServer } from '../packages/api/src/http.js';
+import { ToolRegistry } from '../packages/api/src/registry.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
 import { createApp } from './fixtures/app.js';
-import type { Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
 function identity(c: {

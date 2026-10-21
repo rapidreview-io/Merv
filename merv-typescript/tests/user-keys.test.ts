@@ -1,21 +1,21 @@
 import { createService } from '@merv/contracts';
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { test } from 'node:test';
 
-import { ProjectScope } from '@merv/scope';
-import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
+import type { Principal } from '@merv/contracts';
 import { ReviewService } from '@merv/reviews';
 import { actorPermissionsChanged, actorRevoked } from '@merv/reviews/claims';
-import type { Principal } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
+import { Memberships } from '@merv/scope/memberships';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
-import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');

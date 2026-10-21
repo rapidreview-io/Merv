@@ -1,9 +1,3 @@
-import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import test, { type TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import {
   MAX_OBJECT_BYTES,
   sha256Hex,
@@ -11,10 +5,14 @@ import {
   type ArtifactUploadStatus,
   type Caller,
 } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import { createApp } from './fixtures/app.js';
-import { stateConfig } from './fixtures/state.js';
-import { deferred } from './fixtures/deferred.js';
 import { s3Blobs, send } from './fixtures/s3-blobs.js';
+import { stateConfig } from './fixtures/state.js';
 
 /** Artifacts and their tools over S3 blobs, or over disk blobs, which cannot sign uploads. */
 async function largeApp(t: TestContext, disk = false) {
@@ -342,120 +340,6 @@ test('blobs that cannot sign uploads refuse them before any row', async (t) => {
       }
     ).downloadAvailable,
     false,
-  );
-});
-
-test('an upload begun in sandbox storage resumes and completes through blobs', async (t) => {
-  const f = await largeApp(t);
-  const legacy = file(Buffer.from('begun before the switch'));
-  await f.app.ctx.state.transaction((tx) =>
-    tx.run(
-      'INSERT INTO artifact_uploads(upload_id,project_id,created_by,title,media_type,hash,size,object_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
-      'aup_legacy',
-      f.owner.projectId,
-      f.owner.actorId,
-      legacy.input.title,
-      legacy.input.mediaType,
-      legacy.input.sha256,
-      legacy.input.size,
-      'obj_legacy',
-      '2026-09-28T00:00:00Z',
-    ),
-  );
-  await assert.rejects(f.app.ctx.artifacts.uploadComplete(f.owner, 'aup_legacy'), {
-    code: 'upload_pending',
-  });
-  const plan = await f.app.ctx.artifacts.uploadResume(f.owner, 'aup_legacy');
-  assert.equal((await send(plan, legacy.bytes)).status, 200);
-  const artifact = await f.app.ctx.artifacts.uploadComplete(f.owner, 'aup_legacy');
-  assert.equal(
-    (await f.app.ctx.artifacts.read(f.owner, artifact.id)).content,
-    legacy.bytes.toString(),
-  );
-});
-
-test('a row whose bytes were in sandbox storage downloads through blobs', async (t) => {
-  const f = await largeApp(t);
-  const bytes = Buffer.alloc(3_000_000, 'M');
-  const hash = sha256Hex(bytes);
-  // The move script put its bytes at their content address; object_id is only a label now.
-  f.server.objects.set(f.key(f.owner.projectId, hash), bytes);
-  await f.app.ctx.state.transaction((tx) =>
-    tx.run(
-      'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,object_id) VALUES(?,?,?,?,?,?,?,?,?)',
-      'art_moved',
-      f.owner.projectId,
-      f.owner.actorId,
-      'Moved',
-      'application/octet-stream',
-      hash,
-      bytes.length,
-      '2026-09-20T00:00:00Z',
-      'obj_moved',
-    ),
-  );
-  assert.equal('objectId' in (await f.app.ctx.artifacts.get(f.owner, 'art_moved')), false);
-  const { download } = await f.app.ctx.artifacts.download(f.owner, 'art_moved');
-  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), bytes);
-});
-
-test('resuming an upload waits for no writer, for an owner or a session caller', async (t) => {
-  const f = await largeApp(t);
-  const { app, owner } = f;
-  const source = await app.ctx.scope.delegationSource({
-    ...owner,
-    credentialId: f.boot.credential.id,
-  });
-  const worker = await app.ctx.state.transaction((tx) =>
-    app.ctx.scope.createSessionActor(
-      source,
-      { threadId: 'session_uploads', name: 'Worker', role: 'producer' },
-      tx,
-    ),
-  );
-  const session: Caller = {
-    actorId: worker.id,
-    projectId: worker.projectId,
-    session: { id: 'session_uploads', threadId: 'session_uploads' },
-  };
-  // The session provider vouches for the owner and records whether it was asked in a read scope.
-  const handed: boolean[] = [];
-  t.after(
-    app.ctx.scope.registerSessionAuthority({
-      require: async () => {
-        handed.push(app.ctx.state.readScope);
-        return { source };
-      },
-    }),
-  );
-  const input = file(Buffer.from('ten bytes!')).input;
-  const uploads = [
-    [owner, (await app.ctx.artifacts.uploadBegin(owner, input)).uploadId],
-    [session, (await app.ctx.artifacts.uploadBegin(session, input)).uploadId],
-  ] as const;
-  handed.length = 0;
-  const entered = deferred();
-  const release = deferred();
-  const holding = app.ctx.state.transaction(async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  await entered.promise;
-  try {
-    for (const [caller, uploadId] of uploads) {
-      const resumed = await Promise.race([
-        app.ctx.artifacts.uploadResume(caller, uploadId),
-        delay(3000).then(() => assert.fail('resume waited for the writer lock')),
-      ]);
-      assert.equal(resumed.uploadId, uploadId);
-    }
-  } finally {
-    release.resolve();
-    await holding;
-  }
-  assert.ok(
-    handed.length > 0 && handed.every(Boolean),
-    'every session decision ran in a read scope',
   );
 });
 

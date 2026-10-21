@@ -81,6 +81,9 @@ mkdir -p source && tar -xizf source.tar.gz -C source
 docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE} >> build.log 2>&1
 SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.env)
 [[ $SANDBOXES_TS_IMAGE =~ ^([a-zA-Z0-9][a-zA-Z0-9._:/-]*@)?sha256:[a-f0-9]{64}$ ]] || { echo 'release.env requires one SANDBOXES_TS_IMAGE registry digest reference or local image ID' >&2; exit 1; }
+# Bound unused build cache before each build, including retries after a failed release.
+# This never prunes images or volumes; rollback images remain available.
+docker builder prune -af --keep-storage 10GB >> build.log 2>&1 || echo 'build-cache cleanup failed; continuing release' >> build.log
 docker build --platform linux/amd64 --build-arg SANDBOXES_TS_IMAGE="$SANDBOXES_TS_IMAGE" --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
 docker run --rm --entrypoint node "$IMG" --import tsx dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")

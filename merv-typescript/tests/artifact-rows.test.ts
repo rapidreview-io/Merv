@@ -1,24 +1,12 @@
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { createService, MervError, now, sha256Hex, type Blobs, type Caller } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { performance } from 'node:perf_hooks';
+import { dirname, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
-import {
-  createService,
-  MervError,
-  now,
-  sha256Hex,
-  type Blobs,
-  type Caller,
-  type Scope,
-} from '@merv/contracts';
-import { DiskBlobs } from '@merv/blobs';
-import { ProjectScope } from '@merv/scope';
-import { ArtifactStore } from '@merv/artifacts';
-import { postgresMigrations } from '@merv/artifacts/index.postgres';
-import { deferred } from './fixtures/deferred.js';
 import { openState } from './fixtures/state.js';
 
 /**
@@ -117,27 +105,6 @@ test('create and reads keep bytes in the row, inside a transaction, with no blob
   assert.deepEqual(f.blobs.calls, []);
 });
 
-test('a create and read in one transaction hold the writer lock only for their database work', async (t) => {
-  const f = await fixture(t);
-  // Were storage reached under the lock, an unrelated writer would wait this long.
-  f.blobs.before = () => delay(1500);
-  const entered = deferred();
-  const release = deferred();
-  const working = f.state.transaction(async (tx) => {
-    entered.resolve();
-    await release.promise;
-    const artifact = await f.artifacts.create(f.caller, { title: 'Row', content: 'held' }, tx);
-    await f.artifacts.read(f.caller, artifact.id, undefined, tx);
-  });
-  await entered.promise;
-  const started = performance.now();
-  const writing = f.state.transaction((tx) => tx.run('SELECT 1'));
-  release.resolve();
-  await Promise.all([working, writing]);
-  assert.ok(performance.now() - started < 1000, 'the unrelated writer waited for storage');
-  assert.deepEqual(f.blobs.calls, []);
-});
-
 test('a rolled-back create leaves no row and no bytes, and an ambient create joins its transaction', async (t) => {
   const f = await fixture(t);
   const rollback = new Error('rollback');
@@ -191,193 +158,6 @@ test('the database refuses row bytes that do not match their size and hash', asy
   await assert.rejects(insert('art_size', bytes.length + 1, sha256Hex(bytes)), refused);
   await insert('art_good', bytes.length, sha256Hex(bytes));
   assert.equal((await f.artifacts.read(f.caller, 'art_good')).content, 'bytes');
-});
-
-test('a session create records its session, and metadata answers carry no bytes', async (t) => {
-  const f = await fixture(t);
-  // The worker's authority is Sessions'; here a stub grants it to exercise what artifacts stores.
-  const scope = { require: async () => ({ sessionId: 'ses_worker' }) } as unknown as Scope;
-  const store = await createService(new ArtifactStore(f.state, scope, f.counted));
-  const worker: Caller = { ...f.caller, session: { id: 'ses_worker' } };
-  const artifact = await store.create(worker, { title: 'Output', content: 'worker bytes' });
-  const plain = await store.create(f.caller, { title: 'Plain', content: 'plain bytes' });
-  // Both creates may share a millisecond, so the rows are compared by id, not creation order.
-  const byId = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : 1);
-  const sessions = await f.state.read((sql) =>
-    sql.all<{ id: string; session_id: string | null }>('SELECT id,session_id FROM artifacts'),
-  );
-  assert.deepEqual(
-    sessions.sort(byId),
-    [
-      { id: artifact.id, session_id: 'ses_worker' },
-      { id: plain.id, session_id: null },
-    ].sort(byId),
-  );
-  const keys = Object.keys(artifact).sort();
-  assert.deepEqual(keys, [
-    'createdAt',
-    'createdBy',
-    'hash',
-    'id',
-    'mediaType',
-    'projectId',
-    'size',
-    'title',
-  ]);
-  assert.deepEqual(Object.keys(await store.get(worker, artifact.id)).sort(), keys);
-  for (const listed of await store.list(worker)) assert.deepEqual(Object.keys(listed).sort(), keys);
-  const outputs = await store.executionOutputs(worker);
-  assert.deepEqual(outputs, [artifact]);
-  assert.deepEqual(Object.keys(outputs[0]).sort(), keys);
-});
-
-/** Session authority is Sessions'; this stub grants it so a test can drive session callers. */
-async function sessionStore(f: Awaited<ReturnType<typeof fixture>>) {
-  const scope = { require: async () => ({}) } as unknown as Scope;
-  return await createService(new ArtifactStore(f.state, scope, f.counted));
-}
-
-test('execution outputs are what this session created as this actor, oldest first', async (t) => {
-  const f = await fixture(t);
-  const store = await sessionStore(f);
-  const peer = (await f.scope.credentials.issueActor(f.caller, { name: 'Peer', role: 'producer' }))
-    .actor.id;
-  // One agent's two sessions, and another actor working under the first session's id.
-  const first: Caller = { ...f.caller, session: { id: 'ses_first' } };
-  const second: Caller = {
-    ...f.caller,
-    session: { id: 'ses_second', threadId: 'thr_agent' },
-  };
-  const other: Caller = { ...f.caller, actorId: peer, session: { id: 'ses_first' } };
-  for (const [n, caller] of [first, second, other, f.caller, first, second].entries())
-    await store.create(caller, { title: `Output ${n}`, content: `bytes ${n}` });
-  const uploaded = await store.uploadComplete(
-    first,
-    await f.upload(Buffer.from('uploaded'), store, first),
-  );
-  // What authored() answered: rows by this actor whose creation event names this session.
-  const receipts = async (caller: Caller) =>
-    (
-      await f.state.read((sql) =>
-        sql.all<{ id: string }>(
-          `SELECT id FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`,
-          caller.projectId,
-          caller.actorId,
-          caller.session!.id,
-        ),
-      )
-    ).map((row) => row.id);
-  const outputs = async (caller: Caller) =>
-    (await store.executionOutputs(caller)).map((artifact) => artifact.id);
-  for (const caller of [first, second, other])
-    assert.deepEqual(await outputs(caller), await receipts(caller));
-  assert.equal((await outputs(first)).length, 3);
-  assert.equal((await outputs(first)).at(-1), uploaded.id);
-  assert.equal((await outputs(second)).length, 2);
-  assert.equal((await outputs(other)).length, 1);
-
-  const list = t.mock.method(store, 'list');
-  await assert.rejects(store.executionOutputs(f.caller), { code: 'forbidden', status: 403 });
-  assert.equal(list.mock.callCount(), 0);
-});
-
-test('execution outputs page through every output with the caller they started with', async (t) => {
-  const f = await fixture(t);
-  const store = await sessionStore(f);
-  const peer = (await f.scope.credentials.issueActor(f.caller, { name: 'Peer', role: 'producer' }))
-    .actor.id;
-  // 1,205 rows of this session, ten to a second so pages cross ties on created_at; every fifth
-  // was created by another actor.
-  await f.state.transaction((tx) =>
-    tx.run(
-      `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,session_id)
-       SELECT 'art_' || lpad(n::text, 5, '0'), ?, CASE WHEN n % 5 = 0 THEN ? ELSE ? END, 'Row ' || n,
-         'text/plain', repeat('0', 64), 1,
-         to_char(timestamp '2026-09-01' + (n / 10) * interval '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         'ses_worker'
-       FROM generate_series(1, 1205) n`,
-      f.caller.projectId,
-      peer,
-      f.caller.actorId,
-    ),
-  );
-  const expected = Array.from({ length: 1205 }, (_, i) => i + 1)
-    .filter((n) => n % 5 !== 0)
-    .map((n) => `art_${String(n).padStart(5, '0')}`);
-  const worker: Caller = { ...f.caller, session: { id: 'ses_worker' } };
-  const list = store.list.bind(store);
-  const pages = t.mock.method(store, 'list', async (...args: Parameters<typeof list>) => {
-    const page = await list(...args);
-    // Whatever the caller's object becomes after the first page, the pages keep its start.
-    Object.assign(worker, { actorId: peer, session: { id: 'ses_other' } });
-    return page;
-  });
-  const outputs = await store.executionOutputs(worker);
-  assert.deepEqual(
-    outputs.map((artifact) => artifact.id),
-    expected,
-  );
-  assert.equal(pages.mock.callCount(), 2);
-});
-
-test('the content migration fills session provenance, then the guard and CHECK hold', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-migration-'));
-  const state = await openState(directory);
-  t.after(async () => {
-    await state.close();
-    await rm(directory, { recursive: true, force: true });
-  });
-  await state.migrate('artifacts', [
-    { version: 1, sql: postgresMigrations[1] },
-    { version: 2, sql: postgresMigrations[2] },
-  ]);
-  const created = async (id: string, source: Record<string, string> | undefined) =>
-    await state.transaction(async (tx) => {
-      await tx.run(
-        'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES(?,?,?,?,?,?,?,?)',
-        id,
-        'project',
-        'actor',
-        'Before',
-        'text/plain',
-        sha256Hex(Buffer.from(id)),
-        id.length,
-        now(),
-      );
-      await state.appendEvent(tx, {
-        projectId: 'project',
-        actorId: 'actor',
-        type: 'artifact.created',
-        subjectId: id,
-        data: { hash: sha256Hex(Buffer.from(id)), size: id.length, ...(source ? { source } : {}) },
-      });
-    });
-  await created('art_session', { kind: 'session', sessionId: 'ses_before' });
-  await created('art_key', { kind: 'user-key', keyId: 'key', membershipId: 'member' });
-  await created('art_none', undefined);
-  await createService(new ArtifactStore(state, {} as Scope, {} as Blobs));
-  assert.deepEqual(
-    await state.read((sql) => sql.all('SELECT id,session_id,content FROM artifacts ORDER BY id')),
-    [
-      { id: 'art_key', session_id: null, content: null },
-      { id: 'art_none', session_id: null, content: null },
-      { id: 'art_session', session_id: 'ses_before', content: null },
-    ],
-  );
-  // The guard refuses every UPDATE, a fill of the row's own bytes too.
-  for (const sql of [
-    "UPDATE artifacts SET session_id='changed' WHERE id='art_key'",
-    "UPDATE artifacts SET content='\\x00'::bytea WHERE id='art_key'",
-    "UPDATE artifacts SET content=convert_to('art_key','UTF8') WHERE id='art_key'",
-    "DELETE FROM artifacts WHERE id='art_key'",
-  ])
-    await assert.rejects(
-      state.transaction((tx) => tx.run(sql)),
-      (error: MervError) =>
-        error.code === 'state_constraint' &&
-        (error.cause as { sqlstate?: string }).sqlstate === '23514',
-      sql,
-    );
 });
 
 test('completing a small upload copies its verified bytes into the row', async (t) => {

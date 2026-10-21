@@ -1,16 +1,14 @@
-import type { TaskReview } from '@merv/tasks/types';
-import { currentTask } from './fixtures/current-work.js';
+import { type Caller } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { childRequest, type Caller } from '@merv/contracts';
-import { createApp } from './fixtures/app.js';
+import { pathToFileURL } from 'node:url';
 import type { ApplicationConfig } from '../src/config.js';
-import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { createApp } from './fixtures/app.js';
+import { currentTask } from './fixtures/current-work.js';
 import { s3Server } from './fixtures/s3-server.js';
 import { postgresUrl, schemaFor } from './fixtures/state.js';
 

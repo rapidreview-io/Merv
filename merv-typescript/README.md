@@ -499,31 +499,10 @@ npm test
 
 `build` emits JavaScript and declarations under `dist`; the supplied launch commands execute the workspace TypeScript with `tsx`. The tests use temporary data directories and a local PostgreSQL at `MERV_TEST_POSTGRES_URL`; without it they fail at once rather than skip. Each data directory gets its own schema, `t_<time>_<random>`, dropped when its test file ends. `npm test` first drops test schemas older than six hours that a killed run left behind, and `npm run test:sweep [hours]` does the same on demand; neither touches any other schema, so a database shared with other runs is safe. HTTP/MCP tests bind loopback sockets, so environments that restrict networking must permit local listeners for those tests.
 
-| Test file                          | Coverage                                                                                                                                                               |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/access.test.ts`             | Exact grants, Scope checks, revocation, default denial, atomic configuration                                                                                           |
-| `tests/credentials.test.ts`        | Exact binding selection, secret references, refusal of local Merv credentials, sanitized status and errors                                                             |
-| `tests/mount-upstream.test.ts`     | Per-caller connections, rechecks after a wait, failure classification, idle close, MCP DELETE and pool close                                                           |
-| `tests/remote-permissions.test.ts` | HTTP/MCP caller-filtered discovery, direct calls to hidden tools, current grants and native roles                                                                      |
-| `tests/config.test.ts`             | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
-| `tests/plugin-config.test.ts`      | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
-| `tests/loader.test.ts`             | Config-only extension, asynchronous dependencies, current entry handles, failure readiness, optional absence                                                           |
-| `tests/cli-config.test.ts`         | Explicit config startup, safe status, argument validation, missing API cleanup, signal shutdown                                                                        |
-| `tests/workflow-unload.test.ts`    | Immediate tool withdrawal, held-call draining, independent services, and restoration through loader entries                                                            |
-| `tests/foundations.test.ts`        | Migration immutability/rollback, durable events, role/project access, revocation, artifact immutability/corruption, real Cordis activation/disposal                    |
-| `tests/workflows.test.ts`          | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
-| `tests/tasks.test.ts`              | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
-| `tests/remote-registry.test.ts`    | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
-| `tests/remote-catalog.test.ts`     | Independent MCP pagination of selected names, the page limit, repeated names, page timeout, atomic replacement and drain                                               |
-| `tests/remote-http.test.ts`        | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
-| `tests/protocol.test.ts`           | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
-| `tests/protocol-proxy.test.ts`     | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
-| `tests/api.test.ts`                | Strict schemas, authenticated identity/scope, duplicate registration, awaited disposal, HTTP limits, official MCP client roundtrip, shutdown after disconnection       |
-| `tests/boundaries.test.ts`         | Package import boundaries, declared Cordis dependencies, feature adapter ownership, exported paths, independent service boot with only its dependency closure          |
-| `tests/app.test.ts`                | Fully assembled MCP task/review loop across two server restarts, credentials and retained evidence, invalid composition cleanup                                        |
-| `tests/live-evidence.test.ts`      | Live acceptance rejects unrelated tasks, missing pinned documents, and evidence read only after a verdict                                                              |
-| `tests/feed.test.ts`               | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
-| `tests/feed-unload.test.ts`        | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
+The automated suite keeps critical behavior at its owning layer, plus a small set of
+HTTP/MCP and browser integration checks. See [tests/README.md](tests/README.md) for
+the coverage policy and reduction measurements. Presentation details, source-text
+assertions, historical snapshots and redundant layer-by-layer cases are omitted.
 
 The historical-protocol live acceptance runner launches **three new Codex CLI processes** with a seeded artifact-only task and separate producer, reviewer, and reader credentials. It tests recovery and credential boundaries for existing work; it does not test new managed-Git work. For that path use `tests/runner-code-v2-integration.test.ts` or the opt-in `scripts/live-experiments.ts`:
 

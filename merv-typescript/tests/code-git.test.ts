@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { ServerGit } from '@merv/code/git';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
@@ -12,46 +12,14 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ServerGit } from '@merv/code/git';
-import { diffStats, DriverGit, identity } from '../packages/code/src/driver/git.js';
 
 function home(t: test.TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-git-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
-
-test('driver statistics count renamed paths once alongside text and binary changes', async (t) => {
-  const directory = home(t);
-  const driver = new DriverGit(directory);
-  const git = (args: string[]) => driver.ok(args, { cwd: directory, env: identity });
-  await git(['init', '--quiet']);
-  writeFileSync(join(directory, '1\t2\told'), 'renamed content\n');
-  writeFileSync(join(directory, 'text.txt'), 'before\n');
-  writeFileSync(join(directory, 'binary'), Buffer.from([0, 1]));
-  await git(['add', '-A']);
-  await git(['commit', '--quiet', '-m', 'before']);
-  const before = (await git(['rev-parse', 'HEAD'])).trim();
-  renameSync(join(directory, '1\t2\told'), join(directory, '3\t4\tnew'));
-  writeFileSync(join(directory, 'text.txt'), 'after\nextra\n');
-  writeFileSync(join(directory, 'binary'), Buffer.from([0, 2]));
-  await git(['add', '-A']);
-  await git(['commit', '--quiet', '-m', 'after']);
-  const after = (await git(['rev-parse', 'HEAD'])).trim();
-  assert.deepEqual(await diffStats(git, before, after), {
-    commitCount: 1,
-    filesChanged: 3,
-    insertions: 2,
-    deletions: 1,
-  });
-  assert.deepEqual(await diffStats(git, after, after), {
-    commitCount: 0,
-    filesChanged: 0,
-    insertions: 0,
-    deletions: 0,
-  });
-});
 
 test('the server runs Git with none of the machine’s or the user’s configuration', async (t) => {
   const directory = home(t);

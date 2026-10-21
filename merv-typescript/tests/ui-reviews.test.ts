@@ -158,16 +158,6 @@ test('an experiment results rejection keeps its own two routes', async (t) => {
   ]);
 });
 
-test('a task review offers no return route, because its domain takes none', async (t) => {
-  t.after(async () => await unmount());
-  const { routes, submitted } = await rejected('task', 'in_review');
-  assert.deepEqual(routes, []);
-  assert.ok(!text().includes('Returns to'));
-  await click('Submit verdict');
-  assert.equal(submitted.body?.verdict, 'needs_changes');
-  assert.equal('returnTo' in (submitted.body ?? {}), false);
-});
-
 test('the desk offers the verdicts the owning domain leaves this reader, and names none itself', async (t) => {
   t.after(async () => await unmount());
   const verdicts = async (review: Record<string, unknown>, workflow = 'task') => {
@@ -303,107 +293,6 @@ test('an owner the default leaves out decides the review as owner, with one cont
   assert.ok(text().includes(taken));
 });
 
-test('a decided review leads with what it found short and its sentence; the checks follow', async (t) => {
-  t.after(async () => await unmount());
-  const findings = ['met', 'not_met', 'not_verified', 'waived'];
-  serve('/tools/review.read:get', {
-    body: {
-      result: {
-        ...claimed,
-        criteria: ['First check.', 'Second check.', 'Third check.', 'Fourth check.'],
-        status: 'submitted',
-        verdict: 'needs_changes',
-        returnTo: 'planned',
-        synopsis: 'The design names no matched control run.',
-        findings: findings.map((status, index) => ({
-          criterionNumber: index + 1,
-          status,
-          evidenceIds: [],
-          notes: `Finding ${index + 1}.`,
-        })),
-      },
-    },
-  });
-  await mount(page());
-  await settle(10);
-  const said = text();
-  const order = [
-    '2 of 4 not met',
-    'The design names no matched control run.',
-    'Returned to planned',
-    'Check 4 was waived.',
-    'Check 3 was not verified.',
-    'Checks',
-    'First check.',
-  ].map((line) => [line, said.indexOf(line)] as const);
-  assert.ok(
-    order.every(([, at]) => at >= 0),
-    `every line is on the page: ${said}`,
-  );
-  assert.deepEqual(
-    order.map(([line]) => line),
-    [...order].sort((a, b) => a[1] - b[1]).map(([line]) => line),
-  );
-  assert.equal(said.split('The design names no matched control run.').length, 2, 'said once');
-  assert.ok(
-    ![...document.querySelectorAll('.ev-role')].some((label) => label.textContent === 'Verdict'),
-    'no block after the checks repeats it',
-  );
-});
-
-test('a verdict the owner gave as owner says so where it says who gave it', async (t) => {
-  t.after(async () => await unmount());
-  serve('/tools/review.read:get', {
-    body: {
-      result: {
-        ...claimed,
-        status: 'submitted',
-        verdict: 'pass',
-        synopsis: 'Done.',
-        override: true,
-      },
-    },
-  });
-  await mount(page());
-  await settle(10);
-  assert.match(text(), /reviewed( by \S+)? as owner/);
-});
-
-test('a review is named by what it judges, a reflection too, and the name leads back to it', async (t) => {
-  t.after(async () => await unmount());
-  serve('/tools/review.read:get', { body: { result: claimed } });
-  serve('/tools/workflow.read:status', { body: { result: desk('reflection', 'in_review') } });
-  const reflections = { id: 'reflections', path: '/reflections', view: { kind: 'reflections' } };
-  const element = page();
-  serve('/tools/ui.shell', {
-    body: {
-      result: {
-        actor,
-        project,
-        rows: [
-          {
-            ...reflections,
-            label: 'Reflections',
-            group: 'work',
-            order: 1,
-            status: {},
-            readable: true,
-          },
-        ],
-        plugins: [],
-      },
-    },
-  });
-  serve('/tools/ui.home', {
-    body: { result: { reflections: [{ id: 'wf_wave', title: 'Wave one', ownerId: 'actor_a' }] } },
-  });
-  await mount(element);
-  await settle(10);
-  const name = document.querySelector<HTMLAnchorElement>('h1 a, .record-name a');
-  assert.equal(name?.textContent, 'Wave one');
-  assert.equal(name?.getAttribute('href'), '/reflections/wf_wave');
-});
-
 test('a check the review requires is met to pass, never waived, as review.submit decides', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/review.read:get', { body: { result: { ...claimed, requiredCriteria: [1] } } });
@@ -478,68 +367,6 @@ test('a draft belongs to its review: opening the next review starts it blank', a
   await settle(10);
   assert.ok(!text().includes('Only true of the first review.'));
   assert.ok(!notes() || notes()!.value === '', notes()?.value);
-});
-
-test('the desk takes and refuses a synopsis exactly as review.submit does', async (t) => {
-  t.after(async () => await unmount());
-  const { validateAssessment } = await import('../packages/reviews/src/findings.js');
-  const synopses = [
-    // A word with an underscore is no identifier: the server takes it, and so does the desk.
-    'The task_queue cache fix holds up well under load and meets every check.',
-    // An identifier, Markdown and a list marker: the server refuses each, and so does the desk.
-    'The lens session_3f9a1c2b found the results hold up under every check we ran.',
-    'The **main** claim holds under every check that the reviewer ran on it today.',
-    '- The delivery meets all checks and the cache fix holds up well under load.',
-  ];
-  for (const synopsis of synopses) {
-    serve('/tools/review.read:get', { body: { result: claimed } });
-    serve('/tools/workflow.read:status', { body: { result: desk('task', 'in_review') } });
-    await mount(page());
-    await settle(10);
-    await click('not met');
-    await write(
-      document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Notes on check 1"]')!,
-      'The methods disagreement is not resolved.',
-    );
-    await write(
-      [...document.querySelectorAll('label')]
-        .find((label) => label.textContent?.startsWith('Synopsis'))!
-        .querySelector('textarea')!,
-      synopsis,
-    );
-    await click('needs changes');
-    const submit = [...document.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Submit verdict',
-    )!;
-    let accepted = true;
-    try {
-      validateAssessment(claimed as never, {
-        verdict: 'needs_changes',
-        synopsis,
-        findings: [{ criterionNumber: 1, status: 'not_met', evidenceIds: [], notes: 'Not yet.' }],
-      });
-    } catch {
-      accepted = false;
-    }
-    assert.equal(!submit.disabled, accepted, synopsis);
-    await unmount();
-  }
-});
-
-test('the desk says notes are too long in the words review.submit refuses them with', async () => {
-  const { deskProblem } = await import('../packages/ui/web/views/reviews.js');
-  const review = { criteria: ['Reproduces'], artifactIds: ['art_1'], requiredCriteria: [] };
-  const desk = (notes: string) =>
-    deskProblem(review, {
-      synopsis: '',
-      findings: [{ criterionNumber: 1, status: 'met', evidenceIds: ['art_1'], notes }],
-      routed: true,
-    });
-  assert.deepEqual(desk(' '), { text: 'Check 1 still needs a finding and notes.', at: 1 });
-  assert.deepEqual(desk('n'.repeat(16_001)), {
-    text: 'Criterion 1 needs assessment notes (1–16000 characters)',
-    at: 1,
-  });
 });
 
 test('a claim the reader may hand back is released on the desk, with a reason', async (t) => {

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
-import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 import { deferred } from './fixtures/deferred.js';
+import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');

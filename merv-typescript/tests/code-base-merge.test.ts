@@ -1,11 +1,11 @@
-import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ServerGit } from '../packages/code/src/git.js';
+import test, { type TestContext } from 'node:test';
 import { mergeBases } from '../packages/code/src/base-merge.js';
+import { ServerGit } from '../packages/code/src/git.js';
 
 /** A bare repository holding main and three branches off it: a and c touch one file, b another. */
 function repository(t: TestContext, conflictPath = 'f.txt') {

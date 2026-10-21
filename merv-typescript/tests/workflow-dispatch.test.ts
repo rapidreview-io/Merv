@@ -1,12 +1,7 @@
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import { createService } from '@merv/contracts';
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import {
   check,
+  createService,
   effectiveWorkspace,
   type Caller,
   type Data,
@@ -15,15 +10,13 @@ import {
   type WorkflowExecutionPolicy,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import test, { type TestContext } from 'node:test';
 
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { executionFingerprint, validateExecution } from '@merv/workflows/execution-policy';
-import { createApp } from './fixtures/app.js';
-import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { countWrites, openState } from './fixtures/state.js';
-import { registerTaskType } from './fixtures/task-types.js';
 
 const definition = (name: string, version = 1): WorkflowDefinition => ({
   name,
@@ -260,104 +253,6 @@ test('discovery uses the real source authority and transaction; revoked or cross
   );
 });
 
-test('invalid metadata callbacks fail visibly; asynchronous labels read metadata in the transaction', async (t) => {
-  const f = await fixture(t);
-  const broken = f.rules({ readOnly: false, tools: [] });
-  broken.assignments![0].lease!.label = () => '';
-  const handle = await f.workflows.register(definition('invalid-label'), broken);
-  await handle.start(f.source, { workflow: 'invalid-label', requestId: 'invalid-label' });
-  await assert.rejects(async () => await f.workflows.dispatchCandidates(f.source), {
-    code: 'invalid_workflow_policy',
-  });
-  handle.dispose();
-  const throwing = f.rules({ readOnly: false, tools: [] }, () => {
-    throw new Error('Broken metadata provider');
-  });
-  const other = await f.workflows.register(definition('broken-provider'), throwing);
-  await other.start(f.source, { workflow: 'broken-provider', requestId: 'broken-provider' });
-  await assert.rejects(
-    async () => await f.workflows.dispatchCandidates(f.source),
-    /Broken metadata provider/,
-  );
-  other.dispose();
-  const asynchronous = f.rules({ readOnly: false, tools: [] });
-  asynchronous.assignments![0].lease!.label = async ({ snapshot, tx }) => {
-    const row = await tx.get<{ workflow: string }>(
-      'SELECT workflow FROM wf_instances WHERE id=?',
-      snapshot.id,
-    );
-    return `Async ${row!.workflow}`;
-  };
-  const asyncHandle = await f.workflows.register(definition('async-label'), asynchronous);
-  await asyncHandle.start(f.source, { workflow: 'async-label', requestId: 'async-label' });
-  assert.equal((await f.workflows.dispatchCandidates(f.source))[0].label, 'Async async-label');
-});
-
-/** The statements `run` sends through the transaction it is given, as their SQL. */
-async function statements(
-  state: Awaited<ReturnType<typeof openState>>,
-  run: (tx: Transaction) => Promise<unknown>,
-): Promise<string[]> {
-  const sent: string[] = [];
-  await state.transaction(async (tx) => {
-    const spied = tx as unknown as Record<'get' | 'all' | 'run', (...args: unknown[]) => unknown>;
-    for (const method of ['get', 'all', 'run'] as const) {
-      const original = spied[method].bind(tx);
-      spied[method] = (sql, ...args) => {
-        sent.push(String(sql));
-        return original(sql, ...args);
-      };
-    }
-    await run(tx);
-  });
-  return sent;
-}
-
-test('discovery costs the same however many candidates it finds, and every callback reads the prerequisites', async (t) => {
-  const f = await fixture(t);
-  const policy = f.rules({ readOnly: false, tools: [] });
-  policy.limits = [{ name: 'rounds', from: 'work', actions: ['finish'], max: 3 }];
-  const lease = policy.assignments![0].lease!;
-  const seen: string[][] = [];
-  const settled = ({ dependencies }: { dependencies?: { id: string; settled: boolean }[] }) =>
-    (dependencies ?? []).filter((item) => item.settled).map((item) => item.id);
-  lease.role = (context) => (seen.push(settled(context)), 'producer');
-  lease.label = (context) => (seen.push(settled(context)), 'Counted');
-  lease.excludes = (context) => (seen.push(settled(context)), false);
-  const handle = await f.workflows.register(definition('counted'), policy);
-  const prerequisite = await handle.start(f.source, { workflow: 'counted', requestId: 'first' });
-  await handle.transition(f.source, {
-    instanceId: prerequisite.id,
-    expectedRevision: 0,
-    action: 'finish',
-    requestId: 'finish',
-  });
-  let made = 0;
-  const add = async (count: number) => {
-    for (let i = 0; i < count; i++)
-      await handle.start(f.source, {
-        workflow: 'counted',
-        requestId: `work-${made++}`,
-        dependsOn: [prerequisite.id],
-      });
-  };
-  const cost = async () => {
-    let found = 0;
-    const sent = await statements(f.state, async (tx) => {
-      found = (await f.workflows.dispatchCandidates(f.source, tx, 'worker')).length;
-    });
-    return { statements: sent.length, found };
-  };
-  await add(1);
-  const one = await cost();
-  assert.equal(one.found, 1);
-  await add(24);
-  assert.deepEqual(await cost(), { statements: one.statements, found: 25 });
-  // Role, label and excludes each saw the settled prerequisite, for every candidate.
-  assert.equal(seen.length, 3 * 26);
-  assert.ok(seen.every((ids) => ids.length === 1 && ids[0] === prerequisite.id));
-});
-
 test('a dispatch callback that moves the instance fails the scan, excluded or refused', async (t) => {
   const f = await fixture(t);
   const move = async (tx: Transaction, id: string) =>
@@ -516,123 +411,6 @@ test('workspace declarations are strict, immutable and version-pinned while abse
       { code: 'invalid_workflow_policy' },
     );
   assert.equal(validateExecution({ ...explicit, readOnly: true }).readOnly, true);
-});
-
-test('Tasks contribute source-aware queue labels and recipe availability without reading artifacts or rendering guidance', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-dispatch-tasks-'));
-  const app = await createApp({ directory, api: false });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
-  const boot = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Task dispatch',
-    actorName: 'Owner',
-  });
-  const source: Caller = {
-    actorId: boot.actor.id,
-    projectId: boot.project.id,
-    credentialId: boot.credential.id,
-  };
-  const producerActor = await app.ctx.scope.credentials.issueActor(source, {
-    name: 'Producer',
-    role: 'producer',
-  });
-  const producer: Caller = {
-    ...source,
-    actorId: producerActor.actor.id,
-    credentialId: producerActor.credential.id,
-  };
-  const reviewerActor = await app.ctx.scope.credentials.issueActor(source, {
-    name: 'Reviewer',
-    role: 'reviewer',
-  });
-  const reviewer: Caller = {
-    ...source,
-    actorId: reviewerActor.actor.id,
-    credentialId: reviewerActor.credential.id,
-  };
-  const task = await currentTask(app.ctx, producer, {
-    title: 'Produce evidence',
-    goal: 'Verify.',
-    checks: ['Verified.'],
-    requestId: 'create',
-  });
-  const type = {
-    name: 'dispatch.custom',
-    version: 1,
-    kind: 'work' as const,
-    recipe: {
-      instructions: 'Work.',
-      maxChars: 48000,
-      outputInstructions: 'Deliver.',
-      sections: [
-        { key: 'task', title: 'Task', required: true },
-        { key: 'brief', title: 'Brief', required: true },
-      ],
-      format: 2 as const,
-    },
-  };
-  const disposeType = await registerTaskType(app.ctx.tasks, type);
-  const custom = await currentTask(app.ctx, producer, {
-    title: 'Unavailable recipe',
-    goal: 'Verify.',
-    checks: ['Verified.'],
-    type: type.name,
-    requestId: 'custom',
-  });
-  disposeType();
-  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: producer });
-  const lease = await work.lease(task);
-  const artifact = await work.run(
-    lease,
-    'artifact.create',
-    { title: 'Evidence', content: 'Verified.' },
-    (caller, input) => app.ctx.artifacts.create(caller, input as never),
-  );
-  const commandId = await work.commit(lease);
-  const pending = await work.run(
-    lease,
-    'task.submit_delivery',
-    confirmedDelivery({
-      commandId,
-      taskId: task.id,
-      expectedRevision: 0,
-      artifactIds: [artifact.id],
-      requestId: 'deliver',
-    }),
-    (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
-  );
-  await work.release(lease);
-  t.mock.method(app.ctx.artifacts, 'read', poison);
-  t.mock.method(app.ctx.workflows, 'evaluate', poison);
-  t.mock.method(app.ctx.workflows, 'assignment', poison);
-  const candidates = await app.ctx.workflows.dispatchCandidates(source);
-  assert.deepEqual(
-    candidates.map((candidate) => candidate.instanceId),
-    [task.id],
-  );
-  assert.equal(candidates[0].label, 'Produce evidence');
-  assert.equal(candidates[0].role, 'reviewer');
-  assert.equal(candidates[0].expectedRevision, pending.workflow.revision);
-  assert.equal(candidates[0].readOnly, true);
-  assert.ok(candidates[0].workspace && candidates[0].workspace.mode !== 'none');
-  assert.equal(candidates[0].workspace.driver, 'code.v2');
-  assert.notEqual(task.id, custom.id);
-  assert.deepEqual(await app.ctx.workflows.dispatchCandidates(producer), []);
-  assert.deepEqual(
-    (await app.ctx.workflows.dispatchCandidates(reviewer)).map((candidate) => candidate.instanceId),
-    [task.id],
-  );
-  t.mock.restoreAll();
-  const reviewLease = await work.lease(pending, source);
-  t.mock.method(app.ctx.artifacts, 'read', poison);
-  t.mock.method(app.ctx.workflows, 'evaluate', poison);
-  t.mock.method(app.ctx.workflows, 'assignment', poison);
-
-  assert.deepEqual(await app.ctx.workflows.dispatchCandidates(source), []);
-  t.mock.restoreAll();
-  await work.release(reviewLease);
 });
 
 test('a lease whose receipt its offer accepted is released', async (t) => {

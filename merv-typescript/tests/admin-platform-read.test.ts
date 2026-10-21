@@ -4,6 +4,10 @@
  * registry refuses every other tool before its handler, Scope every other permission, and no
  * other principal, agent path or delegation ever carries the authority.
  */
+import { ToolRegistry } from '@merv/api';
+import { createService, type Caller } from '@merv/contracts';
+import { PLATFORM_ACTOR, ProjectScope } from '@merv/scope';
+import { SignJWT } from 'jose';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -11,11 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SignJWT } from 'jose';
 import { z } from 'zod';
-import { createService, type Caller } from '@merv/contracts';
-import { ToolRegistry } from '@merv/api';
-import { PLATFORM_ACTOR, ProjectScope } from '@merv/scope';
 import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { deferred } from './fixtures/deferred.js';

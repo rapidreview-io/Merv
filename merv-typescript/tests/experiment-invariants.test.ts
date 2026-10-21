@@ -1,6 +1,3 @@
-import { managedServices } from './fixtures/managed-services.js';
-import { currentWork } from './fixtures/current-work.js';
-import { legacyReports } from './fixtures/legacy-reports.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -8,24 +5,27 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { currentWork } from './fixtures/current-work.js';
+import { legacyReports } from './fixtures/legacy-reports.js';
+import { managedServices } from './fixtures/managed-services.js';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { WorkflowsService } from '@merv/workflows';
-import { ReviewService } from '@merv/reviews';
+import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { ExperimentService } from '@merv/experiments';
 import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts';
+import { ExperimentService } from '@merv/experiments';
 import type {
   Experiment,
   ExperimentAttach,
   ExperimentEvidence,
   ExperimentTransition,
 } from '@merv/experiments/types';
+import { ReviewService } from '@merv/reviews';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
 import { feasibilityStatement } from './feasibility-fixture.js';
-import { reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nTest whether the intervention changes the measured outcome.\n# Evaluation\nUse matched controls and report the uncertainty.\n';

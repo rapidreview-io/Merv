@@ -1,10 +1,10 @@
-import test from 'node:test';
+import { MervError } from '@merv/contracts';
+import { FiberState } from 'cordis';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FiberState } from 'cordis';
-import { MervError } from '@merv/contracts';
+import test from 'node:test';
 import { createApp } from './fixtures/app.js';
 import { resources } from './fixtures/loader-marker.js';
 

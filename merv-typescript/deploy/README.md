@@ -19,6 +19,10 @@ and names those files, so a UI never reaches a server without the tools it calls
 assets are added beside the old ones, so open tabs keep loading theirs; `index.html` changes last.
 To undo a UI release, revert the commit on main and run `ui-release.mjs` again.
 
+Main releases prune unused Docker build cache before building, retaining 10 GB
+for reuse. Cleanup is best effort and does not prune images or
+volumes; rollback images must be reviewed separately. Hosted releases apply the same cache budget when they finish.
+
 ## Sandboxes in-process cutover
 
 This section is the Merv-side handoff for the Sandboxes cutover runbook. The TS standalone

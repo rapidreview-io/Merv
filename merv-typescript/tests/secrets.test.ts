@@ -1,11 +1,11 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { inspect } from 'node:util';
+import { ApiServer, ToolRegistry } from '@merv/api';
 import { createService, MervError, type HumanPrincipal } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
 import { AccountSecrets } from '@merv/secrets';
 import { secretsRoutes } from '@merv/secrets/api';
-import { ProjectScope } from '@merv/scope';
-import { ApiServer, ToolRegistry } from '@merv/api';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { inspect } from 'node:util';
 import { openState } from './fixtures/state.js';
 
 const key = Buffer.alloc(32, 42).toString('base64url');

@@ -1,17 +1,17 @@
 import { createService, migrationList } from '@merv/contracts';
-import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { ReviewService } from '@merv/reviews';
+import { DiskBlobs } from '@merv/blobs';
 import type { Caller, ReviewInput, Role } from '@merv/contracts';
-import { openState } from './fixtures/state.js';
+import { ReviewService } from '@merv/reviews';
+import { ProjectScope } from '@merv/scope';
 import { assessment, legacyStart, ownReviews } from './fixtures/review-verdict.js';
+import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));

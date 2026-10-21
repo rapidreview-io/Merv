@@ -284,3 +284,41 @@ test('cutover skips hosted resume and checks; ordinary releases retain both gate
   gates({}, {}, 'production', 'production', hosted);
   assert.deepEqual(calls, ['--resume', '--check']);
 });
+
+test('Main release cache cleanup is bounded, never prunes images or volumes, and is best effort', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merv-release-cache-'));
+  try {
+    const job = render(
+      'node:test',
+      'https://example.test',
+      false,
+    )({
+      release: 'test',
+      archiveSha256: 'a'.repeat(64),
+    });
+    const start = job.indexOf('\ndocker builder prune');
+    const end = job.indexOf('\ndocker build --', start);
+    assert.ok(start > 0 && end > start);
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        `set -euo pipefail
+      docker() { printf '%s\\n' "$*" > commands; return 1; }
+      ${job.slice(start, end)}
+      echo continued
+    `,
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /continued/);
+    assert.equal(
+      readFileSync(join(dir, 'commands'), 'utf8').trim(),
+      'builder prune -af --keep-storage 10GB',
+    );
+    assert.match(readFileSync(join(dir, 'build.log'), 'utf8'), /cleanup failed/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

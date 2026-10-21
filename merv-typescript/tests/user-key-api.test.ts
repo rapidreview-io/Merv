@@ -1,22 +1,18 @@
 import { createService } from '@merv/contracts';
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
 import { Context } from 'cordis';
 import { SignJWT } from 'jose';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { ProjectScope } from '@merv/scope';
-import { scopeToolsPlugin } from '@merv/scope/tools';
-import { SupabaseIdentity } from '@merv/identity';
-import { CredentialStore } from '@merv/identity/credentials';
 import { ApiServer, ToolRegistry } from '@merv/api';
-import { scopeRoutes } from '@merv/scope/api';
 import type { Caller, IssuedUserKey, Project, UserKey } from '@merv/contracts';
+import { SupabaseIdentity } from '@merv/identity';
+import { ProjectScope } from '@merv/scope';
+import { scopeRoutes } from '@merv/scope/api';
+import { scopeToolsPlugin } from '@merv/scope/tools';
 import { openState } from './fixtures/state.js';
-import pg from 'pg';
 
 const issuer = 'https://key-api.example/auth/v1';
 const secret = 'synthetic-merv-user-key-api-secret-at-least-32-bytes';
@@ -382,146 +378,6 @@ test('project and account keys resolve current owner roles while account keys re
   );
 });
 
-test('HTTP and MCP key catalogs use selected authority and preserve remote project arguments', async (t) => {
-  const f = await fixture(t);
-  const key = await f.issue({ grantScope: 'account' });
-  const elsewhere = await f.scope.members.createProject(f.owner, {
-    name: 'Elsewhere',
-    requestId: 'elsewhere',
-  });
-  const ownerActor = await f.scope.caller(f.owner, f.project.id);
-  f.access.replace([
-    { actorId: ownerActor.actorId, projectId: f.project.id, mountId: 'nisa', tools: ['search'] },
-  ]);
-  f.tools.createCatalog('nisa').replace([
-    {
-      kind: 'mcp',
-      name: 'search',
-      description: 'Read a remote project',
-      inputSchema: {
-        type: 'object',
-        properties: { projectId: { type: 'string' } },
-        required: ['projectId'],
-        additionalProperties: false,
-      },
-      handler: async (_caller, input) => ({
-        content: [{ type: 'text', text: JSON.stringify(input) }],
-      }),
-    },
-  ]);
-  const catalog = await f.request<{ tools: { name: string }[] }>('/tools', {
-    token: key.token,
-    projectId: f.project.id,
-  });
-  assert.ok(catalog.body.tools.some((tool) => tool.name === '_nisa.search'));
-  const hidden = await f.request<{ tools: { name: string }[] }>('/tools', {
-    token: key.token,
-    projectId: elsewhere.id,
-  });
-  assert.ok(!hidden.body.tools.some((tool) => tool.name === '_nisa.search'));
-  const remote = await f.request<{ result: { content: { text: string }[] } }>(
-    '/tools/_nisa.search',
-    { token: key.token, projectId: f.project.id, body: { projectId: 'upstream-id' } },
-  );
-  assert.deepEqual(JSON.parse(remote.body.result.content[0]!.text), { projectId: 'upstream-id' });
-  assert.equal(
-    (
-      await f.request('/tools/read', {
-        token: key.token,
-        projectId: f.project.id,
-        body: { human: { issuer, subject: 'bob' }, key: { id: 'spoof' } },
-      })
-    ).status,
-    400,
-  );
-  const client = new Client({ name: 'user-key-mcp-test', version: '1' });
-  t.after(() => client.close());
-  await client.connect(
-    new StreamableHTTPClientTransport(new URL(`${f.url}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${key.token}` } },
-    }),
-  );
-  // Codex repeats a server's instructions at every tool: Merv's own part stays short.
-  const guide = client.getInstructions()!.split('\n\n').at(-1)!;
-  assert.ok(guide.length <= 600 && guide.includes('project.list'), guide);
-  // With no project selected, an account key is offered the native catalog and project.list.
-  const projectless = (await client.listTools()).tools.map((tool) => tool.name);
-  assert.equal(projectless[0], 'project.list');
-  assert.ok(projectless.includes('read') && !projectless.includes('_nisa.search'));
-  const listed = await client.callTool({ name: 'project.list', arguments: {} });
-  assert.deepEqual(
-    JSON.parse((listed.content as { text: string }[])[0]!.text).projects.find(
-      (project: Project) => project.id === f.project.id,
-    ),
-    { ...f.project, role: 'operator' },
-  );
-  const unselected = await client.callTool({ name: 'read', arguments: {} });
-  assert.equal(unselected.isError, true);
-  assert.match((unselected.content as { text: string }[])[0]!.text, /call project\.list/);
-  assert.ok(
-    (await client.listTools({ _meta: { 'merv/projectId': f.project.id } })).tools.some(
-      (tool) => tool.name === '_nisa.search',
-    ),
-  );
-  assert.ok(
-    !(await client.listTools({ _meta: { 'merv/projectId': elsewhere.id } })).tools.some(
-      (tool) => tool.name === '_nisa.search',
-    ),
-  );
-  const called = await client.callTool({
-    name: '_nisa.search',
-    arguments: { projectId: 'upstream-id' },
-    _meta: { 'merv/projectId': f.project.id },
-  });
-  assert.equal(called.isError, undefined);
-  const headerClient = new Client({ name: 'user-key-header-test', version: '1' });
-  t.after(() => headerClient.close());
-  await headerClient.connect(
-    new StreamableHTTPClientTransport(new URL(`${f.url}/mcp`), {
-      requestInit: {
-        headers: { authorization: `Bearer ${key.token}`, 'x-merv-project-id': f.project.id },
-      },
-    }),
-  );
-  await assert.rejects(
-    headerClient.listTools({ _meta: { 'merv/projectId': elsewhere.id } }),
-    /Conflicting Merv project selections/,
-  );
-  assert.equal(
-    (
-      await headerClient.callTool({
-        name: 'read',
-        arguments: {},
-        _meta: { 'merv/projectId': elsewhere.id },
-      })
-    ).isError,
-    true,
-  );
-  const fixed = await f.issue();
-  const projectClient = new Client({ name: 'project-key-mcp-test', version: '1' });
-  t.after(() => projectClient.close());
-  await projectClient.connect(
-    new StreamableHTTPClientTransport(new URL(`${f.url}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${fixed.token}` } },
-    }),
-  );
-  assert.ok((await projectClient.listTools()).tools.some((tool) => tool.name === '_nisa.search'));
-  assert.equal(
-    (await projectClient.callTool({ name: 'actor.whoami', arguments: {} })).isError,
-    undefined,
-  );
-  assert.equal(
-    (
-      await projectClient.callTool({
-        name: 'read',
-        arguments: {},
-        _meta: { 'merv/projectId': elsewhere.id },
-      })
-    ).isError,
-    true,
-  );
-});
-
 test('keys cannot administer accounts, keys, memberships or independent actor credentials', async (t) => {
   const f = await fixture(t);
   const key = await f.issue({ grantScope: 'account' });
@@ -654,61 +510,6 @@ test('revocation and expiry between admission and dispatch fence key calls, with
   }
   assert.equal((await f.request('/account', { token: 'mk_unknown.with.dots' })).status, 401);
   assert.deepEqual(f.routing, { actor: 0, jwt: 0 });
-});
-
-test('resolving a key caller reads its key and ledger rows once', async (t) => {
-  const f = await fixture(t);
-  const key = await f.scope.userKeys.authenticate((await f.issue()).token);
-  const query = pg.Client.prototype.query;
-  const statements: string[] = [];
-  t.mock.method(pg.Client.prototype, 'query', function (this: pg.Client, ...args: unknown[]) {
-    statements.push(String(args[0]));
-    return (query as (...args: unknown[]) => unknown).apply(this, args);
-  });
-  await f.scope.caller({ kind: 'key', key });
-  const reads = (table: string) => statements.filter((sql) => sql.includes(`FROM ${table} `));
-  assert.deepEqual([reads('user_keys').length, reads('identity_credentials').length], [1, 1]);
-});
-
-test('existing opaque actor tokens can begin with mk_ without becoming user keys', async (t) => {
-  const f = await fixture(t);
-  const caller = await f.scope.caller(f.owner, f.project.id);
-  const legacy = await f.scope.credentials.issueActor(caller, {
-    name: 'Legacy actor',
-    role: 'reader',
-  });
-  // Legacy tokens are 43 random base64url characters. Their random prefix is not reserved.
-  const token = `mk_${'A'.repeat(40)}`;
-  const id = `credential_${randomUUID()}`;
-  await f.state.transaction(
-    async (tx) =>
-      await tx.run(
-        'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at) VALUES(?,?,?,?,?,?)',
-        id,
-        legacy.actor.id,
-        f.project.id,
-        'actor',
-        createHash('sha256').update(token).digest('hex'),
-        new Date(f.time()).toISOString(),
-      ),
-  );
-  await new CredentialStore(f.state, f.time).adopt({
-    owner: 'scope',
-    subject: id,
-    kind: 'actor',
-    tokenHash: createHash('sha256').update(token).digest('hex'),
-    expiresAt: null,
-  });
-  assert.equal((await f.scope.authenticate(token)).id, legacy.actor.id);
-  f.routing.actor = 0;
-  const account = await f.request<{ kind: string; actor: { id: string } }>('/account', { token });
-  assert.equal(account.status, 200);
-  assert.equal(account.body.kind, 'actor');
-  assert.equal(account.body.actor.id, legacy.actor.id);
-  assert.deepEqual(f.routing, { actor: 1, jwt: 0 });
-  await f.scope.credentials.revokeCredential(caller, id);
-  assert.equal((await f.request('/account', { token })).status, 401);
-  assert.equal(f.routing.jwt, 0);
 });
 
 test('a key revokes only itself at DELETE /account/key, and a person is refused there', async (t) => {

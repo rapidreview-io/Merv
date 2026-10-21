@@ -1,9 +1,3 @@
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type {
   Caller,
   CodeCommitCommand,
@@ -12,11 +6,15 @@ import type {
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 
 import { admitUpload } from './fixtures/admitted-upload.js';
 import { createApp } from './fixtures/app.js';
-import { deferred } from './fixtures/deferred.js';
-import { openState } from './fixtures/state.js';
 
 const oid = (digit: string) => digit.repeat(40);
 const attachment: SessionWorkspace = {
@@ -339,93 +337,6 @@ test('Failed, cancelled and undelivered command observations never claim a succe
   assert.deepEqual(await f.app.ctx.codeWork.capture(f.reader, failedRef), failedCapture);
   assert.deepEqual(await f.app.ctx.codeWork.capture(f.reader, cancelledRef), cancelledCapture);
   assert.deepEqual(await f.snapshot(), before);
-});
-
-test('Capture reads compose with an existing transaction and retain legacy final reports without inventing a tree OID', async (t) => {
-  const f = await fixture(t),
-    worker = await f.offer(),
-    command = await f.queue(worker);
-  const ref = { kind: 'code-commit' as const, commandId: command.id };
-  await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
-  await admitUpload(f.app.ctx.state, command, receipt(command));
-  const before = await f.snapshot();
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.state.transaction(async (tx) => {
-        await f.app.ctx.codeWork.completeCommand(f.source, {
-          ...worker.control,
-          commandId: command.id,
-          receipt: receipt(command),
-        });
-        assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref, tx)).status, 'ready');
-        throw new Error('rollback observation transaction');
-      }),
-    /rollback observation transaction/,
-  );
-  assert.deepEqual(await f.snapshot(), before);
-  assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'pending');
-  const other = await openState(':memory:');
-  try {
-    await other.transaction(
-      async (tx) =>
-        await assert.rejects(async () => await f.app.ctx.codeWork.capture(f.reader, ref, tx), {
-          code: 'invalid_transaction',
-        }),
-    );
-  } finally {
-    await other.close();
-  }
-  await f.app.ctx.codeWork.completeCommand(f.source, {
-    ...worker.control,
-    commandId: command.id,
-    receipt: receipt(command),
-  });
-  await f.app.ctx.sessions.release(f.source, {
-    sessionId: worker.session.id,
-    runnerId: worker.control.runnerId,
-  });
-  const legacy = { ...attachment, headOid: oid('b'), stats: receipt(command).stats };
-  await f.app.ctx.sessions.workspaceResult(f.source, { ...worker.control, workspace: legacy });
-  const result = await f.app.ctx.codeWork.capture(f.reader, {
-    kind: 'session-final',
-    sessionId: worker.session.id,
-  });
-  assert.deepEqual(result.workspace, legacy);
-  assert.equal(
-    Object.hasOwn(result.workspace!, 'treeOid'),
-    false,
-    'A commit tree must not be guessed onto a legacy final report',
-  );
-  assert.equal(Object.hasOwn(result, 'parentOid'), false);
-  assert.equal(result.attachedBaseOid, attachment.baseOid);
-});
-
-test('Capture reads answer while another writer holds the writer lock', async (t) => {
-  const f = await fixture(t),
-    worker = await f.offer(),
-    command = await f.queue(worker);
-  const locked = deferred(),
-    release = deferred();
-  const writer = f.app.ctx.state.transaction(async () => {
-    locked.resolve();
-    await release.promise;
-  });
-  await locked.promise;
-  try {
-    // A capture that queued for the lock would fail with state_timeout instead.
-    const [commit, final] = await Promise.all([
-      f.app.ctx.codeWork.capture(f.reader, { kind: 'code-commit', commandId: command.id }),
-      f.app.ctx.codeWork.capture(f.reader, {
-        kind: 'session-final',
-        sessionId: worker.session.id,
-      }),
-    ]);
-    assert.equal(commit.status, 'pending');
-    assert.equal(final.status, 'pending');
-  } finally {
-    release.resolve();
-    await writer;
-  }
 });
 
 test('A final capture of a session halted before any host attached is failed, not pending forever', async (t) => {

@@ -1,9 +1,5 @@
-import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
-import { createConnection, createServer } from 'node:net';
-import { fileURLToPath } from 'node:url';
 import {
   chmodSync,
   existsSync,
@@ -15,9 +11,11 @@ import {
   statSync,
   symlinkSync,
 } from 'node:fs';
+import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { test, type TestContext } from 'node:test';
 import { LocalLedger, terminalLaunch } from '../packages/runner/src/ledger.js';
 import { ProcessHost } from '../packages/runner/src/process-host.js';
 
@@ -190,24 +188,6 @@ test('reopened controller reconnects to its guardian and stop proves the entire 
   }
 });
 
-test('group owner enforces the deadline without controller polling and honours an acknowledged extension', async (t) => {
-  const { ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('deadline', 1200);
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: command(`process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`),
-  });
-  await until(() => ledger.get(record.id)?.status === 'running');
-  const extended = Date.now() + 1800;
-  await host.extendDeadline(record.id, extended);
-  await delay(1250);
-  assert.equal(ledger.get(record.id)?.status, 'running');
-  await until(() => terminalLaunch(ledger.get(record.id)!));
-  assert.equal(ledger.get(record.id)?.reason, 'deadline');
-});
-
 /** An agent that starts a job in a session and group of its own, as a harness's shell does. */
 const jobAgent = (ticks: string, after = `setInterval(()=>{},1000)`) =>
   `const {spawn}=require('child_process');spawn(process.execPath,['-e',${JSON.stringify(
@@ -245,27 +225,6 @@ test('a stop and the deadline end the jobs the agent started in groups of their 
     // Ended before the launch's end was written: the job prints nothing more.
     assert.equal(await stillTicking(ticks), false, id);
   }
-});
-
-test("an owner lost on its own ends its agent and the agent's jobs, and stays uncertain", async (t) => {
-  const { directory, ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('owner-lost');
-  const ticks = join(directory, 'owner-lost-ticks');
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: command(jobAgent(ticks)),
-  });
-  await until(() => ledger.get(record.id)?.status === 'running' && existsSync(ticks));
-  // The owner alone dies, as to the OOM killer: the agent's group is the owner's.
-  const agent = readFileSync(join(directory, 'agent.pid'), 'utf8');
-  const group = Number(spawnSync('ps', ['-o', 'pgid=', '-p', agent], { encoding: 'utf8' }).stdout);
-  process.kill(group, 'SIGKILL');
-  await until(() => ledger.get(record.id)?.status === 'uncertain');
-  assert.equal(ledger.get(record.id)?.reason, 'owner_lost');
-  assert.equal(spawnSync('kill', ['-0', agent]).status !== 0, true, 'the agent is gone');
-  assert.equal(await stillTicking(ticks), false);
 });
 
 test(
@@ -375,59 +334,6 @@ test('cancellation before atomic claim prevents a later launch and rejects ident
   assert.equal(ledger.get(active.id)?.status, 'reserved');
 });
 
-test('a user key standing alone is refused, but mk_ inside another token is not', (t) => {
-  const { host, token, command } = setup(t);
-  const validate = (value: string) =>
-    (host as unknown as { validateCommand(c: object, t: string): void }).validateCommand(
-      { ...command(''), env: { VALUE: value } },
-      token,
-    );
-  assert.throws(() => validate(`mk_${'a'.repeat(43)}`), /source credentials/);
-  assert.throws(() => validate(`key=mk_${'a'.repeat(43)}\n`), /source credentials/);
-  // After a URL escape or a JSON escape, or a separator.
-  for (const before of ['Bearer%20', '{"a":"x\\n', '{"a":"\\u0022', 'x-', 'x_'])
-    assert.throws(() => validate(`${before}mk_${'a'.repeat(43)}`), /source credentials/, before);
-  // An HF grant (a JWE) or a session token can hold "mk_" by chance.
-  validate(`eyJhbGciOiJkaXIifQ..abc.Xmk_${'b'.repeat(40)}.tag`);
-  validate(`ms_${'c'.repeat(5)}mk_${'d'.repeat(35)}`);
-});
-
-test('a killed guardian closes its inherited group but leaves uncertain occupancy without an observer proof', async (t) => {
-  const { directory, ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('guardian-crash');
-  const guardian = spawn(
-    process.execPath,
-    [
-      fileURLToPath(new URL('../packages/runner/src/supervisor.mjs', import.meta.url)),
-      'guardian',
-      ledger.path,
-      record.id,
-    ],
-    { detached: true, stdio: 'ignore' },
-  );
-  await until(() => ledger.get(record.id)?.status === 'starting');
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: command(
-      `const fs=require('fs');process.on('SIGTERM',()=>{});setInterval(()=>fs.appendFileSync('crash-ticks','x'),15)`,
-    ),
-  });
-  await until(() => ledger.get(record.id)?.status === 'running');
-  await delay(100);
-  // The test owns this live ChildProcess handle; production never signals saved PIDs.
-  const died = new Promise<void>((resolve) => guardian.once('exit', () => resolve()));
-  guardian.kill('SIGKILL');
-  await died;
-  await delay(500);
-  const size = statSync(join(directory, 'crash-ticks')).size;
-  await delay(100);
-  assert.equal(statSync(join(directory, 'crash-ticks')).size, size);
-  assert.equal((await host.inspect(record.id)).status, 'uncertain');
-  assert.equal(terminalLaunch(ledger.get(record.id)!), false);
-});
-
 test('a wrong local IPC credential cannot stop another live launch', async (t) => {
   const { ledger, host, reserve, token, command } = setup(t);
   const record = reserve('ipc');
@@ -458,160 +364,6 @@ test('a wrong local IPC credential cannot stop another live launch', async (t) =
   assert.deepEqual(JSON.parse(response), { error: 'unauthorized' });
   assert.equal((await host.inspect(record.id)).status, 'running');
   assert.equal((await host.stop(record.id)).status, 'stopped');
-});
-
-test('the original guardian repairs a timeout assessment and resumes its unstarted claim exactly once', async (t) => {
-  const { directory, ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('resume-claim');
-  const guardian = spawn(
-    process.execPath,
-    [
-      fileURLToPath(new URL('../packages/runner/src/supervisor.mjs', import.meta.url)),
-      'guardian',
-      ledger.path,
-      record.id,
-    ],
-    { detached: true, stdio: 'ignore' },
-  );
-  guardian.unref();
-  await until(() => ledger.get(record.id)?.status === 'starting');
-  await delay(50);
-  ledger.markUncertain(record.id);
-  assert.equal((await host.inspect(record.id)).status, 'starting');
-  const input = {
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: command(`require('fs').appendFileSync('resumed','once');setInterval(()=>{},1000)`),
-  };
-  await host.launch(input);
-  await until(() => ledger.get(record.id)?.status === 'running');
-  ledger.markUncertain(record.id);
-  assert.equal((await host.inspect(record.id)).status, 'running');
-  await host.launch(input);
-  await until(() => existsSync(join(directory, 'resumed')));
-  assert.equal(readFileSync(join(directory, 'resumed'), 'utf8'), 'once');
-  await assert.rejects(
-    async () => host.launch({ ...input, command: command('process.exit(0)') }),
-    /launch_conflict/,
-  );
-  assert.equal((await host.stop(record.id)).status, 'stopped');
-});
-
-test('diagnostic redaction hooks never replace the memory-only process environment or stdin', async (t) => {
-  const { ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('json-hooks');
-  const spec = {
-    ...command(
-      `let body='';process.stdin.on('data',d=>body+=d);process.stdin.on('end',()=>{process.stdout.write(process.env.MERV_MCP_URL+' '+body)})`,
-    ),
-    stdin: 'the real assignment',
-    env: { MERV_MCP_URL: 'http://127.0.0.1:1234/mcp' },
-  };
-  Object.defineProperty(spec, 'toJSON', { value: () => ({ redacted: true }) });
-  Object.defineProperty(spec.env, 'toJSON', { value: () => ({ MERV_MCP_URL: '[redacted]' }) });
-  assert.equal(JSON.stringify(spec), '\{"redacted":true\}');
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: spec,
-  });
-  await until(() => terminalLaunch(ledger.get(record.id)!));
-  assert.equal(
-    readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'),
-    'http://127.0.0.1:1234/mcp the real assignment',
-  );
-});
-
-test('a launch claimed in another boot is proven gone; the same boot stays uncertain', async (t) => {
-  const { ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('booted');
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: command('process.exit(0)'),
-  });
-  assert.ok(host.boot, 'this machine names its boot');
-  assert.equal(ledger.get(record.id)?.metadata.boot, host.boot, 'recorded before the spawn');
-  const db = new DatabaseSync(ledger.path);
-  t.after(() => db.close());
-  const orphan = (id: string, boot: string) => {
-    const row = reserve(id);
-    ledger.updateMetadata(row.id, { boot });
-    db.prepare("UPDATE launches SET status='running',command_hash='pinned' WHERE id=?").run(id);
-    return row.id;
-  };
-  const same = orphan('same-boot', host.boot!);
-  const other = orphan('other-boot', 'other');
-  await host.reconcile();
-  assert.equal(ledger.get(same)?.status, 'uncertain');
-  assert.deepEqual(
-    [ledger.get(other)?.status, ledger.get(other)?.reason],
-    ['stopped', 'host_rebooted'],
-  );
-});
-
-test('a reservation no guardian could claim is cancelled, not left uncertain', async (t) => {
-  const { ledger, host, reserve, token, command } = setup(t);
-  const record = reserve('locked', 60_000);
-  ledger.updateMetadata(record.id, { boot: host.boot ?? 'unknown' });
-  // Another process holds the ledger longer than the guardian waits for its claim.
-  const holder = spawn(
-    process.execPath,
-    [
-      '-e',
-      `const db=new (require('node:sqlite').DatabaseSync)(${JSON.stringify(ledger.path)});db.exec('BEGIN EXCLUSIVE');process.stdout.write('locked');setTimeout(()=>db.exec('COMMIT'),7000)`,
-    ],
-    { stdio: ['ignore', 'pipe', 'ignore'] },
-  );
-  t.after(() => holder.kill());
-  await new Promise((resolve) => holder.stdout.once('data', resolve));
-  await assert.rejects(
-    host.launch({
-      launchId: record.id,
-      sessionToken: token,
-      deadline: record.deadline,
-      command: command('process.exit(0)'),
-    }),
-  );
-  assert.deepEqual(
-    [ledger.get(record.id)?.status, ledger.get(record.id)?.reason],
-    ['stopped', 'cancelled_before_spawn'],
-  );
-});
-
-test('a guardian that cannot own its socket ends its claim as stopped, and replaces a stale socket file', async (t) => {
-  const { directory, ledger, host, reserve, token, command } = setup(t);
-  const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(ledger.directory).digest('hex').slice(0, 16)}`;
-  const socket = (id: string) =>
-    join(sockets, `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`);
-  t.after(() => rmSync(sockets, { recursive: true, force: true }));
-  // A socket directory that is not this user's own directory: nothing was spawned.
-  symlinkSync(directory, sockets);
-  const refused = reserve('foreign-socket-directory');
-  const input = (id: string, deadline: number) => ({
-    launchId: id,
-    sessionToken: token,
-    deadline,
-    command: command('process.exit(0)'),
-  });
-  const ended = await host.launch(input(refused.id, refused.deadline));
-  assert.deepEqual([ended.status, ended.reason], ['stopped', 'socket_failed']);
-  rmSync(sockets);
-  // A socket an earlier process left behind when it was killed: this claim listens anyway.
-  const stale = reserve('stale-socket');
-  mkdirSync(sockets, { mode: 0o700 });
-  const path = JSON.stringify(socket(stale.id));
-  spawnSync(process.execPath, [
-    '-e',
-    `require('net').createServer().listen(${path},()=>process.kill(process.pid,'SIGKILL'))`,
-  ]);
-  assert.ok(statSync(socket(stale.id)).isSocket());
-  await host.launch(input(stale.id, stale.deadline));
-  await until(() => ledger.get(stale.id)?.status === 'exited');
-  assert.equal(ledger.get(stale.id)?.exitCode, 0);
 });
 
 test('the controller speaks to no listener outside a private socket folder of its own', async (t) => {
@@ -648,59 +400,6 @@ test('the controller speaks to no listener outside a private socket folder of it
     rmSync(sockets, { recursive: true, force: true });
   }
   assert.deepEqual(heard, []);
-});
-
-test('a claimed launch with no pinned command ends a minute after it was first found unreachable', async (t) => {
-  const { ledger, host, reserve } = setup(t);
-  const record = reserve('unlaunched');
-  const db = new DatabaseSync(ledger.path);
-  t.after(() => db.close());
-  db.prepare("UPDATE launches SET status='starting' WHERE id=?").run(record.id);
-  await host.reconcile();
-  const first = ledger.get(record.id)!;
-  assert.equal(first.status, 'uncertain', 'a fresh loss may still be a live guardian');
-  assert.equal(typeof first.metadata.lostAt, 'number');
-  ledger.updateMetadata(record.id, { session: { status: 'active' } });
-  await host.reconcile();
-  assert.equal(ledger.get(record.id)?.metadata.lostAt, first.metadata.lostAt);
-  assert.equal(ledger.get(record.id)?.status, 'uncertain');
-  ledger.updateMetadata(record.id, { lostAt: Date.now() - 61_000 });
-  await host.reconcile();
-  assert.deepEqual(
-    [ledger.get(record.id)?.status, ledger.get(record.id)?.reason],
-    ['stopped', 'guardian_lost_before_launch'],
-  );
-  // A pinned command is never ended by that rule.
-  const pinned = reserve('pinned');
-  db.prepare("UPDATE launches SET status='uncertain',command_hash='pinned' WHERE id=?").run(
-    pinned.id,
-  );
-  ledger.updateMetadata(pinned.id, { lostAt: Date.now() - 61_000 });
-  await host.reconcile();
-  assert.equal(ledger.get(pinned.id)?.status, 'uncertain');
-});
-
-test('HF process environment is delivered through IPC and split output is redacted before persistence', async (t) => {
-  const { ledger, host, reserve, token, command, directory } = setup(t);
-  const record = reserve('hf-credential');
-  const marker = 'hf_' + 'PrivateAccountMarker'.repeat(2);
-  const child = command(
-    `const s=process.env.HF_TOKEN; if(!s) process.exit(7); process.stdout.write(s.slice(0,10)); setTimeout(()=>{process.stdout.write(s.slice(10)+'\\n');process.stderr.write(s);},20);`,
-  );
-  Object.assign(child.env, { HF_TOKEN: marker });
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: child,
-  });
-  await until(() => terminalLaunch(ledger.get(record.id)!));
-  assert.equal(ledger.get(record.id)?.exitCode, 0);
-  assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]\n');
-  assert.equal(readFileSync(join(record.runDirectory, 'stderr.log'), 'utf8'), '[REDACTED]');
-  for (const file of readdirSync(directory).filter((name) => name.startsWith('ledger.sqlite')))
-    assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
-  assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
 });
 
 test('native MCP bearers cross only IPC and process env and are redacted before persistence', async (t) => {

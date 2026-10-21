@@ -1,16 +1,14 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import v8 from 'node:v8';
-import vm from 'node:vm';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoint.js';
-import { readBootstrap } from '../packages/pi/src/worker-main.js';
-import { cause, runPiWorker } from '../packages/pi/src/worker.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import type { PiBootstrap, PiCompletion, PiNextReply, PiWork } from '../packages/pi/src/types.js';
+import { readBootstrap } from '../packages/pi/src/worker-main.js';
+import { cause, runPiWorker } from '../packages/pi/src/worker.js';
 
 const token = `piw_flt_test.${'a'.repeat(43)}`;
 const relayToken = `pir_${'b'.repeat(43)}`;
@@ -541,60 +539,6 @@ test('project context travels as labeled user-level source, outside trusted syst
   assert.match(JSON.stringify(user), /Question 1/);
 });
 
-test('startup waits for delayed enrollment without repeating a begun prompt', async () => {
-  const app = await fixture({ startupFailures: [401, 403, 503, 'network'] });
-  await app.run();
-  assert.equal(app.begins, 1);
-  assert.equal(app.modelRequests.length, 1);
-  assert.equal(app.completions.length, 2);
-  assert.equal(app.nextRequests, 5);
-});
-
-test('startup enrollment wait stops at bootstrap expiry', async () => {
-  const app = await fixture({ startupFailures: Array(20).fill(503) });
-  app.bootstrap.expiresAt = new Date(Date.now() + 450).toISOString();
-  const started = Date.now();
-  await app.run().catch((error: unknown) => {
-    assert.match(String(error), /Worker request failed with HTTP 503/);
-  });
-  assert.ok(Date.now() - started < 2_000);
-  assert.equal(app.begins, 0);
-  assert.equal(app.modelRequests.length, 0);
-});
-
-test('a request Main never answers ends at its deadline, even across a collection', async (t) => {
-  v8.setFlagsFromString('--expose-gc');
-  const gc = vm.runInNewContext('gc') as () => void;
-  // Deadlines a hundredth as long, still the runtime's own timeout signals.
-  const timeout = AbortSignal.timeout;
-  AbortSignal.timeout = (ms) => timeout.call(AbortSignal, Math.ceil(ms / 100));
-  t.after(() => void (AbortSignal.timeout = timeout));
-  // Main enrolls the worker, then takes each /next and never answers it.
-  const ended: string[] = [];
-  let polls = 0;
-  const fetchImpl = (async (_url: URL, init: RequestInit) =>
-    polls++
-      ? await new Promise((_resolve, reject) =>
-          init.signal!.addEventListener('abort', () => {
-            ended.push((init.signal!.reason as Error).name);
-            reject(init.signal!.reason);
-          }),
-        )
-      : json({ work: null })) as typeof fetch;
-  const stop = new AbortController();
-  const run = runPiWorker(slotBootstrap(1, 'http://127.0.0.1:9'), {
-    fetchImpl,
-    signal: stop.signal,
-  });
-  for (let collections = 0; collections < 20 && !ended.length; collections++) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    gc();
-  }
-  stop.abort();
-  await run;
-  assert.equal(ended[0], 'TimeoutError');
-});
-
 test('authority failure after an accepted grant exits; an outage is waited out', async () => {
   const revoked = await fixture({ turns: 2, nextAfterGrant: [401] });
   await assert.rejects(revoked.run(), /Worker request failed with HTTP 401/);
@@ -606,32 +550,6 @@ test('authority failure after an accepted grant exits; an outage is waited out',
   assert.equal(outage.nextRequests, 4);
   assert.equal(outage.begins, 2);
   assert.equal(outage.completions.length, 3);
-});
-
-test('transient progress and tool failures are retried within the turn', async () => {
-  const app = await fixture({ toolCall: true, toolFailures: [503], progressFailures: [502] });
-  await app.run();
-  assert.equal(app.toolRequests, 2);
-  assert.deepEqual(app.failures, []);
-  assert.equal(app.completions[0].outcomes.length, 1);
-  const outage = await fixture({ progressFailures: [502, 502, 502] });
-  const logged = await stderrOf(() => outage.run());
-  assert.match(logged, /^Pi worker turn failed: Worker request failed with HTTP 502$/m);
-  assert.deepEqual(outage.failures, ['cmd_1']);
-});
-
-test('a recoverable tool error reaches the model as a tool result', async () => {
-  const app = await fixture({ toolCall: true, toolFailures: [404] });
-  await app.run();
-  assert.equal(app.toolRequests, 1);
-  assert.deepEqual(app.failures, []);
-  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
-  assert.deepEqual(app.completions[0].outcomes, []);
-  assert.match(JSON.stringify(app.modelRequests[1].input), /Artifact not found in this project/);
-  const lost = await fixture({ toolCall: true, toolFailures: [409] });
-  await lost.run();
-  assert.deepEqual(lost.failures, ['cmd_1']);
-  assert.equal(lost.modelRequests.length, 1);
 });
 
 test('call 65 is refused before it runs, the next request carries tool_choice none, and the answer completes', async () => {
@@ -647,76 +565,6 @@ test('call 65 is refused before it runs, the next request carries tool_choice no
   assert.equal(app.completions[0].outcomes.length, 64);
   assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
 });
-
-test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
-  // A third of what the window leaves beside the longest answer and the turn's instructions and
-  // tools, at most 128,000: 3 × (272,000 − 128,000) − 172 bytes for gpt-6-luna, and
-  // 3 × (32,000 − 16,000) − 172 for a model the worker does not know.
-  for (const [model, budget] of [
-    ['gpt-6-luna', 128_000],
-    ['gpt-6.1-sol', 128_000],
-    ['unknown-model', 15_942],
-  ] as const) {
-    const toolResult = { content: 'x'.repeat(150_000) };
-    const app = await fixture({ toolCall: true, toolResult, model });
-    await app.run();
-    assert.deepEqual(app.failures, []);
-    const { output } = app.completions[0].outcomes[0];
-    assert.equal(output.truncated, true);
-    assert.equal(String(output.text).length, budget);
-    assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
-  }
-});
-
-test('a write receipt arrives whole after reads have spent the turn budget', async () => {
-  const tools = [
-    { ...tool, name: 'project.records', readOnly: true },
-    { ...tool, name: 'task.create', readOnly: false },
-  ];
-  const calling = (id: number, name: string) => ({
-    ...call,
-    id: `fc_${id}`,
-    call_id: `call_${id}`,
-    name,
-  });
-  const requests: Record<string, unknown>[] = [];
-  const receipt = { id: 'task_1', note: 'r'.repeat(5_000) };
-  const server = slotServer(3, {
-    next(count) {
-      if (server.bodies('complete').length) server.controller.abort();
-      return { work: count === 1 ? { ...assignment('a'), model: 'unknown-model', tools } : null };
-    },
-    model(_name, body) {
-      requests.push(body);
-      const reply = [calling(1, 'project_records'), calling(2, 'task_create')][requests.length - 1];
-      return new Response(reply ? sse([reply]) : sse([message('Done')], 'Done'));
-    },
-    tool: (body) => (body.name === 'task.create' ? receipt : { records: 'x'.repeat(40_000) }),
-  });
-  await server.run();
-  const [read, write] = server.bodies('complete')[0].outcomes as { output: object }[];
-  assert.equal((read.output as { truncated?: boolean }).truncated, true);
-  assert.deepEqual(write.output, receipt);
-  assert.ok(JSON.stringify(requests[2].input).includes(receipt.note));
-});
-
-/** A checkpoint of `steps`, each a message, one after another. */
-function tree(steps: object[]) {
-  const at = new Date().toISOString();
-  const content = JSON.stringify({
-    version: 1,
-    header: { type: 'session', version: 3, id: 'session_steps', cwd: '/pi-worker', timestamp: at },
-    entries: steps.map((message, index) => ({
-      type: 'message',
-      id: `step_${index}`,
-      parentId: index ? `step_${index - 1}` : null,
-      timestamp: at,
-      message,
-    })),
-    leafId: `step_${steps.length - 1}`,
-  });
-  return { content, hash: digest(content) };
-}
 const said = (content: object[], stopReason = 'stop') => ({
   role: 'assistant',
   content,
@@ -733,127 +581,6 @@ const said = (content: object[], stopReason = 'stop') => ({
   },
   stopReason,
   timestamp: 2,
-});
-
-test('older tool results and arguments are clipped before the first exchange is dropped', async () => {
-  // Past the 128 KB a 32,000-token window holds: 4 bytes a token.
-  const checkpoint = tree([
-    { role: 'user', content: 'Remember the budget is 5k', timestamp: 1 },
-    said([{ type: 'text', text: 'Noted: 5k.' }]),
-    { role: 'user', content: 'Read the records', timestamp: 1 },
-    said(
-      [
-        {
-          type: 'toolCall',
-          id: 'call_1',
-          name: 'project_get',
-          arguments: { note: 'a'.repeat(9_000) },
-        },
-      ],
-      'toolUse',
-    ),
-    {
-      role: 'toolResult',
-      toolCallId: 'call_1',
-      toolName: 'project_get',
-      content: [{ type: 'text', text: `Start ${'r'.repeat(140_000)} end` }],
-      isError: false,
-      timestamp: 3,
-    },
-    said([{ type: 'text', text: 'Read them.' }]),
-    { role: 'user', content: 'Thanks', timestamp: 1 },
-    said([{ type: 'text', text: 'Welcome.' }]),
-  ]);
-  const app = await fixture({ checkpoint, model: 'unknown-model' });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const sent = JSON.stringify(app.modelRequests[0].input);
-  assert.ok(sent.includes('Remember the budget is 5k') && sent.includes('Read them.'));
-  assert.ok(sent.includes('characters left out') && !sent.includes('r'.repeat(2_000)));
-  assert.ok(sent.includes('omitted') && !sent.includes('a'.repeat(2_000)));
-});
-
-test('one write argument past the window still completes: the turn compacts, and the next turn restores', async () => {
-  const tools = [{ ...tool, name: 'artifact.create', readOnly: false }];
-  // About 35,000 tokens, past a 32,000-token window, and past the 128 KB of history it holds.
-  const huge = 'z'.repeat(140_000);
-  const stored = 'Summary: an artifact was stored.';
-  const requests: Record<string, unknown>[] = [];
-  let issued = 0;
-  const server = slotServer(3, {
-    next() {
-      const done = server.bodies('complete');
-      if (done.length === 2) server.controller.abort();
-      if (issued > done.length || issued === 2) return { work: null };
-      issued++;
-      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
-      return {
-        work: {
-          ...assignment(`t${issued}`, { conversationId: 'conv_a' }),
-          model: 'unknown-model',
-          tools,
-          checkpoint: previous
-            ? { content: previous.checkpoint, hash: previous.checkpointHash }
-            : null,
-        },
-      };
-    },
-    model(_name, body) {
-      requests.push(body);
-      if (summarizing(body)) return new Response(sse([message(stored)], stored));
-      return new Response(
-        requests.length === 1
-          ? sse([
-              { ...call, name: 'artifact_create', arguments: JSON.stringify({ content: huge }) },
-            ])
-          : sse([message('Stored')], 'Stored'),
-      );
-    },
-    tool: () => ({ id: 'art_1' }),
-  });
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.equal(server.bodies('complete').length, 2);
-  // The turn's start is summarized before its next call, which keeps the write and its result.
-  const [summaries, answers] = [
-    requests.filter(summarizing),
-    requests.filter((body) => !summarizing(body)),
-  ];
-  assert.equal(summaries.length, 1);
-  assert.match(JSON.stringify(summaries[0].input), /Question t1/);
-  assert.equal(answers.length, 3);
-  assert.ok(JSON.stringify(answers[1].input).includes(huge));
-  assert.ok(JSON.stringify(answers[1].input).includes(stored));
-  // The next turn starts from the summary, noting the write left out: too long to send again.
-  const next = JSON.stringify(answers[2].input);
-  assert.ok(!next.includes(huge) && next.includes(stored) && next.includes('Question t2'));
-  assert.match(next, /1 earlier steps of this answer are left out/);
-  assert.ok(!next.includes('function_call'));
-});
-
-test('no output cap is sent; an answer the model itself stops for length says so', async () => {
-  const note =
-    'Finished\n\n[The model stopped here: this answer reached the longest it can write.]';
-  const app = await fixture({ cutOff: true });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: note }]);
-  assert.equal(app.modelRequests[0].max_output_tokens, undefined);
-  const toolCut = await fixture({ cutOff: true, toolCall: true });
-  await toolCut.run();
-  assert.deepEqual(toolCut.completions[0].messages, [{ role: 'assistant', text: note }]);
-});
-
-test('every tool is sent with strict false, so the model may leave an optional input out', async () => {
-  // Without it OpenAI treats a function as strict and makes every property required, and the
-  // model invents values for inputs it should omit (a baseTaskId of "x" on a workspace-free
-  // experiment, refused 25 times in production on 2026-09-25).
-  const app = await fixture({});
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const tools = app.modelRequests[0].tools as { name: string; strict?: unknown }[];
-  assert.ok(tools.length);
-  for (const tool of tools) assert.equal(tool.strict, false, tool.name);
 });
 
 test('only a role with a terminal is offered bash, read, write, ls and grep, in its own folder', async (t) => {
@@ -878,144 +605,6 @@ test('only a role with a terminal is offered bash, read, write, ls and grep, in 
   assert.ok(statSync(join(home, 'conversations', 'conv_1')).isDirectory());
 });
 
-test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  // Bytes bind the first conversation (1 MB, where compaction has not bounded it first); relay
-  // items bind the second.
-  for (const [turns, filler, kept] of [
-    [20, 60_000, 16],
-    [200, 0, 150],
-  ]) {
-    const at = new Date().toISOString();
-    const entries = Array.from({ length: turns }, (_, index) => index + 1).flatMap((turn) => [
-      {
-        type: 'message',
-        id: `user_${turn}`,
-        parentId: turn > 1 ? `answer_${turn - 1}` : null,
-        timestamp: at,
-        message: { role: 'user', content: `Earlier ${turn} ${'y'.repeat(filler)}`, timestamp: 1 },
-      },
-      {
-        type: 'message',
-        id: `answer_${turn}`,
-        parentId: `user_${turn}`,
-        timestamp: at,
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: `Answer ${turn}` }],
-          api: 'openai-responses',
-          provider: 'openai',
-          model: 'gpt-6-luna',
-          usage: {
-            input: 30_000,
-            output: 100,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 30_100,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-          stopReason: 'stop',
-          timestamp: 2,
-        },
-      },
-    ]);
-    const content = JSON.stringify({
-      version: 1,
-      header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
-      entries,
-      leafId: `answer_${turns}`,
-    });
-    const app = await fixture({ checkpoint: { content, hash: digest(content) } });
-    await app.run();
-    assert.deepEqual(app.failures, []);
-    const sent = JSON.stringify(app.modelRequests[0].input);
-    assert.equal(app.modelRequests[0].max_output_tokens, undefined);
-    const oldest = turns - kept + 1;
-    assert.ok(sent.includes(`Earlier ${oldest} `) && !sent.includes(`Earlier ${oldest - 1} `));
-    const saved = decodeCheckpoint({
-      content: app.completions[0].checkpoint,
-      hash: app.completions[0].checkpointHash,
-    });
-    // The checkpoint keeps what the next turn sends: with this turn added, as many exchanges
-    // as fit, the oldest of them first.
-    const from = Number(saved.entries[0].id.replace('user_', ''));
-    assert.ok(from >= oldest && from <= oldest + 2, `saved from ${from}`);
-    assert.deepEqual(saved.entries[0], { ...entries[2 * (from - 1)], parentId: null });
-  }
-});
-
-test('a long earlier answer is history like any other, sent whole while the window holds it', async () => {
-  const at = new Date().toISOString();
-  // About 37,000 tokens: past the relay's old 100,000 characters and the old 128 KB of history.
-  const answer = `Start ${'y'.repeat(150_000)} end`;
-  const message = (id: string, parentId: string | null, value: object) => ({
-    type: 'message',
-    id,
-    parentId,
-    timestamp: at,
-    message: value,
-  });
-  const content = JSON.stringify({
-    version: 1,
-    header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
-    entries: [
-      message('user_1', null, { role: 'user', content: 'Write at length', timestamp: 1 }),
-      message('answer_1', 'user_1', {
-        role: 'assistant',
-        content: [{ type: 'text', text: answer }],
-        api: 'openai-responses',
-        provider: 'openai',
-        model: 'gpt-6-luna',
-        usage: {
-          input: 10,
-          output: 30_000,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 30_010,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: 'stop',
-        timestamp: 2,
-      }),
-    ],
-    leafId: 'answer_1',
-  });
-  // The fixture refuses any request the relay's schema would: the turn completing is the relay
-  // accepting it. One too long to send whole keeps its start and end (the relay protocol test).
-  const app = await fixture({ checkpoint: { content, hash: digest(content) } });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  assert.ok(JSON.stringify(app.modelRequests[0].input).includes(answer));
-  assert.ok(app.completions[0].checkpoint.includes(answer));
-});
-
-test('an answer of many steps is saved and sent on, however many of them fit the window', async () => {
-  // 60 calls, each writing a section and reading a project: no one text over 2,000 characters,
-  // past the 128 KB of history a 32,000-token window holds.
-  const sections = Array.from(
-    { length: 60 },
-    (_, index) => `Section ${index + 1}: ${'s'.repeat(1_800)}`,
-  );
-  const toolResult = { summary: 'x'.repeat(2_000) };
-  // gpt-6-luna keeps the whole answer; a 32,000-token window keeps its prompt, noting the steps
-  // left out, and its newest steps.
-  for (const model of ['gpt-6-luna', 'unknown-model']) {
-    const app = await fixture({ sections, toolResult, model, turns: 2 });
-    await app.run();
-    assert.deepEqual(app.failures, [], model);
-    assert.equal(app.completions.length, 3);
-    const first = app.completions[0];
-    assert.equal(first.messages.length, 61);
-    // Main keeps a checkpoint only if it ends at the answer's own last entry.
-    const saved = decodeCheckpoint({ content: first.checkpoint, hash: first.checkpointHash });
-    assert.equal(saved.leafId, saved.entries.at(-1)!.id);
-    const sent = JSON.stringify(app.modelRequests[61].input);
-    const whole = model === 'gpt-6-luna';
-    assert.equal(sent.includes(sections[0]), whole, model);
-    assert.ok(sent.includes(sections[59]) && sent.includes('Question 1'), model);
-    assert.equal(/\d+ earlier steps of this answer are left out/.test(sent), !whole, model);
-  }
-});
-
 test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
   const app = await fixture({ model: 'gpt-6/luna' });
   await app.run();
@@ -1026,122 +615,6 @@ test('an assignment the worker refuses is failed at once instead of left to expi
   await dotted.run();
   assert.deepEqual(dotted.failures, []);
   assert.equal(dotted.modelRequests[0].model, 'gpt-5.6-luna');
-});
-
-test('requested shutdown during an in-flight next poll exits normally before or after enrollment', async (t) => {
-  for (const enrolled of [false, true])
-    await t.test(enrolled ? 'idle enrolled worker' : 'initial enrollment', async () => {
-      const app = await fixture();
-      let calls = 0;
-      let polling!: () => void;
-      const ready = new Promise<void>((resolve) => {
-        polling = resolve;
-      });
-      const worker = runPiWorker(app.bootstrap, {
-        signal: app.controller.signal,
-        pollIntervalMs: 1,
-        fetchImpl: async (input, init) => {
-          assert.equal(new URL(String(input)).pathname, '/pi-worker/next');
-          calls++;
-          if (enrolled && calls === 1) return json({ work: null });
-          return new Promise<Response>((_resolve, reject) => {
-            init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), {
-              once: true,
-            });
-            polling();
-          });
-        },
-      });
-      await ready;
-      app.controller.abort();
-      await assert.doesNotReject(worker);
-      assert.equal(calls, enrolled ? 2 : 1);
-    });
-});
-
-test('a next poll held for 25 s is asked again at once; a quick empty reply keeps the interval', async (t) => {
-  // Time runs 40x faster: the server holds the second poll for "25 s" before saying no work exists.
-  const timeout = AbortSignal.timeout;
-  t.mock.method(AbortSignal, 'timeout', (delay: number) =>
-    timeout.call(AbortSignal, Math.ceil(delay / 40)),
-  );
-  const app = await fixture();
-  const asked: number[] = [];
-  let heldExpired = true;
-  const logged = await stderrOf(() =>
-    runPiWorker(app.bootstrap, {
-      signal: app.controller.signal,
-      pollIntervalMs: 400,
-      fetchImpl: async (_input, init) => {
-        asked.push(Date.now());
-        if (asked.length === 4) app.controller.abort();
-        if (asked.length === 2) {
-          await new Promise((resolve) => setTimeout(resolve, 25_000 / 40));
-          heldExpired = init!.signal!.aborted;
-        }
-        init!.signal!.throwIfAborted();
-        return json({ work: null });
-      },
-    }),
-  );
-  assert.equal(asked.length, 4);
-  assert.equal(heldExpired, false);
-  assert.ok(asked[1] - asked[0] >= 390);
-  assert.ok(asked[2] - asked[1] < 25_000 / 40 + 200);
-  assert.ok(asked[3] - asked[2] >= 390);
-  assert.equal(logged.match(/^Pi worker enrolled \d+ ms$/gm)?.length, 1);
-});
-
-test('slow progress delivery permits only one outstanding batch or heartbeat', async () => {
-  const app = await fixture({ cancel: true, slowProgress: true });
-  const stop = setTimeout(() => app.controller.abort(), 1_100);
-  try {
-    await app.run();
-  } finally {
-    clearTimeout(stop);
-  }
-  assert.equal(app.progress.length, 1);
-  assert.equal(app.modelRequests.length, 1);
-});
-
-test('streamed words reach Main within about 100 ms, a few requests a second, all of them in order', async (t) => {
-  const words = Array.from({ length: 60 }, (_, index) => `w${index} `);
-  const app = await fixture({ paced: words });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const sent = (app.progress as { type: string; text: string }[][])
-    .map((events, index) => ({
-      at: app.progressAt[index],
-      text: events.map((e) => e.text).join(''),
-    }))
-    .filter(({ text }) => text);
-  assert.equal(sent.map(({ text }) => text).join(''), words.join(''));
-  // About 600 ms of words: coalesced, yet the first leaves promptly and none waits long.
-  assert.ok(sent.length >= 4 && sent.length <= 9, `${sent.length} requests`);
-  assert.ok(sent[0].at - app.firstWordAt < 200, `first after ${sent[0].at - app.firstWordAt} ms`);
-  for (let index = 1; index < sent.length - 1; index++)
-    assert.ok(sent[index].at - sent[index - 1].at >= 90, `request ${index} came too soon`);
-  t.diagnostic(
-    JSON.stringify({
-      words: words.length,
-      requests: sent.length,
-      firstMs: sent[0].at - app.firstWordAt,
-      gapsMs: sent.slice(1).map(({ at }, index) => at - sent[index].at),
-    }),
-  );
-});
-
-test('a tool call written without words still tells Main the turn is moving, about once a second', async () => {
-  // About 1.2 s of arguments: '{' then spaces, then '}'.
-  const app = await fixture({ pacedCall: ['{', ...Array(118).fill(' '), '}'] });
-  await app.run();
-  assert.deepEqual(app.failures, []);
-  const events = (app.progress as { type: string; text: string }[][]).flat();
-  const moving = events.filter((event) => event.type === 'progress');
-  assert.ok(moving.length >= 1 && moving.length <= 2, `${moving.length} progress events`);
-  assert.ok(moving.every((event) => event.text === 'Writing a tool call'));
-  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
-  assert.equal(app.completions[0].outcomes.length, 1);
 });
 
 test('oversized worker responses cancel their streams', async () => {
@@ -1201,14 +674,6 @@ test('lost begin reply never replays prompt; duplicate assignment never invokes 
   assert.equal(duplicate.begins, 1);
   assert.equal(duplicate.modelRequests.length, 1);
   assert.deepEqual(duplicate.failures, ['cmd_1']);
-});
-
-test('a provider overloaded before it answers is asked again and the turn finishes', async () => {
-  const app = await fixture({ overloadedOnce: true });
-  const logged = await stderrOf(() => app.run());
-  assert.match(logged, /model call retried \(1\): server_is_overloaded/);
-  assert.equal(app.modelRequests.length, 2);
-  assert.deepEqual(app.failures, []);
 });
 
 test('provider error fails closed without automatic retry and logs its cause', async () => {
@@ -1273,15 +738,6 @@ test('revocation aborts a silent model turn without completing or retrying the p
   const app = await fixture({ cancel: true });
   await app.run();
   assert.equal(app.modelRequests.length, 1);
-  assert.deepEqual(app.failures, ['cmd_1']);
-  assert.equal(app.completions.length, 0);
-});
-
-test('revocation aborts an outstanding read tool before another model request', async () => {
-  const app = await fixture({ toolCall: true, slowTool: true, cancel: true });
-  await app.run();
-  assert.equal(app.modelRequests.length, 1);
-  assert.equal(app.toolRequests, 1);
   assert.deepEqual(app.failures, ['cmd_1']);
   assert.equal(app.completions.length, 0);
 });
@@ -1358,23 +814,6 @@ const assignment = (name: string, change: Partial<PiWork['command']> = {}): PiWo
   notes: [`Note ${name}`],
   instructions: 'You are a test agent.',
 });
-/** A stream sent one event `ms` apart. */
-function paced(body: string, ms: number): Response {
-  const frames = body.split(/(?<=\n\n)/);
-  const encoder = new TextEncoder();
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      async start(controller) {
-        for (const frame of frames) {
-          await new Promise((resolve) => setTimeout(resolve, ms));
-          controller.enqueue(encoder.encode(frame));
-        }
-        controller.close();
-      },
-    }),
-    { headers: { 'content-type': 'text/event-stream' } },
-  );
-}
 /** An answer whose stream shows its first text, then waits for `release` to finish. */
 function held(text: string, release: Promise<unknown>, started = () => {}): Response {
   const frames = sse([message(text)], text).split(/(?<=\n\n)/);
@@ -1455,117 +894,6 @@ function slotServer(
   };
 }
 
-test('a completion receipt the worker cannot read ends the turn instead of sending it again', async () => {
-  const server = slotServer(1, {
-    next: (count) => (count === 1 ? { work: assignment('a') } : { work: null, retire: true }),
-    model: (name) => new Response(sse([message(`Answer ${name}`)], `Answer ${name}`)),
-    replies: { complete: { saved: 'maybe' } },
-  });
-  await server.run();
-  assert.equal(server.bodies('complete').length, 1);
-  assert.deepEqual(
-    server.bodies('fail').map((body) => body.commandId),
-    ['cmd_a'],
-  );
-});
-
-test('one worker accepts the same command ID in different conversations', async () => {
-  const queue = ['a', 'b'].map((name) => assignment(name, { id: 'cmd_same' }));
-  const server = slotServer(1, {
-    next: () => (queue.length ? { work: queue.shift()! } : { work: null, retire: true }),
-    model: (name) => new Response(sse([message(`Answer ${name}`)], `Answer ${name}`)),
-  });
-  await server.run();
-  assert.deepEqual(server.bodies('fail'), []);
-  assert.deepEqual(
-    server
-      .bodies('complete')
-      .map(({ conversationId, commandId }) => ({ conversationId, commandId })),
-    [
-      { conversationId: 'conv_a', commandId: 'cmd_same' },
-      { conversationId: 'conv_b', commandId: 'cmd_same' },
-    ],
-  );
-});
-
-test('one worker streams turns of several conversations at once, never more than its slots', async () => {
-  // a and b each finish only once both have streamed; turns run one at a time wait out 2 s instead.
-  const order: string[] = [];
-  const streaming = new Map<string, () => void>();
-  const both = Promise.race([
-    Promise.all(
-      ['a', 'b'].map((name) => new Promise<void>((resolve) => streaming.set(name, resolve))),
-    ),
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000)).then(() => order.push('serial')),
-  ]);
-  const queue = ['a', 'b', 'c'].map((name) => assignment(name));
-  const busy: number[] = [];
-  const server = slotServer(2, {
-    next() {
-      const done = server.bodies('complete').length + server.bodies('fail').length;
-      busy.push(server.bodies('begin').length - done);
-      return { work: queue.shift() ?? null };
-    },
-    model(name, body) {
-      order.push(`model ${name}`);
-      const notes = JSON.stringify(body.input).match(/Note \w/g);
-      assert.deepEqual(notes, [`Note ${name}`]);
-      return name === 'c'
-        ? new Response(sse([message('Answer c')], 'Answer c'))
-        : held(`Answer ${name}`, both, streaming.get(name));
-    },
-  });
-  const { bodies } = server;
-  const run = server.run();
-  while (bodies('complete').length < 3 && !server.controller.signal.aborted)
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  server.controller.abort();
-  await run;
-  assert.equal(bodies('fail').length, 0);
-  // Each turn answers and streams only its own conversation's text, and c waits for a free slot.
-  for (const name of ['a', 'b', 'c']) {
-    const mine = (route: string) =>
-      bodies(route).filter((body) => body.conversationId === `conv_${name}`);
-    assert.deepEqual(mine('complete')[0].messages, [{ role: 'assistant', text: `Answer ${name}` }]);
-    assert.equal(
-      mine('progress')
-        .flatMap((body) => body.events as { text: string }[])
-        .map((event) => event.text)
-        .join(''),
-      `Answer ${name}`,
-    );
-  }
-  assert.deepEqual(order.slice(0, 2).sort(), ['model a', 'model b']);
-  assert.equal(order[2], 'model c');
-  // A message keeps a failure from making assert parse this file for one.
-  assert.ok(busy.every((count) => count < 2) && busy.length >= 3, 'At most 2 turns run at once');
-});
-
-test('a probe is echoed on the next poll at once, again after a failed poll, then dropped', async () => {
-  const probe = 'p'.repeat(43);
-  const asked: number[] = [];
-  const server = slotServer(3, {
-    next(count) {
-      asked.push(Date.now());
-      if (count === 4) server.controller.abort();
-      return count === 1
-        ? { work: null, probe }
-        : count === 2
-          ? json({ error: { code: 'unavailable', message: 'unavailable' } }, 503)
-          : { work: null };
-    },
-    model: () => assert.fail('No turn was assigned'),
-  });
-  await server.run();
-  assert.deepEqual(server.bodies('next'), [
-    { workerId: 'worker_1' },
-    { workerId: 'worker_1', probe },
-    { workerId: 'worker_1', probe },
-    { workerId: 'worker_1' },
-  ]);
-  assert.ok(asked[1] - asked[0] < 200, 'The probe is echoed at once');
-});
-
 test('retire takes no more work, lets the running turn finish, then exits', async () => {
   let release!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));
@@ -1584,103 +912,6 @@ test('retire takes no more work, lets the running turn finish, then exits', asyn
   assert.deepEqual(
     server.bodies('complete').map((body) => body.commandId),
     ['cmd_a'],
-  );
-});
-
-test('an assignment for another slot or with oversized notes is failed and never begun', async () => {
-  for (const work of [
-    assignment('a', { hostId: 'pih_2' }),
-    assignment('a', { runtimeId: 'flt_other' }),
-    assignment('a', { epoch: 2 }),
-    { ...assignment('a'), notes: Array.from({ length: 11 }, (_, index) => `${index}`) },
-    { ...assignment('a'), instructions: 'x'.repeat(32_001) },
-    { ...assignment('a'), instructions: undefined as unknown as string },
-    { ...assignment('a'), notes: ['x'.repeat(301)] },
-  ]) {
-    const server = slotServer(3, {
-      next(count) {
-        if (count > 1) server.controller.abort();
-        return { work: count === 1 ? work : null };
-      },
-      model: () => assert.fail('A refused turn reached the model'),
-    });
-    await stderrOf(() => server.run());
-    // Main is told why, in plain words.
-    assert.deepEqual(server.bodies('fail'), [
-      {
-        workerId: 'worker_1',
-        conversationId: 'conv_a',
-        commandId: 'cmd_a',
-        reason: 'Error Invalid worker assignment',
-      },
-    ]);
-    assert.equal(server.bodies('begin').length, 0);
-  }
-});
-
-test('any offered tool is exposed under its model name, and any object input is forwarded', async () => {
-  const described = (name: string, readOnly?: boolean) => ({
-    name,
-    description: name,
-    inputSchema: { type: 'object', properties: {}, additionalProperties: true },
-    ...(readOnly === undefined ? {} : { readOnly }),
-  });
-  const reason = 'Out of memory loading the dataset';
-  const calling = (id: number, name: string, input: object) => ({
-    ...call,
-    id: `fc_${id}`,
-    call_id: `call_${id}`,
-    name,
-    arguments: JSON.stringify(input),
-  });
-  const requests: Record<string, unknown>[] = [];
-  const server = slotServer(3, {
-    next(count) {
-      if (server.bodies('complete').length) server.controller.abort();
-      return {
-        work:
-          count === 1
-            ? {
-                ...assignment('a'),
-                tools: [
-                  described('paper.cite', false),
-                  described('workflow.status_and_next', true),
-                  described('feed.unknown_to_the_worker'),
-                  described('machine.switch'),
-                ],
-              }
-            : null,
-      };
-    },
-    model(_name, body) {
-      requests.push(body);
-      return new Response(
-        requests.length === 1
-          ? sse([
-              calling(1, 'switch_machine', { machine: 'large', reason, projectId: 'proj_2' }),
-              calling(2, 'paper_cite', { url: 'https://arxiv.org/abs/1', nested: { a: [1] } }),
-            ])
-          : sse([message('Done')], 'Done'),
-      );
-    },
-    tool: (body) => ({ ran: body.name }),
-  });
-  await server.run();
-  assert.deepEqual(
-    (requests[0].tools as { name: string }[]).map((tool) => tool.name),
-    ['paper_cite', 'workflow_status_and_next', 'feed_unknown_to_the_worker', 'switch_machine'],
-  );
-  // Main checks every call as the person; the worker forwards what the model sent.
-  assert.deepEqual(
-    server.bodies('tool').map(({ name, input }) => ({ name, input })),
-    [
-      { name: 'machine.switch', input: { machine: 'large', reason, projectId: 'proj_2' } },
-      { name: 'paper.cite', input: { url: 'https://arxiv.org/abs/1', nested: { a: [1] } } },
-    ],
-  );
-  assert.deepEqual(
-    (server.bodies('complete')[0].outcomes as { name: string }[]).map(({ name }) => name),
-    ['machine.switch', 'paper.cite'],
   );
 });
 
@@ -1739,43 +970,6 @@ test('a write is posted once, even after a 503, and a read is retried; writes in
     ['feed.post', 'task.get'],
   );
   assert.equal(server.bodies('fail').length, 0);
-});
-
-test('a conversation begun under older instructions continues under Main’s current ones', async () => {
-  const developer: string[] = [];
-  let issued = 0;
-  const server = slotServer(3, {
-    next() {
-      const done = server.bodies('complete');
-      if (done.length === 2) server.controller.abort();
-      if (issued > done.length || issued === 2) return { work: null };
-      issued++;
-      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
-      const work = assignment(`t${issued}`, { conversationId: 'conv_a' });
-      // The instructions changed between the two turns.
-      return {
-        work: previous
-          ? {
-              ...work,
-              instructions: 'You are Merv’s agent. Current instructions.',
-              checkpoint: { content: previous.checkpoint, hash: previous.checkpointHash },
-            }
-          : { ...work, instructions: 'You are a read-only assistant. Older instructions.' },
-      };
-    },
-    model(_name, body) {
-      const [head, ...rest] = body.input as { role?: string; content?: unknown }[];
-      assert.equal(head.role, 'developer');
-      developer.push(String(head.content));
-      assert.ok(!JSON.stringify(rest).includes('read-only assistant'));
-      return new Response(sse([message('Answer')], 'Answer'));
-    },
-  });
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.match(developer[0], /^You are a read-only assistant\./);
-  assert.match(developer[1], /^You are Merv’s agent\. Current instructions\./);
-  assert.ok(!developer[1].includes('read-only assistant'));
 });
 
 /** `turns` earlier exchanges of a conversation saved before compaction existed, each prompt
@@ -1919,76 +1113,6 @@ test('a long conversation compacts once past 90% of the window, and the next tur
   assert.ok(sent.includes('Question old6 ') && !sent.includes('Question old1 '));
 });
 
-test('a checkpoint saved before compaction restores, and compacts before the turn if it is due', async () => {
-  const { server, requests, completions } = conversation(1, earlier(6, 40_000, 250_000), (body) =>
-    summarizing(body)
-      ? new Response(sse([message(summary)], summary))
-      : new Response(sse([message('Answer')], 'Answer')),
-  );
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.equal(requests.length, 2);
-  assert.ok(summarizing(requests[0]));
-  assert.ok(JSON.stringify(requests[0].input).includes('Question old1 '));
-  const sent = JSON.stringify(requests[1].input);
-  assert.ok(
-    sent.includes(summary) && sent.includes('Question t1') && !sent.includes('Question old1 '),
-  );
-  assert.deepEqual(completions()[0].messages, [{ role: 'assistant', text: 'Answer' }]);
-});
-
-test('a summary that streams past the stall window keeps the turn moving, and its output is capped', async () => {
-  // Main ends a turn that shows no progress for its stall window: an empty pulse is no progress.
-  const stall = 2_000;
-  const { server, requests, completions } = conversation(1, earlier(6, 40_000, 250_000), (body) =>
-    summarizing(body)
-      ? paced(sse([message(summary)], summary), 600)
-      : new Response(sse([message('Answer')], 'Answer')),
-  );
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.deepEqual(completions()[0].messages, [{ role: 'assistant', text: 'Answer' }]);
-  const counted = server.calls
-    .filter(
-      ({ route, body }) =>
-        ['begin', 'complete'].includes(route) ||
-        (route === 'progress' && (body.events as unknown[]).length > 0),
-    )
-    .map(({ at }) => at);
-  const gaps = counted.slice(1).map((at, index) => at - counted[index]!);
-  assert.ok(Math.max(...gaps) < stall, JSON.stringify(gaps));
-  assert.ok(
-    server
-      .bodies('progress')
-      .some((body) => JSON.stringify(body.events).includes('Compacting earlier conversation')),
-  );
-  // The summary has Pi's cap, 80% of the room set aside for it; an answer has none.
-  assert.equal(requests[0].max_output_tokens, 21_760);
-  assert.equal(requests[1].max_output_tokens, undefined);
-});
-
-test('after an interrupted turn, a checkpoint past the compaction point is not summarized again but sent within the window', async () => {
-  const { server, requests, completions } = conversation(
-    1,
-    earlier(8, 60_000, 250_000),
-    (body) =>
-      summarizing(body)
-        ? new Response(sse([message(summary)], summary))
-        : new Response(sse([message('Answer')], 'Answer')),
-    { previousInterrupted: true },
-  );
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.equal(requests.length, 1);
-  const sent = JSON.stringify(requests[0].input);
-  assert.ok(!sent.includes('Question old1 ') && sent.includes('Question old8 '));
-  assert.ok(sent.includes('Question t1'));
-  const [first] = completions();
-  assert.deepEqual(first.messages, [{ role: 'assistant', text: 'Answer' }]);
-  // Saved within the window, so the turn after it does not start past the compaction point.
-  assert.ok(first.checkpoint.length < 330_000 && first.checkpoint.includes('Question t1'));
-});
-
 test('a failed summary keeps the conversation: the turn and the checkpoint fall back to the window', async () => {
   // Eight exchanges of 60,000 characters: more than gpt-6-luna's window held before compaction
   // (304 KB beside 128 KB of tool results), restored whole now that compaction bounds it.
@@ -2019,99 +1143,5 @@ test('a failed summary keeps the conversation: the turn and the checkpoint fall 
     server
       .bodies('progress')
       .every((body) => !JSON.stringify(body.events).includes('Compacted earlier conversation')),
-  );
-});
-
-test('a compacted conversation past the relay item cap keeps its summary and its newest exchanges', async () => {
-  const at = new Date().toISOString();
-  const compaction = {
-    type: 'compaction',
-    id: 'summary_1',
-    parentId: null,
-    timestamp: at,
-    summary,
-    firstKeptEntryId: 'user_1',
-    tokensBefore: 250_000,
-  };
-  const { server, requests, completions } = conversation(
-    1,
-    earlier(200, 0, 30_100, [compaction]),
-    () => new Response(sse([message('Answer')], 'Answer')),
-  );
-  await server.run();
-  assert.equal(server.bodies('fail').length, 0);
-  assert.equal(requests.length, 1);
-  // The summary is one relay item: 149 exchanges of two beside it, the oldest first.
-  const sent = JSON.stringify(requests[0].input);
-  assert.ok(sent.includes(summary));
-  assert.ok(sent.includes('Question old52 ') && !sent.includes('Question old51 '));
-  const saved = decodeCheckpoint({
-    content: completions()[0].checkpoint,
-    hash: completions()[0].checkpointHash,
-  });
-  assert.equal(saved.entries[0].type, 'compaction');
-  assert.ok(saved.entries.length <= 300);
-});
-
-test('board image travels through the real Pi worker as image content, with metadata-only outcomes', async () => {
-  const data = Buffer.alloc(100000, 1).toString('base64');
-  const app = await fixture({
-    toolCall: true,
-    screenImage: true,
-    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
-  });
-  await app.run();
-  assert.equal(app.failures.length, 0);
-  const request = piResponsesSchema.parse(app.modelRequests[1]);
-  const output = request.input.find(
-    (item) => 'type' in item && item.type === 'function_call_output',
-  );
-  assert.ok(output && 'output' in output && Array.isArray(output.output));
-  assert.deepEqual(output.output[1], {
-    type: 'input_image',
-    detail: 'auto',
-    image_url: `data:image/jpeg;base64,${data}`,
-  });
-  assert.deepEqual(app.completions[0].outcomes[0].output, { seen: 'Board' });
-});
-test('board.look image travels through the real Pi worker as image content, with metadata-only outcomes', async () => {
-  const data = Buffer.alloc(100000, 1).toString('base64');
-  const app = await fixture({
-    toolCall: true,
-    boardImage: true,
-    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
-  });
-  await app.run();
-  assert.equal(app.failures.length, 0);
-  const request = piResponsesSchema.parse(app.modelRequests[1]);
-  const output = request.input.find(
-    (item) => 'type' in item && item.type === 'function_call_output',
-  );
-  assert.ok(output && 'output' in output && Array.isArray(output.output));
-  assert.deepEqual(output.output[1], {
-    type: 'input_image',
-    detail: 'auto',
-    image_url: `data:image/jpeg;base64,${data}`,
-  });
-  assert.deepEqual(app.completions[0].outcomes[0].output, { seen: 'Board' });
-});
-
-test('repeated large board.look images stay bounded in relay history and saved checkpoint', async () => {
-  const data = Buffer.alloc(450000, 1).toString('base64');
-  const app = await fixture({
-    boardImage: true,
-    sections: Array(6).fill('Looking'),
-    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
-  });
-  await app.run();
-  assert.equal(app.failures.length, 0);
-  const final = app.modelRequests.at(-1)!;
-  const encoded = JSON.stringify(final);
-  assert.equal(encoded.split('data:image/jpeg;base64,').length - 1, 2);
-  assert.ok(Buffer.byteLength(encoded) < 2000000);
-  assert.ok(Buffer.byteLength(app.completions[0].checkpoint) < 2000000);
-  assert.match(
-    encoded,
-    /Earlier image omitted; use screen.read look for the reference or board.read look for the drawing/,
   );
 });

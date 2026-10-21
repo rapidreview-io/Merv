@@ -1,11 +1,15 @@
-import test, { type TestContext } from 'node:test';
+import type {
+  Caller,
+  SessionWorkspace,
+  WorkflowExecutionReferences,
+  WorkflowWorkspacePolicy,
+} from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Caller, SessionWorkspace, WorkflowExecutionReferences } from '@merv/contracts';
-import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import test, { type TestContext } from 'node:test';
 import { createApp } from './fixtures/app.js';
 
 const oid = (digit: string) => digit.repeat(40);

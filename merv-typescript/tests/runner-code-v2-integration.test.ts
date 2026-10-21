@@ -1,4 +1,7 @@
-import test, { type TestContext } from 'node:test';
+import { CodeWorkspaceDriver } from '@merv/code/driver/index';
+import { CodeRepositories } from '@merv/code/store/repository';
+import type { Caller, Data } from '@merv/contracts';
+import { MachineRunner } from '@merv/runner';
 import assert from 'node:assert/strict';
 import {
   existsSync,
@@ -9,17 +12,14 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, Data } from '@merv/contracts';
-import { MachineRunner } from '@merv/runner';
-import { CodeWorkspaceDriver } from '@merv/code/driver/index';
-import { CodeRepositories } from '@merv/code/store/repository';
+import { fileURLToPath } from 'node:url';
 import { createApp } from './fixtures/app.js';
-import { waitForManagedCode } from './fixtures/managed-code.js';
 import { git } from './fixtures/code-store.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;

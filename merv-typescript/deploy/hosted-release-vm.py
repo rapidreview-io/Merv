@@ -853,7 +853,7 @@ class Step:
             subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             (HOME / 'active').unlink()
         for tidy in (['docker', 'image', 'rm', 'merv-hosted-sandbox:' + self.run.name],
-                     ['docker', 'builder', 'prune', '-f', '--filter', 'until=168h']):  # best effort
+                     ['docker', 'builder', 'prune', '-af', '--keep-storage', '10GB']):  # best effort
             with contextlib.suppress(subprocess.SubprocessError):
                 subprocess.run(tidy, capture_output=True, timeout=600)
         return {'finished': True, 'result': arg.get('result')}

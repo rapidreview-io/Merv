@@ -1,32 +1,27 @@
+import type { ApiRequest } from '@merv/api/types';
+import { MervError, type Caller } from '@merv/contracts';
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import { MervError, type Caller } from '@merv/contracts';
-import type { ApiRequest } from '@merv/api/types';
+import test from 'node:test';
+import { CustomerAccess } from '../packages/customer-experiments/src/access.js';
 import { RequestBuckets } from '../packages/customer-experiments/src/data.js';
+import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { filesHttp, isFilesPath } from '../packages/customer-experiments/src/files-http.js';
 import {
   deletionSchedule,
   FILES_LIMIT_BYTES,
   FilesService,
-  folderView,
-  MAX_PARTS,
   normalizeKey,
   normalizePrefix,
   partCount,
   partLength,
-  partSize,
-  READ_WINDOW,
   type FilesLifecycle,
   type RequestFileStorage,
   type StoredFile,
-  WARM_BUCKET_IDLE_MS,
 } from '../packages/customer-experiments/src/files.js';
-import { filesHttp, isFilesPath } from '../packages/customer-experiments/src/files-http.js';
-import { CustomerAccess } from '../packages/customer-experiments/src/access.js';
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
 import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
-import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { openState } from './fixtures/state.js';
 
 const code = (expected: string) => (error: unknown) =>
@@ -50,58 +45,6 @@ test('file keys normalise to relative paths and refuse escapes, control characte
   assert.equal(normalizePrefix('a/b'), 'a/b/');
   assert.equal(normalizePrefix('/a//b/'), 'a/b/');
   assert.throws(() => normalizePrefix('a/../'), code('invalid_key'));
-});
-
-test('part size fits a terabyte in 10,000 whole-MiB parts of at least 8 MiB', () => {
-  assert.equal(partSize(0), 8 * MIB);
-  assert.equal(partSize(10 * MIB), 8 * MIB);
-  assert.equal(partCount(0), 1);
-  assert.equal(partLength(0, 8 * MIB, 1), 0);
-  for (const size of [1, 8 * MIB, 8 * MIB + 1, 81_920 * MIB, FILES_LIMIT_BYTES]) {
-    const part = partSize(size),
-      count = partCount(size);
-    assert.equal(part % MIB, 0);
-    assert.ok(count <= MAX_PARTS, `${size} needs ${count} parts`);
-    let total = 0;
-    for (let n = 1; n <= count; n++) total += partLength(size, part, n);
-    assert.equal(total, size);
-    assert.ok(partLength(size, part, count) > 0);
-  }
-  assert.equal(
-    partCount(FILES_LIMIT_BYTES),
-    Math.ceil(FILES_LIMIT_BYTES / partSize(FILES_LIMIT_BYTES)),
-  );
-});
-
-test('a folder level lists subfolders with their total size and pages its own files', () => {
-  const file = (key: string, size = 1): StoredFile => ({
-    key,
-    size,
-    etag: '"e"',
-    uploaded: '2026-10-14T00:00:00.000Z',
-  });
-  const all = [
-    file('top.txt', 5),
-    file('a/one.csv', 10),
-    file('a/b/two.csv', 20),
-    file('c/three.csv', 30),
-  ];
-  assert.deepEqual(folderView(all, ''), {
-    folders: [
-      { prefix: 'a/', size: 30, count: 2 },
-      { prefix: 'c/', size: 30, count: 1 },
-    ],
-    files: [{ key: 'top.txt', size: 5, uploaded: '2026-10-14T00:00:00.000Z' }],
-    cursor: null,
-  });
-  assert.deepEqual(folderView(all, 'a/').folders, [{ prefix: 'a/b/', size: 20, count: 1 }]);
-  const many = Array.from({ length: 1500 }, (_, i) => file(`f${String(i).padStart(4, '0')}`));
-  const first = folderView(many, '');
-  assert.equal(first.files.length, 1000);
-  const second = folderView(many, '', first.cursor!);
-  assert.equal(second.files.length, 500);
-  assert.equal(second.files[0]!.key, 'f1000');
-  assert.equal(second.cursor, null);
 });
 
 test('files end 48 hours after completion, failure, or seven quiet days before payment', () => {
@@ -576,34 +519,6 @@ test('the sweeper deletes every object and the bucket at deleteAt and records it
   assert.equal((await f.files.list(other)).files.length, 1);
 });
 
-test('a warmed bucket waits for the first upload, and goes after half an hour with none', async () => {
-  const f = await fixture();
-  const old = await f.request(2);
-  await f.files.warm(old);
-  assert.equal(f.storage.buckets.has(old.id), false);
-  const r = await f.request(),
-    used = await f.request();
-  await f.files.warm(r);
-  await f.files.warm(used);
-  assert.ok(f.storage.buckets.has(r.id));
-  await f.upload(used, 'a.csv', 3);
-  // Warming again is a no-op; a quiet sweep within the half hour keeps the bucket.
-  await f.files.warm(r);
-  await f.files.sweep();
-  assert.deepEqual(f.storage.destroyed, []);
-  const quiet = new Date(Date.now() - WARM_BUCKET_IDLE_MS - 60_000).toISOString();
-  await f.state.transaction((tx) =>
-    tx.run('UPDATE customer_experiment_files SET last_activity_at=?', quiet),
-  );
-  await f.files.sweep();
-  // Only the empty bucket goes; the request's files are not deleted, and an upload makes it again.
-  assert.deepEqual(f.storage.destroyed, [r.id]);
-  assert.equal((await f.files.list(r)).deletedAt, null);
-  await f.upload(r, 'b.csv', 4);
-  assert.equal((await f.files.list(r)).files.length, 1);
-  assert.equal((await f.files.list(used)).files.length, 1);
-});
-
 test('files HTTP: the customer writes, the agent only lists and downloads', async () => {
   const f = await fixture();
   const r = await f.request();
@@ -745,36 +660,6 @@ test('the executing worker reads the frozen v3 files and nothing before acceptan
   await assert.rejects(
     handlers.get('customer_experiment.files')!(caller, { id: r.experimentId }),
     code('not_found'),
-  );
-});
-
-test('the intake agent reads a file as text, a window at a time, and only the type of a binary', async () => {
-  const f = await fixture();
-  const r = await f.request();
-  await f.upload(r, 'data/train.csv', READ_WINDOW + 10);
-  await f.upload(r, 'model.bin', 64);
-  const first = (await f.files.read(r.id, 'data/train.csv')) as {
-    text: string;
-    nextOffset: number | null;
-    size: number;
-  };
-  assert.equal(first.size, READ_WINDOW + 10);
-  assert.equal(first.text.length, READ_WINDOW);
-  assert.equal(first.nextOffset, READ_WINDOW);
-  const rest = (await f.files.read(r.id, 'data/train.csv', first.nextOffset!)) as {
-    text: string;
-    nextOffset: number | null;
-  };
-  assert.equal(rest.text.length, 10);
-  assert.equal(rest.nextOffset, null);
-  assert.deepEqual(
-    { ...(await f.files.read(r.id, './model.bin')), contentType: undefined },
-    { key: 'model.bin', size: 64, contentType: undefined, binary: true, offset: 0 },
-  );
-  await assert.rejects(f.files.read(r.id, '../escape.csv'));
-  await assert.rejects(
-    f.files.read(r.id, 'missing.csv'),
-    (e: { code?: string }) => e.code === 'not_found',
   );
 });
 

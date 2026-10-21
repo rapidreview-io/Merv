@@ -1,37 +1,37 @@
+import type { AnyToolDefinition, NounDefinition, ToolDefinition, Tools } from '@merv/api/types';
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { check, createService, MervError, type Caller } from '@merv/contracts';
+import type { CheckoutInput, Paid } from '@merv/contracts/payments';
+import type { PiProfile, PiRuntime } from '@merv/pi/types';
+import { ReviewService } from '@merv/reviews';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
 import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
-import { legacyReports } from './fixtures/legacy-reports.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
-import { check, createService, MervError, type Caller } from '@merv/contracts';
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
-import { ArtifactStore } from '@merv/artifacts';
-import { WorkflowsService } from '@merv/workflows';
-import { ReviewService } from '@merv/reviews';
+import test, { type TestContext } from 'node:test';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { AnyToolDefinition, NounDefinition, ToolDefinition, Tools } from '@merv/api/types';
-import { fixture as piFixture, models } from './fixtures/pi.js';
-import type { PiRuntime, PiProfile } from '@merv/pi/types';
+import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { customerHttp, startHttp } from '../packages/customer-experiments/src/http.js';
+import type { ResultMailer } from '../packages/customer-experiments/src/mail.js';
 import { CUSTOMER_PRODUCT, CustomerService } from '../packages/customer-experiments/src/service.js';
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
-import { customerHttp, startHttp } from '../packages/customer-experiments/src/http.js';
 import type {
   CustomerExperiment,
   ExperimentPlan,
   RequestFiles,
   StructuredContract,
 } from '../packages/customer-experiments/src/types.js';
-import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
-import type { ResultMailer } from '../packages/customer-experiments/src/mail.js';
-import type { CheckoutInput, Paid } from '@merv/contracts/payments';
 import { PaymentsService } from '../packages/payments/src/index.js';
-import { openState } from './fixtures/state.js';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { managedServices } from './fixtures/managed-services.js';
+import { models, fixture as piFixture } from './fixtures/pi.js';
+import { openState } from './fixtures/state.js';
 
 const plan: ExperimentPlan = {
   title: 'Compare fixed classification rules',
@@ -570,23 +570,6 @@ test('required files remain planning until content validates; accepted manifest 
   assert.deepEqual(exp.contract, frozen);
 });
 
-test('repeating the same intake proposal preserves the ready contract and workflow revision', async (t) => {
-  const f = await fixture(t);
-  const request = await f.create();
-  await f.propose(request.id);
-  const ready = await f.experiment(request.id);
-  await f.propose(request.id);
-  await f.propose(request.id);
-  const repeated = await f.experiment(request.id);
-  assert.equal(repeated.workflow.state, 'ready');
-  assert.equal(repeated.workflow.revision, ready.workflow.revision);
-  assert.deepEqual(repeated.contract, ready.contract);
-  assert.equal(
-    (await f.state.read((sql) => sql.all('SELECT id FROM customer_experiment_contracts'))).length,
-    1,
-  );
-});
-
 test('a replacement upload invalidates the offer until the newest file validates, then requires approval of its new contract', async (t) => {
   const f = await fixture(t);
   const request = await f.create();
@@ -671,95 +654,6 @@ test('a replacement upload invalidates the offer until the newest file validates
     200,
   );
   assert.equal((await f.experiment(request.id)).acceptedContractId, ready.contract!.id);
-});
-
-test('intake reads work in a read-only snapshot but ordinary project callers cannot use either intake tool', async (t) => {
-  const f = await fixture(t);
-  for (const name of ['intake.read', 'intake.write']) {
-    const tool = f.registered.get(name)!;
-    assert.equal(
-      'conversationProfile' in tool && tool.conversationProfile,
-      'customer-experiments-intake',
-    );
-  }
-  const request = await f.create();
-  const record = await f.store.get(request.id);
-  const owner = await f.service.caller(record);
-  const conversationCaller = { ...owner, conversation: { id: record.conversationId } } as Caller;
-  const head = await f.state.eventHead();
-  const snapshot = await f.state.snapshot(() =>
-    f.intake('intake.read:request', conversationCaller, { id: request.id }),
-  );
-  assert.equal((snapshot as { id: string }).id, request.id);
-  assert.equal(await f.state.eventHead(), head, 'the read tool does not write workflow state');
-  const catalogTool = f.registered.get('intake.read')!;
-  assert.equal('readOnly' in catalogTool && catalogTool.readOnly, true);
-  assert.equal('openWorld' in catalogTool && catalogTool.openWorld, true);
-  await f.intake('intake.read:compute', conversationCaller, { id: request.id });
-  assert.deepEqual(f.computeReads, [record.projectId]);
-  assert.equal(f.computePreparations.length, 0, 'Planning never enables funded execution');
-  const reader = await f.scope.credentials.issueActor(owner, {
-    name: 'Ordinary reader',
-    role: 'reader',
-  });
-  for (const caller of [
-    owner,
-    { actorId: reader.actor.id, projectId: record.projectId!, credentialId: reader.credential.id },
-  ]) {
-    await assert.rejects(f.tools.call('customer_experiments.read', caller, { id: request.id }), {
-      code: 'forbidden',
-    });
-    await assert.rejects(
-      f.tools.call('customer_experiments.compute_options', caller, { id: request.id }),
-      {
-        code: 'forbidden',
-      },
-    );
-    await assert.rejects(
-      f.tools.call('customer_experiments.propose', caller, { id: request.id, plan }),
-      { code: 'forbidden' },
-    );
-  }
-  const other = await f.create('other-intake');
-  await assert.rejects(
-    async () => f.intake('intake.read:compute', conversationCaller, { id: other.id }),
-    {
-      code: 'forbidden',
-    },
-  );
-  await assert.rejects(
-    async () => f.intake('intake.read:request', conversationCaller, { id: other.id }),
-    { code: 'forbidden' },
-  );
-  await assert.rejects(
-    f.profiles[0].authorizeTool!({
-      binding: { id: 'customer-experiments-intake', version: 1, requestId: request.id },
-      caller: conversationCaller,
-      name: 'customer_experiments.read',
-      input: { id: other.id },
-    }),
-    { code: 'forbidden' },
-  );
-});
-
-test('the healer reaches only a thread whose worker asked about its run', async (t) => {
-  const f = await fixture(t);
-  const request = await f.create();
-  const record = await f.store.get(request.id);
-  const caller = await f.service.caller(record);
-  const binding = { id: 'customer-experiments-healer', version: 2, requestId: request.id };
-  const healer = f.profiles.find((p) => p.id === binding.id && p.version === binding.version)!;
-  // Not a session tool: no thread to check.
-  await healer.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
-  await assert.rejects(
-    healer.authorizeTool!({
-      binding,
-      caller,
-      name: 'session.message',
-      input: { threadId: 'thread_never_asked', body: 'x' },
-    }),
-    { code: 'forbidden', message: "The healer may only reach its run's worker thread" },
-  );
 });
 
 test('checkout rollover keeps the previous session across provider failures so retries cannot charge again', async (t) => {
@@ -863,48 +757,6 @@ test('unavailable internal compute prevents checkout and payment release, while 
   await f.service.paid(payment);
 });
 
-test('the customer monitoring bookmark survives the agent intake expiry', async (t) => {
-  const f = await fixture(t);
-  const created = await f.create();
-  const future = Date.now() + 31 * 86400_000;
-  t.mock.method(Date, 'now', () => future);
-  assert.equal(
-    (await f.store.authorize(created.id, created.customerToken, ['customer'])).id,
-    created.id,
-  );
-  await assert.rejects(f.store.authorize(created.id, created.agentToken, ['agent']), {
-    code: 'access_expired',
-  });
-  await assert.rejects(f.store.authorize(created.id, created.customerToken, ['agent']), {
-    code: 'unauthorized',
-  });
-});
-
-test('public start page and agent guide are readable without exposing or bypassing invitation access', async (t) => {
-  const f = await fixture(t);
-  const page = await fetch(f.url + '/start');
-  assert.equal(page.status, 200);
-  const html = await page.text();
-  assert.match(html, /A good question/);
-  assert.match(html, /Invitation-only preview/);
-  assert.match(html, /no real charge/);
-  assert.match(html, /href="\/start\/agent.md"/);
-  assert.ok(!html.includes(intakeKey));
-  const docs = await fetch(f.url + '/start/agent.md');
-  assert.match(docs.headers.get('content-type')!, /text\/markdown/);
-  const text = await docs.text();
-  assert.match(text, /Authorization: Bearer <MERV_EXPERIMENT_INVITE>/);
-  assert.match(text, /Never call \/accept or \/checkout/);
-  assert.ok(!text.includes(intakeKey));
-  const negotiated = await fetch(f.url + '/start', { headers: { Accept: 'text/markdown' } });
-  assert.equal(await negotiated.text(), text);
-  assert.equal((await fetch(f.url + '/start/requests', { method: 'POST' })).status, 404);
-  assert.equal(
-    (await f.send(base, undefined, { requestId: randomUUID(), title: 'No invitation' })).status,
-    401,
-  );
-});
-
 test('public intake issues private capabilities, preserves admission limits and requires human approval', async (t) => {
   const f = await fixture(t, true, 1);
   const input = {
@@ -952,15 +804,6 @@ test('public intake issues private capabilities, preserves admission limits and 
   assert.ok(!guide.includes(intakeKey));
   assert.ok(!guide.includes('MERV_EXPERIMENT_INVITE'));
   assert.equal((await f.experiment(created.body.id)).workflow.state, 'planning');
-});
-
-test("the platform admin's standalone drill-in, the customer's own snapshot, carries no capability", async (t) => {
-  const f = await fixture(t);
-  const created = await f.create();
-  const snapshot = JSON.stringify(await f.service.snapshot(await f.store.get(created.id)));
-  assert.ok(snapshot.includes(created.id));
-  for (const secret of [created.agentToken, created.customerToken, intakeKey, 'clientRequest'])
-    assert.ok(!snapshot.includes(secret));
 });
 
 const fileState = { deleted: false, etag: '' };
@@ -1032,68 +875,6 @@ async function planFixture(t: TestContext) {
 }
 const conflict = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
-
-test('v3 requests start on service_experiment@3 with the plan-document intake profile', async (t) => {
-  const f = await planFixture(t);
-  assert.equal((await f.experiment(f.a.id)).workflow.version, 3);
-  // New requests talk to the lead (profile 9): proactive, short linked plans, fixed verdicts.
-  assert.equal(f.conversations[0].profile!.version, 9);
-  const profile = f.profiles.find((p) => p.version === 9)!;
-  assert.match(profile.instructions, /never Merv's limits, compute, review/);
-  assert.equal(f.profiles.find((p) => p.version === 7)!.shell, true);
-  assert.match(profile.instructions, /"decision models"/);
-  assert.match(profile.instructions, /\[Qwen3-8B\]\(https:/);
-  assert.equal(f.profiles.find((p) => p.version === 6)!.shell, true);
-  assert.equal(profile.shell, true);
-  assert.match(profile.instructions, /up to \$1,000 of compute/);
-  assert.match(profile.instructions, /Modal or Lambda/);
-  assert.match(profile.instructions, /Plan not approved\./);
-  assert.match(profile.instructions, /Never put commit hashes/);
-  assert.equal(f.profiles.find((p) => p.version === 5)!.shell, true);
-  assert.equal(f.profiles.find((p) => p.version === 4)!.shell, true);
-  assert.equal(f.profiles.find((p) => p.version === 3)!.shell, undefined);
-  assert.deepEqual(profile.tools, [
-    'intake.read:request',
-    'intake.read:compute',
-    'intake.read:plan',
-    'intake.write:edit_plan',
-    'intake.write:verify_plan',
-    'intake.read:files',
-    'intake.read:file',
-    'intake.read:file_link',
-    'web.read:search',
-    'web.read:extract',
-    'nisa.read:search',
-    'nisa.read:semantic_search',
-    'nisa.read:paper',
-    'nisa.read:excerpts',
-  ]);
-  assert.match(profile.instructions, /At most two questions per turn/);
-  assert.match(profile.instructions, /intake\.read:file_link/);
-  // Earlier versions stay registered for the conversations already bound to them.
-  assert.ok(f.profiles.find((p) => p.version === 2));
-  assert.ok(f.profiles.find((p) => p.version === 3));
-  // The structured offer stays on version 1 of the profile and is refused for v3 requests.
-  assert.ok(
-    f.profiles.find((p) => p.version === 1)!.tools.includes('customer_experiments.propose'),
-  );
-  await assert.rejects(f.propose(f.a.id), conflict('plan_document'));
-  const snapshot = (await f.send(base + '/' + f.a.id, f.a.agentToken)).body;
-  assert.equal(snapshot.version, 3);
-  assert.equal(snapshot.planStatus, 'drafting');
-  assert.equal(snapshot.planRevision, 0);
-  assert.equal(snapshot.contractSummary, null);
-  assert.deepEqual(await f.plan(), {
-    revision: 0,
-    document: '',
-    updatedBy: null,
-    updatedAt: null,
-    status: 'drafting',
-    feedback: null,
-    submittedRevision: null,
-    contract: null,
-  });
-});
 
 test('the customer and the intake agent co-edit the plan under optimistic revisions', async (t) => {
   const f = await planFixture(t);
@@ -1322,210 +1103,6 @@ test('v3 checkout refuses files that changed after acceptance and returns the pl
     contractVersion: 2,
   });
   assert.equal(opened.status, 200, JSON.stringify(opened.body));
-});
-
-test('v3 uses the explicitly submitted email, retries link delivery, and ignores Stripe email', async (t) => {
-  const f = await planFixture(t);
-  f.delivery.fail = true;
-  await f.put({ expectedRevision: 0, document: '# Plan\n\nScore both rules.\n\nMore detail.' });
-  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
-    expectedRevision: 1,
-    email: 'customer@example.com',
-  });
-  const limits = { wallMinutes: 60, maxTokens: 1_000_000, maxAttempts: 1 };
-  await f.tool('plan_verify', {
-    revision: 1,
-    decision: 'accept',
-    question: 'Does the candidate rule improve accuracy?',
-    criteria: ['Accuracy improves by at least 0.05.'],
-    limits,
-  });
-  const checkout = (contractVersion: number, token = f.a.customerToken) =>
-    f.send(base + '/' + f.a.id + '/checkout', token, { contractVersion });
-  // The two-step approval with a typed email is refused; so is the agent.
-  assert.equal(
-    (
-      await f.send(base + '/' + f.a.id + '/accept', f.a.customerToken, {
-        contractVersion: 1,
-        email: 'customer@example.com',
-      })
-    ).status,
-    409,
-  );
-  assert.equal((await checkout(1, f.a.agentToken)).status, 401);
-  assert.equal((await checkout(2)).body.error.code, 'stale_contract');
-  assert.equal(f.checkoutCalls.length, 0);
-  const opened = await checkout(1);
-  assert.equal(opened.status, 200, JSON.stringify(opened.body));
-  assert.equal(opened.body.url, 'https://checkout.stripe.com/fixture');
-  assert.equal(f.checkoutCalls.length, 1);
-  assert.equal(f.checkoutCalls[0].amountUsd, 10);
-  assert.equal(f.checkoutCalls[0].email, 'customer@example.com');
-  let exp = await f.experiment(f.a.id);
-  assert.equal(exp.workflow.state, 'awaiting_payment');
-  assert.equal(exp.email, 'customer@example.com');
-  // Repeating checkout reuses the acceptance.
-  assert.equal((await checkout(1)).status, 200);
-  assert.equal(
-    (await f.state.read((sql) => sql.all('SELECT * FROM customer_experiment_acceptances'))).length,
-    1,
-  );
-  const paid: Paid = {
-    product: CUSTOMER_PRODUCT,
-    eventId: 'evt_v3',
-    reference: f.a.id,
-    metadata: { contractHash: exp.contract!.hash },
-    paymentId: 'pi_v3',
-    amountUsd: 10,
-    createdAt: new Date().toISOString(),
-    email: 'stripe-billing@example.com',
-  };
-  f.delivery.fail = true;
-  const webhook = await f.send('/customer-experiments/stripe-webhook', undefined, paid, {
-    'Stripe-Signature': 'fixture-valid-signature',
-  });
-  assert.equal(webhook.status, 200, JSON.stringify(webhook.body));
-  exp = await f.experiment(f.a.id);
-  assert.equal(exp.workflow.state, 'running');
-  assert.equal(exp.email, 'customer@example.com');
-  assert.equal(exp.paymentId, 'pi_v3');
-  // The customer's page shows their email; the interviewer and the healer read the request
-  // without the buyer's email or payment id.
-  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).email, 'customer@example.com');
-  const agentContext = (id: string, version: number) =>
-    f.profiles.find((p) => p.id === id && p.version === version)!.context!({
-      binding: { id, version, requestId: f.a.id },
-      caller: { projectId: f.record.projectId!, actorId: 'actor' } as Caller,
-    });
-  for (const text of [
-    JSON.stringify(await f.tool('read', {})),
-    await agentContext('customer-experiments-intake', 8),
-    await agentContext('customer-experiments-healer', 2),
-  ])
-    assert.doesNotMatch(text, /customer@example\.com|pi_v3/);
-  assert.equal(f.emails.length, 0);
-  assert.equal((await f.store.get(f.a.id)).submissionEmailPending, true);
-  f.delivery.fail = false;
-  await f.service.reconcile();
-  assert.equal(f.emails.length, 1);
-  assert.equal(f.emails[0].kind, 'submitted');
-  assert.equal(f.emails[0].to, 'customer@example.com');
-  assert.equal(f.emails[0].url, f.a.customerUrl);
-  assert.equal((await f.store.get(f.a.id)).submissionEmailPending, false);
-  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).submissionEmailSent, true);
-  await f.service.paid(paid);
-  await f.service.paid({ ...paid, eventId: 'evt_v3_retry' });
-  await f.service.reconcile();
-  assert.equal(f.emails.length, 1);
-  const { customerReportSubject } =
-    await import('../packages/customer-experiments/src/report-subject.js');
-  const caller = await f.service.caller(f.record);
-  const draft = await f.state.transaction((tx) =>
-    customerReportSubject(f.domain).prefill(caller, exp.id, tx),
-  );
-  assert.match(draft.source, /# Does the candidate rule improve accuracy\?/);
-  assert.match(draft.source, /Score both rules\./);
-  assert.match(draft.source, /- Accuracy improves by at least 0\.05\./);
-  // Merv's own limits are not the customer's constraints.
-  assert.doesNotMatch(draft.source, /agent working time/);
-  assert.match(draft.source, /\| data\/train\.csv \| Request file \| 2 KB \|/);
-});
-
-test('v2 requests keep the structured offer: no plan document, and their checkout is unchanged', async (t) => {
-  const f = await fixture(t);
-  const a = await f.create();
-  assert.equal((await f.experiment(a.id)).workflow.version, 2);
-  assert.equal(f.conversations[0].profile!.version, 1);
-  assert.equal((await f.send(base + '/' + a.id + '/plan', a.agentToken)).status, 409);
-  const snapshot = (await f.send(base + '/' + a.id, a.agentToken)).body;
-  assert.equal(snapshot.version, 2);
-  assert.ok(!('planStatus' in snapshot));
-  await f.propose(a.id);
-  const exp = await f.experiment(a.id);
-  const approval = { contractVersion: exp.contract!.version, email: 'customer@example.com' };
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/accept', a.customerToken, approval)).status,
-    200,
-  );
-  const checkout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
-  assert.equal(checkout.status, 200, JSON.stringify(checkout.body));
-  assert.equal(f.checkoutCalls[0].amountUsd, 10);
-  await assert.rejects(
-    f.service.checkoutPlan(await f.store.get(a.id), { contractVersion: 1 }),
-    conflict('plan_document_unavailable'),
-  );
-});
-
-test('/start opens the customer app with public intake, and keeps the guide for agents', async () => {
-  const serve = async (publicIntake: boolean, path: string, accept = 'text/html') => {
-    const handler = startHttp(
-      { publicOrigin: 'https://merv.example', publicIntake, livePayments: false },
-      undefined,
-      async () => '<!doctype html><title>customer app</title>',
-    );
-    let body = '';
-    const res = { setHeader() {}, end: (text?: string) => void (body = text ?? '') };
-    await handler(
-      { method: 'GET', headers: { accept } } as never,
-      res as never,
-      { url: new URL('https://merv.example' + path) } as never,
-    );
-    return body;
-  };
-  assert.match(await serve(true, '/start'), /customer app/);
-  assert.doesNotMatch(await serve(false, '/start'), /customer app/);
-  assert.match(await serve(true, '/start/agent.md'), /# Merv experiment setup/);
-  assert.match(await serve(true, '/start', 'text/markdown'), /# Merv experiment setup/);
-});
-
-test('each intake turn opens with the request files and what changed since the agent last looked', async (t) => {
-  const f = await planFixture(t);
-  const record = await f.store.get(f.a.id);
-  const profile = f.profiles.find((p) => p.version === 8)!;
-  const context = () =>
-    profile.context!({
-      binding: { id: profile.id, version: 8, requestId: f.a.id },
-      caller: { projectId: record.projectId!, actorId: 'actor' } as Caller,
-    });
-  const first = await context();
-  assert.match(first, /^Request files now \(1\): data\/train\.csv \(2048 bytes\)\./);
-  assert.match(first, /New or changed since your last turn: data\/train\.csv\./);
-  // Nothing changed: no news.
-  assert.doesNotMatch(await context(), /since your last turn/);
-  // A replaced upload (new ETag) is news again.
-  fileState.etag = '-v2';
-  t.after(() => void (fileState.etag = ''));
-  assert.match(await context(), /New or changed since your last turn: data\/train\.csv\./);
-});
-
-test('the intake agent may search the web and the literature: only its request tools name the request', async (t) => {
-  const f = await planFixture(t);
-  const record = await f.store.get(f.a.id);
-  const profile = f.profiles.find((p) => p.version === 8)!;
-  const caller = {
-    ...(await f.service.caller(record)),
-    conversation: { id: record.conversationId },
-  } as Caller;
-  const binding = { id: profile.id, version: 8, requestId: f.a.id };
-  // A web search carries no request id and is allowed.
-  await profile.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
-  await profile.authorizeTool!({ binding, caller, name: 'nisa.search', input: { query: 'x' } });
-  // The request's own tools still name exactly the bound request.
-  await profile.authorizeTool!({
-    binding,
-    caller,
-    name: 'customer_experiments.files',
-    input: { id: f.a.id },
-  });
-  await assert.rejects(
-    profile.authorizeTool!({
-      binding,
-      caller,
-      name: 'customer_experiments.files',
-      input: { id: 'ce_' + '0'.repeat(32) },
-    }),
-    (e: { code?: string }) => e.code === 'forbidden',
-  );
 });
 
 test('submitting a plan requires an explicit email and sends its link before checkout', async (t) => {

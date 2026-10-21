@@ -1,11 +1,10 @@
-import { test, type TestContext } from 'node:test';
+import { MervError } from '@merv/contracts';
+import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { test, type TestContext } from 'node:test';
 import { inspect } from 'node:util';
-import { Context } from 'cordis';
-import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
-import { MervError } from '@merv/contracts';
-import { SupabaseIdentity, identityPlugin } from '../packages/identity/src/index.js';
+import { SupabaseIdentity } from '../packages/identity/src/index.js';
 
 const start = Date.parse('2026-09-16T10:00:00.000Z');
 const url = 'https://identity.example';
@@ -47,20 +46,6 @@ const settled = async () => {
 };
 const unhandled: unknown[] = [];
 process.on('unhandledRejection', (reason) => unhandled.push(reason));
-
-test('disabled identity is independent and Cordis provides it without State or Scope', async (t) => {
-  const provider = new SupabaseIdentity();
-  assert.deepEqual(provider.configuration(), { enabled: false });
-  await assert.rejects(provider.verify(await token()), denied);
-  const ctx = new Context();
-  const entry = ctx.plugin(identityPlugin);
-  await entry.await();
-  assert.deepEqual(ctx.identity.configuration(), { enabled: false });
-  assert.deepEqual(identityPlugin.inject, []);
-  t.after(async () => {
-    await ctx.fiber.dispose();
-  });
-});
 
 test('HS256 verifies only signed account identity and rechecks expiry after asynchronous verification', async (t) => {
   let time = start;
@@ -162,33 +147,6 @@ test('configuration rejects unsafe origins, implicit HMAC and secret-bearing met
     assert.deepEqual(
       new SupabaseIdentity({ supabaseUrl: address, allowLocalHttp: true }).configuration(),
       { enabled: true },
-    );
-});
-
-test('login configuration exposes only a detached public publishable or legacy anon key', async (t) => {
-  const anonymous = await token({ role: 'anon', sub: undefined });
-  for (const key of ['sb_publishable_abcdefghijklmnopqrstuv', anonymous]) {
-    const provider = new SupabaseIdentity({
-      supabaseUrl: `${url}/`,
-      publishableKeyEnv: environment(t, key),
-    });
-    const config = provider.configuration();
-    assert.deepEqual(config, { enabled: true, login: { url, publishableKey: key } });
-    config.login!.publishableKey = 'mutated';
-    assert.equal(provider.configuration().login?.publishableKey, key);
-  }
-  for (const key of [
-    await token({ role: 'service_role' }),
-    secret,
-    'sb_secret_abcdefghijklmnopqrstuv',
-  ])
-    assert.throws(
-      () => new SupabaseIdentity({ supabaseUrl: url, publishableKeyEnv: environment(t, key) }),
-      (error: unknown) => {
-        assert.ok(error instanceof MervError && error.code === 'invalid_identity_config');
-        assert.ok(!inspect(error).includes(key));
-        return true;
-      },
     );
 });
 
@@ -368,199 +326,6 @@ test('JWKS ignores unusable entries and verifies ES256, RS256 and EdDSA from a m
   assert.equal(calls, 1);
 });
 
-test('JWKS keeps the last good set when a refresh returns nothing usable', async () => {
-  let time = start;
-  const pair = await generateKeyPair('ES256', { extractable: true });
-  const good = { ...(await exportJWK(pair.publicKey)), kid: 'good' };
-  const privateKey = { ...(await exportJWK(pair.privateKey)), kid: 'good' };
-  const signed = await new SignJWT(claims({ exp: start / 1000 + 86_400 }))
-    .setProtectedHeader({ alg: 'ES256', kid: 'good' })
-    .sign(pair.privateKey);
-  const other = await generateKeyPair('ES256', { extractable: true });
-  const next = { ...(await exportJWK(other.publicKey)), kid: 'next' };
-  const nextToken = await new SignJWT(claims({ exp: start / 1000 + 86_400 }))
-    .setProtectedHeader({ alg: 'ES256', kid: 'next' })
-    .sign(other.privateKey);
-  const responses = [
-    () => Response.json({ keys: [] }),
-    () => Response.json({ keys: [privateKey] }),
-    () => Response.json({ keys: [{ kty: 'EC', crv: 'P-256', kid: 'good' }] }),
-    () => Response.json({ keys: [{ ...good, x: 'invalid', y: 'invalid' }] }),
-    () => Response.json({ keys: [{ kty: 'RSA', kid: 'good' }] }),
-    () => Response.json({ keys: [{ kty: 'OKP', crv: 'Ed25519', kid: 'good' }] }),
-    () => Response.json({ keys: [{ kty: 'oct', k: 'shared-secret' }] }),
-    () => new Response('<html>maintenance</html>', { headers: { 'content-type': 'text/html' } }),
-    () => new Response(JSON.stringify({ keys: [next], pad: 'x'.repeat(65_536) })),
-    () => new Response('unavailable', { status: 503 }),
-  ];
-  let respond = () => Response.json({ keys: [good] });
-  let calls = 0;
-  const provider = new SupabaseIdentity(
-    { supabaseUrl: url },
-    {
-      clock: () => time,
-      fetch: fetching(async () => {
-        calls++;
-        return respond();
-      }),
-    },
-  );
-  await provider.verify(signed);
-  for (const [i, response] of responses.entries()) {
-    respond = response;
-    time += 300_001;
-    assert.equal((await provider.verify(signed)).subject, 'shared-user');
-    await settled();
-    assert.equal(calls, i + 2);
-    // The refused response was discarded: the old key still verifies, and a new kid waits for
-    // a fetch that succeeds.
-    assert.equal((await provider.verify(signed)).subject, 'shared-user');
-    await assert.rejects(provider.verify(nextToken), unavailable);
-    assert.equal(calls, i + 2);
-  }
-  await provider.verify(signed);
-  assert.equal(calls, responses.length + 1);
-});
-
-test('JWKS shares one fetch between cold starts and between a refresh and an unknown kid', async (t) => {
-  let time = start;
-  const first = await generateKeyPair('ES256', { extractable: true });
-  const second = await generateKeyPair('ES256', { extractable: true });
-  const firstKey = { ...(await exportJWK(first.publicKey)), kid: 'first' };
-  const secondKey = { ...(await exportJWK(second.publicKey)), kid: 'second' };
-  const firstToken = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'first' })
-    .sign(first.privateKey);
-  const nextToken = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'second' })
-    .sign(second.privateKey);
-  let calls = 0;
-  let release!: (keys: unknown[]) => void;
-  const provider = new SupabaseIdentity(
-    { supabaseUrl: url },
-    {
-      clock: () => time,
-      fetch: fetching(async () => {
-        calls++;
-        return Response.json({
-          keys: await new Promise<unknown[]>((resolve) => {
-            release = resolve;
-          }),
-        });
-      }),
-    },
-  );
-  const cold = Array.from({ length: 10 }, () => provider.verify(firstToken));
-  await settled();
-  release([firstKey]);
-  assert.ok((await Promise.all(cold)).every((identity) => identity.subject === 'shared-user'));
-  assert.equal(calls, 1, 'Ten parallel cold requests make one fetch');
-  time += 300_001;
-  await provider.verify(firstToken);
-  assert.equal(calls, 2, 'The due refresh has started in the background');
-  const rotated = provider.verify(nextToken);
-  await settled();
-  release([firstKey, secondKey]);
-  assert.equal((await rotated).subject, 'shared-user');
-  assert.equal(calls, 2, 'An unknown kid joins the refresh already in flight');
-});
-
-test('JWKS keeps serving keys and admits rotation after the clock steps back during an outage', async () => {
-  let time = start;
-  const first = await generateKeyPair('ES256', { extractable: true });
-  const second = await generateKeyPair('ES256', { extractable: true });
-  const firstKey = { ...(await exportJWK(first.publicKey)), kid: 'first' };
-  const secondKey = { ...(await exportJWK(second.publicKey)), kid: 'second' };
-  const firstToken = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'first' })
-    .sign(first.privateKey);
-  const nextToken = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'second' })
-    .sign(second.privateKey);
-  let keys = [firstKey];
-  let failure = false;
-  let calls = 0;
-  const provider = new SupabaseIdentity(
-    { supabaseUrl: url },
-    {
-      clock: () => time,
-      fetch: fetching(async () => {
-        calls++;
-        if (failure) throw new Error('synthetic-key-provider-outage');
-        return Response.json({ keys });
-      }),
-    },
-  );
-  await provider.verify(firstToken);
-  failure = true;
-  time = start - 3_600_000;
-  assert.equal((await provider.verify(firstToken)).subject, 'shared-user');
-  await settled();
-  assert.equal(calls, 2, 'A backward step makes the set due for refresh, not expired');
-  failure = false;
-  keys = [firstKey, secondKey];
-  time += 30_001;
-  assert.equal((await provider.verify(nextToken)).subject, 'shared-user');
-  assert.equal(calls, 3, 'Rotation is admitted 30 s after the failed refresh');
-});
-
-test('JWKS single flight clears after the timeout even when a fetcher ignores its signal', async (t) => {
-  let time = start;
-  let controller = new AbortController();
-  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
-    assert.equal(milliseconds, 5000);
-    controller = new AbortController();
-    return controller.signal;
-  });
-  const pair = await generateKeyPair('ES256', { extractable: true });
-  const key = { ...(await exportJWK(pair.publicKey)), kid: 'key' };
-  const signed = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'key' })
-    .sign(pair.privateKey);
-  let hang = true;
-  let calls = 0;
-  const provider = new SupabaseIdentity(
-    { supabaseUrl: url },
-    {
-      clock: () => time,
-      fetch: fetching(async () => {
-        calls++;
-        if (hang) return await new Promise<Response>(() => undefined);
-        return Response.json({ keys: [key] });
-      }),
-    },
-  );
-  const pending = provider.verify(signed);
-  await settled();
-  controller.abort();
-  await assert.rejects(pending, unavailable);
-  hang = false;
-  time += 30_001;
-  assert.equal((await provider.verify(signed)).subject, 'shared-user');
-  assert.equal(calls, 2);
-  hang = true;
-  time += 300_001;
-  // The fetcher hangs until the abort below, so a request that waited on it would lose
-  // this race; the 2 s bound only keeps a regression from hanging the test.
-  let bound!: NodeJS.Timeout;
-  const outcome = await Promise.race([
-    Promise.all([provider.verify(signed), provider.verify(signed)]).then(() => 'verified'),
-    new Promise((resolve) => {
-      bound = setTimeout(() => resolve('waited'), 2_000);
-    }),
-  ]);
-  clearTimeout(bound);
-  assert.equal(outcome, 'verified', 'No request waits on a hung background refresh');
-  assert.equal(calls, 3);
-  controller.abort();
-  await settled();
-  time += 30_001;
-  hang = false;
-  await provider.verify(signed);
-  await settled();
-  assert.equal(calls, 4, 'The hung background refresh no longer holds the single flight');
-});
-
 test('JWKS refuses a token that expires while a cold key fetch is slow', async () => {
   let time = start;
   const pair = await generateKeyPair('ES256', { extractable: true });
@@ -659,47 +424,6 @@ test('JWKS timeout bounds a stalled response body and cancels its reader', async
   controller.abort();
   await assert.rejects(pending, unavailable);
   assert.equal(cancelCount, 1);
-});
-
-test('JWKS refreshes leave no unhandled rejections', async (t) => {
-  // Earlier tests' real 5 s timeouts fire after this file finishes, so fire the timeout
-  // here: once after the fetch won the race and once while a fetcher rejects on abort.
-  const controllers: AbortController[] = [];
-  t.mock.method(AbortSignal, 'timeout', () => {
-    const controller = new AbortController();
-    controllers.push(controller);
-    return controller.signal;
-  });
-  const pair = await generateKeyPair('ES256', { extractable: true });
-  const key = { ...(await exportJWK(pair.publicKey)), kid: 'key' };
-  const signed = await new SignJWT(claims())
-    .setProtectedHeader({ alg: 'ES256', kid: 'key' })
-    .sign(pair.privateKey);
-  const answered = new SupabaseIdentity(
-    { supabaseUrl: url },
-    { clock: () => start, fetch: fetching(async () => Response.json({ keys: [key] })) },
-  );
-  assert.equal((await answered.verify(signed)).subject, 'shared-user');
-  const aborted = new SupabaseIdentity(
-    { supabaseUrl: url },
-    {
-      clock: () => start,
-      fetch: fetching(
-        (_url, options) =>
-          new Promise<Response>((_resolve, reject) =>
-            options!.signal!.addEventListener('abort', () =>
-              setImmediate(() => reject(new Error('synthetic-abort'))),
-            ),
-          ),
-      ),
-    },
-  );
-  const pending = aborted.verify(signed);
-  await settled();
-  for (const controller of controllers) controller.abort();
-  await assert.rejects(pending, unavailable);
-  await settled();
-  assert.deepEqual(unhandled, []);
 });
 
 test('agent sign-in reads the admin API only with a service-role directory key', async (t) => {

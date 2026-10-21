@@ -1,14 +1,14 @@
+import type { Caller } from '@merv/contracts';
+import { renderDeliveredCommit, validateConfirmations } from '@merv/tasks/evidence';
 import type { Task, TaskCreate, TaskDelivery } from '@merv/tasks/types';
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Caller } from '@merv/contracts';
+import { join } from 'node:path';
+import { test } from 'node:test';
 import { createApp } from './fixtures/app.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { taskActors } from './fixtures/task-actors.js';
-import { renderDeliveredCommit, validateConfirmations } from '@merv/tasks/evidence';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 

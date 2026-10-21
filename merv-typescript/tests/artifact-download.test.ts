@@ -1,16 +1,16 @@
+import { MAX_BLOB_BYTES } from '@merv/blobs/common';
+import { MAX_ARTIFACT_BYTES, type Artifact, type Caller } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { MAX_ARTIFACT_BYTES, type Artifact, type Caller } from '@merv/contracts';
-import { MAX_BLOB_BYTES } from '@merv/blobs/common';
+import { pathToFileURL } from 'node:url';
 import { createApp } from './fixtures/app.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { s3Server } from './fixtures/s3-server.js';
 import { stateConfig } from './fixtures/state.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: TestContext, s3 = true) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-download-'));

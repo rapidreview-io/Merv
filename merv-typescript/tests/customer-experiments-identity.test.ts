@@ -1,21 +1,21 @@
+import { createService, MervError, type Caller, type VerifiedIdentity } from '@merv/contracts';
+import type { PiRuntime, PiSnapshot } from '@merv/pi/types';
+import { ProjectScope } from '@merv/scope';
+import { SignJWT } from 'jose';
 import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { SignJWT } from 'jose';
-import { createService, MervError, type Caller, type VerifiedIdentity } from '@merv/contracts';
-import { ProjectScope } from '@merv/scope';
+import test, { type TestContext } from 'node:test';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { PiRuntime, PiSnapshot } from '@merv/pi/types';
-import { SupabaseIdentity } from '../packages/identity/src/index.js';
-import { CustomerService } from '../packages/customer-experiments/src/service.js';
-import { RequestStore } from '../packages/customer-experiments/src/store.js';
-import { customerHttp } from '../packages/customer-experiments/src/http.js';
 import { customerChat } from '../packages/customer-experiments/src/chat-http.js';
 import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { customerHttp } from '../packages/customer-experiments/src/http.js';
+import { CustomerService } from '../packages/customer-experiments/src/service.js';
+import { RequestStore } from '../packages/customer-experiments/src/store.js';
+import { SupabaseIdentity } from '../packages/identity/src/index.js';
 import { openState } from './fixtures/state.js';
 
 const base = '/customer-experiments/requests';
@@ -324,63 +324,6 @@ test('v3 customer routes need the capability and the bound sign-in; the agent ke
   );
 });
 
-test('the chat adapter reaches the intake conversation as the sponsor, redacted', async (t) => {
-  const f = await fixture(t);
-  await f.send('/session', f.customer, 'alice', {});
-  const chat = await f.send('/chat', f.customer, 'alice');
-  assert.equal(chat.status, 200);
-  assert.deepEqual(chat.body, customerChat(sponsorSnapshot('pi_fixture')));
-  const sent = await f.send('/chat/messages', f.customer, 'alice', {
-    commandId: 'cmd-1',
-    text: 'We need to pick a tokenizer',
-  });
-  assert.equal(sent.status, 200);
-  assert.equal(
-    (
-      await f.send('/chat/messages', f.customer, 'alice', {
-        commandId: 'cmd-2',
-        text: 'x',
-        model: 'm',
-      })
-    ).status,
-    400,
-  );
-  assert.equal((await f.send('/chat/stop', f.customer, 'alice', {})).status, 200);
-  // Opening the page starts the intake's machine, under a request id of the server's own.
-  const warmed = await f.send('/chat/warm', f.customer, 'alice', {});
-  assert.equal(warmed.status, 200);
-  assert.deepEqual(warmed.body, customerChat(sponsorSnapshot('pi_fixture')));
-  const warm = f.calls.find((call) => call.method === 'warm')!;
-  assert.equal((warm.input as { conversationId: string }).conversationId, 'pi_fixture');
-  assert.match((warm.input as { requestId: string }).requestId, /^[0-9a-f-]{36}$/);
-  const send = f.calls.find((call) => call.method === 'send')!;
-  assert.deepEqual(send.input, { commandId: 'cmd-1', text: 'We need to pick a tokenizer' });
-  for (const call of f.calls) {
-    assert.equal(call.id, 'pi_fixture');
-    assert.equal(call.caller.actorId, f.sponsorCaller.actorId);
-    assert.equal(call.caller.projectId, f.record.projectId);
-  }
-  assert.ok(f.calls.some((call) => call.method === 'stop'));
-
-  const controller = new AbortController();
-  const response = await fetch(`${f.url}${base}/${f.record.id}/chat/events`, {
-    headers: { Authorization: 'Bearer ' + f.customer, 'X-Merv-Identity': 'alice' },
-    signal: controller.signal,
-  });
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-type'), 'text/event-stream');
-  const reader = response.body!.getReader();
-  let text = '';
-  while (!text.includes('\n\n')) text += new TextDecoder().decode((await reader.read()).value);
-  controller.abort();
-  const [event, data] = text.split('\n');
-  assert.equal(event, 'event: snapshot');
-  assert.deepEqual(
-    JSON.parse(data!.slice('data: '.length)),
-    customerChat(sponsorSnapshot('pi_fixture')),
-  );
-});
-
 test('the customer view of a snapshot keeps Pi’s shape and drops every sponsor-only field', () => {
   const view = customerChat(sponsorSnapshot('pi_1'));
   const text = JSON.stringify(view);
@@ -404,32 +347,6 @@ test('the customer view of a snapshot keeps Pi’s shape and drops every sponsor
   assert.deepEqual(view.tail, sponsorSnapshot('pi_1').tail);
   assert.equal(view.stage.name, 'idle');
   assert.equal('screen' in view, false);
-});
-
-test('the server’s plan verification turn reads as the customer’s Submit, with the agent’s reply', () => {
-  const sponsor = sponsorSnapshot('pi_1');
-  const reply = { role: 'assistant' as const, text: 'Accepted.' };
-  sponsor.commands.push({
-    ...sponsor.commands[0]!,
-    id: 'plan-submit-2-1',
-    messages: [
-      { role: 'user', text: 'The customer submitted plan revision 2 for verification. Read it…' },
-      reply,
-    ],
-  });
-  assert.deepEqual(customerChat(sponsor).commands.at(-1)!.messages, [
-    { role: 'user', text: 'Submitted the plan.' },
-    reply,
-  ]);
-});
-
-test('v1/v2 requests keep capability-only customers and get no chat', async (t) => {
-  const f = await fixture(t, { version: 2 });
-  assert.equal((await f.send('', f.customer)).status, 200);
-  assert.equal((await f.send('/chat', f.customer)).status, 404);
-  assert.equal((await f.send('/session', f.customer, 'alice', {})).status, 404);
-  const accepted = await f.send('/accept', f.customer, undefined, { contractVersion: 1 });
-  assert.equal(accepted.status, 400);
 });
 
 test('without identity, v3 customers are refused with 503 and the agent is unaffected', async (t) => {

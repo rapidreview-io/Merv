@@ -1,20 +1,20 @@
 import { createService, digest } from '@merv/contracts';
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
 
-import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { createApp } from './fixtures/app.js';
 import type { ContextInput, ContextRecipeDefinition } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
+import { createApp } from './fixtures/app.js';
 import { buildContext } from './fixtures/context.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { openState, storedContext } from './fixtures/state.js';
 import { registerTaskType } from './fixtures/task-types.js';
-import { currentTask, currentWork } from './fixtures/current-work.js';
 
 const definition: ContextRecipeDefinition = {
   name: 'test.context',

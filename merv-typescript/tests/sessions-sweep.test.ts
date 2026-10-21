@@ -3,14 +3,14 @@
  * it has something to record. A light pass looks only at sessions whose deadline passed or
  * whose record moved; a full pass, every 30 s, re-checks every live session.
  */
-import test, { type TestContext } from 'node:test';
+import { createService, type Caller, type State, type WorkflowPolicy } from '@merv/contracts';
+import { DurableEvents } from '@merv/domain-events';
+import { ProjectScope } from '@merv/scope';
+import { LeasedSessions } from '@merv/sessions';
+import { WorkflowsService } from '@merv/workflows';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { createService, type Caller, type State, type WorkflowPolicy } from '@merv/contracts';
-import { ProjectScope } from '@merv/scope';
-import { WorkflowsService } from '@merv/workflows';
-import { DurableEvents } from '@merv/domain-events';
-import { LeasedSessions } from '@merv/sessions';
+import test, { type TestContext } from 'node:test';
 import { openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;

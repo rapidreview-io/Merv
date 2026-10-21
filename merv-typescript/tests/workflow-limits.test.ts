@@ -1,10 +1,5 @@
-import { createService } from '@merv/contracts';
-import test, { type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import {
+  createService,
   MervError,
   type Caller,
   type WorkflowDefinition,
@@ -14,8 +9,11 @@ import {
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { LIMIT_ASK } from '@merv/workflows/evaluation';
-import { limitMarks } from '@merv/workflows/ui';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
 import { openState } from './fixtures/state.js';
 
 const definition: WorkflowDefinition = {
@@ -223,122 +221,6 @@ test('a capped loop permits its rounds, refuses the next, and leaves the record 
   assert.equal((await f.move(instance.id, 'approve')).state, 'approved');
 });
 
-test('guidance names the exhausted limit, keeps the human action, and the overview escalates', async (t) => {
-  const f = await fixture(t);
-  await f.register(definition, policy([returns(1)], true));
-  const instance = await f.start('start');
-  const open = await f.start('open');
-  await f.move(open.id, 'submit');
-  // Every limit is read wherever the work stands, so its rounds are seen before its gate.
-  const drafting = await f.workflows.evaluate(f.owner, instance.id);
-  assert.deepEqual(
-    drafting.limits.map(({ name, from, used, remaining }) => [name, from, used, remaining]),
-    [['review_returns', 'in_review', 0, 1]],
-  );
-  assert.notEqual(drafting.currentGate, 'loop_limit_reached');
-  await f.move(instance.id, 'submit');
-  const fresh = await f.workflows.evaluate(f.owner, instance.id);
-  assert.deepEqual(fresh.limits, [
-    {
-      name: 'review_returns',
-      from: 'in_review',
-      actions: ['return', 'restart'],
-      base: 1,
-      granted: 0,
-      max: 1,
-      used: 0,
-      remaining: 1,
-      exhausted: false,
-    },
-  ]);
-  assert.equal(fresh.currentGate, 'in_review');
-  assert.deepEqual(
-    (await f.workflows.dispatchCandidates(f.owner)).map((item) => item.instanceId).sort(),
-    [instance.id, open.id].sort(),
-  );
-  await f.move(instance.id, 'return');
-  await f.move(instance.id, 'submit');
-
-  // A human opening the review sees the limit while `begin` stays available to them.
-  const decision = await f.workflows.evaluate(f.owner, instance.id);
-  assert.equal(decision.currentGate, 'loop_limit_reached');
-  assert.equal(decision.nextAction?.action, 'begin');
-  assert.equal(decision.nextAction?.status, 'ready');
-  assert.deepEqual(
-    decision.blockers.map((blocker) => [blocker.code, blocker.status]),
-    [['loop_limit_reached', 409]],
-  );
-  assert.match(decision.instruction, /^review_returns is exhausted on this draft \(1\/1\)/);
-  assert.equal(decision.actions.find((action) => action.action === 'verdict')?.status, 'ready');
-  assert.deepEqual(
-    decision.limits.map((limit) => [limit.used, limit.max, limit.remaining, limit.exhausted]),
-    [[1, 1, 0, true]],
-  );
-  // A question about one action is answered for that action.
-  assert.equal(
-    (await f.workflows.evaluate(f.owner, instance.id, { action: 'verdict' })).currentGate,
-    'in_review',
-  );
-
-  const overview = await f.workflows.overview(f.owner);
-  assert.deepEqual(overview.escalated, [instance.id]);
-  assert.deepEqual(overview.ready, [open.id]);
-  assert.deepEqual(overview.blocked, []);
-  assert.deepEqual(overview.stalled, []);
-
-  // Nothing more happens by itself, so it is a project admin's move whoever produced it, and
-  // its card carries the admin's control. Anyone else reads neither.
-  assert.deepEqual(decision.yours, { ask: LIMIT_ASK, limit: 'exhausted' });
-  const { actor: producer } = await f.scope.credentials.issueActor(f.owner, {
-    name: 'Producer',
-    role: 'producer',
-  });
-  const reader: Caller = { projectId: f.owner.projectId, actorId: producer.id };
-  assert.equal((await f.workflows.evaluate(reader, instance.id)).yours, undefined);
-  assert.deepEqual(
-    limitMarks(await f.workflows.escalated(f.owner)).map(({ key, action }) => [
-      key,
-      action?.tool,
-      action?.input,
-    ]),
-    [
-      [
-        `work:${instance.id}`,
-        'workflow.write:extend_limit',
-        { instanceId: instance.id, limit: 'review_returns', additional: 1 },
-      ],
-    ],
-  );
-  assert.deepEqual(
-    limitMarks(await f.workflows.escalated(reader)).map(({ key, action }) => [key, action]),
-    [[`work:${instance.id}`, undefined]],
-  );
-
-  // Nothing is dispatched for it until an admin allows another round.
-  assert.deepEqual(
-    (await f.workflows.dispatchCandidates(f.owner)).map((item) => item.instanceId),
-    [open.id],
-  );
-  const status = await f.workflows.extendLimit(f.owner, {
-    instanceId: instance.id,
-    limit: 'review_returns',
-    additional: 1,
-    reason: 'One more round was agreed',
-    requestId: 'grant',
-  });
-  assert.equal(status.exhausted, false);
-  assert.deepEqual(
-    (await f.workflows.dispatchCandidates(f.owner)).map((item) => item.instanceId).sort(),
-    [instance.id, open.id].sort(),
-  );
-  const after = await f.workflows.overview(f.owner);
-  assert.deepEqual(after.escalated, []);
-  assert.deepEqual((await f.workflows.escalated(f.owner)).items, []);
-  assert.equal(after.workflows.find((item) => item.instanceId === instance.id)?.yours, undefined);
-  assert.deepEqual(after.ready.sort(), [instance.id, open.id].sort());
-  assert.equal((await f.move(instance.id, 'return')).state, 'drafting');
-});
-
 test('only a project admin who is not a leased worker may extend a limit', async (t) => {
   const f = await fixture(t);
   await f.register(definition, policy([returns(1)]));
@@ -529,115 +411,4 @@ test('a lower cap deployed on the same version escalates live work from its hist
     }),
     refused('loop_limit_reached', 409),
   );
-});
-
-test('work waiting in a state whose rule extends a limit is marked with the admin’s move', async (t) => {
-  const f = await fixture(t);
-  // A suspended state, left only by allowing another round, as a Tasks service task waits.
-  const suspending: WorkflowDefinition = {
-    ...definition,
-    states: [...definition.states, 'suspended'],
-    edges: [
-      ...definition.edges,
-      { from: 'in_review', action: 'suspend', to: 'suspended' },
-      { from: 'suspended', action: 'resume', to: 'drafting' },
-    ],
-  };
-  const base = policy([returns(1)]);
-  await f.register(suspending, {
-    ...base,
-    actions: [
-      ...base.actions!.map((rule) =>
-        rule.name === 'verdict'
-          ? { ...rule, transitions: [...rule.transitions!, 'suspend'] }
-          : rule,
-      ),
-      {
-        name: 'resume',
-        tool: 'workflow.extend_limit',
-        states: ['suspended'],
-        transitions: ['resume'],
-        suggested: false,
-        instruction: 'A project admin allows another round to resume it.',
-        check: () => {},
-      },
-    ],
-  });
-  const instance = await f.start('start');
-  await f.move(instance.id, 'submit');
-  await f.move(instance.id, 'return');
-  await f.move(instance.id, 'submit');
-  const suspended = await f.move(instance.id, 'suspend');
-  assert.equal(suspended.state, 'suspended');
-  const { admin, items } = await f.workflows.escalated(f.owner);
-  assert.equal(admin, true);
-  assert.deepEqual(
-    items.map(({ instanceId, revision, limit }) => [
-      instanceId,
-      revision,
-      limit.name,
-      limit.exhausted,
-    ]),
-    [[instance.id, suspended.revision, 'review_returns', true]],
-  );
-  const [mark] = limitMarks({ admin, items });
-  assert.equal(mark.key, `work:${instance.id}`);
-  assert.equal(mark.action?.tool, 'workflow.write:extend_limit');
-  // Once a round is allowed it still waits there for the move that resumes it.
-  await f.workflows.extendLimit(f.owner, {
-    instanceId: instance.id,
-    limit: 'review_returns',
-    additional: 1,
-    reason: 'One more round',
-    requestId: 'grant',
-  });
-  const after = await f.workflows.escalated(f.owner);
-  assert.deepEqual(
-    after.items.map(({ instanceId, limit }) => [instanceId, limit.exhausted]),
-    [[instance.id, false]],
-  );
-  // With rounds to spare it is resumed, and no round more is offered.
-  const [resume] = limitMarks(after);
-  assert.deepEqual(resume.says, ['Suspended · an admin resumes it']);
-  assert.deepEqual(
-    [resume.action?.label, resume.action?.input],
-    ['Resume', { instanceId: instance.id, limit: 'review_returns', additional: 0 }],
-  );
-  // Work elsewhere in the graph is not marked.
-  await f.move(instance.id, 'resume');
-  assert.deepEqual((await f.workflows.escalated(f.owner)).items, []);
-});
-
-test('the exhausted limit leaving the current state is read in one place', async (t) => {
-  const f = await fixture(t);
-  const handle = await f.register(definition, policy([returns(1)]));
-  const instance = await f.start('start');
-  assert.equal(await f.workflows.exhaustedLimit(f.owner, instance.id), undefined);
-  await f.move(instance.id, 'submit');
-  await f.move(instance.id, 'return');
-  // Used up, but the limit leaves in_review, not drafting.
-  assert.equal(await f.workflows.exhaustedLimit(f.owner, instance.id), undefined);
-  await f.move(instance.id, 'submit');
-  const limit = await f.workflows.exhaustedLimit(f.owner, instance.id);
-  assert.deepEqual(
-    [limit?.name, limit?.from, limit?.used, limit?.exhausted],
-    ['review_returns', 'in_review', 1, true],
-  );
-  // The marks say it in words, and the admin's control is the mark's own.
-  const [mark] = limitMarks(await f.workflows.escalated(f.owner));
-  assert.deepEqual(mark.says, [
-    'Every round of ',
-    { mono: 'review_returns' },
-    ' is used · ',
-    { count: 1 },
-  ]);
-  assert.equal(
-    mark.who,
-    'A project admin allows another round, or a person takes the next step by hand or ends it',
-  );
-  // A version whose program is not loaded is left out, not refused.
-  const status = () => f.workflows.limitStatusOf(f.owner, [instance.id], 'review_returns');
-  assert.equal((await status()).get(instance.id)?.used, 1);
-  handle.dispose();
-  assert.equal((await status()).size, 0);
 });

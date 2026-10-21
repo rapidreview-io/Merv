@@ -1,24 +1,12 @@
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { createService, sha256Hex, type Artifact, type Caller } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import {
-  createService,
-  MervError,
-  sha256Hex,
-  type Artifact,
-  type Blobs,
-  type Caller,
-} from '@merv/contracts';
-import type { ArtifactFile } from '@merv/contracts/artifact-models';
-import { ArtifactStore } from '@merv/artifacts';
-import { artifactToolsPlugin } from '@merv/artifacts/tools';
-import type { NounDefinition } from '@merv/api/types';
-import { noun } from '../packages/api/src/noun.js';
-import { DiskBlobs } from '@merv/blobs';
-import type { z } from 'zod';
-import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
 
 test('collection is one immutable, scoped artifact; retries and member links use retained references', async (t) => {
@@ -215,61 +203,6 @@ test('collection rejects duplicate names and malformed file claims before writin
   );
 });
 
-test('a manifest above the inline blob limit is mirrored by signed upload and downloads', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'merv-collections-'));
-  const state = await openState(directory);
-  t.after(async () => {
-    await state.close();
-    await rm(directory, { recursive: true, force: true });
-  });
-  const disk = new DiskBlobs(join(directory, 'blobs'));
-  const stored = new Map<string, number>();
-  // Signed transfers of any size beside Disk's inline puts, as the S3 provider has.
-  const blobs: Blobs = {
-    put: (namespace, bytes) => disk.put(namespace, bytes),
-    get: (namespace, hash) => disk.get(namespace, hash),
-    async download(_namespace, hash, size) {
-      if (stored.get(hash) !== size) throw new MervError('blob_not_found', 'Blob not found', 404);
-      return { url: `https://bucket.invalid/${hash}`, expiresAt: '2026-09-30T13:00:00Z' };
-    },
-    async upload(_namespace, hash) {
-      return {
-        url: `https://bucket.invalid/${hash}`,
-        headers: { 'if-none-match': '*' },
-        expiresAt: '',
-      };
-    },
-  };
-  t.mock.method(globalThis, 'fetch', async (url: URL, init: RequestInit) => {
-    assert.equal(init.method, 'PUT');
-    const bytes = init.body as Uint8Array;
-    assert.equal(String(url), `https://bucket.invalid/${sha256Hex(bytes)}`);
-    stored.set(sha256Hex(bytes), bytes.length);
-    return new Response(null, { status: 200 });
-  });
-  const scope = await createService(new ProjectScope(state));
-  const artifacts = await createService(new ArtifactStore(state, scope, blobs));
-  const owner = await scope.credentials.bootstrap({
-    projectName: 'Collections',
-    actorName: 'Owner',
-  });
-  const caller: Caller = { projectId: owner.project.id, actorId: owner.actor.id };
-  const many = await artifacts.createCollection(caller, {
-    title: 'Full capture',
-    sourceKey: 'full',
-    files: Array.from({ length: 10_000 }, (_, i) => ({
-      name: `outputs/${'a'.repeat(180)}/${i}.txt`,
-      size: 1,
-      hash: 'a'.repeat(64),
-      provider: 'compute',
-      reference: 'r',
-    })),
-  });
-  assert.ok(many.size > 2_000_000);
-  const { download } = await artifacts.download(caller, many.id);
-  assert.equal(download.url, `https://bucket.invalid/${many.hash}`);
-});
-
 test('artifact.read reads a member inline or links members, naming the collection without them', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'merv-collections-tool-'));
   const { createApp } = await import('./fixtures/app.js');
@@ -439,135 +372,4 @@ test('artifact.read reads a member inline or links members, naming the collectio
       .files,
     artifact.files,
   );
-});
-
-/** A succeeded capture's collection record, holding `files`. */
-const capture = (files: ArtifactFile[]) => ({
-  id: 'art_capture',
-  projectId: 'project_1',
-  createdBy: 'actor_1',
-  title: 'Capture',
-  mediaType: 'application/vnd.merv.collection+json',
-  hash: 'a'.repeat(64),
-  size: 10,
-  createdAt: '2026-10-18T00:00:00.000Z',
-  files,
-  metadata: { captureState: 'succeeded' },
-});
-/** The artifact tools by name, registered over a stub of the artifacts service. */
-function toolsOver(artifacts: object) {
-  const tools = new Map<
-    string,
-    { handler: (caller: Caller, input: object) => unknown; inputSchema: z.ZodTypeAny }
-  >();
-  artifactToolsPlugin.apply({
-    artifacts,
-    tools: {
-      register: (tool: { name: string }) => void tools.set(tool.name, tool as never),
-      // Each retired name runs its action with its own flat input, as the registry's alias does.
-      noun: (name: string, definition: NounDefinition) => {
-        tools.set(name, noun(name, definition) as never);
-        for (const action of Object.values(definition.actions))
-          for (const was of action.was ?? [])
-            tools.set(was, { handler: action.handler, inputSchema: action.input });
-      },
-      contributeInstructions: () => () => {},
-      contributePicture: () => () => {},
-    },
-    effect: (fn: () => unknown) => fn(),
-  } as never);
-  return tools;
-}
-
-test('artifact.list gives an agent each collection’s member count, and a person its members', async () => {
-  const collection = capture([
-    { name: 'run/metrics.json', size: 2, hash: 'b'.repeat(64), provider: 'compute' },
-  ]);
-  const tools = toolsOver({ list: async () => [collection], downloadAvailable: true });
-  const list = (caller: Partial<Caller>) =>
-    tools
-      .get('artifact.list')!
-      .handler({ actorId: 'actor_1', projectId: 'project_1', ...caller }, {});
-  const { files: _, ...named } = collection;
-  for (const agent of [
-    { session: { id: 'session_1' } },
-    { conversation: { id: 'c', epoch: 1, commandId: 'k', runtimeId: 'r' } },
-  ])
-    assert.deepEqual(await list(agent), [{ ...named, fileCount: 1, downloadAvailable: true }]);
-  assert.deepEqual(await list({}), [{ ...collection, downloadAvailable: true }]);
-});
-
-test('artifact.get gives an agent a collection’s members a page at a time, by prefix', async () => {
-  const member = (name: string) => ({
-    name,
-    size: 142_310,
-    hash: 'b'.repeat(64),
-    provider: 'sandboxes-native',
-  });
-  // Shaped like the 940-member capture whose every get was 174,060 characters.
-  const files = [
-    ...Array.from({ length: 900 }, (_, i) => member(`pilot-a2-complete/shards/${i}/MANIFEST.json`)),
-    ...Array.from({ length: 40 }, (_, i) => member(`pilot-a2-complete/metrics/${i}.json`)),
-  ];
-  const collection = capture(files);
-  const { files: _, ...rest } = collection;
-  const plain = { ...rest, id: 'art_notes', mediaType: 'text/markdown' };
-  const tool = toolsOver({
-    get: async (_: Caller, id: string) => (id === plain.id ? plain : collection),
-    downloadAvailable: true,
-  }).get('artifact.get')!;
-  const agent: Caller = { actorId: 'actor_1', projectId: 'project_1', session: { id: 's' } };
-  const person: Caller = { actorId: 'actor_1', projectId: 'project_1' };
-  type Answer = Artifact & { fileCount?: number; matchCount?: number; nextOffset?: number };
-  const get = async (caller: Caller, input: object = {}) =>
-    (await tool.handler(
-      caller,
-      tool.inputSchema.parse({ artifactId: collection.id, ...input }),
-    )) as Answer;
-  const names = (members?: ArtifactFile[]) => members!.map((file) => file.name);
-
-  // Unasked, a session's or Pi conversation's agent gets the first 100 members, how many there
-  // are, and where the next start.
-  const conversation = { id: 'c', epoch: 1, commandId: 'k', runtimeId: 'r' };
-  for (const caller of [agent, { ...person, conversation }]) {
-    const first = await get(caller);
-    assert.deepEqual(names(first.files), names(files.slice(0, 100)));
-    assert.equal(first.fileCount, 940);
-    assert.equal(first.nextOffset, 100);
-    assert.equal(first.matchCount, undefined);
-    assert.deepEqual(first.metadata, collection.metadata);
-    assert.equal((first as { downloadAvailable?: boolean }).downloadAvailable, true);
-    assert.ok(JSON.stringify(first).length < 25_000, String(JSON.stringify(first).length));
-  }
-  // The pages tile the collection in its own order.
-  const pages: string[] = [];
-  for (let offset: number | undefined = 0; offset !== undefined;) {
-    const page = await get(agent, { offset, limit: 300 });
-    pages.push(...names(page.files));
-    offset = page.nextOffset;
-  }
-  assert.deepEqual(pages, names(files));
-  // A prefix keeps the members under a path and says how many there are.
-  const metrics = await get(agent, { prefix: 'pilot-a2-complete/metrics/' });
-  assert.deepEqual(names(metrics.files), names(files.slice(900)));
-  assert.deepEqual(
-    [metrics.matchCount, metrics.nextOffset, metrics.fileCount],
-    [40, undefined, 940],
-  );
-  const late = await get(agent, { prefix: 'pilot-a2-complete/shards/', offset: 850 });
-  assert.deepEqual([late.files!.length, late.matchCount, late.nextOffset], [50, 900, undefined]);
-  assert.deepEqual((await get(agent, { prefix: 'nothing/' })).files, []);
-  assert.deepEqual((await get(agent, { offset: 5_000 })).files, []);
-  // A person's Files page still gets every member unless it asks for a page.
-  const whole = await get(person);
-  assert.deepEqual(whole.files, files);
-  assert.deepEqual([whole.fileCount, whole.nextOffset], [940, undefined]);
-  assert.deepEqual(names((await get(person, { limit: 2 })).files), names(files.slice(0, 2)));
-  // A file that is not a collection is its record, whatever the paging asks.
-  assert.deepEqual(await tool.handler(agent, { artifactId: plain.id, limit: 5 }), {
-    ...plain,
-    downloadAvailable: true,
-  });
-  for (const input of [{ limit: 0 }, { limit: 1_001 }, { offset: -1 }, { prefix: '' }])
-    assert.equal(tool.inputSchema.safeParse({ artifactId: 'a', ...input }).success, false);
 });

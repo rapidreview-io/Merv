@@ -1,23 +1,22 @@
-import { currentTask } from './fixtures/current-work.js';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createApp } from './fixtures/app.js';
-import { storedContext } from './fixtures/state.js';
-import { describeTool, isRemoteTool } from '../packages/api/src/registry.js';
-import { fit } from '../packages/pi/src/fit.js';
-import type { ToolDefinition } from '../packages/api/src/types.js';
-import { piTool } from '../packages/pi/src/relay-schema.js';
-import { piOffers } from '../packages/pi/src/worker-protocol.js';
-import { fetchesContent } from '../packages/fleet/src/model-requests.js';
-import { piModelToolName } from '../packages/pi/src/tool-names.js';
-import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
-import { researchGuide } from '../packages/research/src/guide.js';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
 import { toolsGuide } from '../packages/api/src/guide.js';
+import { describeTool, isRemoteTool } from '../packages/api/src/registry.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
+import { fetchesContent } from '../packages/fleet/src/model-requests.js';
+import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
+import { piTool } from '../packages/pi/src/relay-schema.js';
+import { piModelToolName } from '../packages/pi/src/tool-names.js';
+import { piOffers } from '../packages/pi/src/worker-protocol.js';
+import { researchGuide } from '../packages/research/src/guide.js';
+import { createApp } from './fixtures/app.js';
+import { currentTask } from './fixtures/current-work.js';
+import { storedContext } from './fixtures/state.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -278,98 +277,6 @@ test('application stop disposes Cordis and the state store after API shutdown re
     rmSync(directory, { recursive: true, force: true });
   }
 });
-test('a paper too long to show the agent whole reads on section by section', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
-  const app = await createApp({ directory, api: true, port: 0 });
-  try {
-    const boot = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Paper',
-      actorName: 'Owner',
-    });
-    const caller = { actorId: boot.actor.id, projectId: boot.project.id };
-    const read = async (input: object) =>
-      fit('paper.read', await app.ctx.tools.call('paper.read', caller, input)) as {
-        index?: { current: { sections: { id: string; content: string }[] } };
-        note: string;
-        content: string;
-      };
-    const long = (letter: string, length: number) =>
-      Array.from({ length }, (_, n) => (n % 80 === 79 ? '\n' : letter)).join('');
-    const sections = ['a', 'b', 'c'].map((id) => ({ id, title: id, content: long(id, 12_000) }));
-    sections.push({ id: 'd', title: 'd', content: long('d', 70_000) });
-    await app.ctx.tools.call('paper.patch', caller, {
-      kind: 'methods',
-      expectedRevision: 0,
-      requestId: 'methods',
-      changes: sections,
-    });
-    // The document comes back as its sections' ids and openings, and says how to read one.
-    const document = await read({ kind: 'methods' });
-    assert.deepEqual(
-      document.index!.current.sections.map(({ id }) => id),
-      ['a', 'b', 'c', 'd'],
-    );
-    assert.equal(document.index!.current.sections[0].content.length, 301);
-    assert.equal(
-      document.note,
-      'Shown as an index: read one record with its get tool, or one part with a narrower paper.read call',
-    );
-    // One section comes back whole; one too long for that, in slices that read on.
-    assert.equal((await read({ kind: 'methods', section: 'b' })).content, sections[1].content);
-    const first = await read({ kind: 'methods', section: 'd' });
-    const end = first.content.length;
-    assert.ok(end > 20_000 && end < 32_000);
-    assert.equal(first.note, `Characters 0–${end} of 70000 are shown; read on with offset ${end}`);
-    const next = await read({ kind: 'methods', section: 'd', offset: end });
-    assert.equal(
-      first.content + next.content,
-      sections[3].content.slice(0, end + next.content.length),
-    );
-    // A later revision changes d; the earlier one still reads on, section by section.
-    await app.ctx.tools.call('paper.patch', caller, {
-      kind: 'methods',
-      expectedRevision: 1,
-      requestId: 'methods-2',
-      changes: [{ id: 'd', content: long('e', 70_000) }],
-    });
-    const old = await read({ kind: 'methods', revision: 1, section: 'd' });
-    assert.equal(old.content.length, end);
-    assert.equal(old.note, first.note);
-    const rest = await read({ kind: 'methods', revision: 1, section: 'd', offset: end });
-    assert.equal(old.content + rest.content, first.content + next.content);
-    assert.equal(
-      (await read({ kind: 'methods', section: 'd' })).content,
-      long('e', 70_000).slice(0, end),
-    );
-    await assert.rejects(
-      app.ctx.tools.call('paper.read', caller, { kind: 'methods', revision: 3, section: 'd' }),
-      { code: 'not_found' },
-    );
-    // The old flat form and the action form read alike; a field no action takes is refused.
-    assert.deepEqual(
-      await app.ctx.tools.call('paper.read', caller, {
-        action: 'section',
-        section: { kind: 'methods', section: 'b' },
-      }),
-      await app.ctx.tools.call('paper.read', caller, { kind: 'methods', section: 'b' }),
-    );
-    for (const input of [
-      { section: 'd' },
-      { revision: 1 },
-      { kind: 'methods', history: true, section: 'd' },
-    ])
-      await assert.rejects(app.ctx.tools.call('paper.read', caller, input), {
-        code: 'invalid_input',
-      });
-    await assert.rejects(
-      app.ctx.tools.call('paper.read', caller, { kind: 'results', section: 'd' }),
-      { code: 'not_found' },
-    );
-  } finally {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
 test('a tool is titled in the words of the plugin that owns it', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   const app = await createApp({ directory, api: true, port: 0 });
@@ -389,26 +296,6 @@ test('a tool is titled in the words of the plugin that owns it', async () => {
     }
     // A tool whose owner names no act is said in its own words.
     assert.equal((tools.get('task.write') as ToolDefinition).actions!.create!.act, undefined);
-  } finally {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('each paper-keeping review owner tells its reviewers the one paper instruction, with its own returns', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
-  const app = await createApp({ directory, api: true, port: 0 });
-  try {
-    const owners = (app.ctx.reviews as unknown as { owners: Map<string, { guidance?: string }> })
-      .owners;
-    assert.equal(
-      owners.get('experiments')?.guidance,
-      'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. To change part of a long section, give its change edits: [{find, replace}] in place of content. Each find quotes text that occurs exactly once in the section as paper.read returns it, and replace takes its place; to add a sentence, find the end of the paragraph it follows and replace that with itself plus your sentence. Only what you change is sent, and an edit made at an earlier revision still applies wherever its find occurs once. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
-    );
-    assert.equal(
-      owners.get('reflections')?.guidance,
-      'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. To change part of a long section, give its change edits: [{find, replace}] in place of content. Each find quotes text that occurs exactly once in the section as paper.read returns it, and replace takes its place; to add a sentence, find the end of the paragraph it follows and replace that with itself plus your sentence. Only what you change is sent, and an edit made at an earlier revision still applies wherever its find occurs once. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
-    );
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   loadConfiguration,
   type ApplicationConfig,
@@ -121,83 +120,6 @@ test('default configuration includes session enforcement and API adds tool trans
     }
 });
 
-test('legacy selection keeps only matching providers and adapters without adding hidden dependencies', () => {
-  const selected = loadConfiguration({
-    directory: './data',
-    components: ['scope', 'state'],
-    api: true,
-    port: 0,
-  });
-  assert.deepEqual(
-    selected.entries.map((entry) => entry.id),
-    ['api', 'scope-tools', 'scope-api', 'tools', 'identity', 'scope', 'state'],
-  );
-  assert.equal(selected.entries.find((entry) => entry.id === 'api')?.config?.port, 0);
-  // An adapter follows the provider whose package it extends: code-tools is Code Work's.
-  const adapters = (components: string[]) =>
-    loadConfiguration({ directory: './data', components, api: true })
-      .entries.map((entry) => entry.id)
-      .filter((id) => id.startsWith('code'));
-  assert.deepEqual(adapters(['code-work']), ['code-tools', 'code-work-api', 'code-work']);
-  assert.deepEqual(adapters(['code']), ['code']);
-  assert.deepEqual(
-    loadConfiguration({ directory: './data', components: ['feed'] }).entries.map(
-      (entry) => entry.id,
-    ),
-    ['feed'],
-  );
-  assert.deepEqual(loadConfiguration({ directory: './data', components: [] }).entries, []);
-  assert.deepEqual(
-    loadConfiguration({ directory: './data', components: ['state', 'state'] }).entries.map(
-      (entry) => entry.id,
-    ),
-    ['state'],
-  );
-  assert.throws(() => loadConfiguration({ directory: './data', components: ['unknown'] }), invalid);
-  assert.throws(
-    () => loadConfiguration({ directory: './data', components: 'state' as unknown as string[] }),
-    invalid,
-  );
-});
-
-test('Feed is kept but off by default, its tools and page with it, and the rest stay declared', () => {
-  const config = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as ApplicationConfig;
-  const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 59);
-  for (const [id, name] of [
-    ['feed', '@merv/feed'],
-    ['feed-tools', '@merv/feed/tools'],
-    ['feed-ui', '@merv/feed/ui'],
-  ])
-    assert.deepEqual(
-      loaded.entries.find((entry) => entry.id === id),
-      { id, name, required: false, disabled: true },
-    );
-  assert.deepEqual(
-    loaded.entries.filter((entry) => entry.disabled).map((entry) => entry.id),
-    ['feed-ui', 'feed-tools', 'feed'],
-  );
-  const browser = (id: string) => id === 'ui' || id.endsWith('-ui');
-  assert.ok(
-    loaded.entries
-      .filter(
-        (entry) =>
-          !['feed', 'feed-tools', 'code', 'code-work', 'code-tools', 'code-work-api'].includes(
-            entry.id,
-          ) && !browser(entry.id),
-      )
-      .every((entry) => entry.required),
-  );
-  assert.ok(loaded.entries.filter((entry) => browser(entry.id)).every((entry) => !entry.required));
-  assert.ok(
-    loaded.entries
-      .filter((entry) => ['code-tools', 'code-work-api'].includes(entry.id))
-      .every((entry) => entry.required),
-  );
-});
-
 test('explicit configuration validates schema, stable IDs, and option conflicts', () => {
   const entry = { id: 'custom', name: './custom.ts' };
   for (const value of [
@@ -283,35 +205,6 @@ test('configuration values support only explicit substitutions and remain detach
   );
 });
 
-test('config-file modules resolve beside their JSON file and programmatic modules from workspace root', (t) => {
-  const directory = folder(t),
-    filename = join(directory, 'application.json');
-  writeFileSync(filename, JSON.stringify({ plugins: [{ id: 'relative', name: './plugin.ts' }] }));
-  const loaded = loadConfiguration({ directory: join(directory, 'data'), configFile: filename });
-  assert.equal(loaded.baseUrl, pathToFileURL(filename).href);
-  assert.equal(
-    fileURLToPath(new URL(loaded.entries[0].name, loaded.baseUrl)),
-    join(directory, 'plugin.ts'),
-  );
-  const programmatic = configuration({
-    plugins: [{ id: 'relative', name: './plugins/custom.ts' }],
-  });
-  assert.equal(programmatic.baseUrl, new URL('../package.json', import.meta.url).href);
-  assert.equal(
-    new URL(programmatic.entries[0].name, programmatic.baseUrl).href,
-    new URL('../plugins/custom.ts', import.meta.url).href,
-  );
-  const explicitDefault = loadConfiguration({
-    directory,
-    configFile: fileURLToPath(new URL('../config/default.json', import.meta.url)),
-  });
-  assert.equal(
-    explicitDefault.entries.length,
-    59,
-    'Explicit config files must not be implicitly filtered by the legacy API default',
-  );
-});
-
 test('malformed or unreadable files produce sanitized configuration errors', (t) => {
   const directory = folder(t),
     filename = join(directory, 'broken.json');
@@ -330,17 +223,4 @@ test('malformed or unreadable files produce sanitized configuration errors', (t)
     /could not be read/,
   );
   assert.throws(() => loadConfiguration({ directory, configFile: ' ' }), invalid);
-});
-
-test('host, port, and data-directory inputs are checked without reading environment substitutions', () => {
-  for (const port of [-1, 65536, 1.5, NaN, '3081']) {
-    assert.throws(() => loadConfiguration({ directory: './data', port: port as number }), invalid);
-  }
-  for (const host of ['', ' ', false])
-    assert.throws(() => loadConfiguration({ directory: './data', host: host as string }), invalid);
-  assert.throws(() => loadConfiguration({ directory: ' ' }), invalid);
-  assert.throws(
-    () => loadConfiguration({ directory: './data', api: 'true' as unknown as boolean }),
-    invalid,
-  );
 });

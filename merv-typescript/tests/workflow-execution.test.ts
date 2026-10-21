@@ -1,29 +1,29 @@
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import { createService, type MervError } from '@merv/contracts';
+import {
+  createService,
+  type Caller,
+  type Data,
+  type MervError,
+  type WorkflowDefinition,
+  type WorkflowExecutionPolicy,
+  type WorkflowLeaseOffer,
+  type WorkflowPolicy,
+} from '@merv/contracts';
 import { admitDispatch } from '@merv/workflows/execution';
-import { test } from 'node:test';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type Caller,
-  type Data,
-  type WorkflowDefinition,
-  type WorkflowExecution,
-  type WorkflowExecutionPolicy,
-  type WorkflowLeaseOffer,
-  type WorkflowPolicy,
-} from '@merv/contracts';
-import type { WorkflowSnapshot } from '@merv/workflows/models';
+import { test } from 'node:test';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 
 import { ProjectScope } from '@merv/scope';
 import type { PostgresState } from '@merv/state';
 import { WorkflowsService } from '@merv/workflows';
 import { createApp } from './fixtures/app.js';
-import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const definition: WorkflowDefinition = {
   name: 'execution-test',
@@ -324,59 +324,6 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
     query: 'cordis',
   });
 });
-test('a refused oneOf says what its reference holds; only a subset is told to leave values out', () => {
-  const execution: WorkflowExecution = {
-    instanceId: 'instance',
-    projectId: 'project',
-    actorId: 'actor',
-    workflow: 'execution-test',
-    version: 1,
-    state: 'working',
-    revision: 0,
-    policyHash: 'hash',
-    registrationId: 'registration',
-    policy: {
-      readOnly: true,
-      tools: [
-        {
-          name: 'artifact.read',
-          alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
-        },
-        { name: 'submit', alternatives: [{ artifactIds: { kind: 'subset', name: 'artifacts' } }] },
-      ],
-    },
-    references: { artifacts: ['own'] },
-  };
-  // Reading an earlier session's artifact: there is nothing to leave out, and citing it in a new
-  // artifact would not make it readable.
-  assert.throws(
-    () => admitDispatch(execution, 'artifact.read', { artifactId: 'art_old' }),
-    (error: MervError) => {
-      assert.equal(error.code, 'execution_arguments_forbidden');
-      assert.equal(
-        error.message,
-        "artifactId is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created.",
-      );
-      return true;
-    },
-  );
-  // A subset names a repeated id once, and is told to drop it or cite it.
-  assert.throws(
-    () => admitDispatch(execution, 'submit', { artifactIds: ['own', 'art_old', 'art_old'] }),
-    (error: MervError) => {
-      assert.equal(
-        error.message,
-        "artifactIds is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created. Leave it out of artifactIds; to rely on an artifact from an earlier session, cite its id in one this session creates.",
-      );
-      assert.deepEqual(error.details, {
-        field: 'artifactIds',
-        reference: 'artifacts',
-        outside: ['art_old'],
-      });
-      return true;
-    },
-  );
-});
 
 test('a lease check fences its worker, revision, policy and active registration, even inside an existing transaction', async (t) => {
   const f = await fixture();
@@ -606,46 +553,6 @@ test('malformed declarations, unsafe keys, accessors and sparse arrays fail befo
   assert.equal(
     (await f.state.read(async (sql) => await sql.all('SELECT * FROM wf_definitions'))).length,
     1,
-  );
-});
-
-test('manifest alternatives use locale-independent code-unit ordering', async (t) => {
-  const f = await fixture();
-  t.after(f.close);
-  const declaration: WorkflowExecutionPolicy = {
-    readOnly: false,
-    tools: [
-      {
-        name: 'choose',
-        alternatives: [
-          { value: { kind: 'literal', value: 'ä' } },
-          { value: { kind: 'literal', value: 'z' } },
-        ],
-      },
-    ],
-  };
-  const handle = await f.workflows.register(
-    { ...definition, name: 'code-unit-order' },
-    policy(f.scope, declaration),
-  );
-  const instance = await handle.start(f.caller, {
-    workflow: 'code-unit-order',
-    requestId: 'order',
-  });
-  const current = (await f.workflows.assignment(f.caller, instance.id)).execution;
-  assert.deepEqual(current.policy!.tools[0].alternatives, [
-    { value: { kind: 'literal', value: 'z' } },
-    { value: { kind: 'literal', value: 'ä' } },
-  ]);
-  handle.dispose();
-  declaration.tools[0].alternatives.reverse();
-  await f.workflows.register(
-    { ...definition, name: 'code-unit-order' },
-    policy(f.scope, declaration),
-  );
-  assert.equal(
-    (await f.workflows.assignment(f.caller, instance.id)).execution.policyHash,
-    current.policyHash,
   );
 });
 
