@@ -10,7 +10,7 @@ import {
 import { spawn, execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer as createHttpsServer } from 'node:https';
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import { OAuth } from '@merv/scope/oauth';
@@ -494,16 +494,36 @@ test(
     assert.equal(blocks.length, 2);
     const prepare = () =>
       JSON.parse(execFileSync('python3', ['-c', blocks[0]!], { encoding: 'utf8', env }));
-    const run = async (prepared: { directory: string; publicKey: string }, batch: string[][]) => {
+    const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], {
+      encoding: 'utf8',
+    }).trim();
+    const run = async (
+      prepared: { directory: string; publicKey: string },
+      batch: string[][],
+      overrides: { expiresAt?: string; rawReply?: string; path?: string } = {},
+    ) => {
       const reply = await f.mint('read', f.admin.projectId, prepared.publicKey);
       const script = blocks[1]!
         .replace('"<temporary-directory>"', JSON.stringify(prepared.directory))
         .replace('https://<connected-merv-host>', origin)
         .replace('<selected-project-id>', f.admin.projectId)
-        .replace('<JSON-tool-reply>', JSON.stringify({ ...reply, encryption: 'RSA-OAEP-SHA256' }))
+        .replace(
+          '<JSON-tool-reply>',
+          overrides.rawReply ??
+            JSON.stringify({
+              ...reply,
+              encryption: 'RSA-OAEP-SHA256',
+              ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
+            }),
+        )
         .replace('"<existing-working-directory>"', JSON.stringify(f.directory))
         .replace('<JSON-Git-argument-arrays>', JSON.stringify(batch));
-      const result = await execute('python3', ['-c', script], { env });
+      const result = await execute(python, ['-c', script], {
+        env: { ...env, ...(overrides.path ? { PATH: overrides.path } : {}) },
+      }).catch((error: { stdout: string; stderr: string }) => {
+        assert.ok(!/mg_[A-Za-z0-9_-]{43}/.test(error.stdout + error.stderr));
+        throw error;
+      });
       assert.ok(!/mg_[A-Za-z0-9_-]{43}/.test(result.stdout + result.stderr));
       assert.ok(
         !existsSync(prepared.directory),
@@ -581,5 +601,39 @@ test(
     t.after(() => rmSync(failed.directory, { recursive: true, force: true }));
     await assert.rejects(run(failed, [['not-a-git-command']]));
     assert.ok(!existsSync(failed.directory), 'failure also cleans up within the same invocation');
+    const noGitPath = mkdtempSync(join(f.directory, 'no-git-'));
+    const openssl = execFileSync('which', ['openssl'], { encoding: 'utf8' }).trim();
+    symlinkSync(openssl, join(noGitPath, 'openssl'));
+    for (const scenario of [
+      {
+        name: 'expired reply',
+        batch: [['status']],
+        overrides: { expiresAt: '2000-01-01T00:00:00Z' },
+        error: /Request a fresh credential/,
+      },
+      { name: 'empty batch', batch: [], overrides: {}, error: /AssertionError/ },
+      {
+        name: 'malformed reply',
+        batch: [['status']],
+        overrides: { rawReply: '{' },
+        error: /JSONDecodeError/,
+      },
+      {
+        name: 'missing Git',
+        batch: [['status']],
+        overrides: { path: noGitPath },
+        error: /FileNotFoundError.*git/,
+      },
+    ]) {
+      const attempt = prepare();
+      t.after(() => rmSync(attempt.directory, { recursive: true, force: true }));
+      await assert.rejects(run(attempt, scenario.batch, scenario.overrides), (error) =>
+        scenario.error.test((error as { stderr: string }).stderr),
+      );
+      assert.ok(
+        !existsSync(attempt.directory),
+        `${scenario.name} removes the exact private directory`,
+      );
+    }
   },
 );

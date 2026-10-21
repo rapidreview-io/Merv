@@ -149,26 +149,16 @@ The receiving-key step and MCP call may be separate: their temporary key file is
 removed by this block, and no cache exists until this block starts.
 
 ```python
-import base64, datetime, json, os, re, shlex, shutil, subprocess
+import base64, datetime, json, os, re, shlex, shutil, stat, subprocess
 from urllib.parse import urlsplit
 # Fill these with the non-secret values from the preceding steps.
 directory = "<temporary-directory>"
-origin = "https://<connected-merv-host>"
-project_id = "<selected-project-id>"
-reply = json.loads(r'''<JSON-tool-reply>''')
-checkout = "<existing-working-directory>"
-batch = json.loads(r'''<JSON-Git-argument-arrays>''')
-assert batch and all(isinstance(args, list) and args and
-                     all(isinstance(arg, str) for arg in args) for args in batch)
-u = urlsplit(origin)
-assert u.scheme == "https" and u.netloc and not u.username and not u.password
-assert u.path in ("", "/") and not u.query and not u.fragment
-assert re.fullmatch(r"[A-Za-z0-9_-]{1,200}", project_id)
-assert reply["url"] == "/git/" + project_id + ".git"
-assert reply["encryption"] == "RSA-OAEP-SHA256"
-expires = datetime.datetime.fromisoformat(reply["expiresAt"].replace("Z", "+00:00"))
-remaining = int((expires - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
-assert remaining > 60, "Request a fresh credential through MCP"
+# Accept only the exact private directory returned by the receiving-key step.
+assert os.path.dirname(directory) == "/tmp"
+assert re.fullmatch(r"merv-git-[A-Za-z0-9_-]+", os.path.basename(directory))
+owned = os.lstat(directory)
+assert stat.S_ISDIR(owned.st_mode) and owned.st_uid == os.getuid()
+assert stat.S_IMODE(owned.st_mode) == 0o700
 key = os.path.join(directory, "key.pem")
 socket = os.path.join(directory, "socket")
 # Strip tracing and config injection from this process's environment.
@@ -178,6 +168,22 @@ env["GIT_TERMINAL_PROMPT"] = "0"
 options = ["-c", "credential.helper=", "-c", "credential.helper=cache --socket=" + shlex.quote(socket),
            "-c", "credential.useHttpPath=true", "-c", "http.followRedirects=false"]
 try:
+    origin = "https://<connected-merv-host>"
+    project_id = "<selected-project-id>"
+    reply = json.loads(r'''<JSON-tool-reply>''')
+    checkout = "<existing-working-directory>"
+    batch = json.loads(r'''<JSON-Git-argument-arrays>''')
+    assert batch and all(isinstance(args, list) and args and
+                         all(isinstance(arg, str) for arg in args) for args in batch)
+    u = urlsplit(origin)
+    assert u.scheme == "https" and u.netloc and not u.username and not u.password
+    assert u.path in ("", "/") and not u.query and not u.fragment
+    assert re.fullmatch(r"[A-Za-z0-9_-]{1,200}", project_id)
+    assert reply["url"] == "/git/" + project_id + ".git"
+    assert reply["encryption"] == "RSA-OAEP-SHA256"
+    expires = datetime.datetime.fromisoformat(reply["expiresAt"].replace("Z", "+00:00"))
+    remaining = int((expires - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    assert remaining > 60, "Request a fresh credential through MCP"
     result = subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", key,
         "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256",
         "-pkeyopt", "rsa_mgf1_md:sha256"],
@@ -200,10 +206,14 @@ try:
     print(json.dumps({"completedCommands": len(batch),
                       "remote": origin.rstrip("/") + reply["url"]}))
 finally:
-    subprocess.run(["git", "credential-cache", "--socket=" + socket, "exit"],
-                   env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # This is only the private temporary directory created in the receiving-key step.
-    shutil.rmtree(directory)
+    try:
+        subprocess.run(["git", "credential-cache", "--socket=" + socket, "exit"],
+                       env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        # Never remove a substituted path or any directory other than the owned one.
+        current = os.lstat(directory)
+        assert (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino)
+        shutil.rmtree(directory)
 
 ```
 

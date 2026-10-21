@@ -393,3 +393,10 @@ shutdown simulates executor cleanup, while the credential itself remains valid. 
 then verifies same-invocation clone/fetch/head reads, cleanup before return, successful
 fresh-batch renewal, and cleanup on a failed Git command. This reproduces the lifetime
 boundary, rather than claiming the local test runner is the production Codex executor.
+
+The cleanup regression also exercises expired replies, empty command batches,
+malformed reply JSON and a PATH with OpenSSL but no Git. Each failure removes the
+receiving-key directory without emitting plaintext credentials. Parsing and reply
+validation run inside the cleanup scope; an inner finally removes the verified
+private directory even when launching cache shutdown fails. Directory ownership,
+mode and identity are checked before removal.
