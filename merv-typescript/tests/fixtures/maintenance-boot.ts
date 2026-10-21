@@ -14,6 +14,35 @@ test('assembled Main boots and restarts fenced with pending events and unchanged
       actorName: 'Operator',
     });
     const state = app.ctx.state;
+    const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
+    const handle = await app.ctx.workflows.register({
+      name: 'maintenance-probe',
+      version: 1,
+      initial: 'work',
+      states: ['work', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'work', action: 'finish', to: 'done' }],
+    });
+    const instance = await handle.start(caller, {
+      workflow: 'maintenance-probe',
+      requestId: 'probe',
+    });
+    await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: false });
+    // A real held target is deliberately not yet reported. Ordinary startup repairs this;
+    // maintenance must preserve even that pending decision without manufacturing a blocker.
+    await state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,first_at,last_at,held_at)
+       VALUES(?,?,?,4,'original_retry','Preserve this decision',?,?,?)`,
+        caller.projectId,
+        instance.id,
+        instance.revision,
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z',
+      ),
+    );
+
     await state.transaction((tx) =>
       state.appendEvent(tx, {
         projectId: credentials.project.id,

@@ -227,7 +227,7 @@ export function retryUnavailable(
 
 /** Startup must also revisit events previously consumed while blocked. */
 export async function wakeAutomatic(ctx: ResearchContext): Promise<void> {
-    if (bootMaintenance.active) return;
+  if (bootMaintenance.active) return;
   if (ctx.closed) return;
   await ctx.state.transaction(async (tx) => {
     // One resume per project: its consumer reconciles every open cycle there.

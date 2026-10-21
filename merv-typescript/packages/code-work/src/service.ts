@@ -251,7 +251,7 @@ export class CodeService implements Code {
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
-    if (bootMaintenance.active) return;
+        if (bootMaintenance.active) return;
         pass ??= this.network(async () => {
           await landing.tick();
           await this.publicationStore.syncDue(() => this.publicationClosed);

@@ -66,7 +66,7 @@ export function sandboxesRunning(ctx: Context): RunningContribution {
   ctx.effect(() => {
     let refreshing = false;
     const timer = setInterval(async () => {
-    if (bootMaintenance.active) return;
+      if (bootMaintenance.active) return;
       if (refreshing) return;
       refreshing = true;
       try {

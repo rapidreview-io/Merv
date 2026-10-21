@@ -32,12 +32,15 @@ export default {
     // An existing cursor resumes verbatim. Without one, `from: now` on the next boot
     // could skip events queued during maintenance, so refuse this first-time cutover.
     if (bootMaintenance.active && config.relayEvents) {
-      const previous = await ctx.get('sbxDb')!.get(
-        "SELECT id FROM domain_event_consumers WHERE id = $1", ['merv-relay'],
-      );
+      const previous = await ctx
+        .get('sbxDb')!
+        .get('SELECT id FROM domain_event_consumers WHERE id = $1', ['merv-relay']);
       if (!previous)
-        throw new MervError('maintenance_relay_uninitialized',
-          'Initialize the Sandboxes relay before entering maintenance', 503);
+        throw new MervError(
+          'maintenance_relay_uninitialized',
+          'Initialize the Sandboxes relay before entering maintenance',
+          503,
+        );
     }
   },
 };
