@@ -410,9 +410,13 @@ test('a script holds its slot until its host calls settle; host calls are bounde
   assert.equal((await runScript('return 1', 1000, [], host)).result, 1);
   let now = 0;
   let most = 0;
+  // Each call stays open until the global cap is reached (or 1 s passes), so a slow machine
+  // that starts the four scripts apart still fills every host slot, and never more.
   const slow = async () => {
     most = Math.max(most, ++now);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    for (let i = 0; i < 100 && now < LIMITS.hostCalls; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     now--;
     return 1;
   };
