@@ -180,6 +180,7 @@ test('inquiry and review gates allow root mount setup while retaining Docker sec
 test('boundary gate profile is unattached, selected only for mount gates, and removed after its container', () => {
   const calls = py(`calls=[]
 vm.Path.read_text=lambda path:''
+vm.gate_seccomp=lambda path:str(path)
 vm.read=lambda path:{'lane':'boundary','candidate':'sha256:candidate'}
 vm.gate_passed=lambda *args:True
 def run(command,payload=None,**kwargs):
@@ -205,6 +206,10 @@ print(json.dumps(calls))`);
   assert.equal(add[1], `abi <abi/4.0>,\nprofile ${profile} flags=(unconfined) {\n  userns,\n}\n`);
   const gates = rest.slice(0, 4).map(([command]) => command);
   assert.equal(gates.length, 4);
+  assert.deepEqual(
+    gates.map((command) => command.includes('seccomp=/run/gate/gate-seccomp.json')),
+    [false, true, false, false],
+  );
   for (const command of gates) {
     assert.equal(command[command.indexOf('--name') + 1], profile);
     assert.equal(command.includes(`apparmor=${profile}`), command.includes('SYS_ADMIN'));
@@ -264,6 +269,47 @@ print(json.dumps({'calls':calls,'reason':reason}))`);
   assert.equal(result.calls.length, 1);
   assert.deepEqual(result.calls[0].slice(0, 3), ['docker', 'ps', '-a']);
   assert.match(result.reason, /gate container already exists/);
+});
+
+test('workflow seccomp preserves the exact pinned default and adds only pivot_root', () => {
+  const result = py(`import tempfile
+def run(command):
+    return json.dumps({'Version':'29.6.0','GitCommit':'70eaf5e'} if command[1]=='version' else ['name=seccomp,profile=builtin']).encode()
+vm.run=run
+with tempfile.TemporaryDirectory() as directory:
+    path=vm.Path(directory)/'seccomp.json'
+    assert vm.gate_seccomp(path)==str(path)
+    print(path.read_text())`);
+  const raw = readFileSync(new URL('vendor/docker-seccomp/default.json', import.meta.url));
+  assert.equal(
+    createHash('sha256').update(raw).digest('hex'),
+    '536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74',
+  );
+  const baseline = JSON.parse(raw);
+  assert.ok(!baseline.syscalls.some((rule) => rule.names.includes('pivot_root')));
+  baseline.syscalls.push({ names: ['pivot_root'], action: 'SCMP_ACT_ALLOW' });
+  assert.deepEqual(result, baseline);
+  assert.ok(WATCH.includes('deploy/vendor/docker-seccomp/'));
+  assert.equal(classify(['deploy/vendor/docker-seccomp/default.json'], []), 'boundary');
+});
+
+test('workflow seccomp refuses Docker upgrades, custom defaults and modified baseline bytes', () => {
+  for (const failure of ['version', 'custom', 'bytes']) {
+    const result = py(
+      `import tempfile
+def run(command):
+    return json.dumps({'Version':'new' if i=='version' else '29.6.0','GitCommit':'70eaf5e'} if command[1]=='version' else ['name=seccomp,profile=custom' if i=='custom' else 'name=seccomp,profile=builtin']).encode()
+vm.run=run
+if i=='bytes': vm.Path.read_bytes=lambda path:b'{}'
+with tempfile.TemporaryDirectory() as directory:
+    path=vm.Path(directory)/'seccomp.json'
+    try: vm.gate_seccomp(path)
+    except RuntimeError as error: print(json.dumps({'reason':str(error),'exists':path.exists()}))`,
+      failure,
+    );
+    assert.equal(result.exists, false);
+    assert.match(result.reason, /seccomp baseline/);
+  }
 });
 
 test('every boundary image must prove it can be a work host before its release switches', () => {

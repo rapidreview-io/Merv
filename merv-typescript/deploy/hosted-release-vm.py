@@ -168,6 +168,22 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def gate_seccomp(path):
+    """The pinned Docker default plus the one syscall Codex's nested sandbox needs."""
+    server = json.loads(run(['docker', 'version', '--format', '{{json .Server}}']))
+    need((server.get('Version'), server.get('GitCommit')) == ('29.6.0', '70eaf5e'),
+         'review the hosted gate seccomp baseline for this Docker version')
+    need('name=seccomp,profile=builtin' in json.loads(run(['docker', 'info', '--format', '{{json .SecurityOptions}}'])),
+         'hosted gates require the reviewed Docker builtin seccomp baseline')
+    raw = (Path(__file__).parent / 'vendor/docker-seccomp/default.json').read_bytes()
+    need(sha(raw) == '536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74',
+         'hosted gate seccomp baseline changed')
+    policy = json.loads(raw)
+    policy['syscalls'].append({'names': ['pivot_root'], 'action': 'SCMP_ACT_ALLOW'})
+    path.write_text(json.dumps(policy))
+    return str(path)
+
+
 def run(command, payload=None, timeout=120, env=None, cwd=None, log=None):
     result = subprocess.run([str(c) for c in command], input=payload, capture_output=True, timeout=timeout,
                             env=env, cwd=cwd)
@@ -941,6 +957,8 @@ class Step:
                 environment = ['--name', profile] if profile else []
                 if profile and 'SYS_ADMIN' in flags:
                     environment += ['--security-opt', 'apparmor=' + profile]
+                if name == 'linux-workflow-gate.py':
+                    environment += ['--security-opt', 'seccomp=' + gate_seccomp(self.run / 'gate-seccomp.json')]
                 gate = self.run / 'source/scripts/hosted-runner' / name
                 mounts = [part for target in targets for part in ('-v', f'{gate}:{target}:ro')]
                 out = run(['docker', 'run', '--rm', '--network', 'none', *environment, *flags, *mounts,

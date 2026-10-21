@@ -72,6 +72,11 @@ profile, which permits user namespaces and retains Docker seccomp. The gate runn
 logs its unique container/profile name and removes the container before the profile,
 including on gate failure. If cleanup fails or the host stops, remove that exact
 container before removing its profile; never replace existing policy or change sysctls.
+The workflow gate alone uses the pinned Docker29.6.0 default seccomp profile plus
+`pivot_root`, which Codex needs to establish its nested sandbox. The unmodified
+baseline and license are in `deploy/vendor/docker-seccomp/`; the runner refuses an
+unexpected Docker version, custom default policy, or baseline hash. Review/Pi gates
+retain the daemon's default seccomp, and production runtime policy is unchanged.
 
 `SYS_PTRACE` is for the root test inspector only; the Pi worker and assignment
 probe must have zero effective, permitted, inheritable, bounding and ambient

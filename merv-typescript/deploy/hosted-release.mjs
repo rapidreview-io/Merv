@@ -88,11 +88,13 @@ export const WATCH = [
   'packages/pi/worker-runtime/',
   'package-lock.json',
   'deploy/hosted-release-vm.py',
+  'deploy/vendor/docker-seccomp/',
   'deploy/hosted-sandboxes-probe.mjs',
   'deploy/source-archive.mjs',
   'tsconfig.json',
 ];
 export const BOUNDARY = [
+  'deploy/vendor/docker-seccomp/',
   'scripts/hosted-runner/Dockerfile',
   'scripts/hosted-runner/start-runtime.py',
   'scripts/hosted-runner/assignment-probed.py',
@@ -126,6 +128,7 @@ export const STAGING_APPS = {
 const PIPELINE = [
   'deploy/hosted-release.mjs',
   'deploy/hosted-release-vm.py',
+  'deploy/vendor/docker-seccomp/',
   'deploy/hosted-sandboxes-probe.mjs',
   'deploy/source-archive.mjs',
   ...Object.values(APPS),
