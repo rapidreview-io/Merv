@@ -581,18 +581,8 @@
       "purpose": "Connects Code Work to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
-          "name": "code.commit",
-          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. It commits what the checkout holds and stages, ignored paths aside; a new or changed file over 50 MiB fails the operation, so keep such data out of Git. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused. The runner also commits this checkout by itself every five minutes (\"Checkpoint: …\"), which moves HEAD: an expectedHead that only those checkpoints have moved past is taken as the newest of them, so the commit lands on top of them. An operation that failed with workspace_head_conflict means HEAD moved after you read it: read it again and commit under a new requestId.",
-          "readOnly": false
-        },
-        {
-          "name": "code.merge",
-          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.",
-          "readOnly": false
-        },
-        {
           "name": "code.publication.read",
-          "description": "Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.",
+          "description": "Read retained local integration and historical publication evidence. No external service is contacted.",
           "readOnly": true
         }
       ]
@@ -650,18 +640,8 @@
       "purpose": "Connects Git to generic work units: exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded.",
       "exposedTools": [
         {
-          "name": "code.commit",
-          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. It commits what the checkout holds and stages, ignored paths aside; a new or changed file over 50 MiB fails the operation, so keep such data out of Git. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused. The runner also commits this checkout by itself every five minutes (\"Checkpoint: …\"), which moves HEAD: an expectedHead that only those checkpoints have moved past is taken as the newest of them, so the commit lands on top of them. An operation that failed with workspace_head_conflict means HEAD moved after you read it: read it again and commit under a new requestId.",
-          "readOnly": false
-        },
-        {
-          "name": "code.merge",
-          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.",
-          "readOnly": false
-        },
-        {
           "name": "code.publication.read",
-          "description": "Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.",
+          "description": "Read retained local integration and historical publication evidence. No external service is contacted.",
           "readOnly": true
         }
       ]
@@ -1975,7 +1955,8 @@
       "requires": [
         "scope",
         "api",
-        "identity"
+        "identity",
+        "state"
       ],
       "optional": [],
       "kind": "api",
@@ -2289,7 +2270,7 @@
         },
         {
           "name": "task.submit_delivery",
-          "description": "Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses ordinary Git. Submit from the producing session, then stop: Merv freezes its exact working tree for independent review without making a commit. ArtifactIds may be empty; a met claim with no evidenceIds is backed by that submitted code. Passing review durably commits the approved tree before accepted code becomes available to dependents. commandId is reserved for historical task versions. expectedRevision is the task workflow revision.",
           "readOnly": false
         }
       ]
@@ -2353,7 +2334,7 @@
         },
         {
           "name": "task.submit_delivery",
-          "description": "Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.",
+          "description": "Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses ordinary Git. Submit from the producing session, then stop: Merv freezes its exact working tree for independent review without making a commit. ArtifactIds may be empty; a met claim with no evidenceIds is backed by that submitted code. Passing review durably commits the approved tree before accepted code becomes available to dependents. commandId is reserved for historical task versions. expectedRevision is the task workflow revision.",
           "readOnly": false
         }
       ]
@@ -3695,6 +3676,11 @@
       "optional": false
     },
     {
+      "from": "merv-scope-api",
+      "to": "state",
+      "optional": false
+    },
+    {
       "from": "merv-scope-tools",
       "to": "scope",
       "optional": false
@@ -3924,7 +3910,7 @@
     "plugins": 84,
     "providers": 38,
     "adapters": 46,
-    "dependencies": 270
+    "dependencies": 271
   },
   "network": [
     {

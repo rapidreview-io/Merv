@@ -10,7 +10,7 @@
   "apiEntries": 46,
   "serverPlugins": 83,
   "machinePlugins": 1,
-  "directDependencyCount": 270,
+  "directDependencyCount": 271,
   "optionalDependencyCount": 22,
   "directConsumers": {
     "api": 12,
@@ -44,7 +44,7 @@
     "scripts": 1,
     "secrets": 2,
     "sessions": 10,
-    "state": 27,
+    "state": 28,
     "tasks": 4,
     "tools": 31,
     "ui": 17,
@@ -1039,7 +1039,8 @@
       "requires": [
         "scope",
         "api",
-        "identity"
+        "identity",
+        "state"
       ],
       "optional": [],
       "kind": "api",

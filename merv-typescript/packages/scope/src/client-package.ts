@@ -11,8 +11,10 @@ export function packageFiles(origin: string): Record<string, string> {
   return Object.fromEntries(
     Object.entries(clientBundle).map(([path, text]) => [
       path,
-      text.replaceAll(production, origin).replaceAll('"name": "merv"', `"name": "${name}"`)
-          .replaceAll('"merv": {', `"${name}": {`),
+      text
+        .replaceAll(production, origin)
+        .replaceAll('"name": "merv"', `"name": "${name}"`)
+        .replaceAll('"merv": {', `"${name}": {`),
     ]),
   );
 }
