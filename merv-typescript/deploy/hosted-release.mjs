@@ -370,10 +370,17 @@ async function main(args) {
     return 0;
   }
   const replaceRun = values['replace-predeploy-cutover'];
-  if (replaceRun !== undefined &&
-      (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(replaceRun) || !values['prepare-cutover'] ||
-       ['resume', 'abandon', 'check', 'mint-canary', 'accept-cutover', 'staging-cutover'].some(k => values[k])))
-    throw new Error('--replace-predeploy-cutover RUN requires --prepare-cutover and cannot combine with other modes');
+  if (
+    replaceRun !== undefined &&
+    (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(replaceRun) ||
+      !values['prepare-cutover'] ||
+      ['resume', 'abandon', 'check', 'mint-canary', 'accept-cutover', 'staging-cutover'].some(
+        (k) => values[k],
+      ))
+  )
+    throw new Error(
+      '--replace-predeploy-cutover RUN requires --prepare-cutover and cannot combine with other modes',
+    );
   if (values['accept-cutover'] && (!values.resume || values['prepare-cutover'] || values.abandon))
     throw new Error('--accept-cutover requires --resume and cannot prepare or abandon');
   if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
@@ -619,7 +626,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
   }
   const mode = values.abandon ? 'abandon' : 'resume';
   if (replaceRun && live.active !== replaceRun)
-    throw new Error('Replacement requires the exact active predecessor; use --resume if ownership already transferred');
+    throw new Error(
+      'Replacement requires the exact active predecessor; use --resume if ownership already transferred',
+    );
   if (live.active && !replaceRun) {
     const doing = { abandon: 'abandoning it', resume: 'finishing it' }[mode];
     console.log(
