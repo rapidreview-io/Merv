@@ -926,7 +926,9 @@ export class MachineRunner implements Runner {
     const t = record.metadata[kind] as Owed<TranscriptFacts | ConversationFacts> | undefined;
     if (t?.state !== 'owed') return true;
     const retry = `${kind}:${record.id}`;
-    if (this.uploading || this.stopping || (this.transcriptRetry.get(retry) ?? 0) > this.clock())
+    // Planned shutdown stops new visits but must drain these files before releasing the VM.
+    // Ordinary stop aborts delivery and leaves its durable obligation for the next start.
+    if (this.uploading || this.stopPromise || (this.transcriptRetry.get(retry) ?? 0) > this.clock())
       return false;
     // Past the tenth PUT a delivery only confirms: stored, or abandoned.
     const tries = (t.tries ?? 0) + 1,
@@ -934,6 +936,7 @@ export class MachineRunner implements Runner {
     this.save(record.id, { [kind]: { ...t, tries } });
     try {
       const reply = await this.send(kind, record, factsOf(t), true);
+      if (this.stopPromise) return false;
       if (reply.uploadedAt) return this.delivered(kind, record.id);
       if (spent) return this.delivered(kind, record.id, `${kind}_abandoned`);
       // The declaration is write-once: a file changed or removed since cannot be delivered.
@@ -1291,7 +1294,7 @@ export class MachineRunner implements Runner {
   /** Planned VM teardown. Failure leaves the runner stopped but its data and journal open
    * for retry; the caller must not release the machine until this receipt is acknowledged. */
   async prepareShutdown() {
-    if (!this.started || this.stopped)
+    if (!this.started || this.stopped || this.stopPromise)
       throw new Error('Runner must be open to prepare VM shutdown');
     this.stopping = true;
     this.state = 'stopping';
