@@ -1,47 +1,70 @@
-name: Publish client bundle
+name: Publish client plugins
 
 on:
   push:
-    branches:
-      - main
+    tags: ['clients-v*']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: publish-merv-client
-  cancel-in-progress: true
+  group: publish-merv-plugins
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      HAS_PUBLISH_CREDENTIAL: ${{ secrets.MERV_PLUGINS_PUBLISH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Build slim multi-client bundle
-        run: python3 merv/scripts/build_client_bundle.py --out "$RUNNER_TEMP/merv-client"
+      - name: Test exporter contract
+        run: python3 -m unittest discover -s tools -p 'test_export_plugins.py'
 
-      - name: Verify client manifests and bundle
-        working-directory: merv
-        env:
-          PYTHONPATH: src
-        run: python3 -m unittest tests.surface.test_client_manifests tests.surface.test_client_bundle tests.surface.test_kilo_adapter tests.surface.test_opencode_adapter tests.surface.test_hermes_adapter
-
-      - name: Publish generated merv-client branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Export committed plugins (no application build)
+        shell: bash
         run: |
           set -euo pipefail
-          publish_dir="$RUNNER_TEMP/merv-client-publish"
-          mkdir -p "$publish_dir"
-          cp -R "$RUNNER_TEMP/merv-client/." "$publish_dir/"
-          cd "$publish_dir"
-          git init
-          git checkout -b merv-client
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version_args=()
+          if [[ "$GITHUB_REF" == refs/tags/clients-v* ]]; then
+            version_args=(--version "${GITHUB_REF_NAME#clients-v}")
+          fi
+          python3 tools/export_plugins.py --revision "$GITHUB_SHA" \
+            --out "$RUNNER_TEMP/merv-plugins" "${version_args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merv-plugins
+          path: ${{ runner.temp }}/merv-plugins
+          include-hidden-files: true
+
+      - name: Check out dedicated public destination
+        if: env.HAS_PUBLISH_CREDENTIAL == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: rapidreview-io/merv-plugins
+          ref: main
+          path: plugin-destination
+          token: ${{ secrets.MERV_PLUGINS_PUBLISH_TOKEN }}
+
+      - name: Publish only exported plugin files
+        if: env.HAS_PUBLISH_CREDENTIAL == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude=.git/ "$RUNNER_TEMP/merv-plugins/" plugin-destination/
+          cd plugin-destination
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add --all
-          git commit -m "Publish Merv client bundle from ${GITHUB_SHA}"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push --force origin merv-client
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Publish plugins from ${GITHUB_SHA}"
+          git push origin HEAD:main
+
+      - name: Publication setup required
+        if: env.HAS_PUBLISH_CREDENTIAL != 'true'
+        run: echo 'Export verified and uploaded. Publication skipped; configure MERV_PLUGINS_PUBLISH_TOKEN or publish the artifact using local gh authentication.' >> "$GITHUB_STEP_SUMMARY"
