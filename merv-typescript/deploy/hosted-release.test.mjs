@@ -1084,6 +1084,10 @@ res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
      'phaseOnly':canary(stopped=False),'late':canary(release_after=327),'deadline':canary(release_after=601),
      'wrongRelease':canary(recorded='srp_new')}
 apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
+step.plan.update({'stagingCutover':True,'cutover':True,'current':{'image':'accepted@sha256:abc'}})
+vm.Step.staging_accept=lambda *a:None
+vm.native=lambda *a:(_ for _ in ()).throw(Exception('staging cannot read production locally'))
+res['staging']=canary()
 print(json.dumps(res))`,
   );
   const [v2, calls] = out.v2;
@@ -1097,6 +1101,9 @@ print(json.dumps(res))`,
     'unhold',
   ]);
   assert.equal(v2.servedByRelease && v2.released && v2.reply, true);
+  assert.equal(out.staging[0].released && out.staging[0].servedByRelease, true);
+  assert.ok(!out.staging[1].includes('unhold'));
+  assert.deepEqual(out.staging[0].apps, {});
   assert.deepEqual(v2.apps, { 'cloudflare-fleet-large': true });
   // Pi v1 has no machine to release: its pi.stop releases the conversation's.
   assert.equal(out.v1[0].released, true);
@@ -1435,4 +1442,186 @@ print(json.dumps({'preflight':step.preflight({}),'calls':calls}))`);
   assert.deepEqual(result.calls, [['maintenance', true], ['census']]);
   assert.equal(result.preflight.cutoverMainImage, 'sha256:main');
   assert.equal(result.preflight.canaryActor, 'canary-reader');
+});
+
+test('staging checkpoint requires native Main, exact providers, empty ownership and unchanged Main on reopening', () => {
+  const result = py(`${scratch}
+import io
+vm.ENV=t/'env'
+target={p:'rt1_'+str(n)*64 for n,p in enumerate(vm.STAGING_PROVIDERS,1)}
+main={vm.RUNTIMES:json.dumps([{'key':str(i),'provider':p,'releaseId':rid} for i,(p,rid) in enumerate(target.items())]),
+      vm.KEY:target[vm.STAGING_PROVIDERS[0]],'MERV_BOOT_MAINTENANCE':'1','MERV_TS_DB_SCHEMA':'merv_ts_staging'}
+def save():vm.ENV.write_text(''.join(k+'='+v+'\\n' for k,v in main.items()))
+save();image=['sha256:main'];label=['1'];health={'status':'ok','maintenance':True}
+vm.env_of=lambda _:dict(main)
+vm.inspect=lambda _:{'Image':image[0],'Config':{'Labels':{'org.merv.native-git-protocol':label[0]}}}
+vm.urllib.request.urlopen=lambda *a,**k:io.BytesIO(json.dumps(health).encode())
+vm.claim=lambda _:None;vm.owner=lambda:'';vm.main_release_running=lambda:False
+vm.credential=lambda _:{'projectId':'staging','actorId':'reader'}
+queries=[];counts={'worker_sessions':0}
+vm.main_read=lambda q,*a,**k:queries.append([q,k]) or dict(counts)
+step=vm.Step(r,{'cutover':True,'stagingCutover':True,'current':{'image':'accepted@sha256:abc'},
+ 'stagingReleases':target,'canary':{'credential':'/private','projectId':'staging'}})
+res={}
+label[0]='0'
+try:step.staging_preflight({})
+except RuntimeError as e:res['legacy']=str(e)
+label[0]='1';counts['worker_sessions']=1
+try:step.staging_preflight({})
+except RuntimeError as e:res['busy']=str(e)
+counts['worker_sessions']=0
+before=step.staging_preflight({});vm.atomic(r/'preflight.json',json.dumps(before).encode())
+res['prepared']=step.staging_prepare({})
+try:step.staging_accept({})
+except RuntimeError as e:res['fenced']=str(e)
+main['MERV_BOOT_MAINTENANCE']='0';health.pop('maintenance');save()
+res['accepted']=step.staging_accept({})
+image[0]='sha256:other'
+try:step.staging_accept({})
+except RuntimeError as e:res['changed']=str(e)
+image[0]='sha256:main';main[vm.KEY]='wrong';save()
+try:step.staging_accept({})
+except RuntimeError as e:res['pins']=str(e)
+res['queries']=queries
+print(json.dumps(res))`);
+  assert.match(result.legacy, /native-compatible/);
+  assert.match(result.busy, /ownership/);
+  assert.match(result.fenced, /maintenance removed/);
+  assert.deepEqual(result.accepted, { accepted: true });
+  assert.match(result.changed, /Main image changed/);
+  assert.match(result.pins, /Standard pin changed/);
+  assert.ok(result.queries.every(([, flags]) => !flags.write));
+  for (const table of [
+    'worker_sessions',
+    'wf_leases',
+    'code_workspaces',
+    'code_operations',
+    'pi_hosts',
+    'managed_compute_runs',
+    'code_base_cleanup',
+    'session_managed_runners',
+  ])
+    assert.ok(result.queries[0][0].includes(table));
+});
+
+test('staging switch failure preserves new pins and cannot roll back or unhold', () => {
+  const out = py(`${scratch}
+vm.ENV=t/'env';target={p:'rt1_'+str(n)*64 for n,p in enumerate(vm.STAGING_PROVIDERS,1)}
+raw=(vm.KEY+'=old\\n'+vm.RUNTIMES+"='"+json.dumps([{'provider':p,'releaseId':'rt1_'+'0'*64} for p in target])+"'\\n").encode()
+vm.ENV.write_bytes(raw);vm.atomic(r/'preflight.json',json.dumps({'cutoverMainImage':'sha256:main'}).encode())
+vm.inspect=lambda _:{'Image':'sha256:main','Config':{'Labels':{'com.docker.compose.project.working_dir':str(t)}}}
+vm.main_release_running=lambda:False
+vm.Step.cutover_maintenance=lambda *a:None;vm.Step.staging_census=lambda *a:None
+calls=[]
+def fail(command,**k):calls.append(command);raise RuntimeError('recreate failed')
+vm.run=fail
+step=vm.Step(r,{'cutover':True,'stagingCutover':True,'stagingReleases':target})
+try:step.staging_switch({})
+except RuntimeError as e:error=str(e)
+print(json.dumps({'calls':len(calls),'saved':vm.pins(vm.file_env(vm.ENV.read_bytes())),
+ 'backup':(r/'env.before').read_bytes()==raw,'error':error}))`);
+  assert.equal(out.calls, 1);
+  assert.equal(out.backup, true);
+  assert.equal(out.saved[0], 'rt1_' + '1'.repeat(64));
+  assert.equal(out.saved[1]['cloudflare-fleet-staging-large'], 'rt1_' + '2'.repeat(64));
+});
+
+test('staging provider census refuses unknown live machines, pending bootstraps and native instances', () => {
+  const out = py(`${scratch}
+queries=[];values=[0,0]
+vm.main_read=lambda q,*a,**k:queries.append([q,a,k]) or {'n':values.pop(0)}
+vm.native=lambda p:{'health':{'instances':{'active':0}}}
+res={'idle':vm.staging_provider_census()}
+for name,pair in [('machine',[1,0]),('bootstrap',[0,1])]:
+    values[:]=pair
+    try:vm.staging_provider_census()
+    except RuntimeError as e:res[name]=str(e)
+values[:]=[0,0];vm.native=lambda p:{'health':{'instances':{'active':1}}}
+try:vm.staging_provider_census()
+except RuntimeError as e:res['native']=str(e)
+res['queries']=queries
+print(json.dumps(res))`);
+  assert.equal(out.idle.readOnly, true);
+  assert.match(out.machine, /ownership/);
+  assert.match(out.bootstrap, /ownership/);
+  assert.match(out.native, /instances/);
+  assert.ok(
+    out.queries.every(
+      ([, args, flags]) => args[0].every((p) => p.includes('staging')) && !flags.write,
+    ),
+  );
+});
+
+test('staging source requires a completed native acceptance receipt and matching live production pins', () => {
+  const out = py(`${scratch}
+vm.RUNS=t/'runs';proof=vm.RUNS/'accepted';proof.mkdir(parents=True)
+current={'image':'registry.cloudflare.com/acct/worker@sha256:'+'a'*64,'releaseId':'rt1_prod',
+ 'releases':{vm.PROVIDER:'rt1_prod'},'sourceCommit':'source','sandboxesCommit':'sandboxes'}
+vm.atomic(vm.HOME/'state.json',json.dumps({'current':current}).encode())
+vm.atomic(proof/'plan.json',json.dumps({'cutover':True,'sourceCommit':'source','sandboxesCommit':'sandboxes'}).encode())
+vm.atomic(proof/'push.json',json.dumps({'image':current['image']}).encode())
+vm.atomic(proof/'progress.json',json.dumps({'cutoverPrepared':{'image':current['image']}}).encode())
+vm.atomic(proof/'finish.json',json.dumps({'result':'pass'}).encode())
+vm.owner=lambda:'';vm.main_release_running=lambda:False
+vm.inspect=lambda _:{'Config':{'Labels':{'org.merv.native-git-protocol':'1'}}}
+entry={'provider':vm.PROVIDER,'image_digest':'sha256:'+'a'*64,'executable_sha256':'b'*64}
+vm.env_of=lambda _:{vm.CATALOG:json.dumps([entry])}
+vm.release_ids=lambda entries:['rt1_prod' if e['provider']==vm.PROVIDER else 'rt1_'+e['provider'] for e in entries]
+live={'releases':current['releases'],'fileReleases':current['releases'],'mainReleaseId':'rt1_prod','fileReleaseId':'rt1_prod',
+ 'apps':{vm.PROVIDER:{'image':current['image'],'rollout':None}}}
+vm.Step.pins=lambda _:live
+res={'source':vm.staging_source()}
+live['fileReleaseId']='drift'
+try:vm.staging_source()
+except RuntimeError as e:res['drift']=str(e)
+live['fileReleaseId']='rt1_prod';vm.atomic(proof/'finish.json',json.dumps({'result':'failed'}).encode())
+try:vm.staging_source()
+except RuntimeError as e:res['unaccepted']=str(e)
+vm.owner=lambda:'production-run'
+try:vm.staging_source()
+except RuntimeError as e:res['active']=str(e)
+print(json.dumps(res))`);
+  assert.equal(out.source.acceptedRun, 'accepted');
+  assert.deepEqual(
+    out.source.entries.map((e) => e.provider),
+    Object.keys(STAGING_APPS),
+  );
+  assert.match(out.drift, /pins drifted/);
+  assert.match(out.unaccepted, /no completed acceptance/);
+  assert.match(out.active, /release is in progress/);
+});
+
+test('staging catalog gateway reuses forward-only transaction without changing production state or pins', () => {
+  const out = py(`${scratch}
+source={'current':{'image':'registry.cloudflare.com/acct/worker@sha256:'+'a'*64},
+ 'entries':[{'provider':p} for p in vm.STAGING_PROVIDERS], 'releases':{p:'rt1_'+p for p in vm.STAGING_PROVIDERS}}
+vm.os.geteuid=lambda:0;vm.staging_source=lambda:source;vm.staging_provider_census=lambda:None
+vm.env_of=lambda _:{'SANDBOXES_PROVIDERS':json.dumps([{'name':p} for p in vm.STAGING_PROVIDERS])}
+calls=[]
+def add(self,arg,backup):
+    calls.append({'plan':self.plan,'entries':arg['entries'],'backup':str(backup)})
+    raise RuntimeError('catalog recreate failed')
+vm.Step.add_releases=add
+vm.atomic(vm.HOME/'state.json',b'production-state')
+try:vm.staging_gateway({'action':'catalog','source':source,'run':'20261021T000000Z-1234abcd-staging'})
+except RuntimeError as e:error=str(e)
+print(json.dumps({'calls':calls,'state':(vm.HOME/'state.json').read_text(),'active':vm.owner(),'error':error}))`);
+  assert.equal(out.state, 'production-state');
+  assert.equal(out.active, '');
+  assert.equal(out.calls[0].plan.cutover, true);
+  assert.deepEqual(
+    out.calls[0].entries.map((e) => e.provider),
+    Object.keys(STAGING_APPS),
+  );
+  assert.match(out.error, /catalog recreate failed/);
+});
+
+test('stdin production gateway carries the committed Sandboxes probe without a host checkout', () => {
+  const out = py(`vm.__file__='/nonexistent/host.py'
+vm._STAGING_PROBE=b'committed probe'
+seen=[]
+vm.run=lambda command,**kwargs:seen.append(kwargs['payload'].decode()) or b'{}'
+vm.sbx(MERV_PROVIDER='cloudflare-fleet-staging')
+print(json.dumps(seen))`);
+  assert.deepEqual(out, ['committed probe']);
 });

@@ -37,6 +37,7 @@ import urllib.request
 from pathlib import Path
 
 MAIN, CONTROL = 'merv-typescript-control-1', 'sandboxes-control-1'
+RUNS = Path('/opt/merv-typescript/hosted')
 SHARED = Path('/etc/sandboxes/shared.env')
 ENV = Path('/etc/merv/typescript.env')
 HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
@@ -69,7 +70,8 @@ GATES = {  # name: (docker run flags, mount targets, command, expected gate, rep
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
-STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
+STAGING_PROVIDERS = ('cloudflare-fleet-staging', 'cloudflare-fleet-staging-large')
+STEPS = {'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
          'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins', 'prepare_cutover', 'accept_cutover'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
@@ -178,7 +180,7 @@ def main_read(query, *params, write=False, url=None):
 
 def sbx(**env):
     flags = [part for key, value in env.items() for part in ('-e', f'{key}={value}')]
-    source = Path(__file__).with_name('hosted-sandboxes-probe.mjs').read_bytes()
+    source = globals().get('_STAGING_PROBE') or Path(__file__).with_name('hosted-sandboxes-probe.mjs').read_bytes()
     return json.loads(run(['docker', 'exec', '-i', *flags, '-w', '/opt/sandboxes/typescript', CONTROL,
                            'node', '--import', 'tsx', '--input-type=module', '-'], payload=source, timeout=60))
 
@@ -551,6 +553,90 @@ class Step:
     def __init__(self, run, plan):
         self.run, self.plan = run, plan
 
+    def staging_preflight(self, _):
+        need(self.plan.get('stagingCutover') and self.plan.get('cutover'), 'not a staging cutover')
+        claim(self.run.name)
+        try:
+            need(not main_release_running(), 'a Main release job is running')
+            self.cutover_maintenance(True)
+            state = inspect(MAIN)
+            need(state['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
+                 'staging requires native-compatible Main')
+            need(env_of(MAIN).get('MERV_TS_DB_SCHEMA') == 'merv_ts_staging', 'not the staging schema')
+            self.staging_census()
+            live, saved = machines(env_of(MAIN)), machines(file_env(ENV.read_bytes()))
+            need(set(live) == set(saved) == set(STAGING_PROVIDERS) and live == saved,
+                 'staging must name exactly both staging providers consistently')
+            cred = credential(Path(self.plan['canary']['credential']))
+            need(cred['projectId'] == self.plan['canary']['projectId'], 'staging canary project mismatch')
+            return {'releases': live, 'cutoverMainImage': state['Image'], 'canaryActor': cred['actorId']}
+        except BaseException:
+            if owner() == self.run.name:
+                (HOME / 'active').unlink()
+            raise
+
+    def staging_census(self):
+        # Local ownership only. Provider ownership is separately read on production, filtered to
+        # the two staging apps; never drain unrelated production work to prepare staging.
+        conditions = {
+            'worker_sessions': "status IN ('offered','active')",
+            'wf_leases': 'released_at IS NULL',
+            'code_workspaces': "writer_state IN ('reserved','active','closing','recovery_required')",
+            'code_commands': "status IN ('queued','dispatched')",
+            'code_operations': "status='prepared' AND kind IN ('upload','import','export')",
+            'fleet_allocations': "phase <> 'released'",
+            'pi_commands': "status IN ('waiting','starting','working','saving')",
+            'pi_hosts': "status <> 'ended'",
+            'managed_compute_runs': "state NOT IN ('completed','failed','cancelled')",
+            'code_bases': "state='running' OR check_state IN ('queued','running') OR check_job_json IS NOT NULL",
+            'code_base_cleanup': 'true', 'code_publications': 'lock_id IS NOT NULL',
+            'session_managed_runners': "runner_released_at IS NULL AND control_expires_at > to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
+        }
+        counts = main_read('SELECT ' + ', '.join(
+            f'(SELECT count(*)::int FROM {{s}}.{table} WHERE {where}) AS {table}'
+            for table, where in conditions.items()))
+        need(counts and all(n == 0 for n in counts.values()), 'staging ownership is not empty')
+        return {'drained': True, 'readOnly': True}
+
+    def staging_pair(self):
+        before = read(self.run / 'preflight.json')
+        need(before and inspect(MAIN)['Image'] == before['cutoverMainImage'], 'prepared staging Main image changed')
+        target = self.plan['stagingReleases']
+        need(set(target) == set(STAGING_PROVIDERS), 'exactly both staging providers are required')
+        live, saved = env_of(MAIN), file_env(ENV.read_bytes())
+        need(machines(live) == machines(saved) == target, 'prepared staging pins changed')
+        need(live.get(KEY) == saved.get(KEY) == target[STAGING_PROVIDERS[0]], 'staging Standard pin changed')
+        return {'mainImage': before['cutoverMainImage'], 'image': self.plan['current']['image'], 'releases': target}
+
+    def staging_switch(self, _):
+        self.cutover_maintenance(True)
+        self.staging_census()
+        before = read(self.run / 'preflight.json')
+        need(before and inspect(MAIN)['Image'] == before['cutoverMainImage'], 'staging Main image changed')
+        target = self.plan['stagingReleases']
+        need(set(target) == set(STAGING_PROVIDERS), 'exactly both staging providers are required')
+        raw = ENV.read_bytes()
+        need(set(machines(file_env(raw))) == set(STAGING_PROVIDERS), 'staging providers changed')
+        want = with_env(with_machines(raw, target), KEY, target[STAGING_PROVIDERS[0]])
+        result = {'changed': False} if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)) else recreate(
+            raw, want, self.run / 'env.before', restore=False)
+        self.staging_pair()
+        return result
+
+    def staging_prepare(self, _):
+        self.cutover_maintenance(True)
+        self.staging_census()
+        pair = self.staging_pair()
+        self.note({'cutoverPrepared': pair})
+        return pair
+
+    def staging_accept(self, _):
+        checkpoint = (read(self.run / 'progress.json') or {}).get('cutoverPrepared')
+        need(checkpoint, 'staging has no preparation checkpoint')
+        self.cutover_maintenance(False)
+        need(self.staging_pair() == checkpoint, 'prepared staging pair changed')
+        return {'accepted': True}
+
     def preflight(self, _):
         """Claims the host for this run, then reads the live pins; changes nothing else."""
         claim(self.run.name)
@@ -775,6 +861,9 @@ class Step:
         too) and holding work machines, so Fleet stops each once its step settles. A rollback's drain
         ({"work": true}) waits on work machines alone: it must not wait on turns the release it undoes
         is serving."""
+        if self.plan.get('stagingCutover'):
+            self.cutover_maintenance(True)
+            return self.staging_census()
         if self.plan.get('cutover'):
             self.cutover_maintenance(True)
             return self.cutover_census()
@@ -854,7 +943,9 @@ class Step:
     def canary(self, arg):
         """One real Pi turn as the canary reader on Standard; proves the release served it and its
         machine was released, and that every other live app runs the same image, healthy."""
-        if self.plan.get('cutover'):
+        if self.plan.get('stagingCutover'):
+            self.staging_accept({})
+        elif self.plan.get('cutover'):
             self.accept_cutover({})
         cred, target = credential(Path(self.plan['canary']['credential'])), arg['releaseId']
         whoami(cred)
@@ -893,8 +984,10 @@ class Step:
             if released:
                 break
             time.sleep(min(3, max(0, release_deadline - time.monotonic())))
-        image = native()['image']
-        apps = {p: native(p) for p in self.apps() if p != PROVIDER}
+        image = self.plan['current']['image'] if self.plan.get('stagingCutover') else native()['image']
+        # The coordinator verifies staging apps through production's Sandboxes before and after
+        # this local ordinary-HTTP canary. Staging has no Sandboxes control container.
+        apps = {} if self.plan.get('stagingCutover') else {p: native(p) for p in self.apps() if p != PROVIDER}
         result = {'conversation': conversation, 'status': command.get('status'), 'error': command.get('error'),
                   'reply': any(word in m.get('text', '') for m in command.get('messages', [])
                                if m.get('role') == 'assistant'),
@@ -1038,7 +1131,7 @@ def step(name, directory, payload):
     need(directory.is_dir() and not directory.is_symlink(), f'no hosted run at {directory}')
     need(directory.stat().st_uid == 0 and directory.stat().st_mode & 0o077 == 0, 'run directory must be root-private')
     driver, arg = payload.get('driver'), payload.get('arg') or {}
-    if name in ('preflight', 'mint_canary', 'pins'):  # the plan arrives with the first step of a run
+    if name in ('preflight', 'staging_preflight', 'mint_canary', 'pins'):  # the plan arrives with the first step of a run
         atomic(directory / 'plan.json', json.dumps(arg).encode())
         arg = {}
     work = Step(directory, json.loads((directory / 'plan.json').read_bytes()))
@@ -1060,15 +1153,104 @@ def step(name, directory, payload):
             return {'guard': 'busy'}
         if name == 'guard':
             return work.guard(arg)
-        if name not in ('preflight', 'mint_canary', 'finish'):
+        if name not in ('preflight', 'staging_preflight', 'mint_canary', 'finish'):
             need(owner() == directory.name, f'hosted run {directory.name} does not hold {HOME / "active"}')
         with leased(directory, driver) if name != 'mint_canary' else contextlib.nullcontext():
-            if name != 'finish':
+            if name != 'finish' and not work.plan.get('stagingCutover'):
                 arm(directory, arg)
             result = getattr(work, name)(arg)
+            if name == 'staging_preflight':
+                atomic(directory / 'preflight.json', json.dumps(result).encode())
             if name in RECORDED and not arg.get('restore'):
                 atomic(directory / f'{name}.json', json.dumps(result).encode())
     return result
+
+
+def staging_source():
+    need(not owner() and not main_release_running(), 'production release is in progress')
+    state = read(HOME / 'state.json') or {}
+    current = state.get('current') or {}
+    need(current and current.get('verified') is not False and
+         re.fullmatch(r'registry\.cloudflare\.com/[a-z0-9/_-]+@sha256:[0-9a-f]{64}', current.get('image', '')),
+         'production has no verified immutable release')
+    accepted = []
+    for finish in RUNS.glob('*/finish.json'):
+        record, plan = read(finish), read(finish.parent / 'plan.json') or {}
+        progress = read(finish.parent / 'progress.json') or {}
+        if (record.get('result') == 'pass' and (read(finish.parent / 'push.json') or {}).get('image') == current['image']
+                and plan.get('sourceCommit') == current.get('sourceCommit')
+                and plan.get('sandboxesCommit') == current.get('sandboxesCommit')
+                and plan.get('cutover') and not plan.get('stagingCutover') and progress.get('cutoverPrepared')):
+            accepted.append(finish.parent.name)
+    need(accepted, 'production native cutover has no completed acceptance receipt')
+    need(inspect(MAIN)['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
+         'production Main is not native compatible')
+    live = Step(Path('/unused'), {}).pins()
+    need(live['releases'] == live['fileReleases'] == current['releases'] and
+         live['mainReleaseId'] == live['fileReleaseId'] == current['releaseId'], 'production pins drifted')
+    need(all(n['image'] == current['image'] and not n.get('rollout') for n in live['apps'].values()),
+         'production accepted image drifted')
+    catalog = json.loads(env_of(CONTROL)[CATALOG])
+    source = [e for e, rid in zip(catalog, release_ids(catalog)) if rid == current['releaseId']]
+    need(len(source) == 1 and source[0]['image_digest'] == current['image'].split('@')[1], 'accepted catalog entry missing')
+    entries = [{**source[0], 'provider': p} for p in STAGING_PROVIDERS]
+    return {'current': current, 'acceptedRun': sorted(accepted)[-1], 'entries': entries,
+            'releases': dict(zip(STAGING_PROVIDERS, release_ids(entries)))}
+
+
+def staging_provider_census():
+    # Every staging provider object counts, including owners unknown to Main and pending bootstrap.
+    row = main_read("SELECT count(*)::int AS n FROM public.sandboxes WHERE provider = ANY($1::text[]) "
+                    "AND state NOT IN ('stopped','deleted','failed')", list(STAGING_PROVIDERS), url='SANDBOXES_DATABASE_URL')
+    launches = main_read("SELECT count(*)::int AS n FROM public.runtime_bootstraps b JOIN public.sandboxes s "
+                        "ON s.id=b.sandbox_id AND s.namespace=b.namespace WHERE s.provider = ANY($1::text[]) "
+                        "AND b.state='pending' AND b.expires_at > now()",
+                        list(STAGING_PROVIDERS), url='SANDBOXES_DATABASE_URL')
+    need(row['n'] == launches['n'] == 0, 'staging provider ownership is not empty')
+    for provider in STAGING_PROVIDERS:
+        status = native(provider)
+        counts = (status.get('health') or {}).get('instances')
+        need(isinstance(counts, dict) and counts and all(type(n) is int and n == 0 for n in counts.values()),
+             'staging provider instances are not confirmed empty')
+    return {'drained': True, 'readOnly': True}
+
+
+def staging_gateway(arg):
+    need(os.geteuid() == 0, 'run as root')
+    action = arg['action']
+    need(action in ('source', 'catalog', 'native', 'census'), 'invalid staging gateway action')
+    HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
+        need(locked(maintenance, 1200) and locked(lock, 1200), 'production maintenance lock is busy')
+        need(not RECOVERY_PENDING.exists(), 'production recovery is pending')
+        source = staging_source()
+        if action == 'source':
+            return source
+        need(source == arg.get('source'), 'accepted production source changed; preserve staging fence')
+        if action == 'native':
+            for raw in (env_of(CONTROL)[CATALOG], env_of(MAIN)[CATALOG], env_value(SHARED.read_bytes(), CATALOG)):
+                held = json.loads(raw)
+                need(all(entry in held for entry in source['entries']), 'prepared staging catalog changed')
+            need(arg.get('provider') in STAGING_PROVIDERS, 'not a staging provider')
+            return native(arg['provider'])
+        staging_provider_census()
+        if action == 'census':
+            return {'drained': True, 'readOnly': True}
+        served = {p['name'] for p in json.loads(env_of(CONTROL)['SANDBOXES_PROVIDERS'])}
+        need(set(STAGING_PROVIDERS) <= served, 'both staging providers must be configured')
+        # Keep the accepted source and durable secret backup under a separate staging catalog run.
+        name = arg['run']
+        need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid staging run')
+        directory = HOME / 'staging-catalog' / name
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        existing = read(directory / 'source.json')
+        need(not existing or existing == source, 'staging catalog source changed')
+        atomic(directory / 'source.json', json.dumps(source).encode())
+        result = Step(directory, {'cutover': True, 'drainSeconds': 900}).add_releases(
+            {'entries': source['entries'], 'releases': source['releases'],
+             'protect': [source['current']['image'].split('@')[1]]}, directory / 'catalog.before')
+        need(staging_source() == source, 'production source changed during catalog update')
+        return result
 
 
 def main():
@@ -1086,7 +1268,7 @@ if __name__ == '__main__':
     # On the staging host: `staging '<releases>'` switches staging Main; `staging-drain '<seconds>'`
     # holds its work machines and waits, bounded, until none is up, before its apps are replaced;
     # `staging-unhold` lifts that hold when they were not.
-    STAGING = {'staging': lambda a: staging(json.loads(a)), 'staging-drain': lambda a: work_drain(int(a)),
+    STAGING = {'staging-gateway': lambda a: staging_gateway(json.loads(a)), 'staging': lambda a: staging(json.loads(a)), 'staging-drain': lambda a: work_drain(int(a)),
                'staging-unhold': lambda _: unhold() or {'lifted': True}}
     if sys.argv[1:2] and sys.argv[1] in STAGING:
         os.umask(0o077)

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Native cutover: --prepare-cutover persists a forward-only run and pauses before live canary (exit 5).
-// Reopen Main explicitly, then --resume --accept-cutover; plain resume never accepts. Staging is deferred.
+// Reopen Main explicitly, then --resume --accept-cutover; plain resume never accepts.
+// --staging-cutover uses staging's own checkpoint and the already accepted production digest.
 // Release the hosted Pi/Codex worker image with one guarded command, from the founder's Mac:
 //   node deploy/hosted-release.mjs [--dry-run] [--resume] [--host ResearchSuite_Control]
 //        [--staging-host azureuser@dev-experiments.rapidreview.io]
@@ -63,11 +64,13 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdtempSync,
   openSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -352,11 +355,13 @@ async function main(args) {
       abandon: { type: 'boolean' },
       'prepare-cutover': { type: 'boolean' },
       'accept-cutover': { type: 'boolean' },
+      'staging-cutover': { type: 'boolean' },
+      'canary-project': { type: 'string' },
     },
   });
   if (values.help) {
     console.log(
-      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--prepare-cutover | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--staging-cutover --canary-project ID] [--prepare-cutover | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
     );
     return 0;
   }
@@ -364,9 +369,25 @@ async function main(args) {
     throw new Error('--accept-cutover requires --resume and cannot prepare or abandon');
   if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
     throw new Error('--prepare-cutover cannot abandon, check or mint a credential');
+  const stagingCutover = values['staging-cutover'] === true;
+  if (
+    stagingCutover &&
+    (values.check ||
+      values.abandon ||
+      (!values.resume && !values['prepare-cutover'] && !values['mint-canary']))
+  )
+    throw new Error('--staging-cutover requires --prepare-cutover or --resume; never abandon');
+  if (
+    stagingCutover &&
+    !values.resume &&
+    (!values['canary-project'] || !values['canary-credential'])
+  )
+    throw new Error(
+      'Staging preparation requires its own --canary-project and --canary-credential',
+    );
   const dryRun = values['dry-run'];
   if (!dryRun && !values.check && !process.env.MERV_HOSTED_DRIVER) return detached(args);
-  const host = values.host;
+  const host = stagingCutover ? values['staging-host'] : values.host;
   const git = (a, cwd = root) => sh('git', a, cwd).trim();
   // The defaults sit in the main checkout, which a worktree shares its Git directory with.
   const checkout = dirname(resolve(root, git(['rev-parse', '--git-common-dir'])));
@@ -385,6 +406,7 @@ async function main(args) {
   const bridge = dirname(dirname(template.main)); // the bridge Worker's directory in Sandboxes
   const canary = {
     ...seed.canary,
+    ...(values['canary-project'] ? { projectId: values['canary-project'] } : {}),
     credential: values['canary-credential'] ?? seed.canary.credential,
   };
   const driver = randomUUID();
@@ -398,7 +420,10 @@ async function main(args) {
     });
   // A host out of reach (a reboot, a network blip) is waited out for about 10 minutes, never taken
   // for a failed step: a repeated step is harmless, and the next one re-arms the host's guard.
+  let stagingSource;
   const onHost = (run, step, arg = {}) => {
+    if (stagingCutover && step === 'native')
+      return production('native', { provider: arg.provider });
     const dir = `${RUNS}/${run}`;
     const script = `${dir}/source/deploy/hosted-release-vm.py`;
     let r;
@@ -432,27 +457,40 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
   // Staging Main, on its own host: the committed hosted-release-vm.py, run there as root from stdin.
   // `staging` names these staging releases ({provider: releaseId}; ids only, nothing secret),
   // `staging-drain` drains its work machines for up to `seconds`, `staging-unhold` lifts that hold.
-  const onStaging = (command, arg = '') => {
-    const r = spawnSync(
-      'ssh',
-      [
-        ...SSH,
-        values['staging-host'],
-        'sudo',
-        '-n',
-        'python3',
-        '-',
-        command,
-        `'${JSON.stringify(arg)}'`,
-      ],
-      {
-        input: git(['show', `${head}:./deploy/hosted-release-vm.py`]),
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'inherit'],
-        // A drain waits up to `arg` seconds.
-        timeout: ((command === 'staging-drain' ? arg : 0) + 15 * 60) * 1000,
-      },
-    );
+  const onStaging = (command, arg = '', remote = values['staging-host']) => {
+    // A file descriptor avoids pipe backpressure while sending the committed host program.
+    const source = join(mkdtempSync(join(tmpdir(), 'merv-hosted-command-')), 'host.py');
+    const probe =
+      command === 'staging-gateway'
+        ? `_STAGING_PROBE = bytes.fromhex('${Buffer.from(git(['show', `${head}:./deploy/hosted-sandboxes-probe.mjs`])).toString('hex')}')\n`
+        : '';
+    writeFileSync(source, probe + git(['show', `${head}:./deploy/hosted-release-vm.py`]));
+    const fd = openSync(source, 'r');
+    let r;
+    try {
+      r = spawnSync(
+        'ssh',
+        [
+          ...SSH,
+          remote,
+          'sudo',
+          '-n',
+          'python3',
+          '-',
+          command,
+          `'${JSON.stringify(arg).replaceAll("'", "'\\''")}'`,
+        ],
+        {
+          encoding: 'utf8',
+          stdio: [fd, 'pipe', 'inherit'],
+          // A drain waits up to `arg` seconds.
+          timeout: ((command === 'staging-drain' ? arg : 0) + 15 * 60) * 1000,
+        },
+      );
+    } finally {
+      closeSync(fd);
+      rmSync(dirname(source), { recursive: true, force: true });
+    }
     let out;
     try {
       out = JSON.parse(r.stdout.trim().split('\n').pop());
@@ -462,6 +500,8 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
     if (r.status !== 0 || out.error) throw new Error(`${command}: ${out.error ?? 'failed'}`);
     return out;
   };
+  const production = (action, arg = {}) =>
+    onStaging('staging-gateway', { action, source: stagingSource, ...arg }, values.host);
   const upload = (run, sandboxesCommit) => {
     const src = packageSource();
     const sbx = join(src.dir, 'sandboxes.tar.gz');
@@ -576,6 +616,35 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     console.log('No hosted run is open.');
     return values['accept-cutover'] ? 2 : 0;
   }
+  if (stagingCutover) {
+    stagingSource = production('source');
+    const target = stagingSource.current;
+    const plan = {
+      run: `${stamp()}-${head.slice(0, 8)}-staging`,
+      sourceCommit: head,
+      sandboxesCommit: target.sandboxesCommit,
+      current: target,
+      cutover: true,
+      stagingCutover: true,
+      stagingSource,
+      stagingReleases: stagingSource.releases,
+      canary,
+      lane: 'accepted-production',
+      drainSeconds: 900,
+    };
+    if (dryRun) {
+      console.log(JSON.stringify(plan));
+      return 0;
+    }
+    if (!clean()) return 2;
+    const why = unready(target);
+    if (why) throw new Error(why);
+    const src = upload(plan.run, target.sandboxesCommit);
+    if (src.gitRevision !== head) throw new Error('HEAD moved while planning');
+    plan.contentSha256 = src.contentSha256;
+    onHost(plan.run, 'staging_preflight', plan);
+    return drive(plan.run);
+  }
   const since = (from, to, paths, cwd) =>
     from && spawnSync('git', ['-C', cwd, 'cat-file', '-e', `${from}^{commit}`]).status === 0
       ? git(['diff', '--name-only', '--relative', from, to, '--', ...paths], cwd)
@@ -635,8 +704,16 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`hosted run ${run} stopped: ${error.message}. The next run finishes it.`);
       return 3;
     } finally {
-      const ledgers = ['HOSTED_RELEASES.md', 'hosted-release.json'].map((f) => join(RECORDS, f));
-      publishLedgers(ledgers, `Record hosted image run ${run} in production`);
+      const ledgers = (
+        stagingCutover
+          ? ['STAGING_HOSTED_RELEASES.md', 'staging-hosted-release.json']
+          : ['HOSTED_RELEASES.md', 'hosted-release.json']
+      ).map((f) => join(RECORDS, f));
+      if (ledgers.some(existsSync))
+        publishLedgers(
+          ledgers.filter(existsSync),
+          `Record hosted image run ${run} in ${stagingCutover ? 'staging' : 'production'}`,
+        );
     }
   }
 
@@ -657,6 +734,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     }
     const { plan, preflight: pre } = s;
     let { build, gates, push: pushed, progress = {} } = s;
+    if (!!plan?.stagingCutover !== stagingCutover)
+      throw new Error('Run scope differs; use --staging-cutover only for a staging run');
+    if (stagingCutover) stagingSource = plan.stagingSource;
     if ((values['prepare-cutover'] || values['accept-cutover']) && !plan?.cutover)
       throw new Error('This existing run was not opened with --prepare-cutover');
     if (plan?.cutover && mode === 'abandon')
@@ -676,7 +756,11 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     }
     // The live apps and Main's machine releases as preflight read them; a run from before Large
     // knew only Standard.
-    const apps = pre.apps ?? { [STANDARD]: pre.native };
+    const apps =
+      pre.apps ??
+      (stagingCutover
+        ? Object.fromEntries(Object.keys(pre.releases).map((provider) => [provider, {}]))
+        : { [STANDARD]: pre.native });
     const providers = Object.keys(apps);
     const previous = { ...plan.current, releases: pre.releases };
     const commits = { sourceCommit: plan.sourceCommit, sandboxesCommit: plan.sandboxesCommit };
@@ -692,7 +776,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       spawnSync('npx', ['prettier', '--write', file], { cwd: root, stdio: 'ignore' });
     // The ledger is committed: a note keeps each step's reason, never a command's output.
     const record = (result, ...notes) => {
-      const file = join(RECORDS, 'HOSTED_RELEASES.md');
+      const file = join(
+        RECORDS,
+        stagingCutover ? 'STAGING_HOSTED_RELEASES.md' : 'HOSTED_RELEASES.md',
+      );
       const note = notes.filter(Boolean).map(brief).join('; ');
       appendFileSync(file, ledgerRow({ ...row, result, note }));
       prettier(file);
@@ -700,8 +787,14 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     const close = (result, state) => {
       onHost(run, 'finish', { result, state });
       if (!state) return;
-      const file = join(RECORDS, 'hosted-release.json');
-      writeFileSync(file, JSON.stringify({ canary: seed.canary, ...state }, null, 2));
+      const file = join(
+        RECORDS,
+        stagingCutover ? 'staging-hosted-release.json' : 'hosted-release.json',
+      );
+      writeFileSync(
+        file,
+        JSON.stringify({ canary: stagingCutover ? plan.canary : seed.canary, ...state }, null, 2),
+      );
       prettier(file);
     };
     const config = (provider, image, workerMain = template.main) => {
@@ -774,6 +867,77 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       else console.error(`${said}, but it failed its canary, so it stays live as UNVERIFIED`);
       return failed ? 4 : 0;
     };
+
+    if (stagingCutover) {
+      if (
+        spawnSync('git', ['diff', '--quiet', plan.sourceCommit, head, '--', ...PIPELINE], {
+          cwd: root,
+        }).status !== 0
+      )
+        throw new Error('Staging pipeline changed; resume from the original committed pipeline');
+      const target = {
+        ...plan.current,
+        releases: plan.stagingReleases,
+        releaseId: plan.stagingReleases['cloudflare-fleet-staging'],
+      };
+      Object.assign(row, { image: target.image, releaseId: target.releaseId });
+      try {
+        // Refresh provenance before every phase. Production has its own release lock; the gateway
+        // only adds staging catalog entries, and refuses an open production release or changed source.
+        if (JSON.stringify(production('source')) !== JSON.stringify(stagingSource))
+          throw new Error('Accepted production source changed; preserve staging fence');
+        if (progress.cutoverPrepared) {
+          onHost(run, 'staging_accept');
+          await settle(target.image);
+        } else {
+          onHost(run, 'drain');
+          production('census');
+          production('catalog', { run });
+          const stale = providers.filter(
+            (p) => onHost(run, 'native', { provider: p }).image !== target.image,
+          );
+          if (stale.length) {
+            onHost(run, 'drain');
+            production('census');
+            deploy(target, stale, { deployAttempted: true });
+          }
+          row.version = await settle(target.image);
+          onHost(run, 'staging_switch');
+          onHost(run, 'staging_prepare');
+          record(
+            'PREPARED',
+            `accepted production run ${stagingSource.acceptedRun}; staging remains fenced`,
+          );
+          console.log(
+            `staging hosted run ${run} prepared; reopen the same Main image, then --staging-cutover --resume --accept-cutover`,
+          );
+          return 5;
+        }
+        const turn = onHost(run, 'canary', { releaseId: target.releaseId });
+        row.canary = `${turn.status} in ${turn.seconds}s`;
+        row.version = await settle(target.image);
+        onHost(run, 'staging_accept');
+        close('pass', {
+          current: target,
+          acceptedProductionRun: stagingSource.acceptedRun,
+          pipelineCommit: plan.sourceCommit,
+          inputs: [],
+        });
+        record(
+          'pass',
+          `accepted production run ${stagingSource.acceptedRun}; runner source ${target.sourceCommit}`,
+        );
+        return 0;
+      } catch (error) {
+        onHost(run, 'note', { cutoverFailure: error.message.slice(0, 1000) });
+        record(
+          'STAGING CUTOVER OPEN',
+          error.message,
+          'forward recovery only; preserve or re-establish maintenance',
+        );
+        throw error;
+      }
+    }
 
     if (mode === 'abandon') {
       let agreed;

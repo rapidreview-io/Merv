@@ -90,6 +90,20 @@ const input = fs.readFileSync(0, 'utf8');
 const at = argv.indexOf('python3');
 if (at < 0) { if (argv.includes('bash')) event('upload'); process.exit(0); }
 // Staging Main's switch on its own host: this file's committed host script arrives on stdin.
+if (argv[at + 1] === '-' && argv[at + 2] === 'staging-gateway') {
+  const arg = JSON.parse(argv[at + 3].slice(1, -1));
+  event('gateway-' + arg.action);
+  const out = value => { save(); console.log(JSON.stringify(value)); process.exit(0); };
+  if (sim.fail['gateway-' + arg.action]) out({error:sim.fail['gateway-' + arg.action]});
+  if (arg.action === 'source') out(sim.acceptedSource);
+  if (JSON.stringify(arg.source) !== JSON.stringify(sim.acceptedSource)) out({error:'production source changed'});
+  if (arg.action === 'native') out(sim.staging.apps[arg.provider]);
+  if (arg.action === 'catalog') {
+    for (const e of arg.source.entries) sim.releases[arg.source.releases[e.provider]] = arg.source.current.image;
+    out({releases:arg.source.releases});
+  }
+  out({drained:true});
+}
 if (argv[at + 1] === '-' && argv[at + 2] === 'staging') {
   if (!input.includes('def staging(')) process.exit(2);
   const releases = JSON.parse(argv[at + 3].slice(1, -1));
@@ -124,11 +138,39 @@ event(step + ' ' + (step === 'push' ? Object.keys(arg.credential).join('+') : JS
 const stale = counted ? R.staleAfter <= 0 : Date.now() - (R.lease?.seen ?? 0) > 300000;
 if (R.lease && R.lease.driver !== driver && !stale) err('driven by another process');
 R.lease = { driver, seen: Date.now() }; R.staleAfter = null;
-if (!['preflight', 'finish', 'pins'].includes(step) && sim.active !== run) err('run does not hold the marker');
+if (!['preflight', 'staging_preflight', 'finish', 'pins'].includes(step) && sim.active !== run) err('run does not hold the marker');
 const fail = sim.fail[step], previous = R.rec.plan?.current;
 // others: the apps besides Standard; machines: Main's MERV_FLEET_RUNTIMES, absent before the cutover.
 const CF = 'cloudflare-fleet', apps = () => ({ [CF]: sim.native, ...sim.others });
 const machines = () => sim.machines ?? { [CF]: sim.main };
+if (step === 'staging_preflight') {
+  if (fail) err(fail);
+  if (!sim.maintenance) err('staging maintenance required');
+  sim.active=run; R.rec.plan=arg;
+  R.rec.preflight={releases:sim.staging.machines,cutoverMainImage:sim.mainImage};
+  out(R.rec.preflight);
+}
+if (step === 'staging_switch') {
+  if (fail) err(fail);
+  sim.staging.machines=R.rec.plan.stagingReleases;
+  out({changed:true});
+}
+if (step === 'staging_prepare') {
+  if (!sim.maintenance) err('staging maintenance required');
+  R.progress.cutoverPrepared={mainImage:sim.mainImage,releases:sim.staging.machines};
+  out(R.progress.cutoverPrepared);
+}
+if (step === 'staging_accept') {
+  if (sim.maintenance) err('staging maintenance must be removed');
+  const before=R.progress.cutoverPrepared;
+  if (!before || before.mainImage!==sim.mainImage || JSON.stringify(before.releases)!==JSON.stringify(sim.staging.machines)) err('prepared staging pair changed');
+  out({accepted:true});
+}
+if (step === 'canary' && R.rec.plan.stagingCutover) {
+  if (fail || sim.maintenance) err(fail || 'canary fenced');
+  if (sim.staging.machines['cloudflare-fleet-staging']!==arg.releaseId) err('staging canary release mismatch');
+  out({status:'completed',seconds:12,released:true});
+}
 if (step === 'preflight') {
   if (sim.active && sim.active !== run) err('another run is open');
   sim.active = run; R.rec.plan = arg;
@@ -168,7 +210,7 @@ if (step === 'stage') {
   for (const e of served) sim.catalog.push({ provider: e.provider, digest: e.image_digest, id: arg.releases[e.provider] });
   out({ releases: Object.fromEntries(served.map((e) => [e.provider, arg.releases[e.provider]])), changed: true });
 }
-if (step === 'drain') out({ drained: true });
+if (step === 'drain') { if (fail) err(fail); out({ drained: true }); }
 if (step === 'note') { R.progress = { ...R.progress, ...arg }; out(R.progress); }
 // unread: {provider: reads left before Sandboxes can no longer read that app}.
 if (step === 'native') {
@@ -646,3 +688,114 @@ test('partial cutover switch failure never deploys the previous image and can fi
   assert.equal(resumed.status, 5, resumed.out);
   assert.equal(resumed.sim.main, NEXT_ID);
 });
+
+const stagingFlags = [
+  '--staging-cutover',
+  '--prepare-cutover',
+  '--canary-project',
+  'staging-project',
+  '--canary-credential',
+  '/private/staging-reader.json',
+];
+const stagingFixture = () => {
+  const entries = [STG, STG_L].map((provider) => ({
+    ...releaseEntry(NEXT, 'e'.repeat(64)),
+    provider,
+  }));
+  return {
+    ...STAGING,
+    maintenance: true,
+    mainImage: 'sha256:staging-main',
+    acceptedSource: {
+      current: { ...LIVE, image: NEXT, sourceCommit: 'a'.repeat(40), sandboxesCommit: c1 },
+      acceptedRun: 'accepted-production',
+      entries,
+      releases: Object.fromEntries(entries.map((e) => [e.provider, releaseId(e)])),
+    },
+  };
+};
+const resumeStaging = (first, patch = {}, accept = true) => {
+  const sim = { ...first.sim, ...patch };
+  sim.runs[sim.active].lease.seen -= 400000;
+  writeFileSync(join(first.dir, 'sim.json'), JSON.stringify(sim));
+  return simulate(
+    'staging-resume',
+    {},
+    {
+      dir: first.dir,
+      args: ['--staging-cutover', '--resume', ...(accept ? ['--accept-cutover'] : [])],
+    },
+  );
+};
+
+test('staging-only cutover deploys accepted digest, pauses, then accepts with real canary path and separate ledgers', () => {
+  const first = simulate('staging-cutover', stagingFixture(), { args: stagingFlags });
+  assert.equal(first.status, 5, first.out);
+  for (const forbidden of ['build', 'gates', 'push', 'catalog', 'switch', 'stage', 'canary'])
+    assert.ok(!first.steps.includes(forbidden), forbidden);
+  assert.equal(first.sim.native.image, LIVE.image);
+  assert.equal(first.sim.main, LIVE.releaseId);
+  for (const app of Object.values(first.sim.staging.apps)) assert.equal(app.image, NEXT);
+  assert.equal(first.ledger, '');
+  const paused = resumeStaging(first, {}, false);
+  assert.equal(paused.status, 5, paused.out);
+  const accepted = resumeStaging(paused, { maintenance: false });
+  assert.equal(accepted.status, 0, accepted.out);
+  assert.equal(accepted.sim.active, null);
+  assert.ok(accepted.steps.includes('canary'));
+  assert.equal(accepted.record, '');
+  const record = JSON.parse(readFileSync(join(first.dir, 'staging-hosted-release.json'), 'utf8'));
+  assert.equal(record.current.image, NEXT);
+  assert.equal(record.current.sourceCommit, 'a'.repeat(40));
+  assert.equal(record.pipelineCommit, head);
+});
+
+for (const [failure, message] of [
+  ['gateway-source', 'unaccepted production'],
+  ['staging_preflight', 'legacy Main'],
+  ['drain', 'in-flight work'],
+  ['gateway-census', 'provider ownership'],
+]) {
+  test(`staging preparation refuses ${message} before deployment`, () => {
+    const first = simulate(
+      'staging-denied',
+      { ...stagingFixture(), fail: { [failure]: message } },
+      { args: stagingFlags },
+    );
+    assert.notEqual(first.status, 0);
+    assert.notEqual(first.status, 5);
+    assert.ok(!first.steps.includes('wrangler'), first.out);
+    assert.equal(first.sim.main, LIVE.releaseId);
+  });
+}
+
+test('staging deploy failure remains open and resumes forward without rebuilding or touching production pins', () => {
+  const first = simulate(
+    'staging-failure',
+    { ...stagingFixture(), fail: { deploy: 'staging' } },
+    { args: stagingFlags },
+  );
+  assert.equal(first.status, 3, first.out);
+  assert.ok(first.sim.active);
+  assert.ok(!first.steps.includes('finish'));
+  const next = resumeStaging(first, { fail: {} }, false);
+  assert.equal(next.status, 5, next.out);
+  assert.equal(next.sim.main, LIVE.releaseId);
+  assert.equal(next.sim.native.image, LIVE.image);
+});
+
+for (const [patch, reason] of [
+  [{}, 'fenced'],
+  [{ maintenance: false, mainImage: 'sha256:other' }, 'image changed'],
+  [{ maintenance: false, fail: { canary: 'failed canary cleanup' } }, 'canary failure'],
+]) {
+  test(`staging acceptance stays open on ${reason}`, () => {
+    const first = simulate('staging-accept-denied', stagingFixture(), { args: stagingFlags });
+    assert.equal(first.status, 5, first.out);
+    const denied = resumeStaging(first, patch);
+    assert.equal(denied.status, 3, denied.out);
+    assert.ok(denied.sim.active);
+    assert.equal(denied.sim.main, LIVE.releaseId);
+    assert.equal(denied.record, '');
+  });
+}
