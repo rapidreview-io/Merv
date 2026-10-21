@@ -1,10 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { exportHistory, importHistory, identity, hash, safeRow } from './history.mjs';
+import {
+  exportHistory,
+  importHistory,
+  identity,
+  hash,
+  safeRow,
+  installDataFile,
+} from './history.mjs';
 const url = process.env.ISOLATION_TEST_DATABASE_URL;
 if (url)
   assert.ok(
@@ -147,6 +162,9 @@ test(
     const admin = new pg.Client({ connectionString: url });
     await admin.connect();
     const dir = mkdtempSync(join(tmpdir(), 'pinned-history-'));
+    const previousDataDir = process.env.STAGING_HISTORY_DATA_DIR;
+    const sourceData = join(dir, 'source-data'),
+      targetData = join(dir, 'target-data');
     let source, dest, sbx;
     const created = [];
     const connect = async (name) => {
@@ -246,6 +264,41 @@ test(
           { table: 'storage_objects', key: { id: 'manifest' } },
         ],
       };
+      const outputs = new Map();
+      for (const job of ['flat-job', 'segmented-job']) {
+        await source.query(
+          "INSERT INTO jobs(id,namespace,sandbox_id,state,revision,command,request_json,epoch,attempts,run_after,created_at,updated_at) VALUES($1,$2,'stopped-one','succeeded',1,'echo history','{}','epoch',1,now(),now(),now())",
+          [job, LEGACY],
+        );
+        for (const stream of ['stdout', 'stderr']) {
+          const base = `jobs/${job}/${stream}.log`;
+          const bytes = Buffer.from(`${job} ${stream} retained bytes`);
+          const start = job === 'flat-job' ? 0 : 7;
+          await source.query(
+            "INSERT INTO job_outputs(job_id,stream,epoch,available_start,total_length,complete,updated_at) VALUES($1,$2,'epoch',$3,$4,true,now())",
+            [job, stream, start, start + bytes.length],
+          );
+          if (job === 'flat-job') outputs.set(base, bytes);
+          else {
+            outputs.set(base + '/start', Buffer.from(String(start)));
+            outputs.set(base + '/' + String(start).padStart(20, '0'), bytes.subarray(0, 8));
+            outputs.set(base + '/' + String(start + 8).padStart(20, '0'), bytes.subarray(8));
+          }
+        }
+      }
+      for (const [path, bytes] of outputs) {
+        mkdirSync(join(sourceData, path, '..'), { recursive: true });
+        writeFileSync(join(sourceData, path), bytes);
+      }
+      process.env.STAGING_HISTORY_DATA_DIR = sourceData;
+      const missing = 'jobs/segmented-job/stdout.log/00000000000000000007';
+      unlinkSync(join(sourceData, missing));
+      await assert.rejects(exportHistory(source, selection, dir), /segment gap/);
+      writeFileSync(join(sourceData, missing), outputs.get(missing));
+      const flatPath = 'jobs/flat-job/stdout.log';
+      writeFileSync(join(sourceData, flatPath), 'short');
+      await assert.rejects(exportHistory(source, selection, dir), /byte length drift/);
+      writeFileSync(join(sourceData, flatPath), outputs.get(flatPath));
       const bundle = await exportHistory(source, selection, dir),
         binding = await identity(dest);
       assert.equal(bundle.rows.pipelines[0].value.state, 'completed');
@@ -253,8 +306,41 @@ test(
       assert.equal(bundle.rows.sessions.length, 1);
       assert.equal(bundle.rows.certificates.length, 1);
       assert.equal(bundle.rows.api_tokens[0].value.id, 'revoked');
+      assert.equal(bundle.dataFiles.length, outputs.size);
+      process.env.STAGING_HISTORY_DATA_DIR = targetData;
+      const saved = readFileSync(join(dir, bundle.dataFiles[0].sha256));
+      unlinkSync(join(dir, bundle.dataFiles[0].sha256));
+      await assert.rejects(importHistory(dest, bundle, binding, dir, bundle.sha256), /ENOENT/);
+      writeFileSync(join(dir, bundle.dataFiles[0].sha256), 'corrupt');
+      await assert.rejects(
+        importHistory(dest, bundle, binding, dir, bundle.sha256),
+        /private data hash/,
+      );
+      writeFileSync(join(dir, bundle.dataFiles[0].sha256), saved);
+      const { dataFiles: omitted, sha256: oldDigest, ...without } = bundle;
+      const incomplete = { ...without, sha256: hash(without) };
+      await assert.rejects(
+        importHistory(dest, incomplete, binding, dir, incomplete.sha256),
+        /manifest missing/,
+      );
+      const broken = {
+        query: async (sql, ...args) => {
+          if (sql.startsWith('INSERT INTO')) throw Error('simulated database interruption');
+          return dest.query(sql, ...args);
+        },
+      };
+      await assert.rejects(
+        importHistory(broken, bundle, binding, dir, bundle.sha256),
+        /database interruption/,
+      );
+      assert.equal((await dest.query('SELECT count(*) FROM job_outputs')).rows[0].count, '0');
       await importHistory(dest, bundle, binding, dir, bundle.sha256);
       await importHistory(dest, bundle, binding, dir, bundle.sha256);
+      for (const [path, bytes] of outputs) {
+        assert.deepEqual(readFileSync(join(targetData, path)), bytes);
+        assert.equal(hash(readFileSync(join(targetData, path))), hash(bytes));
+      }
+      assert.equal((await dest.query('SELECT count(*) FROM job_outputs')).rows[0].count, '4');
       assert.equal((await dest.query('SELECT count(*) FROM sandboxes')).rows[0].count, '1');
       assert.equal((await source.query('SELECT count(*) FROM sandboxes')).rows[0].count, '2');
       await fenceSource(source, true);
@@ -319,6 +405,8 @@ test(
         await restored.end();
       }
     } finally {
+      if (previousDataDir === undefined) delete process.env.STAGING_HISTORY_DATA_DIR;
+      else process.env.STAGING_HISTORY_DATA_DIR = previousDataDir;
       await sbx?.close();
       await source?.end();
       await dest?.end();
@@ -328,3 +416,24 @@ test(
     }
   },
 );
+
+test('private log publication survives SIGKILL mid-write and refuses unrelated final files', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'history-install-')),
+    target = join(dir, 'stdout.log'),
+    bytes = Buffer.from('complete retained output'),
+    digest = hash(bytes);
+  try {
+    const script = `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const original=fs.writeFileSync;fs.writeFileSync=(fd,data,...args)=>{original(fd,data.subarray(0,4),...args);process.kill(process.pid,'SIGKILL');};syncBuiltinESMExports();const {installDataFile}=await import(${JSON.stringify(new URL('./history.mjs', import.meta.url).href)});installDataFile(${JSON.stringify(target)},Buffer.from(${JSON.stringify(bytes.toString())}),${JSON.stringify(digest)});`;
+    const killed = spawnSync(process.execPath, ['--input-type=module', '-e', script]);
+    assert.equal(killed.signal, 'SIGKILL');
+    assert.equal(existsSync(target), false);
+    installDataFile(target, bytes, digest);
+    installDataFile(target, bytes, digest);
+    assert.deepEqual(readFileSync(target), bytes);
+    writeFileSync(target, 'unrelated');
+    assert.throws(() => installDataFile(target, bytes, digest), /private data conflict/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

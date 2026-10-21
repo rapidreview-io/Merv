@@ -1,0 +1,36 @@
+{
+  "reviewedBase": "8798982dde9666ee72e0914ef0b1f857fe292f1c",
+  "reviewReport": "/tmp/merv-launch-staging-review/final-isolation/REVIEW.md",
+  "scope": "Corrections to all three reported findings; independent retest pending; no live operations",
+  "passed": {
+    "deployment": 140,
+    "isolationPostgres": 10,
+    "pythonRecovery": 11
+  },
+  "regressions": [
+    "Pinned-schema export/import of flat and segmented stdout/stderr, byte/digest equality and idempotent replay",
+    "Missing segment, short source log, missing/corrupt transferred bytes and omitted manifest refuse",
+    "SIGKILL after four temporary bytes leaves no partial final pathname; same-byte retry succeeds; conflicting final file refuses",
+    "DB interruption rolls back metadata while complete installed files remain safely replayable",
+    "Docker-state adapter interrupts each reader at stop/remove/rename/start; same-target resume and public restore-admission succeed",
+    "Wrong image, Compose identity and recovery target refuse"
+  ],
+  "limitations": [
+    "Compose lifecycle test uses a local state adapter, not an actual Docker daemon crash",
+    "No final archive/Main image build or live acceptance is claimed for this correction"
+  ],
+  "logs": [
+    {
+      "path": "/tmp/merv-corrective-deploy.log",
+      "sha256": "9bcef2597c01187d338e612fd359056b71a046b45227556dbc970cc701886661"
+    },
+    {
+      "path": "/tmp/merv-corrective-postgres.log",
+      "sha256": "20e5762744d3971c656cf9a06a62907b3499d8b41a1795d9b0724b365b7eda88"
+    },
+    {
+      "path": "/tmp/merv-corrective-python.log",
+      "sha256": "9aba07aee2b65da5885d0c6904e207e3e2aa1a2f3e3e2513f65b5f76b89a4c93"
+    }
+  ]
+}

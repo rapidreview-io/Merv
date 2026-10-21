@@ -35,3 +35,14 @@ boundary; actual two-host receipts; authenticated historical downloads and cross
 real Pi reply, native observed stop and complete app inventories. Retain the launch fences until
 those checks pass. No live deployment, credentials transfer, account grant, bucket creation or
 provider mutation was performed by this implementation chat.
+
+## Final-review correction evidence
+
+The review of `8798982dd` found three defects not covered by the original suites: omitted job-log
+manifest, non-replayable partial log publication, and missing canonical container names during
+Compose replacement. The corrective follow-up fixes all three and adds the regressions recorded
+in `corrective-validation.json`. Local checks now pass 140 deployment tests, 10 PostgreSQL
+isolation tests (zero skips), and 11 Python recovery tests. Reader lifecycle tests accurately use
+a Docker-state adapter at stop/remove/rename/start; log interruption uses an actual killed local
+writer process. This corrective candidate awaits the independent reviewer's exact-commit retest.
+The older validation/image receipt above applies only to the earlier candidate.

@@ -14,6 +14,9 @@ import {
   lstatSync,
   readdirSync,
   existsSync,
+  linkSync,
+  mkdtempSync,
+  rmSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import pg from 'pg';
@@ -304,7 +307,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       const st = lstatSync(path);
       need(!st.isSymbolicLink(), 'symlink output refused');
       const names = st.isDirectory() ? readdirSync(path).sort() : null;
-      let end = 0;
+      let end = Number(o.available_start);
       for (const name of names ?? ['']) {
         need(name === '' || name === 'start' || /^\d+$/.test(name), 'unknown output segment');
         const file = name ? join(path, name) : path,
@@ -329,7 +332,8 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       }
       need(end === Number(o.total_length), 'output byte length drift');
     }
-    const body = { version: 1, source, selection, schema: meta, rows: exported, files };
+    const body = { version: 1, source, selection, schema: meta, rows: exported, files, dataFiles };
+    validateOutputFiles(body, blobDir);
     await db.query('ROLLBACK');
     return { ...body, sha256: hash(body) };
   } catch (e) {
@@ -337,6 +341,102 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
     throw e;
   }
 }
+function validateOutputFiles(bundle, blobDir) {
+  const files = bundle.dataFiles ?? [];
+  const paths = new Set();
+  for (const f of files) {
+    need(!paths.has(f.path), 'duplicate private data path');
+    paths.add(f.path);
+    need(/^[a-f0-9]{64}$/.test(f.sha256), 'invalid private data hash');
+    const bytes = readFileSync(join(blobDir, f.sha256));
+    need(hash(bytes) === f.sha256 && bytes.length === f.size, 'private data hash mismatch');
+  }
+  const used = new Set();
+  for (const { value: o } of bundle.rows.job_outputs ?? []) {
+    need(o.file_state !== 'purge_pending', 'job output retention is in flight');
+    if (o.file_state !== 'present' || Number(o.total_length) === 0) continue;
+    const base = `jobs/${o.job_id}/${o.stream}.log`,
+      start = Number(o.available_start),
+      end = Number(o.total_length);
+    const selected = files.filter((f) => f.path === base || f.path.startsWith(base + '/'));
+    need(selected.length > 0, 'retained output file manifest missing');
+    selected.forEach((f) => used.add(f.path));
+    const flat = selected.find((f) => f.path === base);
+    if (flat)
+      need(
+        selected.length === 1 && start === 0 && flat.size === end,
+        'flat output byte range mismatch',
+      );
+    else {
+      const marker = selected.find((f) => f.path === base + '/start');
+      need(
+        marker && Number(readFileSync(join(blobDir, marker.sha256)).toString()) === start,
+        'output start marker missing or changed',
+      );
+      const segments = selected
+        .filter((f) => f !== marker)
+        .map((f) => ({ file: f, offset: Number(f.path.slice(base.length + 1)) }))
+        .sort((a, b) => a.offset - b.offset);
+      let cursor = start;
+      for (const { file, offset } of segments) {
+        need(
+          Number.isSafeInteger(offset) &&
+            offset >= 0 &&
+            offset <= cursor &&
+            offset + file.size >= cursor,
+          'output segment gap or overlap',
+        );
+        cursor = offset + file.size;
+      }
+      need(cursor === end, 'output retained range incomplete');
+    }
+  }
+  need(used.size === files.length, 'private file lacks retained output metadata');
+}
+
+/** Publish a fully fsynced inode without overwriting an existing final pathname.
+ * Crashes leave only unreferenced private temporary files; retry always uses a fresh temp.
+ */
+export function installDataFile(target, bytes, sha256) {
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  const verify = () =>
+    need(
+      lstatSync(target).isFile() &&
+        !lstatSync(target).isSymbolicLink() &&
+        hash(readFileSync(target)) === sha256,
+      'private data conflict',
+    );
+  if (existsSync(target)) verify();
+  else {
+    const tempDir = mkdtempSync(join(dirname(target), '.history-import-'));
+    const temp = join(tempDir, 'bytes');
+    try {
+      const fd = openSync(temp, 'wx', 0o600);
+      try {
+        writeFileSync(fd, bytes);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      need(hash(readFileSync(temp)) === sha256, 'private data temporary write mismatch');
+      try {
+        linkSync(temp, target);
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        verify();
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+  const parent = openSync(dirname(target), 'r');
+  try {
+    fsyncSync(parent);
+  } finally {
+    closeSync(parent);
+  }
+}
+
 export async function importHistory(db, bundle, expectedIdentity, blobDir, expectedDigest) {
   const { sha256, ...body } = bundle;
   need(
@@ -357,6 +457,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
     const b = readFileSync(join(blobDir, f.sha256));
     need(hash(b) === f.sha256 && b.length === Number(f.size), 'blob verification failed');
   }
+  validateOutputFiles(bundle, blobDir);
   for (const file of bundle.dataFiles ?? []) {
     need(
       /^jobs\/[A-Za-z0-9_-]+\/(stdout|stderr)\.log(?:\/(start|[0-9]+))?$/.test(file.path),
@@ -366,29 +467,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
     const bytes = readFileSync(join(blobDir, file.sha256));
     need(hash(bytes) === file.sha256 && bytes.length === file.size, 'private data hash mismatch');
     const target = join(process.env.STAGING_HISTORY_DATA_DIR, file.path);
-    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-    if (existsSync(target))
-      need(
-        lstatSync(target).isFile() &&
-          !lstatSync(target).isSymbolicLink() &&
-          hash(readFileSync(target)) === file.sha256,
-        'private data conflict',
-      );
-    else {
-      const fd = openSync(target, 'wx', 0o600);
-      try {
-        writeFileSync(fd, bytes);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    }
-    const parent = openSync(dirname(target), 'r');
-    try {
-      fsyncSync(parent);
-    } finally {
-      closeSync(parent);
-    }
+    installDataFile(target, bytes, file.sha256);
   }
   await db.query('BEGIN');
   try {

@@ -253,3 +253,29 @@ Production source lookup follows `current` (identical-build) receipts back to a 
 image using the retained build equality proof. New `rechecked` and `abandoned` verified outcomes
 have an explicit exact-image/canary acceptance receipt. Legacy outcomes lacking that receipt
 remain refused; a finish label alone is not acceptance evidence.
+
+## Recovery corrections after final review
+
+The history bundle includes `dataFiles` in its independently reviewed digest. Import refuses
+retained nonempty job-output rows without a complete file manifest; flat files and segmented
+stdout/stderr retain their exact bytes, absolute offsets and start markers. Missing segments,
+transfer corruption and unrelated conflicting final files refuse. Each file is written and
+fsynced in a new private temporary directory on the destination filesystem, then published by
+an atomic non-overwriting hard link and directory fsync. A killed writer leaves no partial final
+file; replay ignores its private temporary inode and installs the same approved bytes. A DB
+rollback can leave complete verified files, which the same bundle safely reuses on retry.
+
+Before reader mutation, the kit saves `reader-originals.json` (0600) on that same host with both
+exact image IDs, Compose identity, original environment and network names. **This file contains
+secrets: never transfer the source's reader metadata to staging or publish it.** The handoff
+captures it at reservation; local catalog operations capture it before the first file change.
+A durable `reader-target.json` binds the exact environment bytes for forward retry. Recovery
+checks any existing canonical reader's image and Compose identity. If Compose removed its
+canonical name before rename, only this saved metadata supplies the one-shot SQL environment
+and the exact Compose invocation; arbitrary temporary containers are never selected as authority.
+Health checks still require a real canonical container. The public `handoff.py` actions,
+including `restore-admission`, activate this recovery context under the existing owner locks.
+Retain the metadata, target and originals until independent handoff acceptance.
+
+These corrections address the three findings in the final review of `8798982dd`. They still
+require independent retest; neither local tests nor this runbook constitutes deployment approval.

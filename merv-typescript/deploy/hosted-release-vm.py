@@ -215,8 +215,52 @@ def inspect(name):
     return json.loads(run(['docker', 'inspect', name]))[0]
 
 
+_READER_ORIGINALS = {}
+_READER_LABELS = ('com.docker.compose.project','com.docker.compose.project.config_files',
+                  'com.docker.compose.project.working_dir','com.docker.compose.service')
+
+
+def reader_info(name):
+    """Metadata only: durable originals can bridge Compose's remove/rename gap.
+    Health checks must still use inspect(), never this fallback."""
+    original=_READER_ORIGINALS.get(name)
+    try:
+        actual=inspect(name)
+    except RuntimeError:
+        if original is None:
+            raise
+        return original
+    if original:
+        need(actual['Image']==original['Image'] and
+             all(actual['Config'].get('Labels',{}).get(k)==original['Config'].get('Labels',{}).get(k)
+                 for k in _READER_LABELS), 'reader image or Compose identity changed: '+name)
+    return actual
+
+
+@contextlib.contextmanager
+def reader_recovery(directory, capture=False):
+    global _READER_ORIGINALS
+    path=directory/'reader-originals.json'
+    if not path.exists() and capture:
+        atomic(path,json.dumps({name:reader_info(name) for name in (MAIN,CONTROL)}).encode())
+    if not path.exists():
+        yield
+        return
+    need(not path.is_symlink() and path.stat().st_uid == os.geteuid() and path.stat().st_mode & 0o077 == 0, 'reader metadata must be private and operator-owned')
+    originals=read(path)
+    need(set(originals)=={MAIN,CONTROL}, 'incomplete reader metadata')
+    previous=_READER_ORIGINALS
+    _READER_ORIGINALS=originals
+    try:
+        # Existing canonical containers are checked; absent ones are never assumed healthy.
+        for name in originals: reader_info(name)
+        yield
+    finally:
+        _READER_ORIGINALS=previous
+
+
 def env_of(container):
-    return dict(item.split('=', 1) for item in inspect(container)['Config']['Env'])
+    return dict(item.split('=', 1) for item in reader_info(container)['Config']['Env'])
 
 
 def healthy(name, tries, pause):
@@ -1020,11 +1064,25 @@ class Step:
             shutil.rmtree(config, ignore_errors=True)
 
     def sandboxes_file(self, network_none=False, before_recreate=lambda: None):
+        if not network_none:
+            return self._sandboxes_file(network_none, before_recreate)
+        with reader_recovery(self.run, capture=True):
+            path, apply = self._sandboxes_file(network_none, before_recreate)
+        def recoverable(raw):
+            with reader_recovery(self.run):
+                target=self.run/'reader-target.json'
+                expected={'sha256':sha(raw)}
+                need(not target.exists() or read(target)==expected, 'reader recovery target changed')
+                if not target.exists(): atomic(target,json.dumps(expected).encode())
+                return apply(raw)
+        return path,recoverable
+
+    def _sandboxes_file(self, network_none=False, before_recreate=lambda: None):
         """The shared raw env and a coordinated recreate of its two readers on their current images."""
         need(not main_release_running(), 'a Main release job is running')
         commands = []
         for name, key in ((CONTROL, 'SANDBOXES_TS_IMAGE'), (MAIN, 'MERV_TS_IMAGE')):
-            state = inspect(name)
+            state = reader_info(name)
             labels = state['Config']['Labels']
             command = ['docker', 'compose', '-p', labels['com.docker.compose.project']]
             for file in labels['com.docker.compose.project.config_files'].split(','):
@@ -1683,7 +1741,7 @@ def reader_read(query, *params, **flags):
     effective=env_of(MAIN)
     effective.pop('MERV_W',None)
     effective.update(MERV_URL=flags.get('url','MERV_DB_URL'),MERV_Q=query,MERV_P=json.dumps(params))
-    info=inspect(MAIN)
+    info=reader_info(MAIN)
     networks=list(info.get('NetworkSettings',{}).get('Networks',{})) or ['sandboxes_default']
     return json.loads(run(['docker','run','--rm',*[part for n in networks for part in ('--network',n)],
                            '-w','/app',*[part for k in effective for part in ('-e',k)],
@@ -1703,7 +1761,7 @@ def isolated_probe(provider, inventory=False):
     source = globals().get('_STAGING_PROBE') or Path(__file__).with_name('hosted-sandboxes-probe.mjs').read_bytes()
     return json.loads(run(['docker', 'run', '--rm', '-i', '--network', 'sandboxes_default',
                            '-w', '/opt/sandboxes/typescript', *[part for key in effective for part in ('-e', key)],
-                           '--entrypoint', 'node', inspect(CONTROL)['Image'], '--import', 'tsx', '--input-type=module', '-'],
+                           '--entrypoint', 'node', reader_info(CONTROL)['Image'], '--import', 'tsx', '--input-type=module', '-'],
                           payload=source, env=dict(os.environ, **effective), timeout=60))
 
 
@@ -1729,7 +1787,7 @@ def isolation_identity(binding_override=None):
              'staging readers disagree on database or vault')
         providers = json.loads(effective['SANDBOXES_PROVIDERS'])
         need({p['name'] for p in providers} == set(STAGING_APPS) and all(p['settings']['application_id'] == STAGING_APPS[p['name']] for p in providers), 'staging provider/app set changed')
-        need(inspect(service)['Image'] == binding['images'][service], 'isolated reader image changed')
+        need(reader_info(service)['Image'] == binding['images'][service], 'isolated reader image changed')
     db = isolated_read("SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS oid, "
                    "current_user AS role,inet_server_addr()::text AS address,inet_server_port() AS port",
                    url='SANDBOXES_DATABASE_URL')
@@ -1746,47 +1804,49 @@ def isolated_staging_gateway(arg):
     with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
         need(locked(maintenance, 1200) and locked(lock, 1200), 'staging owner is busy')
         need(not RECOVERY_PENDING.exists() and not main_release_running(), 'staging recovery/release is active')
-        binding = isolation_identity()
-        if arg['action'] == 'identity':
-            return binding
-        name = arg.get('run', '')
-        need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid local staging run')
-        need(owner() == name, 'local hosted run does not own staging')
-        plan = read(RUNS / name / 'plan.json') or {}
-        need(plan.get('isolatedStaging') and plan.get('isolation') == binding and
-             plan.get('stagingSource') == arg.get('source'), 'local source or isolation binding changed')
-        source = arg['source']
-        if arg['action'] == 'native':
-            need(arg.get('provider') in STAGING_PROVIDERS, 'not a staging app')
-            return isolated_probe(arg['provider'])
-        isolated_census()
-        if arg['action'] == 'census':
-            return {'drained': True, 'readOnly': True, 'isolation': binding}
-        directory = RUNS / name / 'local-catalog'
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        journal = read(directory / 'intent.json')
-        if journal:
-            need(journal['source'] == source and journal['isolation'] == binding, 'local catalog intent changed')
-        else:
-            before = SHARED.read_bytes()
-            atomic(directory / 'original.env', before)
-            target = before
-            for entry in source['entries']:
-                need(entry['provider'] in STAGING_PROVIDERS, 'non-staging catalog entry')
-                target, _ = with_release(target, entry)
-            atomic(directory / 'target.env', target)
-            atomic(directory / 'intent.json', json.dumps({'source': source, 'isolation': binding,
-                   'before': sha(before), 'target': sha(target)}).encode())
+        recovery_name=arg.get('run','')
+        need(not recovery_name or re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging',recovery_name), 'invalid recovery run')
+        with reader_recovery(RUNS / recovery_name / 'local-catalog'):
+            binding = isolation_identity()
+            if arg['action'] == 'identity':
+                return binding
+            name = arg.get('run', '')
+            need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid local staging run')
+            need(owner() == name, 'local hosted run does not own staging')
+            plan = read(RUNS / name / 'plan.json') or {}
+            need(plan.get('isolatedStaging') and plan.get('isolation') == binding and
+                 plan.get('stagingSource') == arg.get('source'), 'local source or isolation binding changed')
+            source = arg['source']
+            if arg['action'] == 'native':
+                need(arg.get('provider') in STAGING_PROVIDERS, 'not a staging app')
+                return isolated_probe(arg['provider'])
+            isolated_census()
+            if arg['action'] == 'census':
+                return {'drained': True, 'readOnly': True, 'isolation': binding}
+            directory = RUNS / name / 'local-catalog'
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             journal = read(directory / 'intent.json')
-        target = (directory / 'target.env').read_bytes()
-        need(sha(target) == journal['target'] and sha(SHARED.read_bytes()) in (journal['before'], journal['target']),
-             'local catalog files drifted')
-        # An interrupted reader recreation always rolls forward to the same durable target.
-        Step(directory, {}).sandboxes_file(network_none=True)[1](target)
-        need(isolation_identity() == binding, 'isolation changed during catalog apply')
-        atomic(directory / 'complete.json', json.dumps({'target': journal['target']}).encode())
-        return {'entries': source['entries'], 'releases': source['releases'], 'isolation': binding}
-
+            if journal:
+                need(journal['source'] == source and journal['isolation'] == binding, 'local catalog intent changed')
+            else:
+                before = SHARED.read_bytes()
+                atomic(directory / 'original.env', before)
+                target = before
+                for entry in source['entries']:
+                    need(entry['provider'] in STAGING_PROVIDERS, 'non-staging catalog entry')
+                    target, _ = with_release(target, entry)
+                atomic(directory / 'target.env', target)
+                atomic(directory / 'intent.json', json.dumps({'source': source, 'isolation': binding,
+                       'before': sha(before), 'target': sha(target)}).encode())
+                journal = read(directory / 'intent.json')
+            target = (directory / 'target.env').read_bytes()
+            need(sha(target) == journal['target'] and sha(SHARED.read_bytes()) in (journal['before'], journal['target']),
+                 'local catalog files drifted')
+            # An interrupted reader recreation always rolls forward to the same durable target.
+            Step(directory, {}).sandboxes_file(network_none=True)[1](target)
+            need(isolation_identity() == binding, 'isolation changed during catalog apply')
+            atomic(directory / 'complete.json', json.dumps({'target': journal['target']}).encode())
+            return {'entries': source['entries'], 'releases': source['releases'], 'isolation': binding}
 
 def staging_gateway(arg):
     need(os.geteuid() == 0, 'run as root')

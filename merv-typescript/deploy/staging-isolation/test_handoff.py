@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 from pathlib import Path
@@ -22,7 +23,7 @@ class Handoff(unittest.TestCase):
   self.calls=[]
   self.env=lambda service:{**vm.file_env(vm.SHARED.read_bytes()),'MERV_BOOT_MAINTENANCE':'1'}
   self.apply=lambda raw: (self.calls.append(raw),vm.atomic(vm.SHARED,raw))
-  self.patchers=[patch.object(vm,'main_release_running',return_value=False),patch.object(vm,'env_of',side_effect=self.env),patch.object(h,'stable_identity'),patch.object(h,'source_fence',return_value={'denied':True}),patch.object(vm,'quiet'),patch.object(h,'pi_admission',side_effect=lambda action:{'active':action=='apply' or (action=='inspect' and (h.ROOT/'pi-admission.intent.json').exists()),'commands':0,'hosts':0,'allocations':0}),patch.object(vm,'isolated_census',return_value={'drained':True}),patch.object(vm.Step,'sandboxes_file',return_value=(vm.SHARED,self.apply))]
+  self.patchers=[patch.object(vm,'reader_recovery',side_effect=lambda *a,**kw:contextlib.nullcontext()),patch.object(vm,'main_release_running',return_value=False),patch.object(vm,'env_of',side_effect=self.env),patch.object(h,'stable_identity'),patch.object(h,'source_fence',return_value={'denied':True}),patch.object(vm,'quiet'),patch.object(h,'pi_admission',side_effect=lambda action:{'active':action=='apply' or (action=='inspect' and (h.ROOT/'pi-admission.intent.json').exists()),'commands':0,'hosts':0,'allocations':0}),patch.object(vm,'isolated_census',return_value={'drained':True}),patch.object(vm.Step,'sandboxes_file',return_value=(vm.SHARED,self.apply))]
   for p in self.patchers:p.start()
  def tearDown(self):
   for p in getattr(self,'patchers',[]):p.stop()
@@ -47,14 +48,14 @@ class Handoff(unittest.TestCase):
     self.assertEqual(json.loads(vm.env_value(vm.SHARED.read_bytes(),'SANDBOXES_PROVIDERS')),[self.customer])
     self.assertIn(b'UNRELATED=preserve bytes\n',vm.SHARED.read_bytes())
     self.assertEqual((h.ROOT/'shared.original').read_bytes(),self.raw)
-    self.tearDown();self.patchers=[]
+    self.tearDown();self.patchers=[patch.object(vm,'reader_recovery',side_effect=lambda *a,**kw:contextlib.nullcontext()),]
  def test_destination_requires_source_receipt_and_refuses_double_controller(self):
   with tempfile.TemporaryDirectory() as d:
    self.setup_case(d,'destination')
    h.execute('reserve','destination',self.plan)
    with self.assertRaisesRegex(RuntimeError,'source relinquishment'):h.execute('enable','destination',self.plan,None)
    self.assertEqual(self.calls,[])
-  self.tearDown();self.patchers=[]
+  self.tearDown();self.patchers=[patch.object(vm,'reader_recovery',side_effect=lambda *a,**kw:contextlib.nullcontext()),]
   with tempfile.TemporaryDirectory() as d:
    self.setup_case(d,'source')
    with self.assertRaisesRegex(RuntimeError,'already enabled'):h.execute('reserve','destination',self.plan)
@@ -80,7 +81,7 @@ class Handoff(unittest.TestCase):
     self.assertEqual(h.execute('enable','destination',self.plan,peer),receipt)
     self.assertTrue(h.execute('release','destination',self.plan,receipt)['released'])
     self.assertTrue(h.execute('release','destination',self.plan,receipt)['released'])
-    self.tearDown();self.patchers=[]
+    self.tearDown();self.patchers=[patch.object(vm,'reader_recovery',side_effect=lambda *a,**kw:contextlib.nullcontext()),]
  def test_app_confusion_and_unknown_inventory_refused(self):
   with tempfile.TemporaryDirectory() as d:
    self.setup_case(d,'source');h.execute('reserve','source',self.plan)
