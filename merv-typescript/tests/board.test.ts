@@ -794,4 +794,11 @@ test('board.read look works without a personal conversation, presents images, an
   assert.equal(renders.length, 2, 'unauthorized calls do not render');
   const zoom = { board: made.id, view: { action: 'zoom', factor: 0 } };
   assert.equal(look.inputSchema.safeParse({ action: 'look', look: zoom }).success, false);
+  // Shape ids are random base64url, so a focus may start with _ or -.
+  for (const focus of ['_abcdefghijklmnopqrs', '-abcdefghijklmnopqrs'])
+    assert.equal(
+      look.inputSchema.safeParse({ action: 'look', look: { board: made.id, focus } }).success,
+      true,
+      focus,
+    );
 });

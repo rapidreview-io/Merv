@@ -14,7 +14,12 @@ const guide = `Text wraps automatically. Preserve requested text exactly, includ
 const shapes =
   "its frames, its shapes (notes, boxes, text, link cards with the record or address they open, freehand drawings) with their ids, text and rough place, and its arrows with the shapes they join. Shape ids are what board.draw's operations name.";
 const lookSchema = z
-  .object({ board: id, focus: id.optional(), view: viewSchema.optional() })
+  // A shape id is random base64url, so it may start with _ or -: any trimmed id is a focus.
+  .object({
+    board: id,
+    focus: z.string().trim().min(1).max(200).optional(),
+    view: viewSchema.optional(),
+  })
   .strict();
 const sceneSchema = z.object({ id, since: z.number().int().safe().min(0).optional() }).strict();
 
