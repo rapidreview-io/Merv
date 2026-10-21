@@ -24,6 +24,16 @@ const ROOTS = [
   'deploy',
   'docs/architecture',
 ];
+// Root-level plugin sources are flattened into the build context alongside package.json.
+// Both release callers use this same committed snapshot and manifest.
+const CLIENT_ROOTS = [
+  'codex',
+  'claude-code',
+  '.agents',
+  '.claude-plugin',
+  'manifest.json',
+  'README.md',
+];
 const VENDOR = 'vendor/merv-sandboxes';
 const VENDOR_ROOTS = ['typescript/packages', 'typescript/hosts/merv', 'typescript/patches'];
 const EXCLUDE =
@@ -43,6 +53,16 @@ export function packageSource() {
     .split('\0')
     .filter((p) => p && !EXCLUDE.test(p))
     .sort();
+  const clientTree = `${gitRevision}:clients`;
+  const clientFiles = sh(
+    'git',
+    ['ls-tree', '-r', '-z', '--name-only', clientTree, '--', ...CLIENT_ROOTS],
+    repo,
+  )
+    .split('\0')
+    .filter((p) => p && !EXCLUDE.test(p))
+    .sort();
+  if (!clientFiles.length) throw new Error('Release has no committed client plugin sources');
   const vendor = join(root, VENDOR);
   const pin = sh('git', ['rev-parse', `${tree}/${VENDOR}`], repo).trim();
   const vendorFiles = sh(
@@ -54,6 +74,11 @@ export function packageSource() {
     .filter(Boolean);
   const entries = [
     ...files.map((path) => ({ path, cwd: repo, object: `${tree}/${path}` })),
+    ...clientFiles.map((path) => ({
+      path: `clients/${path}`,
+      cwd: repo,
+      object: `${clientTree}/${path}`,
+    })),
     ...vendorFiles.map((path) => ({
       path: `${VENDOR}/${path}`,
       cwd: vendor,
@@ -82,12 +107,26 @@ export function packageSource() {
       { cwd: vendor, maxBuffer: 64 << 20 },
     ),
   );
+  appendFileSync(
+    join(dir, 'source.tar.gz'),
+    execFileSync(
+      'git',
+      ['archive', '--format=tar.gz', '--prefix=clients/', clientTree, '--', ...clientFiles],
+      { cwd: repo, maxBuffer: 64 << 20 },
+    ),
+  );
   const archiveSha256 = sha256(readFileSync(join(dir, 'source.tar.gz')));
   const manifest = { release, gitRevision, contentSha256, archiveSha256, files: entries };
   writeFileSync(join(dir, 'source-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
   const uncommitted = sh(
     'git',
-    ['status', '--porcelain', '--', ...ROOTS.map((r) => `merv-typescript/${r}`)],
+    [
+      'status',
+      '--porcelain',
+      '--',
+      ...ROOTS.map((r) => `merv-typescript/${r}`),
+      ...CLIENT_ROOTS.map((r) => `clients/${r}`),
+    ],
     repo,
   ).trim();
   if (uncommitted) console.error(`not in this release (uncommitted):\n${uncommitted}`);

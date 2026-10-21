@@ -4,7 +4,15 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -269,6 +277,7 @@ before(() => {
     mkdirSync(dirname(join(fixture, file)), { recursive: true });
     writeFileSync(join(fixture, file), readFileSync(join(merv, file)));
   }
+  cpSync(join(merv, '../clients'), join(repo, 'clients'), { recursive: true });
   writeFileSync(join(fixture, 'package.json'), '{"name":"release-fixture","private":true}');
   mkdirSync(join(fixture, 'src'));
   writeFileSync(join(fixture, 'src/cli.ts'), 'export const fixture = true;');

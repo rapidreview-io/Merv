@@ -1,4 +1,5 @@
-# Build from the merv-typescript directory. Pin NODE_IMAGE to a reviewed digest for a release.
+# Build from the extracted packageSource archive (flattened app plus committed clients/).
+# Pin NODE_IMAGE to a reviewed digest for a release.
 ARG NODE_IMAGE=node:22-bookworm-slim
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app

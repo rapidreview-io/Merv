@@ -81,3 +81,21 @@ bearers; clients must reconnect after OAuth is restored. Never silently turn the
 email-code flow back on as a fallback. Deploy first in an isolated staging tenant
 with distinct plugin names. Complete the real-client matrix in
 [MCP_OAUTH_VALIDATION.md](../docs/MCP_OAUTH_VALIDATION.md) before production cutover.
+
+## Release source packaging
+
+Main and hosted releases both use `packageSource()` from `source-archive.mjs`.
+It snapshots one Git commit, maps that commit's root `clients/` into the flattened
+build context as `clients/`, and records every shipped client source in the source
+manifest and content hash. Dirty or untracked client files are not release inputs.
+The Docker allowlist includes these sources; `npm run build` regenerates the
+server bundle from `/app/clients`. Full checkouts use the canonical root directory.
+Do not build the release Dockerfile from a bare `merv-typescript/` checkout: use
+the extracted committed archive used by the release scripts. Missing sources fail
+the build; the generated TypeScript bundle is not a fallback for missing inputs.
+
+`node --test deploy/source-archive.test.mjs` exercises packaging, extraction into
+the flattened build layout, bundle regeneration, actual setup handlers and both
+production/nonproduction plugin archives. It also verifies source hashes, omission
+of dirty/untracked inputs and credential-shaped files, and that a committed skill
+change changes the release content hash.

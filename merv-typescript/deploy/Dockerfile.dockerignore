@@ -3,6 +3,8 @@
 !package.json
 !package-lock.json
 !tsconfig.json
+!clients/
+!clients/**
 !vendor/
 !vendor/**
 !packages/

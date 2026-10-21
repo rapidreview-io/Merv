@@ -1,6 +1,9 @@
 import { format } from 'prettier';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-const root = new URL('../../clients/', import.meta.url);
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+// packageSource flattens the committed client sources into /app/clients for Docker.
+// A full checkout keeps their canonical location at the repository root.
+const packaged = new URL('../clients/', import.meta.url);
+const root = existsSync(packaged) ? packaged : new URL('../../clients/', import.meta.url);
 const files = {};
 for (const name of readdirSync(root, { recursive: true }).sort()) {
   if (
