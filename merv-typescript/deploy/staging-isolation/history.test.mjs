@@ -331,6 +331,18 @@ test(
           JSON.stringify(['sbx:stopped-one']),
         ],
       );
+      const gatewaySession = 'ses_1234567890abcdef',
+        upstreamSerial = '9007199254740992';
+      await source.query("UPDATE sessions SET id=$1,kind='client' WHERE id='session-0'", [
+        gatewaySession,
+      ]);
+      await source.query("UPDATE sandboxes SET endpoint_json=$1 WHERE id='stopped-one'", [
+        JSON.stringify({ host: '127.0.0.1', port: 22, user: 'root' }),
+      ]);
+      await source.query(
+        "UPDATE certificates SET kind='upstream',token_id=$1,key_id=$2,principals_json='[\"root\"]' WHERE serial=$3",
+        [`jobs:${principalJob}`, `gateway:${gatewaySession}`, upstreamSerial],
+      );
       for (const [path, bytes] of outputs) {
         mkdirSync(join(sourceData, path, '..'), { recursive: true });
         writeFileSync(join(sourceData, path), bytes);
@@ -524,7 +536,14 @@ test(
           token,
           `${LEGACY}/${token}`,
         ]);
-        await assert.rejects(exportHistory(source, selection, dir), pattern);
+        await assert.rejects(
+          exportHistory(
+            source,
+            { ...selection, roots: [{ table: 'certificates', key: { serial: '42' } }] },
+            dir,
+          ),
+          pattern,
+        );
       }
       await source.query('UPDATE certificates SET token_id=$1,key_id=$2 WHERE serial=42', [
         `jobs:${principalJob}`,
@@ -536,7 +555,14 @@ test(
         ['sandbox_id', 'customer-one', /namespace or sandbox mismatch/],
       ]) {
         await source.query(`UPDATE jobs SET ${field}=$1 WHERE id=$2`, [value, principalJob]);
-        await assert.rejects(exportHistory(source, selection, dir), pattern);
+        await assert.rejects(
+          exportHistory(
+            source,
+            { ...selection, roots: [{ table: 'certificates', key: { serial: '42' } }] },
+            dir,
+          ),
+          pattern,
+        );
         await source.query(`UPDATE jobs SET ${field}=$1 WHERE id=$2`, [
           { state: 'succeeded', namespace: LEGACY, sandbox_id: 'stopped-one' }[field],
           principalJob,
@@ -563,6 +589,98 @@ test(
       await source.query("UPDATE api_tokens SET revoked_at=$1 WHERE id='revoked'", [
         bundle.rows.api_tokens[0].original.revoked_at,
       ]);
+      const upstream = bundle.rows.certificates.find((r) => r.key.serial === upstreamSerial);
+      assert.deepEqual(upstream.value, upstream.original);
+      const pair = await exportHistory(
+        source,
+        { ...selection, roots: [{ table: 'certificates', key: { serial: upstreamSerial } }] },
+        dir,
+      );
+      assert.ok(pair.rows.sessions.some((r) => r.key.id === gatewaySession));
+      assert.ok(pair.rows.certificates.some((r) => r.key.serial === '42'));
+      for (const [field, value, pattern] of [
+        ['id', 'ses_0000000000000000', /missing or ambiguous native gateway/],
+        ['ended_at', null, /open historical session/],
+        ['certificate_serial', '9223372036854775807', /binding mismatch/],
+        ['certificate_serial', '123456', /missing or ambiguous native gateway/],
+        ['sandbox_id', 'customer-one', /binding mismatch/],
+        ['namespace', 'customer', /unapproved namespace|binding mismatch/],
+      ]) {
+        const before = bundle.rows.sessions.find((r) => r.key.id === gatewaySession).original[
+          field
+        ];
+        await source.query(`UPDATE sessions SET ${field}=$1 WHERE id=$2`, [value, gatewaySession]);
+        await assert.rejects(
+          exportHistory(
+            source,
+            { ...selection, roots: [{ table: 'certificates', key: { serial: upstreamSerial } }] },
+            dir,
+          ),
+          pattern,
+        );
+        await source.query(`UPDATE sessions SET ${field}=$1 WHERE id=$2`, [
+          before,
+          field === 'id' ? value : gatewaySession,
+        ]);
+      }
+      await source.query(
+        'UPDATE certificates SET principals_json=\'["wrong-user"]\' WHERE serial=$1',
+        [upstreamSerial],
+      );
+      await assert.rejects(exportHistory(source, selection, dir), /SSH login principal mismatch/);
+      await source.query('UPDATE certificates SET principals_json=$1 WHERE serial=$2', [
+        upstream.original.principals_json,
+        upstreamSerial,
+      ]);
+      await source.query(
+        "UPDATE sandboxes SET access_mode='tunnel',endpoint_json=NULL WHERE id='stopped-one'",
+      );
+      assert.ok(
+        (await exportHistory(source, selection, dir)).rows.certificates.some(
+          (r) => r.key.serial === upstreamSerial,
+        ),
+      );
+      await source.query(
+        "UPDATE sandboxes SET access_mode='inbound',endpoint_json=$1 WHERE id='stopped-one'",
+        [bundle.rows.sandboxes.find((r) => r.key.id === 'stopped-one').original.endpoint_json],
+      );
+      for (const mutate of [
+        (b) => {
+          b.rows.sessions = b.rows.sessions.filter((r) => r.key.id !== gatewaySession);
+        },
+        (b) => {
+          b.rows.sessions.find((r) => r.key.id === gatewaySession).original.ended_at = null;
+        },
+        (b) => {
+          b.rows.sessions.find((r) => r.key.id === gatewaySession).original.certificate_serial =
+            '9223372036854775807';
+        },
+        (b) => {
+          b.rows.sessions.find((r) => r.key.id === gatewaySession).original.sandbox_id =
+            'customer-one';
+        },
+        (b) => {
+          b.rows.sessions.find((r) => r.key.id === gatewaySession).original.namespace = 'customer';
+        },
+        (b) => {
+          b.rows.certificates.find(
+            (r) => r.key.serial === upstreamSerial,
+          ).original.principals_json = '["wrong-user"]';
+        },
+      ]) {
+        const altered = structuredClone(bundle);
+        mutate(altered);
+        const { sha256: ignored, ...body } = altered;
+        altered.sha256 = hash(body);
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, bundle.sha256),
+          /reviewed export digest/,
+        );
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, altered.sha256),
+          /native gateway|open historical session|unapproved namespace/,
+        );
+      }
       // Import independently enforces job closure and terminal identity binding.
       for (const mutate of [
         (b) => {

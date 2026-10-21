@@ -192,15 +192,66 @@ function jobPrincipalId(certificate) {
   const match = /^jobs:(job_[0-9a-z]{8,32})$/.exec(token);
   need(match && match[0] === token, 'malformed native job principal');
   need(
-    certificate.kind === 'user' &&
-      certificate.key_id === `${certificate.namespace}/${token}` &&
-      typeof certificate.sandbox_id === 'string' &&
-      certificate.sandbox_id.length > 0 &&
-      canonical(JSON.parse(certificate.principals_json)) ===
-        canonical([`sbx:${certificate.sandbox_id}`]),
+    typeof certificate.sandbox_id === 'string' && certificate.sandbox_id.length > 0,
     'invalid native job certificate binding',
   );
+  if (certificate.kind === 'user') {
+    need(
+      certificate.key_id === `${certificate.namespace}/${token}` &&
+        canonical(JSON.parse(certificate.principals_json)) ===
+          canonical([`sbx:${certificate.sandbox_id}`]),
+      'invalid native job certificate binding',
+    );
+  } else {
+    need(
+      certificate.kind === 'upstream' && gatewaySessionId(certificate),
+      'invalid native job certificate binding',
+    );
+  }
   return match[1];
+}
+function gatewaySessionId(certificate) {
+  const match = /^gateway:(ses_[0-9a-z]{8,32})$/.exec(certificate.key_id);
+  need(match && match[0] === certificate.key_id, 'invalid native gateway session key');
+  return match[1];
+}
+function validateGatewayPrincipal(certificate, sessions, users, sandboxes, namespaces) {
+  need(
+    sessions.length === 1 && users.length === 1 && sandboxes.length === 1,
+    'missing or ambiguous native gateway session/user/sandbox',
+  );
+  const [session] = sessions,
+    [user] = users,
+    [sandbox] = sandboxes;
+  safeRow('sessions', session, namespaces);
+  safeRow('sandboxes', sandbox, namespaces);
+  need(
+    session.id === gatewaySessionId(certificate) &&
+      session.kind === 'client' &&
+      session.namespace === certificate.namespace &&
+      session.sandbox_id === certificate.sandbox_id &&
+      session.certificate_serial === user.serial &&
+      user.kind === 'user' &&
+      user.token_id === certificate.token_id &&
+      user.namespace === certificate.namespace &&
+      user.sandbox_id === certificate.sandbox_id &&
+      jobPrincipalId(user) === jobPrincipalId(certificate) &&
+      sandbox.id === certificate.sandbox_id &&
+      sandbox.namespace === certificate.namespace,
+    'native gateway session/user/sandbox binding mismatch',
+  );
+  const login =
+    sandbox.access_mode === 'tunnel'
+      ? sandbox.login_user
+      : sandbox.access_mode === 'inbound'
+        ? JSON.parse(sandbox.endpoint_json ?? 'null')?.user
+        : null;
+  need(
+    typeof login === 'string' &&
+      login.length > 0 &&
+      canonical(JSON.parse(certificate.principals_json)) === canonical([login]),
+    'native gateway SSH login principal mismatch',
+  );
 }
 function validateJobPrincipal(meta, certificate, jobs, namespaces) {
   need(
@@ -221,13 +272,30 @@ function validateJobPrincipal(meta, certificate, jobs, namespaces) {
 function validateJobPrincipals(bundle) {
   for (const { original: certificate } of bundle.rows.certificates ?? []) {
     const jobId = jobPrincipalId(certificate);
-    if (jobId !== null)
+    if (jobId !== null) {
       validateJobPrincipal(
         bundle.schema,
         certificate,
         (bundle.rows.jobs ?? []).filter((r) => r.original.id === jobId).map((r) => r.original),
         bundle.selection.namespaces,
       );
+      if (certificate.kind === 'upstream') {
+        const sessions = (bundle.rows.sessions ?? [])
+          .filter((r) => r.original.id === gatewaySessionId(certificate))
+          .map((r) => r.original);
+        validateGatewayPrincipal(
+          certificate,
+          sessions,
+          (bundle.rows.certificates ?? [])
+            .filter((r) => r.original.serial === sessions[0]?.certificate_serial)
+            .map((r) => r.original),
+          (bundle.rows.sandboxes ?? [])
+            .filter((r) => r.original.id === certificate.sandbox_id)
+            .map((r) => r.original),
+          bundle.selection.namespaces,
+        );
+      }
+    }
   }
 }
 // The only permitted missing logical parent is an observed, pre-existing closed-session
@@ -324,6 +392,28 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
           if (jobId !== null) {
             const jobs = await select(db, 'jobs', { id: jobId }, meta.jobs);
             validateJobPrincipal(meta, original, jobs, selection.namespaces);
+            if (original.kind === 'upstream') {
+              const sessionId = gatewaySessionId(original);
+              const sessions = await select(db, 'sessions', { id: sessionId }, meta.sessions);
+              const users =
+                sessions.length === 1
+                  ? await select(
+                      db,
+                      'certificates',
+                      { serial: sessions[0].certificate_serial },
+                      meta.certificates,
+                    )
+                  : [];
+              const sandboxes = await select(
+                db,
+                'sandboxes',
+                { id: original.sandbox_id },
+                meta.sandboxes,
+              );
+              validateGatewayPrincipal(original, sessions, users, sandboxes, selection.namespaces);
+              queue.push({ table: 'sessions', key: { id: sessionId } });
+              queue.push({ table: 'certificates', key: { serial: users[0].serial } });
+            }
             queue.push({ table: 'jobs', key: { id: jobId } });
             continue;
           }

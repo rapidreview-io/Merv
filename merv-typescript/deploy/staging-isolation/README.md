@@ -343,11 +343,17 @@ lock and returns the manifest in its receipt, including on idempotent replay. Op
 independently compare this manifest with read-only source evidence and bind the fresh export
 digest before importing; a destination cannot independently reconstruct a past source absence.
 
-Native job certificate identities (`jobs:job_<id>`) follow the pinned jobs executor's identity
-contract, rather than an API-token lookup. Export and import require a sandbox-bound user
-certificate with the matching namespace/key ID and `sbx:<sandbox_id>` SSH principal, and exactly
-one terminal job in that same namespace and sandbox. The referenced job is included in closure;
-certificate fields stay unchanged. Malformed identities, missing/nonterminal jobs, binding
-mismatches and declared token FKs refuse. This handles only the evidenced jobs identity form;
-other token strings retain strict API-token traversal and active-token rejection. The closed
-session missing-certificate manifest is unchanged.
+Native job certificate identities (`jobs:job_<id>`) follow the pinned jobs executor and gateway
+identity contracts, rather than an API-token lookup. Export and import require exactly one
+terminal job in the same namespace and sandbox. User certificates must bind their namespace/key
+ID and `sbx:<sandbox_id>` SSH principal. Upstream certificates must bind `gateway:<session_id>`
+to an existing closed client session, whose exact certificate serial identifies the corresponding
+user certificate with the same job, namespace and sandbox. Missing-certificate exceptions cannot
+substitute for that gateway user certificate. The upstream SSH principal must equal the stopped
+sandbox's `login_user` for tunnel access or `endpoint_json.user` for inbound access.
+
+The job, session, original user certificate and sandbox are included in closure; certificate and
+session fields stay unchanged. Malformed identities, missing/nonterminal jobs, missing/open/wrong
+sessions, mismatched namespaces/sandboxes/SSH principals and declared token FKs refuse. This
+handles only the evidenced jobs identity form; other token strings retain strict API-token
+traversal and active-token rejection. The closed-session missing-certificate manifest is unchanged.

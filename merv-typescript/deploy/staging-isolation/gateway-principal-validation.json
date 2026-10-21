@@ -1,0 +1,30 @@
+{
+  "base": "69e0fdd45ae21e709743c1d029a489d3f31e5a01",
+  "scope": "Pinned job user-to-gateway certificate pair validation. Local correction only; no live operations.",
+  "localEvidenceAudit": {
+    "closureSummary": "/tmp/merv-staging-isolation-liveprep/closure-audit-summary.json",
+    "jobSummary": "/tmp/merv-staging-isolation-liveprep/job-principals-summary.json",
+    "observed": "All 12 locally reported synthetic job certificates across six jobs checked: six user + six upstream, matching job namespace/sandbox and succeeded state. Full closure summary reports 233 certificates/152 sessions, six synthetic API-token gaps and no safeRow refusals.",
+    "limit": "Local summaries do not include gateway session rows or sandbox endpoint/login columns; parent must verify these exact bindings in fresh read-only export. No claim of live/full-row replay by author."
+  },
+  "pinnedProducer": "packages/access/src/service.ts:628-705 selects login_user for tunnel or endpoint.user for inbound, issues gateway:session upstream certificate and inserts client session referencing original user certificate serial.",
+  "validation": {
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "serverDefault": "America/Los_Angeles",
+    "checks": [
+      "Full user-to-upstream pair from upstream-only root follows exact session and user certificate",
+      "Exact certificate/session fields survive import, cross-timezone idempotent replay and SQL-text dump/restore",
+      "Missing, wrong, open, cross-sandbox and cross-namespace session rejects",
+      "Incorrect upstream SSH principal rejects; both inbound endpoint and tunnel login modes pass",
+      "Digest tampering and self-rehashed semantic tampering reject on import",
+      "Existing terminal-job, real-token, declared-FK, missing-certificate, numeric and timezone checks pass"
+    ]
+  },
+  "log": {
+    "path": "/tmp/merv-gateway-suite.log",
+    "sha256": "da4d3f63e0ac757fa5c72fc0914c90e6ec3bde811efc027a4c846aa699d416cb"
+  },
+  "next": "Independent review then parent fresh read-only export before image/import."
+}
