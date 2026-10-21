@@ -1832,6 +1832,7 @@
       "owner": {
         "ok": [
           "blockers",
+          "budgets",
           "dispatch",
           "observedAt",
           "projectId",
@@ -1844,6 +1845,7 @@
       "reader": {
         "ok": [
           "blockers",
+          "budgets",
           "dispatch",
           "observedAt",
           "projectId",

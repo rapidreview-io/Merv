@@ -3,7 +3,8 @@
  * any rename (tests/fixtures/tool-contracts.json, from origin/main 5e4f210a5 on a seeded project):
  * called by a person's agent over MCP, by a page over POST /tools, by a leased worker under a
  * published policy (whose listing is name for name the base one), and by a Pi turn frozen before
- * the release. Results are compared with the captured shapes, never with the noun actions.
+ * the release. Results are compared with the captured shapes, never with the noun actions;
+ * system.status also retains the approved additive project budgets field.
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -264,6 +265,39 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
       );
     });
   }
+  await t.test('project budgets survive legacy and noun status over pages and MCP', async () => {
+    const updated = await tool('usage.set_budget', boot.token, { maxTokens: 150_000 });
+    assert.equal(updated.status, 200);
+    const budget = updated.body.result;
+    assert.deepEqual(Object.keys(budget).sort(), captured.contracts['usage.set_budget']!.owner.ok);
+    assert.equal(budget.kind, 'project');
+    assert.equal(budget.scopeId, boot.project.id);
+    assert.equal(budget.maxTokens, 150_000);
+    assert.equal(budget.maxWallMs, 600 * 60_000);
+    assert.deepEqual(Object.keys(budget.used).sort(), ['tokens', 'wallMs']);
+    assert.deepEqual(budget.exceeded, []);
+    assert.deepEqual(budget.unavailable, []);
+    const calls = [
+      { name: 'system.status', arguments: {} },
+      { name: 'project.read', arguments: { action: 'status' } },
+    ];
+    for (const call of calls) {
+      for (const token of [boot.token, reader.token]) {
+        const answer = await tool(call.name, token, call.arguments);
+        assert.equal(answer.status, 200);
+        assert.deepEqual(
+          { ok: shape(answer.body.result) },
+          captured.contracts['system.status']!.owner,
+        );
+        assert.deepEqual(answer.body.result.budgets, [budget], `${call.name} page budgets`);
+      }
+      const answer = await client.callTool(call);
+      assert.ok(!answer.isError);
+      const result = JSON.parse((answer.content as { text: string }[])[0]!.text);
+      assert.deepEqual({ ok: shape(result) }, captured.contracts['system.status']!.owner);
+      assert.deepEqual(result.budgets, [budget], `${call.name} MCP budgets`);
+    }
+  });
   // A kept flat name reads its old flat input as the action it routes to.
   assert.deepEqual(
     (await tool('artifact.read', boot.token, { artifactId: seed.id })).body,
@@ -361,6 +395,15 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     secret,
   });
   const worker = await app.ctx.sessions.authenticate(secret);
+  // Project budget visibility must not widen a leased worker's session-only status.
+  for (const [name, args] of [
+    ['system.status', {}],
+    ['project.read', { action: 'status' }],
+  ] as const) {
+    const { value } = await app.ctx.tools.invoke(name, worker, args, true);
+    assert.deepEqual(shape(value), ['lineage', 'projectId', 'scope', 'session']);
+    assert.equal((value as { scope: string }).scope, 'session');
+  }
   assert.deepEqual(
     (await app.ctx.tools.describe(worker, true)).map(({ name }) => name),
     captured.listings.worker,

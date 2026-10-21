@@ -103,7 +103,10 @@ test('outside noun summaries never change worker metadata or retired calls', asy
   );
 });
 
-// Captured from origin/main with the measurement helper; optional production tools enabled.
+// The total is the original measured baseline; optional production tools are enabled.
+// Only sandboxes.spend's individual cap includes its approved funding guidance (933 characters).
+// Metadata accepts only the reviewed budget/funding descriptions (system.status/project.read
+// and sandboxes.spend). Every other hash, including every validation constraint, stays pinned.
 test('the operator MCP listing stays at least 25% below the measured baseline', async () => {
   const baseline = JSON.parse(
     readFileSync(new URL('./fixtures/tool-list-sizes.json', import.meta.url), 'utf8'),
@@ -118,7 +121,7 @@ test('the operator MCP listing stays at least 25% below the measured baseline', 
   assert.deepEqual(
     JSON.parse(metadata[1]!),
     JSON.parse(readFileSync(new URL('./fixtures/tool-metadata.json', import.meta.url), 'utf8')),
-    'original worker metadata, script declarations and validation constraints',
+    'reviewed worker metadata, script declarations and unchanged validation constraints',
   );
   const total = /^TOTAL\t(\d+)\t(\d+) tools$/m.exec(stdout);
   assert.ok(total, stdout);
