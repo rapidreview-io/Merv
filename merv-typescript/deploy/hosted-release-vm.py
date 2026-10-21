@@ -1433,6 +1433,19 @@ class Step:
 
     def finish(self, arg):
         """Closes the run: the new pins (on success), the drain's hold, the guard, the backups, the marker."""
+        if self.plan.get('deferStaging') and arg.get('result') == 'pass':
+            current=(arg.get('state') or {}).get('current') or {}
+            canary=read(self.run / 'canary.json') or {}
+            need(not self.plan.get('cutover') and not self.plan.get('stagingCutover')
+                 and not (read(self.run / 'progress.json') or {}).get('stagingPropagation'),
+                 'deferral cannot erase staging propagation ownership')
+            need(current.get('image') and current.get('releaseId') and canary.get('accepted') is True
+                 and canary.get('image') == current['image'] and canary.get('releaseId') == current['releaseId'],
+                 'staging deferral requires the actual accepted production canary')
+            deferred={'status':'deferred','reason':self.plan['deferStaging'],'sourceRun':self.run.name,
+                      'image':current['image'],'releaseId':current['releaseId']}
+            need(arg['state'].get('staging') == deferred, 'staging deferral receipt mismatch')
+            atomic(self.run / 'staging-deferred.json',json.dumps(deferred).encode())
         if not self.plan.get('cutover') and owner() in ('', self.run.name):
             with authorized(self.run.name):
                 unhold()

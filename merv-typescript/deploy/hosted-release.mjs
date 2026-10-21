@@ -297,6 +297,7 @@ export function describePlan(p) {
     `  changed   ${list(p.changed)}`,
     `  sandboxes ${list(p.sandboxChanged)}`,
     `  lane      ${LANE_TEXT[p.lane]}`,
+    ...(p.deferStaging ? [`  staging   DEFERRED: ${p.deferStaging}; no staging calls`] : []),
     ...(p.lane === 'none'
       ? p.current.verified === false
         ? ['  steps     build; an identical image gets a live canary Pi turn as deployed']
@@ -347,6 +348,7 @@ async function main(args) {
       help: { type: 'boolean' },
       host: { type: 'string', default: 'ResearchSuite_Control' },
       'staging-host': { type: 'string', default: 'azureuser@dev-experiments.rapidreview.io' },
+      'defer-staging': { type: 'string' },
       sandboxes: { type: 'string' },
       wrangler: { type: 'string' },
       'canary-credential': { type: 'string' },
@@ -366,7 +368,7 @@ async function main(args) {
   });
   if (values.help) {
     console.log(
-      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--staging-cutover --canary-project ID] [--prepare-cutover [--replace-predeploy-cutover RUN] | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--defer-staging REASON] [--staging-cutover --canary-project ID] [--prepare-cutover [--replace-predeploy-cutover RUN] | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
     );
     return 0;
   }
@@ -386,6 +388,26 @@ async function main(args) {
     throw new Error('--accept-cutover requires --resume and cannot prepare or abandon');
   if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
     throw new Error('--prepare-cutover cannot abandon, check or mint a credential');
+  const deferStaging = values['defer-staging'];
+  if (
+    deferStaging !== undefined &&
+    (deferStaging.trim() !== deferStaging ||
+      !deferStaging.length ||
+      deferStaging.length > 300 ||
+      /[\x00-\x1f\x7f]/.test(deferStaging) ||
+      [
+        'staging-cutover',
+        'isolated-staging',
+        'prepare-cutover',
+        'accept-cutover',
+        'abandon',
+        'check',
+        'mint-canary',
+      ].some((k) => values[k]))
+  )
+    throw new Error(
+      '--defer-staging requires a plain reason (1-300 characters) and an ordinary production release or resume',
+    );
   const stagingCutover = values['staging-cutover'] === true;
   const isolatedStaging = values['isolated-staging'] === true;
   if (isolatedStaging && !stagingCutover)
@@ -702,6 +724,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     current,
     cutover: values['prepare-cutover'] === true,
     ...(replaceRun ? { replaces: replaceRun } : {}),
+    ...(deferStaging !== undefined ? { deferStaging } : {}),
     canary,
     nodeImage: NODE_IMAGE,
     drainSeconds: Number(values['drain-minutes']) * 60,
@@ -779,6 +802,13 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       return ['pass', 'current'].includes(s.finish.result) ? 0 : 1;
     }
     const { plan, preflight: pre } = s;
+    if (deferStaging !== undefined && plan?.deferStaging !== deferStaging)
+      throw new Error('Resume cannot add or change the saved staging deferral');
+    if (
+      plan?.deferStaging &&
+      (s.progress?.stagingPropagation || plan.cutover || plan.stagingCutover)
+    )
+      throw new Error('Staging deferral cannot override an existing propagation or cutover');
     let { build, gates, push: pushed, progress = {} } = s;
     if (!!plan?.isolatedStaging !== isolatedStaging)
       throw new Error('Resume must preserve isolated staging mode');
@@ -1205,6 +1235,25 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     return finishStaging(entry, next);
 
     async function finishStaging(entry, target) {
+      if (plan.deferStaging) {
+        const staging = {
+          status: 'deferred',
+          reason: plan.deferStaging,
+          sourceRun: run,
+          image: target.image,
+          releaseId: target.releaseId,
+        };
+        close('pass', { current: target, inputs: build.inputs, staging });
+        record(
+          'pass',
+          `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`,
+          `STAGING DEFERRED: ${plan.deferStaging}`,
+        );
+        console.log(
+          JSON.stringify({ run, ...target, version: row.version, canary: row.canary, staging }),
+        );
+        return 0;
+      }
       const staged = plan.cutover
         ? 'DEFERRED: staging Main protocol compatibility requires separate acceptance'
         : await stage(entry, target);

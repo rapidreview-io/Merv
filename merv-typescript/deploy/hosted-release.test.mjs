@@ -1871,3 +1871,43 @@ print(json.dumps({'passed':passed,'refused':refused}))`);
   assert.equal(result.passed.requiredPlugins.length, 7);
   assert.equal(result.refused.length, 8);
 });
+
+test('host deferral receipt requires accepted exact-image canary before closing ownership', () => {
+  const result = py(`${scratch}
+vm.HOME=t/'home';vm.HOME.mkdir(exist_ok=True)
+vm.owner=lambda:r.name
+vm.unhold=lambda:None
+vm.subprocess.run=lambda *a,**k:None
+(vm.HOME/'active').write_text(r.name)
+plan={'deferStaging':'Staging fenced'}
+step=vm.Step(r,plan)
+current={'image':'image-new','releaseId':'release-new'}
+staging={'status':'deferred','reason':plan['deferStaging'],'sourceRun':r.name,**current}
+arg={'result':'pass','state':{'current':current,'staging':staging}}
+refused=[]
+for canary in ({},{'accepted':False,**current},{'accepted':True,'image':'wrong','releaseId':'release-new'}):
+ vm.atomic(r/'canary.json',json.dumps(canary).encode())
+ try:step.finish(arg)
+ except RuntimeError:refused.append(True)
+ assert (vm.HOME/'active').exists() and not (r/'staging-deferred.json').exists()
+vm.atomic(r/'canary.json',json.dumps({'accepted':True,**current}).encode())
+vm.atomic(r/'progress.json',b'{"stagingPropagation":true}')
+try:step.finish(arg)
+except RuntimeError:refused.append(True)
+assert (vm.HOME/'active').exists()
+vm.atomic(r/'progress.json',b'{}')
+original_atomic=vm.atomic
+def fail_receipt(path,*args):
+ if path.name=='staging-deferred.json':raise OSError('durability failure')
+ return original_atomic(path,*args)
+vm.atomic=fail_receipt
+try:step.finish(arg)
+except OSError:refused.append(True)
+assert (vm.HOME/'active').exists() and not (vm.HOME/'state.json').exists()
+vm.atomic=original_atomic
+step.finish(arg)
+print(json.dumps({'refused':len(refused),'receipt':vm.read(r/'staging-deferred.json'),'state':vm.read(vm.HOME/'state.json'),'closed':not (vm.HOME/'active').exists()}))`);
+  assert.equal(result.refused, 5);
+  assert.equal(result.closed, true);
+  assert.deepEqual(result.receipt, result.state.staging);
+});
