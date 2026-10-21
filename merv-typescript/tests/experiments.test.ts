@@ -1469,13 +1469,20 @@ test('experiments.list reads each table once however many experiments there are'
         });
         return fn(tx);
       })) as typeof f.state.transaction;
+    // Any background transaction in the window adds statements, never removes them: keep the
+    // fewest of three lists.
+    let fewest = Infinity;
     try {
-      const listed = await f.experiments.list(f.reader);
-      assert.equal(listed.length, count);
+      for (let i = 0; i < 3; i++) {
+        issued = 0;
+        const listed = await f.experiments.list(f.reader);
+        assert.equal(listed.length, count);
+        fewest = Math.min(fewest, issued);
+      }
     } finally {
       f.state.transaction = transaction;
     }
-    return issued;
+    return fewest;
   };
   const few = await statements(2);
   const many = await statements(6);
