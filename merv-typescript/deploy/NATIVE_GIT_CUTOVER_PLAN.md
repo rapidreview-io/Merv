@@ -1,6 +1,10 @@
 # Native Git migration and production acceptance
 
-**Implemented locally; production migration has not run.** The parent release chat coordinates the combined native Git, OAuth and plugin release. Do not deploy this worktree independently. The current step is migration/drain planning and local validation; no isolated production canary is being created. No customer approval, payment or review verdict may be invented to clear a gate.
+**Migration applied on 21 October 2026 at 12:41:55 UTC; hosted acceptance remains separate.** The coordinating release applied the reviewed format-2 plan after an empty ownership census and a fresh verified stopped-Main backup. It migrated 38 workflows in place, retained the artifact-only review, and retired the abandoned command with its execution outcome explicitly unknown. No isolated production canary was created. The parent release chat owns the combined native Git, OAuth and plugin rollout; do not deploy this worktree independently or rerun migration from an earlier preview.
+
+The applied plan hash is `d1f030a7bf7cc3f5b83acfee23859288b6eefd5bdb23bf05dc904c241704e9e0`. Recovery snapshot `20261021T122417Z-47425c60dacb483eb201bc93c3d31daa` passed isolated restore verification for 61 repositories and their database promises; its COMPLETE manifest SHA-256 is `255455fdfb75173fd67d5e0fd879950ad8b9deaceccb4b28f8d6cf2dcf551107`. Retained operator evidence is in the coordinating checkout's `output/launch-readiness/production/migration-receipt-summary.json`, `verified-backup-receipt.log`, and `fenced-new-main-census.json`. These are execution records; the inventory below remains the original disposition ledger.
+
+A fresh [read-only disposition check](../verification/native-git-migration-disposition-2026-10-21.json) at 14:06 UTC found all 39 original workflow IDs with unchanged data/state, all 19 dependency edges, and all 39 baseline Code workspace heads. The 38 migration ledger/history/event records match, and the retained review's 13 pinned fields and two deliveries are unchanged. No migration reapplication or blanket workflow closure is needed.
 
 ## Preserve existing work
 
@@ -23,7 +27,7 @@ Command `codecmd_4bb21dbc0c594ad1aeca5748ca957e58` has no matching admitted stor
 
 ## Keep admission decisions through cutover
 
-The first protocol migration implementation reset the effective scheduling revision. Independent review found an existing five-failure `host_failed` hold on experiment `wf_0fce8cfc71dc4d428181efc834695ea8` at revision 12 that would have become eligible at revision 13. This is a release blocker until the continuity fix and dispatch tests are integrated.
+The first protocol migration implementation reset the effective scheduling revision. Independent review found an existing five-failure `host_failed` hold on experiment `wf_0fce8cfc71dc4d428181efc834695ea8` at revision 12 that would have become eligible at revision 13. The integrated continuity fix passed independent tests of actual dispatch admission before migration was applied.
 
 The corrected candidate retains original rows and interprets both sides of the immutable migration boundary as one scheduling revision, only while the workflow remains at that exact target version/revision. Holds and their counters, recent session failures, unanswered questions, unsettled compute waits, provider blocker ages, first work-start evidence and Fleet cooldown/retry windows remain effective. New failures append to the actual current revision's counter; reports combine the counters. The administrator releases a carried hold at the current revision, and replay of the migration cannot restore a released hold. Ordinary user revisions retain their existing behavior. Lease, action and credential authorization still requires the exact revision.
 
@@ -68,6 +72,6 @@ Backup arguments record the operator's recovery evidence; this command does not 
 
 ## Recovery evidence
 
-Snapshot `20261020T040557Z-3f4618afb38e45539e09c0891c048652` passed an isolated network-disabled restore on 21 October at 10:23–10:27UTC: 61 repositories and database promises matched. Main stayed healthy and unchanged; scratch resources were removed. This snapshot is stale and cannot satisfy the final backup gate. The 21 October backup failure coincided with host disk exhaustion and a Docker build. Candidate recovery tooling holds resource exclusion through capture, verification, upload and prune, budgets scratch DB/WAL and Code space, and emits safe stage/tool/exit diagnostics.
+The fresh snapshot named above satisfied the final backup gate. Independent read-only comparison against that stopped backup verified all 19 event-consumer rows exactly. Both repository holds remain effective: one is unchanged; the other now names the retained local successor of an unsettled GitHub publication. Its project and reason are preserved. Do not describe repository-hold rows as byte-identical. Earlier snapshot `20261020T040557Z-3f4618afb38e45539e09c0891c048652` was only a recovery rehearsal and was not used to authorize migration.
 
 The [inventory ledger](../verification/native-git-drain-inventory-2026-10-21.csv) records proposed paths; [original production readiness evidence](../verification/native-git-production-readiness-2026-10-21.json) remains historical. Neither is a backup. See [recovery scope](../docs/RECOVERY_SNAPSHOTS.md) and [hosted acceptance](../scripts/hosted-runner/NATIVE_GIT_ACCEPTANCE.md).

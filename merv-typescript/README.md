@@ -498,7 +498,7 @@ HTTP/MCP and browser integration checks. See [tests/README.md](tests/README.md) 
 the coverage policy and reduction measurements. Presentation details, source-text
 assertions, historical snapshots and redundant layer-by-layer cases are omitted.
 
-The historical-protocol live acceptance runner launches **three new Codex CLI processes** with a seeded artifact-only task and separate producer, reviewer, and reader credentials. It tests recovery and credential boundaries for existing work; it does not test new managed-Git work. For that path use `tests/runner-code-v2-integration.test.ts` or the opt-in `scripts/live-experiments.ts`:
+The historical-protocol live acceptance runner launches **three new Codex CLI processes** with a seeded artifact-only task and separate producer, reviewer, and reader credentials. It tests recovery and credential boundaries for existing work; it does not test new managed-Git work. Current local native-Git coverage is in `tests/experiment-native-lifecycle.test.ts`; the real hosted path uses [the acceptance commands and prerequisites](scripts/hosted-runner/NATIVE_GIT_ACCEPTANCE.md#actual-hosted-experiment-after-controlled-reopening). The obsolete local `live-experiments.ts` runner was removed because its planning, capture and reporting instructions predated the current protocol.
 
 ```sh
 npm run test:live

@@ -163,9 +163,8 @@ See [project context tests](../tests/project-context.test.ts),
 [Code driver tests](../tests/runner-code-driver.test.ts).
 
 The earlier four-agent scratch acceptance remains historical evidence for
-`experiment@1`. The new `scripts/live-experiments.ts --git` acceptance is running
-at this documentation checkpoint; no successful native Git result is claimed
-here. It is designed to check real producer files, stopped-worker capture,
-independent pinned-checkout reexecution, unchanged source/central refs and
-cleanup. Final results belong in the verification
-record after independent inspection.
+`experiment@1`. Its local successor `live-experiments.ts` was removed after its
+instructions became incompatible with the current planning, capture and report
+contracts. See the [current native Git acceptance path](../scripts/hosted-runner/NATIVE_GIT_ACCEPTANCE.md)
+for local lifecycle coverage and actual hosted worker evidence. Final results
+belong in the verification record after independent inspection.

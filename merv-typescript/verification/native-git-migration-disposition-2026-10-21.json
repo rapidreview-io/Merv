@@ -1,0 +1,91 @@
+{
+  "checkedAt": "2026-10-21T14:05:59.821Z",
+  "method": "Repeatable-read READ ONLY PostgreSQL transaction; no mutations",
+  "sourceWorkflows": 39,
+  "foundWorkflows": 39,
+  "migrationLedgerRows": 38,
+  "migrationHistoryRows": 38,
+  "migrationEvents": 38,
+  "exactIdStateRevisionAndDataMismatches": [],
+  "cohorts": {
+    "experiment@45:planned": 7,
+    "service_experiment@6:planning": 2,
+    "service_experiment@5:planning": 20,
+    "service_experiment@5:awaiting_payment": 2,
+    "service_experiment@5:ready": 2,
+    "task@2:in_review": 1,
+    "task@46:in_progress": 5
+  },
+  "preservedArtifactReviews": [
+    {
+      "id": "wf_c7e253751027433bac7923ac71ddc631",
+      "version": 2,
+      "revision": 1,
+      "state": "in_review"
+    }
+  ],
+  "artifactReview": {
+    "id": "review_033b07fd4e714a61bf668233a899bbff",
+    "status": "requested",
+    "reviewerPresent": false,
+    "claimPresent": false,
+    "baselineFieldCount": 13,
+    "baselineDifferences": [],
+    "taskBaselineDifferences": [],
+    "deliveryCount": 2
+  },
+  "dependencies": {
+    "baseline": 19,
+    "current": 19,
+    "identical": true
+  },
+  "retainedWorkspaceHeads": {
+    "baseline": 39,
+    "current": 39,
+    "changedIds": [],
+    "scope": "All 39 workspace rows in source detail snapshot: 38 original producing workflows plus completed command-owning unit; preserved artifact-only task has no Code workspace."
+  },
+  "command": {
+    "id": "codecmd_4bb21dbc0c594ad1aeca5748ca957e58",
+    "status": "failed",
+    "has_receipt": false,
+    "error": "Retired at native Git cutover: the originating session and host ended without a recoverable command receipt; the unit completed later with a durable head. Original execution outcome remains unknown. Preserve unfinished work during approved native Git migration"
+  },
+  "cutoverReceipt": {
+    "eventCount": 1,
+    "eventCreatedAt": "2026-10-21T12:41:55.951Z",
+    "appliedAt": "2026-10-21T12:41:55.947Z",
+    "planHash": "d1f030a7bf7cc3f5b83acfee23859288b6eefd5bdb23bf05dc904c241704e9e0",
+    "migrated": 38,
+    "backupId": "20261021T122417Z-47425c60dacb483eb201bc93c3d31daa",
+    "backupSha256": "255455fdfb75173fd67d5e0fd879950ad8b9deaceccb4b28f8d6cf2dcf551107",
+    "matchesRetainedSummary": true
+  },
+  "commandRetirement": {
+    "eventCount": 1,
+    "createdAt": "2026-10-21T12:41:55.933Z",
+    "planHash": "d1f030a7bf7cc3f5b83acfee23859288b6eefd5bdb23bf05dc904c241704e9e0",
+    "backupId": "20261021T122417Z-47425c60dacb483eb201bc93c3d31daa"
+  },
+  "limits": [
+    "Does not prove hosted provider acceptance or successful continuation after maintenance reopening.",
+    "Does not re-certify external customer blob bytes.",
+    "Original source inventory and readiness JSON remain historical preparation records.",
+    "Docker exec environment does not establish the running Main maintenance fence; use the parent release census for current runtime and fence state."
+  ],
+  "supplementalCheckedAt": "2026-10-21T14:06:19.944Z",
+  "dispatchHoldSummary": {
+    "retainedCounterRows": 4,
+    "heldSourceRevisionRows": [
+      {
+        "instance_id": "wf_0fce8cfc71dc4d428181efc834695ea8",
+        "revision": "12",
+        "attempts": "5",
+        "last_code": "host_failed",
+        "first_at": "2026-10-06T01:48:54.086Z",
+        "last_at": "2026-10-06T01:54:48.586Z",
+        "held_at": "2026-10-06T01:54:48.586Z"
+      }
+    ]
+  }
+}

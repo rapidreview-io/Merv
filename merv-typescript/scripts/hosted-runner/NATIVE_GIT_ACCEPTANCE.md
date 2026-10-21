@@ -46,7 +46,7 @@ The older `local-smoke.ts` invokes a paid model and ends at one task's review ha
 
 ## Production preflight, 2026-10-21
 
-The running server was inspected through SSH and public HTTPS. It remains release
+The pre-migration server was inspected through SSH and public HTTPS. It was release
 `20261021T064230Z-7871b0af-85410a2ad390` (image
 `sha256:7f7b6177a78023f4e3b954b8f28466fb1b622c26509fcf9370502b17b9c730a4`).
 Its read-only cutover check found 39 unfinished legacy workflow instances across
@@ -60,12 +60,12 @@ this check does not establish a Cloudflare HTTP-edge path. These are observation
 the existing deployment, not acceptance of this candidate. Exact identities and
 results are in `verification/native-git-production-readiness-2026-10-21.json`.
 
-The owner chose migration/drain before a separate canary, then authorized implementation
-and production acceptance. The locally tested migration preserves38 workflows in place and
-retains the remaining artifact-only review; a hardened read-only production plan passes.
-The [cutover plan](../../deploy/NATIVE_GIT_CUTOVER_PLAN.md) and its disposition ledger
-cover the required legacy repairs, preservation, maintenance and acceptance gates.
-No workflow closure, infrastructure provisioning or candidate deployment has occurred.
+The owner chose migration/drain before a separate canary. The coordinating release applied
+the reviewed plan at 12:41:55 UTC after a fresh verified backup: 38 workflows migrated in
+place, the artifact-only review retained, and the abandoned command retired with unknown
+execution outcome. No isolated canary was created. The [cutover plan](../../deploy/NATIVE_GIT_CUTOVER_PLAN.md)
+records the applied plan and recovery identities. Its migration receipt does not establish
+hosted lifecycle, public Git, or provider shutdown acceptance.
 
 Once the candidate is deployed and its disposable project is ready, the standalone
 operator probe exercises public Git without creating projects or credentials:
@@ -81,3 +81,97 @@ refs in the disposable project because remote deletion is intentionally disabled
 Retain the evidence and revoke the test credential. Remove test infrastructure only
 when it is isolated and its disposal is authorized. This probe alone does not establish
 hosted lifecycle or provider teardown.
+
+## Actual hosted experiment after controlled reopening
+
+`deploy/hosted-native-acceptance.mjs` uses the public operator API and Fleet's normal
+dispatch. Its default `check` is read-only. `start` creates one idempotent experiment;
+`watch` collects evidence and answers only its prescribed dirty-checkout continuity
+pause; `collect` only reads; `drain` requests planned shutdown for that terminal
+experiment's exact allocations. It never enrolls a runner, claims a workflow,
+authors evidence, submits a verdict, changes dispatch, or clears an existing hold.
+Planning, design review, execution, rendered reporting and results review are actual
+hosted agent work. The immutable request includes the exact worker probe, supplied
+through Python stdin/command input so it adds no file to the reviewed checkout.
+
+The retained project `project_c54cd6d765d8467d948bb638c55f169d` (Fleet Git acceptance
+2026-09-23) had a human admin, an active human operator and only terminal work at the
+read-only workflow census. The 14:11 UTC observer also found six prepared September 23
+`mirror-accepted` records. Commit `058c57222` retired execution/retry of that kind;
+the observer now reports them separately and leaves them untouched. Actual pending
+capture/retention operations still block preflight. Earlier temporary keys were
+expired/revoked. The 14:18 UTC credential census found no active actor credential,
+covering user API key or live OAuth grant. The actual admin must sign in and create
+a bounded project-scoped machine key under **Settings → Keys**, then securely set
+`MERV_ACCEPTANCE_TOKEN`. That `mk_` key supports operator HTTP and Git; an OAuth
+credential supports `/mcp` only. This CLI issues no credentials. Recheck the project
+before use. Existing customer projects and the
+preserved artifact review are not test targets. The release owner must first accept
+the exact Main/hosted pair and reopen the required authenticated routes. Set the
+two expected pins from that release's retained manifests, never from an arbitrary
+latest image. Budget/compute authorization must cover the real model sessions;
+an instance dispatch budget is not a hard dollar spending cap.
+
+From the reviewed `merv-typescript` checkout, with those values securely set:
+
+```sh
+run_native_acceptance() {
+  node deploy/hosted-native-acceptance.mjs --mode "$1" \
+    --base-url https://experiments.rapidreview.io --host ResearchSuite_Control \
+    --project project_c54cd6d765d8467d948bb638c55f169d \
+    --main-image "$MERV_ACCEPTANCE_MAIN_IMAGE" \
+    --runtime-release "$MERV_ACCEPTANCE_RUNTIME_RELEASE" \
+    --run-id oct21-native --out /tmp/merv-hosted-oct21-native \
+    --token-env MERV_ACCEPTANCE_TOKEN
+}
+run_native_acceptance check
+run_native_acceptance start
+run_native_acceptance watch
+```
+
+Run `watch` immediately after `start`: the planned question must be answered before
+the five-minute idle host retirement if the test is to prove unchanged dirty inode
+continuity. It stops after 30 minutes; inspect any real hold/question rather than
+resetting it. Retry `start` with the same private output directory after an uncertain
+create response. The journal retains the identical request. The standard Cloudflare
+profile and every observed allocation must match the supplied runtime pin.
+
+Then run the existing public Git probe above using this project's key and a separate
+output directory, retain both approval commits via public fetch, and request cleanup:
+
+```sh
+run_native_acceptance drain
+run_native_acceptance collect
+```
+
+Repeat `collect` through shutdown completion. Evidence files are private and retain
+the exact API replies, paginated conversations, tool-result probe output and the
+bounded read-only Main/Sandboxes observer. `acceptanceComplete` intentionally remains
+false: a collected narrative or registry state is not a verified end-to-end result.
+Before accepting, independently establish all of these joins:
+
+- Every worker is a managed session on the expected Cloudflare release. Its probe's
+  protected `launcher.launchId` matches that session's host reference; allocation,
+  epoch, actual model grant, and runtime bootstrap belong to this test.
+- The two planning visits have identical path/device/inode, HEAD/index tree, dirty
+  status digest and canary digests across the owner pause. After design approval,
+  the assigned path and canary persist and HEAD becomes the exact approval commit;
+  an inode replacement at that explicit baseline change is allowed.
+- Each reviewer is independent of its producer, has the exact submission parent and
+  tree attached, and its actual probe demonstrates read-only kernel mounts, EROFS
+  for worktree/Git writes, denied remount, and protected launcher identity. Publicly
+  fetched approval commit parents/trees must match those frozen submissions.
+- Planned stop has a completed durable capture and closed writer before the matching
+  allocation/epoch shutdown acknowledgement; provider deletion follows that receipt.
+  Join operation IDs and object hashes, not timestamps alone. Confirm the exact native
+  instance is absent through the provider's read API; registry deletion alone is
+  insufficient. Keep evidence, revoke the test key, and preserve retained Git refs.
+
+**Remaining retry prerequisite:** there is no supported public operator endpoint to
+drop a managed runner's receipt response after its commit. Repeating `fleet drain`
+tests only operator request idempotence. A naturally observed lost-response retry, or
+a separately authorized narrowly scoped one-shot fault on the test allocation's
+receipt response, is required to prove that remaining gate on the deployed image.
+Do not change global ingress or add an unscoped production fault hook to claim it.
+The current executable path supplies the real workflow, observations and planned
+stop; it does not claim that this missing retry proof has happened.

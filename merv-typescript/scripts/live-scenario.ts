@@ -27,8 +27,8 @@ const RUN_ID = randomBytes(4).toString('hex');
  * The machine key is read only from the environment variable named by --token-env
  * (default MERV_SCENARIO_TOKEN). It is never accepted on the command line or from a
  * file, and never written to the run directory. --local stands up an in-process
- * server with a fresh project the way live-experiments.ts does and mints its own
- * credential into that same variable for the lifetime of the process.
+ * server with a fresh project and mints its own credential into that same
+ * variable for the lifetime of the process.
  *
  * Brief format: the Markdown the scenario briefs are written in
  * (`Scenarios/briefs/0N-*.md`). Sections are `## [N.] NAME [— …]` with NAME one of
