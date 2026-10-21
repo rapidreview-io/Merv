@@ -27,12 +27,34 @@ production maintenance=0 on native Main `0c519ee…`, and no staging hosted owne
 maintenance=1 on native Main `e9ed6dbc…`. Recheck immediately before execution; other isolation journals
 are separate and must remain untouched.
 
+Before Main recreation, build the final reviewed source and record its actual immutable Docker image
+ID (`sha256:` plus 64 lowercase hex digits) in the parent's admission-guard intent. Use that same ID
+as `EXPECTED_MAIN_IMAGE` below. Apply the owned Pi admission barrier and let existing Pi commands,
+hosts and allocations drain naturally to zero before starting the Main release. Keep admission closed
+through public acceptance and the admission guard's exact-image verification; restore only the barrier
+owned by this operation before starting the hosted release. Do not relax the guard's identity check.
+
+`--expected-image` compares the freshly built immutable image ID before executing the candidate CLI,
+copying live UI files, stopping Main or starting the candidate. A mismatch fails with Main and its UI
+untouched by the Main release job. Leave the admission barrier in place, inspect the build and source
+difference, and follow the parent's reviewed recovery; never substitute the unexpected ID in the intent
+just to make restoration pass. For this sequence, retain `--skip-hosted` so the wrapper cannot perform
+hosted work before this check.
+
+The expectation is frozen in the saved remote release job. Observe an interrupted release with
+`node deploy/release.mjs --host ResearchSuite_Control --resume RELEASE --skip-hosted --no-rollback`
+without `--expected-image`; resume does not rebuild or replace the saved expectation. The option is
+rejected with `--resume` or `--retry-prestart`; a prestart retry already requires the retained immutable
+build manifest and does not build another image. Omitting it on a new release retains ordinary behavior.
+
 Then parent executes these two separate steps. `--skip-hosted` deliberately prevents Main's wrapper
 from starting an ordinary staging propagation; it does not authorize skipping the following hosted run:
 
 ```sh
 node deploy/release.mjs --host ResearchSuite_Control \
-  --public https://experiments.rapidreview.io --sandboxes "$SBX" --skip-hosted --no-rollback
+  --public https://experiments.rapidreview.io --sandboxes "$SBX" --skip-hosted --no-rollback \
+  --expected-image "$EXPECTED_MAIN_IMAGE"
+# After Main public acceptance and guarded restoration of the owned Pi admission barrier:
 node deploy/hosted-release.mjs --host ResearchSuite_Control --sandboxes "$SBX" \
   --defer-staging 'Staging native isolation remains fenced pending scoped storage credentials'
 ```

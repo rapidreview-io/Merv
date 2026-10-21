@@ -124,3 +124,20 @@ test('hosted replacement requires explicit production preparation and an exact s
     assert.equal(result.stdout, '');
   }
 });
+
+test('expected Main image rejects malformed, repeated and non-new-release overrides before any work', () => {
+  const image = 'sha256:' + 'a'.repeat(64);
+  for (const args of [
+    ...['', 'latest', image.slice(0, -1), image + 'a', image.toUpperCase(), image + '\n', image + ';id'].map(value => ['--expected-image', value]),
+    ['--expected-image', image, '--expected-image', image],
+    ['--expected-image', image, '--resume', 'saved'],
+    ['--expected-image', image, '--retry-prestart', 'saved', '--no-rollback', '--skip-hosted'],
+  ]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], {
+      env: { PATH: '/nonexistent' }, encoding: 'utf8', timeout: 5000,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--expected-image requires/);
+    assert.equal(result.stdout, '');
+  }
+});
