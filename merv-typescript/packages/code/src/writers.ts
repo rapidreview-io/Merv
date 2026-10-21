@@ -8,7 +8,6 @@ import {
   now,
   recorded,
   type Caller,
-  type CodeCommandCompletion,
   type Scope,
   type Sql,
   type State,
@@ -327,6 +326,31 @@ export class CodeWriterService {
   }
 
   /** An admitted upload advanced the branch; a final one ends its generation. */
+  async settle(tx: Transaction, fence: WriterFence, ownEnd = false): Promise<void> {
+    this.state.assertTransaction(tx);
+    const row = await this.row(tx, fence.projectId, fence.unitId);
+    check(
+      row &&
+        Number(row.generation) === fence.generation &&
+        row.writer_session_id === fence.sessionId &&
+        row.writer_lease_id === fence.leaseId,
+      'code_generation_stale',
+      'Another writer generation owns this unit now',
+      409,
+    );
+    check(
+      fence.expectedHead === (row.head_oid ?? this.base(row)),
+      'code_head_conflict',
+      'The last retained commit differs from the stopped writer',
+      409,
+    );
+    if (row.writer_state === 'closed') return;
+    await this.fenced(tx, fence, 'final', true, ownEnd);
+    await this.move(tx, row, 'closed', false, null);
+    await this.changed(tx, row.project_id, row.unit_id);
+  }
+
+  /** An admitted upload advanced the branch; a final one ends its generation. */
   async advanced(
     tx: Transaction,
     fence: WriterFence,
@@ -419,32 +443,6 @@ export class CodeWriterService {
       from: row.writer_state,
     });
     return result;
-  }
-
-  /** A commit succeeded only once Code admitted exactly it under the command's own request. */
-  async requireAdmitted(
-    input: CodeCommandCompletion,
-    command: { projectId: string; instanceId: string },
-    tx: Transaction,
-  ) {
-    if (!('receipt' in input) || !input.receipt) return;
-    const upload = await tx.get<{ status: string; result_json: string | null }>(
-      "SELECT status,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=? AND kind='upload' AND unit_id=?",
-      command.projectId,
-      `session:${input.sessionId}`,
-      input.commandId,
-      command.instanceId,
-    );
-    const admitted =
-      upload?.status === 'completed'
-        ? (JSON.parse(upload.result_json!) as { head: string; tree?: string | null })
-        : null;
-    check(
-      admitted?.head === input.receipt.headOid && admitted.tree === input.receipt.treeOid,
-      'code_upload_required',
-      'This commit succeeds only once Code admitted exactly it, with its tree',
-      409,
-    );
   }
 
   /** The first admitted upload of this unit that left it at `commit`, and the merge it verified. */

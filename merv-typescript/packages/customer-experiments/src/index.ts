@@ -19,6 +19,7 @@ import { registerWorkerTools } from './worker-tools.js';
 import { FilesService } from './files.js';
 import { hostedCustomerCompute } from './hosted-compute.js';
 import { plansDocument } from './program.js';
+import { deliveryReady } from './types.js';
 import type { StandaloneExperiments } from './models.js';
 
 const env = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -134,7 +135,13 @@ export const customerExperimentsPlugin = {
       const files: FilesService = new FilesService(ctx.state, store, storage, async (record) => {
         check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
         const caller = await service.caller(record);
-        const { workflow } = await domain.get(caller, record.experimentId);
+        const exp = await domain.get(caller, record.experimentId);
+        const workflow =
+          exp.workflow.state === 'complete' && !deliveryReady(exp)
+            ? { ...exp.workflow, state: 'finalizing' }
+            : exp.codeReadyAt
+              ? { ...exp.workflow, updatedAt: exp.codeReadyAt }
+              : exp.workflow;
         return plansDocument(workflow.version)
           ? { ...workflow, planStatus: (await domain.plan(caller, record.experimentId)).status }
           : workflow;

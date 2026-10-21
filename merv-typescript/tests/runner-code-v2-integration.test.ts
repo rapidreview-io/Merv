@@ -1,6 +1,6 @@
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { Caller, Data } from '@merv/contracts';
+import { NATIVE_CODE_DRIVER, type Caller, type Data } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import assert from 'node:assert/strict';
 import {
@@ -20,7 +20,6 @@ import { fileURLToPath } from 'node:url';
 import { createApp } from './fixtures/app.js';
 import { git } from './fixtures/code-store.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { reviewedFindings } from './fixtures/task-evidence.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 /** What the server makes a runner wait after a close it counted; sessions' dispatch backoff. */
@@ -42,6 +41,7 @@ interface Worker {
   write(path: string, content: string | null): Promise<void>;
   read(path: string): Promise<string | null>;
   git(...args: string[]): Promise<string>;
+  finish(): Promise<void>;
 }
 
 /** One machine: a runner with its own ledger and credential, and the workers the test plays on it. */
@@ -89,8 +89,8 @@ function machine(
       ...(fetcher ? { fetch: fetcher } : {}),
       drivers: [
         {
-          name: 'code.v2',
-          create: (host, transport) => new CodeWorkspaceDriver(host, transport, { pollMs: 25 }),
+          name: NATIVE_CODE_DRIVER,
+          create: (host, transport) => new CodeWorkspaceDriver(host, transport),
         },
       ],
     },
@@ -182,6 +182,7 @@ function machine(
         write: (path, content) => step({ kind: 'write', path, content }),
         read: (path) => step({ kind: 'read', path }),
         git: (...args) => step({ kind: 'git', args }),
+        finish: () => step({ kind: 'exit' }),
       };
     },
     /** Whether this machine asks for new work; what it already runs is finished either way. */
@@ -210,17 +211,17 @@ function machine(
 }
 
 test(
-  'a default task without GitHub crosses machines, resumes retained changes, passes independent review and integrates into managed main',
+  'native Git session closure creates no commit; planned shutdown retains dirty files once after a lost acknowledgement',
   { timeout: 3 * waitMs },
   async (t) => {
-    const root = mkdtempSync(join(tmpdir(), 'merv-v2-'));
+    const root = mkdtempSync(join(tmpdir(), 'merv-native-runner-'));
     const app = await createApp({ directory: join(root, 'server'), api: true, port: 0 });
     t.after(async () => {
       await app.stop();
       rmSync(root, { recursive: true, force: true });
     });
     const boot = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Hosted',
+      projectName: 'Native runner',
       actorName: 'Owner',
     });
     const owner: Caller = {
@@ -228,204 +229,112 @@ test(
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const { codeWork: code, tasks, sessions, reviews, state } = app.ctx;
-
-    const initial = await waitForManagedCode(code, owner);
-    const main = initial.project!.main.oid;
-    assert.equal(initial.store?.source, 'managed');
-    assert.equal((await code.github.status(owner)).repository, null);
-    assert.ok((await code.status(owner)).project);
-
+    const { codeWork: code, tasks, sessions, state } = app.ctx;
+    const main = (await waitForManagedCode(code, owner)).project!.main.oid;
+    const brief = await app.ctx.artifacts.create(owner, {
+      title: 'Harness brief',
+      content: 'Build the harness. It runs.',
+    });
     const task = await tasks.create(owner, {
       title: 'Harness',
       goal: 'Build the harness.',
       checks: ['It runs'],
-      requestId: 'hosted',
+      briefId: brief.id,
+      requestId: 'native-runner',
     });
-    assert.equal(
-      task.workflow.version,
-      44,
-      'new Git work lives in Code once the project is hosted',
-    );
-
-    await state.transaction((tx) => code.publishOnAcceptance(owner, { unitId: task.id }, tx));
-
-    let finalizes = 0;
+    assert.equal(task.workflow.version, 46);
+    let finalAcknowledgements = 0;
     let dropped = false;
-    const issue = async (name: string) =>
-      (await app.ctx.scope.credentials.issueActor(owner, { name, role: 'operator' })).token;
-    const a = machine(t, app, root, 'a', await issue('Machine A'), owner, async (input, init) => {
+    const token = (
+      await app.ctx.scope.credentials.issueActor(owner, {
+        name: 'Native machine',
+        role: 'operator',
+      })
+    ).token;
+    const host = machine(t, app, root, 'native', token, owner, async (input, init) => {
       const response = await fetch(input, init);
-      if (String(input).endsWith('/code/v2/finalize') && response.ok) {
-        finalizes++;
+      if (
+        String(input).endsWith('/code/v2/pushed') &&
+        response.ok &&
+        JSON.parse(String(init?.body ?? '{}')).kind === 'final'
+      ) {
+        finalAcknowledgements++;
         if (!dropped) {
           dropped = true;
-          throw new TypeError('Lost the reply to a final capture Code admitted');
+          throw new TypeError('Lost the acknowledgement after the native Git capture was retained');
         }
       }
       return response;
     });
-    const b = machine(t, app, root, 'b', await issue('Machine B'), owner);
-    await a.runner.start();
-    await b.runner.start();
-    // Work is independent of the agent that made it, not of its machine, so the test says
-    // which machine asks for work: otherwise whichever ticks first takes the next lease.
-    await b.accepting(false);
+    await host.runner.start();
     await sessions.dispatch.setDispatch(owner, { enabled: true });
-    const unit = async () => await code.unit(owner, task.id);
-    const commit = async (worker: Worker, requestId: string) => {
-      const expectedHead = await worker.git('rev-parse', 'HEAD');
-      let operation = await worker.tool<Data>('code.commit', {
-        expectedHead,
-        message: `Record ${requestId}`,
-        requestId,
-      });
-      while (operation.status !== 'succeeded') {
-        assert.ok(
-          ['queued', 'dispatched'].includes(String(operation.status)),
-          JSON.stringify(operation),
-        );
-        operation = await worker.tool<Data>('code.operation', {
-          commandId: (operation.command as Data).id,
-        });
-      }
-      return operation as {
-        command: { id: string };
-        receipt: { headOid: string; parentOid: string };
-      };
-    };
-    const deliver = async (worker: Worker, commandId: string, requestId: string) => {
-      const evidence = await worker.tool<{ id: string }>('artifact.create', {
-        title: `Evidence ${requestId}`,
-        content: 'The harness ran end to end.',
-      });
-      await worker.handoff('task.submit_delivery', {
-        taskId: task.id,
-        artifactIds: [evidence.id],
-        commandId,
-        confirmations: [
-          { checkNumber: 1, status: 'met', evidenceIds: [evidence.id], notes: 'Ran it here.' },
-        ],
-        expectedRevision: (await tasks.get(owner, task.id)).workflow.revision,
-        requestId,
-      });
-    };
-    const verdict = async (worker: Worker, value: 'pass' | 'needs_changes') => {
-      const current = await tasks.get(owner, task.id);
-      const review = await reviews.get(owner, current.reviewId!);
-      await worker.handoff('review.submit', {
-        ...reviewedFindings(review),
-        reviewId: review.id,
-        claimId: review.claimId!,
-        verdict: value,
-        notes: 'Checked out the delivered commit and ran the harness.',
-        expectedRevision: current.workflow.revision,
-        requestId: `verdict-${value}`,
-      });
-    };
+    const worker = await host.worker();
+    await host.accepting(false);
+    assert.equal(await worker.git('rev-parse', 'HEAD'), main);
+    assert.equal(await worker.git('symbolic-ref', '--short', 'HEAD'), `merv/work/${task.id}`);
+    await worker.write('harness.txt', 'agent commit\n');
+    await worker.git('add', 'harness.txt');
+    await worker.git(
+      '-c',
+      'user.name=Native agent',
+      '-c',
+      'user.email=agent@example.test',
+      'commit',
+      '-m',
+      'Build harness',
+    );
+    const committed = await worker.git('rev-parse', 'HEAD');
+    await worker.git('push', 'merv', 'HEAD');
+    assert.equal((await code.unit(owner, task.id)).canonicalHead, committed);
+    await worker.write('notes.txt', 'remaining work for shutdown\n');
+    await worker.finish();
+    await host.settled();
+    assert.equal(
+      git(worker.cwd, ['rev-parse', 'HEAD']),
+      committed,
+      'ordinary close made no commit',
+    );
+    assert.equal(
+      readFileSync(join(worker.cwd, 'notes.txt'), 'utf8'),
+      'remaining work for shutdown\n',
+    );
+    assert.equal((await code.unit(owner, task.id)).canonicalHead, committed);
+    assert.equal((await code.unit(owner, task.id)).writerState, 'closed');
+    assert.equal(finalAcknowledgements, 0, 'ordinary close did not request a shutdown capture');
 
-    // Machine A: generation 1 commits, leaves trailing work behind and hands off.
-    const first = await a.worker();
-    await a.accepting(false);
-    assert.equal(await first.git('rev-parse', 'HEAD'), main);
-    assert.equal(await first.git('symbolic-ref', '--short', 'HEAD'), `merv/work/${task.id}`);
-    assert.equal((await unit()).generation, 1);
-    await first.write('harness.txt', 'one\n');
-    const delivered = await commit(first, 'first');
-    assert.equal(delivered.receipt.parentOid, main);
-    assert.equal((await unit()).canonicalHead, delivered.receipt.headOid);
-    await first.write('notes.txt', 'left uncommitted by machine A\n');
-    await deliver(first, delivered.command.id, 'delivery-1');
-    await a.settled();
-    assert.ok(dropped && finalizes >= 2, 'the lost reply to the final capture was replayed');
-    const afterFirst = await unit();
-    assert.equal(afterFirst.writerState, 'closed');
-    assert.notEqual(afterFirst.canonicalHead, delivered.receipt.headOid);
+    await assert.rejects(host.runner.prepareShutdown());
+    assert.equal(dropped, true);
+    const receipt = await host.runner.prepareShutdown();
+    assert.equal(receipt.empty, false);
+    assert.equal(receipt.captures.length, 1);
+    assert.deepEqual(await host.runner.prepareShutdown(), receipt);
+    assert.ok(finalAcknowledgements >= 2, 'the retained push acknowledgement was replayed');
+    const capture = receipt.captures[0]!;
+    assert.equal(capture.unitId, task.id);
+    assert.notEqual(capture.headOid, committed);
     const repository = new CodeRepositories({
       root: join(root, 'server', 'code'),
       quotaBytes: 0,
       reservedFreeBytes: 0,
     }).paths(owner.projectId).repository;
+    assert.equal(git(repository, ['rev-parse', `${capture.headOid}^`]), committed);
+    assert.equal(git(repository, ['rev-parse', `${capture.headOid}^{tree}`]), capture.treeOid);
     assert.equal(
-      git(repository, ['rev-parse', `${afterFirst.canonicalHead}~1`]),
-      delivered.receipt.headOid,
+      git(repository, ['show', `${capture.headOid}:notes.txt`]),
+      'remaining work for shutdown',
     );
-
-    // Machine B reviews exactly the delivered commit: none of the trailing work is there.
-    await b.accepting(true);
-    const reviewer = await b.worker();
-    await b.accepting(false);
-    assert.equal(await reviewer.git('rev-parse', 'HEAD'), delivered.receipt.headOid);
-    assert.equal(await reviewer.read('notes.txt'), null);
-    assert.equal(await reviewer.read('harness.txt'), 'one\n');
-    await verdict(reviewer, 'needs_changes');
-    await b.settled();
-
-    // Machine B resumes as generation 2, from the head that includes what machine A left.
-    await b.accepting(true);
-    const second = await b.worker();
-    await b.accepting(false);
-    assert.equal((await unit()).generation, 2);
-    assert.equal(await second.git('rev-parse', 'HEAD'), afterFirst.canonicalHead);
-    assert.equal(await second.read('notes.txt'), 'left uncommitted by machine A\n');
-    await second.write('harness.txt', 'two\n');
-    const revised = await commit(second, 'second');
-    assert.equal(revised.receipt.parentOid, afterFirst.canonicalHead);
-    await deliver(second, revised.command.id, 'delivery-2');
-    await b.settled();
-
-    // Machine A reviews the revision at exactly its commit, and passes it.
-    await a.accepting(true);
-    const final = await a.worker();
-    await a.accepting(false);
-    assert.equal(await final.git('rev-parse', 'HEAD'), revised.receipt.headOid);
-    await verdict(final, 'pass');
-    await a.settled();
-
-    assert.equal((await tasks.get(owner, task.id)).workflow.state, 'done');
-    const accepted = (await unit()).acceptance!;
-    assert.equal(accepted.storage, 'code');
-    assert.equal(accepted.reference, revised.receipt.headOid);
-    assert.equal(accepted.reviewAttached, true);
-    assert.ok(accepted.receipt);
-    await a.until('the accepted ref is written', () =>
-      git(repository, [
-        'for-each-ref',
-        '--format=%(objectname)',
-        `refs/merv/accepted/${task.id}`,
-      ]) === revised.receipt.headOid
-        ? true
-        : undefined,
-    );
-
-    // The work's retries and handoffs did not count as execution failures.
-    const all = await sessions.list(owner);
-    assert.deepEqual(
-      all.map((session) => session.outcome).filter((outcome) => outcome !== 'completed'),
-      [],
+    assert.equal(git(repository, ['rev-list', '--count', `${committed}..${capture.headOid}`]), '1');
+    assert.equal((await code.unit(owner, task.id)).canonicalHead, capture.headOid);
+    const finals = await state.read((sql) =>
+      sql.all<{ id: string }>(
+        "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='completed' AND (payload_json::jsonb)->>'kind'='final'",
+        owner.projectId,
+        task.id,
+      ),
     );
     assert.deepEqual(
-      await state.read(async (sql) => await sql.all('SELECT * FROM session_dispatch_holds')),
-      [],
-    );
-    await code.syncPublications(owner);
-    await a.until('reviewed local integration', async () =>
-      (await code.status(owner)).project?.main.oid === revised.receipt.headOid ? true : undefined,
-    );
-    const [publication] = await code.publications(owner);
-    assert.equal(publication.destination, 'local');
-    assert.equal(publication.verified, true);
-    assert.equal((await code.github.status(owner)).repository, null);
-    const finals = await state.read(
-      async (sql) =>
-        await sql.all<{ data_json: string }>(
-          "SELECT data_json FROM events WHERE type='code.capture_admitted' ORDER BY id",
-        ),
-    );
-    assert.equal(
-      finals.filter((row) => (JSON.parse(row.data_json) as { final: boolean }).final).length,
-      2,
-      'one final capture for each writer generation, however often it was sent',
+      finals.map((row) => row.id),
+      [capture.operationId],
     );
   },
 );

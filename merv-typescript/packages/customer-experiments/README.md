@@ -162,6 +162,25 @@ are separate: `customer_experiment.get` and `customer_experiment.submit_results`
 the existing artifacts, Code and Reviews tools granted by the workflow. From
 `service_experiment@4` the running worker also posts status-page lines with
 `customer_experiment.progress`; a session calls only what its version's policy grants.
+
+`service_experiment@5` uses native Git for execution. Results submission freezes the stopped
+producer's complete tree and parent, including uncommitted edits, without creating a commit.
+Independent results review reads that exact tree with read-only code and Git metadata.
+Passing `accept_results` durably journals the approval; customer completion, report downloads,
+result emails and request-file expiry wait until Code retains the exact approved commit and
+its acceptance. A failed retention attempt retries the authorized milestone; it cannot expose
+an unretained result. Earlier published versions stay unchanged and must drain on the prior
+runtime before native Git cutover, unless an explicitly validated migration moves an idle
+request to a native version. Version 6 is reserved for migrated structured-intake requests:
+it preserves their capability-only access, intake conversation, draft, dataset uploads and
+self-contained page, and never enrolls their buckets in document-plan file expiry. Future
+execution uses native Git, immutable review capture and approval commits, with report tools
+and the existing structured dataset contract. New requests still start on version 5.
+The `code_units.version` value remains the immutable original declaration provenance;
+only the workflow version changes during migration. Existing contracts, acceptances and
+payment receipts remain unchanged. The customer's plan approval has no code milestone because
+code execution begins only after plan acceptance and payment.
+
 Merv's own agents (the worker, its reviewer through `review.write` (`submit`), the interviewer and
 the healer) read the request without the buyer's email and payment id; the customer page,
 the owner and the platform administrator keep them.

@@ -1,4 +1,4 @@
-import { CODE_DRIVER } from '@merv/contracts';
+import { CODE_DRIVER, NATIVE_CODE_DRIVER } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 
 /**
@@ -11,6 +11,7 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 export function codeWorkspace(
   purpose: 'work' | 'review' | 'read',
   namespace: string,
+  native = false,
 ): WorkflowWorkspacePolicy {
   return purpose === 'work'
     ? {
@@ -20,13 +21,13 @@ export function codeWorkspace(
         perBase: false,
         retain: true,
         advancesCentral: false,
-        driver: CODE_DRIVER,
+        driver: native ? NATIVE_CODE_DRIVER : CODE_DRIVER,
       }
     : {
         mode: 'ephemeral',
         namespace,
         base: purpose === 'read' ? 'reference:base' : 'reference:code',
         retain: false,
-        driver: CODE_DRIVER,
+        driver: native ? NATIVE_CODE_DRIVER : CODE_DRIVER,
       };
 }

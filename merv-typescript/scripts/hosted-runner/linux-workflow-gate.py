@@ -95,8 +95,9 @@ def control_reply(handler, method, body):
     control_calls.append((method, path, body))
     if path == '/sessions/runners/heartbeat':
         return {'runner': {'runnerId': body['runnerId'], 'desiredVersion': 0, 'desiredSettings': {'platforms': []}}}
-    if path == '/code/commands/next':
-        return {'command': None}
+    if path == '/sessions/runners/shutdown':
+        return {'requested': bool(body.get('request') or body.get('receipt')),
+                'acknowledged': bool(body.get('receipt'))}
     if path == '/sessions/lease':
         if not step_state:
             step_secret.append(body['secret'])
@@ -407,7 +408,7 @@ try:
     presences = [b for m, p, b in control_calls if p == '/sessions/runners/heartbeat']
     # Exactly its enrolment: the Code driver took the work-host config, and the hosted profile.
     # `inquiry.1`: the image runs inquiry visits as such, which only it can say.
-    assert presences and all(b['capabilities'] == ['code.v2', 'inquiry.1', 'workflow.workhost.1'] and
+    assert presences and all(b['capabilities'] == ['code.git.1', 'inquiry.1', 'workflow.workhost.1'] and
                              [x['name'] for x in b['platforms']] == ['hosted-codex'] for b in presences), presences
     [leased] = [b for m, p, b in control_calls if p == '/sessions/lease'][:1]
     assert leased['platform']['name'] == 'hosted-codex'

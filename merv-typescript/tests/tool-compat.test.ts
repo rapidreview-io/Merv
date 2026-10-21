@@ -52,13 +52,9 @@ const retired = {
       (action) => `code.base.${action}`,
     ),
     'code.unit.fence',
-    'code.mirror.retry',
-    'code.repository.import',
     'code.repository.configure',
     'code.repository.prepare',
     'code.publication.sync',
-    'code.publication.merge',
-    'code.publication.control',
   ],
   experiment: [
     'experiment.list',
@@ -354,7 +350,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
     capacity: 4,
-    capabilities: ['code.v2'],
+    capabilities: ['code.git.1'],
   });
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   await app.ctx.sessions.offer(owner, {
@@ -400,7 +396,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   const shown = new Map(
     (await app.ctx.tools.describe(worker, true)).map((tool) => [tool.name, tool.description]),
   );
-  assert.match(shown.get('code.status')!, /^Read retained bases/);
+  assert.match(shown.get('code.status')!, /^Read the project repository binding/);
   // A kept flat name is listed to a worker as it was, with its old flat schema; an agent is
   // listed it with actions.
   const schema = async (caller: Caller, of = 'paper.read') =>

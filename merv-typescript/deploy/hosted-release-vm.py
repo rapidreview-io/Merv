@@ -63,6 +63,8 @@ GATES = {  # name: (docker run flags, mount targets, command, expected gate, rep
     'linux-isolation-probe-gate.mjs': (['--entrypoint', '/usr/local/bin/node'],
                                        ['/opt/merv/runner/supervisor.mjs', '/opt/merv/runner/smoke-supervisor.mjs'],
                                        '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry', 1),
+    'linux-review-gate.py': (['--cap-add', 'SYS_ADMIN', '--security-opt', 'seccomp=unconfined', '--entrypoint', '/usr/bin/python3.11'],
+                              ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-review-readonly', 1),
 }
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}

@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import { MervError, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
-import type { CodeStoreOperation } from '@merv/code/store/protocol';
-import type { CodeStoreOptions } from '@merv/code-work/service';
-import { codeStoreFixture, gitSource, type Bundle } from './code-store.js';
+import { fixtureThread } from './threads.js';
+import { codeStoreFixture, gitSource } from './code-store.js';
 
 const definition: WorkflowDefinition = {
   name: 'build',
@@ -33,7 +32,7 @@ const workspace = {
   perBase: false,
   retain: true,
   advancesCentral: false,
-  driver: 'code.v2',
+  driver: 'code.git.1',
 };
 export const refused = (code: string) => (error: unknown) => {
   assert.ok(error instanceof MervError, String(error));
@@ -45,7 +44,7 @@ export const refused = (code: string) => (error: unknown) => {
 export async function writerFixture(
   t: TestContext,
   grace = 900,
-  options: Pick<CodeStoreOptions, 'mirror' | 'mirrorConfig'> & {
+  options: {
     objectFormat?: 'sha1' | 'sha256';
   } = {},
 ) {
@@ -65,18 +64,54 @@ export async function writerFixture(
   const build = await f.workflows.register(definition, policy);
   const unit = await build.start(f.admin, { workflow: 'build', requestId: 'unit' });
   const runner = { runnerId: 'runner-1' };
-  let commands = 0;
+  let revision = 0;
+  const actors = new Map<string, string>();
+  const persist = async (sessionId: string, readOnly = false) => {
+    let actorId = actors.get(sessionId);
+    if (!actorId) {
+      actorId = (
+        await f.scope.credentials.issueActor(f.admin, {
+          name: sessionId,
+          role: readOnly ? 'reviewer' : 'producer',
+        })
+      ).actor.id;
+      actors.set(sessionId, actorId);
+    }
+    const actor = actorId;
+    await f.state.transaction(async (tx) => {
+      const thread = await fixtureThread(tx, f.admin.projectId, actor);
+      await tx.run(
+        'INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json,thread_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
+        sessionId,
+        f.admin.projectId,
+        actor,
+        unit.id,
+        ++revision,
+        'owner',
+        runner.runnerId,
+        sessionId,
+        sessionId,
+        sessionId,
+        'active',
+        JSON.stringify(sessions.get(sessionId)),
+        thread,
+      );
+    });
+  };
   const self = {
     ...f,
     get code() {
       return f.code;
     },
+    get store() {
+      return f.store;
+    },
     source,
     root,
     unitId: unit.id,
     /** What an owner's lease acquisition does, in one transaction. */
-    lease: async (sessionId: string) =>
-      await f.state.transaction(async (tx) => {
+    lease: async (sessionId: string) => {
+      const result = await f.state.transaction(async (tx) => {
         await f.code.pinBase(f.admin, { unitId: unit.id, leaseId: sessionId, writer: true }, tx);
         const writer = await f.core.writers.writerStatus(f.admin, unit.id, tx);
         sessions.set(sessionId, {
@@ -89,7 +124,10 @@ export async function writerFixture(
           execution: { policy: { readOnly: false, workspace, tools: [] }, references: {} },
         });
         return writer;
-      }),
+      });
+      await persist(sessionId);
+      return result;
+    },
     /** A session event as Code's writer subscription takes it; `ownEnd` as session.closed says
      *  its worker ended the visit by its own hand (a handoff or a question to its owner). */
     event: async (type: string, sessionId: string, ownEnd = false) => {
@@ -102,7 +140,7 @@ export async function writerFixture(
         );
     },
     /** A read-only session whose checkout is exactly one referenced commit. */
-    reviewer: (sessionId: string, code: string) => {
+    reviewer: async (sessionId: string, code: string) => {
       sessions.set(sessionId, {
         id: sessionId,
         projectId: f.admin.projectId,
@@ -118,97 +156,30 @@ export async function writerFixture(
               namespace: 'task-reviews',
               base: 'reference:code',
               retain: false,
-              driver: 'code.v2',
+              driver: 'code.git.1',
             },
             tools: [],
           },
           references: { code },
         },
       });
+      await persist(sessionId, true);
     },
     /** The session as the machine that runs it was handed it. */
     session: (sessionId: string) => structuredClone(sessions.get(sessionId)!),
-    end: (sessionId: string, closeReason: string | null = null) => {
+    end: async (sessionId: string, closeReason: string | null = null) => {
       Object.assign(sessions.get(sessionId)!, { status: 'released', closeReason });
+      await f.state.transaction((tx) =>
+        tx.run(
+          "UPDATE worker_sessions SET status='released',session_json=? WHERE id=?",
+          JSON.stringify(sessions.get(sessionId)),
+          sessionId,
+        ),
+      );
     },
     unit: async () => await f.code.unit(f.admin, unit.id),
     /** Code's writer sweep, as the store runs it at start and on its interval. */
     sweep: async () => await f.core.writers.expire(),
-    /** A commit command the session was handed, as Code's command table records it. */
-    async dispatched(sessionId: string, commandId: string) {
-      await f.state.transaction(async (tx) => {
-        // A session has one outstanding command; the earlier ones have ended.
-        await tx.run(
-          "UPDATE code_commands SET status='failed',error='ended' WHERE session_id=? AND id<>? AND status='dispatched'",
-          sessionId,
-          commandId,
-        );
-        await tx.run(
-          'INSERT INTO code_commands (id,project_id,session_id,actor_id,request_id,input_hash,command_json,status) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING',
-          commandId,
-          f.admin.projectId,
-          sessionId,
-          f.admin.actorId,
-          commandId,
-          'hash',
-          '{}',
-          'dispatched',
-        );
-      });
-    },
-    async begin(
-      kind: 'checkpoint' | 'final',
-      sessionId: string,
-      generation: number,
-      expectedHead: string,
-      bundle: Bundle | null,
-      commandId = `command-${++commands}`,
-    ): Promise<CodeStoreOperation> {
-      if (kind === 'checkpoint') await self.dispatched(sessionId, commandId);
-      const tip = bundle?.tip ?? expectedHead;
-      const body = {
-        sessionId,
-        ...runner,
-        hostRef: `launch-${sessionId}`,
-        unitId: unit.id,
-        generation,
-        leaseId: sessionId,
-        expectedHead,
-        proposedHead: tip,
-        treeOid: source.git('rev-parse', `${tip}^{tree}`),
-        bundle: bundle && { sha256: bundle.sha256, bytes: bundle.bytes },
-        kind,
-        ...(kind === 'checkpoint' ? { commandId, requestId: commandId } : {}),
-      };
-      return (
-        (await f.code.v2!.call(f.admin, kind === 'final' ? 'finalize' : 'uploads', body)) as {
-          operation: CodeStoreOperation;
-        }
-      ).operation;
-    },
-    async send(operation: CodeStoreOperation, bundle: Bundle): Promise<CodeStoreOperation> {
-      // A sender whose whole bundle already arrived is told so, and goes on to complete.
-      await f.code.v2!.putPart(f.admin, operation.id, 0, bundle.content).catch((error: unknown) => {
-        if (!(error instanceof MervError) || error.code !== 'code_upload_closed') throw error;
-      });
-      return (
-        (await f.code.v2!.call(f.admin, `uploads/${operation.id}/complete`, {})) as {
-          operation: CodeStoreOperation;
-        }
-      ).operation;
-    },
-    async upload(
-      kind: 'checkpoint' | 'final',
-      sessionId: string,
-      generation: number,
-      expectedHead: string,
-      bundle: Bundle,
-    ) {
-      return await self.send(
-        await self.begin(kind, sessionId, generation, expectedHead, bundle),
-        bundle,
-      );
-    },
   };
   return self;
 }

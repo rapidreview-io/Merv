@@ -9,7 +9,6 @@ import { EmptyState, KV, LoadState, Ruled, StatusPill, Summary, col, cx } from '
 import { ThreeStates } from '../states';
 import type { PluginState } from '../shell-types';
 import { useSession } from '../session';
-import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
 import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView } from './people';
@@ -344,16 +343,16 @@ function Keys() {
   return <KeysPanel account={account} initialProjectId={project.id} />;
 }
 
-/**
- * What this project works with outside Merv: today the one GitHub repository,
- * its connection and the access its agents have in it. The Code page draws what
- * that connection produced; everything that configures it is here.
- */
+/** Ordinary source exchange uses the authenticated project Git remote. */
 export function Integrations({ shell }: ViewProps) {
   const code = shell.rows.some((row) => row.view.kind === 'code');
   return (
     <div className="page-stage stack stack--lg">
-      {code && <GitHubConnection />}
+      {code && (
+        <p>
+          Use the project Git remote to exchange source code. GitHub is managed by your own agent.
+        </p>
+      )}
       {!code && <EmptyState kind="settings" icon="link" title="No integrations" />}
     </div>
   );

@@ -668,6 +668,14 @@ export interface SessionsPlatformWork {
   usage: Omit<UsageTotals, 'toolCalls' | 'toolPayloadTokensEstimate'> | null;
 }
 export interface ManagedRunners {
+  /** Server-only request; true only after durable capture, or when no runner ever enrolled. */
+  requestShutdown(allocationId: string, epoch: number): Promise<boolean>;
+  shutdown(
+    caller: Caller,
+    receipt?: unknown,
+    request?: boolean,
+  ): Promise<import('./managed-shutdown.js').ManagedShutdownControl>;
+
   registerValidator(validator: ManagedRunnerValidator): () => void;
   ensure(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
   /** `projectId`: the runner's selected project, refused unless it is the binding's. */

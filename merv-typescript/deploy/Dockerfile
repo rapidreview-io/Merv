@@ -9,6 +9,7 @@ RUN npm ci && npm run build:ui && npm run build \
 FROM ${NODE_IMAGE} AS runtime
 ARG SANDBOXES_TS_IMAGE
 LABEL org.merv.sandboxes-image=${SANDBOXES_TS_IMAGE}
+LABEL org.merv.native-git-protocol=1
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/package.json ./package.json
@@ -16,7 +17,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/vendor/merv-sandboxes/typescript/packages ./vendor/merv-sandboxes/typescript/packages
 COPY --from=build /app/vendor/merv-sandboxes/typescript/hosts/merv ./vendor/merv-sandboxes/typescript/hosts/merv
-COPY deploy/render-config.mjs deploy/schema.mjs deploy/entrypoint.sh ./deploy/
+COPY deploy/render-config.mjs deploy/schema.mjs deploy/git-cutover-preflight.mjs deploy/git-cutover-migrate.mjs deploy/entrypoint.sh ./deploy/
 # Code keeps one Git repository per project on the data volume and is the only part of the
 # server that runs Git. It looks for it at /usr/bin/git, needs 2.38 or newer, and refuses to
 # start with code_git_unsupported without it.

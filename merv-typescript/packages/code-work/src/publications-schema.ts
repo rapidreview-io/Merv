@@ -64,11 +64,40 @@ const retireProposals = {
   ].join('\n'),
 };
 
-/** Preserve deployed migration identities while storage remains available without Code Work. */
+/** Retire external activity, preserving every original publication and reviewed acceptance.
+ * A pending reviewed integration gets a separate local successor; the old destination and
+ * external merge intent stay immutable and no external branch or pull request is changed.
+ */
+const retireGitHubPublications = {
+  version: 4,
+  sql: `
+INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json,review_json)
+SELECT 'codeprop_local_' || md5(proposal_id),project_id,
+ (record_json::jsonb || jsonb_build_object('proposalId','codeprop_local_' || md5(proposal_id),
+  'destination','local','repository','','repositoryId',0,'connectionRevision',0,
+  'branch','merv/proposals/codeprop_local_' || md5(proposal_id),'baseBranch','merv-main'))::text,
+ 'null',review_json
+FROM code_publications
+WHERE settled=0 AND COALESCE(record_json::jsonb->>'destination','github')='github'
+ AND incident_json IS NULL AND stale=0 AND review_json::jsonb->>'verdict'='pass'
+ AND record_json::jsonb->'approval' IS NOT NULL
+ON CONFLICT(proposal_id) DO NOTHING;
+UPDATE code_publications p SET successor=s.proposal_id
+FROM code_publications s
+WHERE s.proposal_id='codeprop_local_' || md5(p.proposal_id)
+ AND p.project_id=s.project_id AND p.successor IS NULL;
+UPDATE code_publications SET settled=1,error='github_integration_retired',lock_id=NULL,lock_until=NULL
+WHERE settled=0 AND COALESCE(record_json::jsonb->>'destination','github')='github';
+`,
+};
+
+/** Published versions stay byte-identical; the additive retirement preserves evidence. */
+export const publicationMigrations = [
+  { version: 1, sql: schema },
+  publicationMigration,
+  retireProposals,
+  retireGitHubPublications,
+];
 export async function migratePublications(state: State): Promise<void> {
-  await state.migrate('code_publications', [
-    { version: 1, sql: schema },
-    publicationMigration,
-    retireProposals,
-  ]);
+  await state.migrate('code_publications', publicationMigrations);
 }

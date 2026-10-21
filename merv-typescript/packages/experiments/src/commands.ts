@@ -51,6 +51,7 @@ import type { ExperimentsContext } from './index.js';
 import {
   reviewing,
   runningNode,
+  approvalCommits,
   programVersion,
   rolesFor,
   currentEvidence,
@@ -708,6 +709,10 @@ async function submit(
   tx: Transaction,
 ): Promise<Experiment> {
   const stage = input.transition === 'submit_design' ? 'design' : 'results';
+  if (approvalCommits(experiment.workflow.version)) {
+    const submitted = await ctx.code.expectSubmission(caller, tx);
+    codeCaptureRef = submitted.ref;
+  }
   if (exhibit?.willPin) {
     const artifact = await ctx.artifacts.create(
       caller,
@@ -914,6 +919,20 @@ export async function submitReview(
           },
           tx,
         );
+      if (input.verdict === 'pass' && approvalCommits(experiment.workflow.version))
+        await ctx.code.approveSubmission(
+          caller,
+          {
+            unitId: experiment.id,
+            terminalRevision: moved.revision,
+            submissionRef: submission.id,
+            reviewRef: review.id,
+            codeRef: submission.codeCaptureRef!,
+            reviewSessionId: caller.session?.id ?? null,
+            kind: action === 'approve_design' ? 'plan' : 'results',
+          },
+          tx,
+        );
       if (action === 'approve_design')
         await tx.run(
           'UPDATE experiment_attempts SET approved_submission_id=?,approved_review_id=? WHERE experiment_id=? AND attempt_index=?',
@@ -943,18 +962,19 @@ export async function submitReview(
         // Every version records its success, so later work can take its base from it. The
         // reference is the one the submission stored: the review capture is read only while
         // the experiment is under review, and the guard's checkReview has just verified it there.
-        await ctx.code.acceptUnit(
-          caller,
-          {
-            unitId: experiment.id,
-            terminalRevision: moved.revision,
-            submissionRef: submission.id,
-            reviewRef: review.id,
-            codeRef: submission.codeCaptureRef!,
-            reviewSessionId: caller.session?.id ?? null,
-          },
-          tx,
-        );
+        if (!approvalCommits(experiment.workflow.version))
+          await ctx.code.acceptUnit(
+            caller,
+            {
+              unitId: experiment.id,
+              terminalRevision: moved.revision,
+              submissionRef: submission.id,
+              reviewRef: review.id,
+              codeRef: submission.codeCaptureRef!,
+              reviewSessionId: caller.session?.id ?? null,
+            },
+            tx,
+          );
       }
       await tx.run(
         'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',

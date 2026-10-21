@@ -120,7 +120,6 @@ async function main() {
     { autoPoll: false, drivers: [codeWorkspaceDriver], resetAssignment },
   );
   delete process.env.MERV_HOSTED_SOURCE;
-  controlToken = '';
   let stopping = false;
   process.on('SIGTERM', () => {
     stopping = true;
@@ -128,23 +127,60 @@ async function main() {
   process.on('SIGINT', () => {
     stopping = true;
   });
-  // Each step's own deadline, which the server sets, ends its launch, and Fleet stops the machine
-  // once its work item wants no more; this adds no clock of its own.
+  const shutdown = async (body: object = {}) => {
+    const response = await fetch(`${data.baseUrl.replace(/\/$/, '')}/sessions/runners/shutdown`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${controlToken}`,
+        'content-type': 'application/json',
+        'x-merv-project-id': data.projectId,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error('shutdown control unavailable');
+    return z
+      .object({ requested: z.boolean(), acknowledged: z.boolean() })
+      .parse(await response.json());
+  };
+  let receipt: Awaited<ReturnType<MachineRunner['prepareShutdown']>> | undefined;
   try {
     status('starting');
     await runner.start();
     status('connected');
-    while (!stopping) {
+    while (true) {
+      // Poll before ordinary control: stop intent intentionally revokes new work authority.
+      // Retry the same capture receipt after lost replies; never turn a transfer failure into
+      // permission for Fleet to destroy the only remaining working copy.
+      const control = await shutdown(stopping ? { request: true } : {}).catch(() => null);
+      if (control?.requested) {
+        status('capturing');
+        try {
+          receipt ??= await runner.prepareShutdown();
+          const ack = await shutdown({ receipt });
+          if (ack.acknowledged) {
+            status('captured');
+            break;
+          }
+        } catch {
+          status('capture-pending');
+        }
+        await delay(1000);
+        continue;
+      }
+      if (stopping) {
+        await delay(1000);
+        continue;
+      }
       const snapshot = runner.snapshot();
-      if (snapshot.state === 'unauthorized') return;
       if (snapshot.lastError === 'assignment_cleanup_failed')
         throw new Error('assignment cleanup failed');
       await delay(500);
       await runner.tick();
     }
-    status('stopping');
   } finally {
     await runner.stop();
+    controlToken = '';
   }
 }
 

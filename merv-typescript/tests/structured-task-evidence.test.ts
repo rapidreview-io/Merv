@@ -146,7 +146,7 @@ test('new tasks render one immutable brief, expose numbered checks and replay wi
     );
     assert.deepEqual(
       task.guidance.actions.find((action) => action.action === 'submit_delivery')?.requiredInput,
-      ['artifactIds', 'commandId', 'confirmations'],
+      ['artifactIds', 'confirmations'],
     );
     const context = await f.app.ctx.tasks.context(f.producer.caller, {
       taskId: task.id,

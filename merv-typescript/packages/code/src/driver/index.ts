@@ -1,11 +1,8 @@
 import { existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  codeCommitCommandSchema,
   effectiveWorkspace,
-  CODE_DRIVER,
-  type CodeCommitCommand,
-  type CodeCommitReceipt,
+  NATIVE_CODE_DRIVER as CODE_DRIVER,
   type SessionWorkspace,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
@@ -17,19 +14,44 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { codeWorkspaceManifestSchema } from '../store/protocol.js';
 import { pathStat } from '@merv/contracts/private-directory';
 import { hash, WorkspaceError } from './git.js';
-import { UploadRefused, terminal, deferral } from './core.js';
+import { deferral } from './core.js';
 import { DriverTransfer } from './transfer.js';
 
 export { WorkspaceError } from './git.js';
 
 /**
  * The workspace driver for projects whose history lives in Code's repository on the server.
- * A machine keeps only a cache: before a session it downloads exactly the commit Code names,
- * every commit and the final capture are uploaded as bundles, and the local branch moves only
- * after Code has acknowledged the upload. Nothing here knows a remote, a central ref or a
- * GitHub credential, and the runner's own repository and ledger tables are never touched.
+ * Native Git fetch/push carries objects; narrow authenticated controls freeze submissions
+ * and acknowledge planned shutdown captures. Ordinary sessions retain local uncommitted work.
  */
 export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriver {
+  async shutdownCapture() {
+    const rows = this.db
+      .prepare(
+        `SELECT w.* FROM code_v2_workspaces w WHERE read_only=0 AND attachment_json IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM code_v2_workspaces newer WHERE newer.project_ref=w.project_ref
+      AND newer.unit_id=w.unit_id AND newer.read_only=0 AND newer.attachment_json IS NOT NULL AND newer.rowid>w.rowid)`,
+      )
+      .all() as unknown as import('./core.js').WorkspaceRow[];
+    const receipts = [];
+    for (const row of rows)
+      receipts.push(await this.run(this.workKey ?? row.launch_id, () => this.captureShutdown(row)));
+    return receipts;
+  }
+  agentGit(launchId: string) {
+    const row = this.row(launchId);
+    if (!row) throw new WorkspaceError('workspace_missing');
+    const access = this.access(launchId);
+    const attached = row.attachment_json
+      ? (JSON.parse(row.attachment_json) as SessionWorkspace)
+      : undefined;
+    return {
+      url: access.url,
+      token: access.agentToken,
+      branch: row.branch,
+      startingCommit: attached?.headOid ?? row.head_oid,
+    };
+  }
   get(launchId: string): WorkspaceHandle | undefined {
     const row = this.row(launchId);
     if (!row) return undefined;
@@ -118,6 +140,38 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
       if (row.head_oid !== manifest.head || row.base_oid !== manifest.base)
         throw new WorkspaceError('workspace_recorded_base_changed');
       await this.checkout(cache, row, !!existing);
+      if (manifest.submission) {
+        const submitted = manifest.submission;
+        const saved = this.submission(row.launch_id);
+        if (saved && JSON.stringify(saved) !== JSON.stringify(submitted))
+          throw new WorkspaceError('workspace_submission_changed');
+        this.db
+          .prepare(
+            'INSERT OR IGNORE INTO code_git_submissions(launch_id,session_id,parent_oid,tree_oid) VALUES(?,?,?,?)',
+          )
+          .run(row.launch_id, submitted.sessionId, submitted.parentOid, submitted.treeOid);
+        if (this.assignmentRoot) {
+          // Include the non-commit tree in the independent checkout using Git's local object transfer.
+          await this.git.ok(
+            ['-c', 'protocol.file.allow=always', 'fetch', '--no-tags', cache, submitted.treeOid],
+            { cwd: row.path },
+          );
+        }
+        await this.git.ok(['read-tree', '--reset', '-u', submitted.treeOid], { cwd: row.path });
+      }
+      const access = this.access(row.launch_id);
+      await this.git.ok(['config', 'remote.merv.url', access.url], { cwd: row.path });
+      await this.git.ok(['config', 'remote.merv.fetch', '+refs/heads/*:refs/remotes/merv/*'], {
+        cwd: row.path,
+      });
+      await this.git.ok(['config', 'user.name', 'Merv Agent'], { cwd: row.path });
+      await this.git.ok(['config', 'user.email', 'agent@merv.local'], { cwd: row.path });
+      if (row.branch) {
+        await this.git.ok(['config', `branch.${row.branch}.remote`, 'merv'], { cwd: row.path });
+        await this.git.ok(['config', `branch.${row.branch}.merge`, `refs/heads/${row.branch}`], {
+          cwd: row.path,
+        });
+      }
       const snapshot = await this.snapshot(row, manifest.head);
       if (this.workKey && !row.read_only) {
         const preserved = this.preservedPath();
@@ -144,116 +198,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
     });
   }
 
-  /**
-   * Commit the checkout deterministically, but keep the commit aside until Code has admitted
-   * it: HEAD moves only on that acknowledgement, so the local branch never runs ahead of the
-   * one everybody else resumes from.
-   */
-  checkpointCommit(launch: WorkspaceLaunch, input: CodeCommitCommand): Promise<CodeCommitReceipt> {
-    const parsed = codeCommitCommandSchema.safeParse(input);
-    if (!parsed.success) return Promise.reject(new WorkspaceError('workspace_invalid_command'));
-    const command = parsed.data;
-    return this.run(this.workKey ?? launch.id, async () => {
-      const row = this.row(launch.id);
-      if (
-        !row ||
-        !row.attachment_json ||
-        row.read_only ||
-        command.sessionId !== row.session_id ||
-        command.hostRef !== launch.id ||
-        command.runnerId !== row.runner_id ||
-        JSON.stringify(command.workspace) !== row.attachment_json
-      )
-        throw new WorkspaceError('workspace_command_mismatch');
-      let journal = this.transfer(command.id);
-      if (!journal) {
-        this.db
-          .prepare(
-            "INSERT INTO code_v2_transfers (request_id,launch_id,kind,command_json,expected_head) VALUES (?,?,'checkpoint',?,?)",
-          )
-          .run(command.id, launch.id, JSON.stringify(command), command.expectedHead);
-        journal = this.transfer(command.id)!;
-      } else if (journal.command_json !== JSON.stringify(command))
-        throw new WorkspaceError('workspace_command_conflict');
-      if (journal.receipt_json) return JSON.parse(journal.receipt_json) as CodeCommitReceipt;
-      if (journal.error) throw new WorkspaceError(journal.error);
-      try {
-        return await this.commit(row, command, journal);
-      } catch (error) {
-        const code = (error as { code?: unknown }).code;
-        // Before there is a commit, a failure is this checkout's and ends the command. Once
-        // Code is involved only a refusal that time cannot change ends it; everything else is
-        // tried again with the same journal.
-        const ended =
-          error instanceof UploadRefused ||
-          (typeof code === 'string' && terminal.includes(code)) ||
-          (!this.transfer(command.id)?.target_oid && !deferral(error));
-        if (ended) {
-          await this.dropPending(row, command.id);
-          this.db
-            .prepare('UPDATE code_v2_transfers SET error=? WHERE request_id=? AND error IS NULL')
-            .run(
-              typeof code === 'string' && /^[a-z][a-z0-9_]{0,99}$/.test(code)
-                ? code
-                : 'workspace_commit_failed',
-              command.id,
-            );
-        }
-        throw error;
-      }
-    });
-  }
-
-  /**
-   * The head a periodic checkpoint commits on: Code's head, while the live checkout holds changes
-   * on it that Code has not admitted; else null (nothing changed, or the agent moved HEAD on its
-   * own, which only its own code.commit may hand over). Read without taking Git's locks, so the
-   * agent's own Git is never kept waiting.
-   */
-  checkpointHead(launchId: string): Promise<string | null> {
-    return this.run(this.workKey ?? launchId, async () => {
-      const row = this.row(launchId);
-      if (!row || row.read_only || row.status !== 'ready' || !row.attachment_json) return null;
-      const env = { GIT_OPTIONAL_LOCKS: '0' };
-      const head = await this.resolve(row, 'HEAD^{commit}', env);
-      if (head !== row.head_oid) return null;
-      const changes = await this.git.ok(['status', '--porcelain', '--untracked-files=all'], {
-        cwd: row.path,
-        env,
-      });
-      return changes.toString().trim() ? head : null;
-    });
-  }
-
-  pendingCommits(launchId: string): CodeCommitCommand[] {
-    return (
-      this.db
-        .prepare(
-          "SELECT command_json FROM code_v2_transfers WHERE launch_id=? AND kind='checkpoint' AND acknowledged=0 ORDER BY rowid",
-        )
-        .all(launchId) as { command_json: string }[]
-    ).map((row) => JSON.parse(row.command_json) as CodeCommitCommand);
-  }
-
-  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null {
-    const row = this.transfer(commandId);
-    if (row?.receipt_json) return { receipt: JSON.parse(row.receipt_json) as CodeCommitReceipt };
-    return row?.error ? { error: row.error } : null;
-  }
-
-  acknowledgeCommit(commandId: string): void {
-    if (!this.commitOutcome(commandId))
-      throw new WorkspaceError('workspace_commit_outcome_required');
-    this.db
-      .prepare('UPDATE code_v2_transfers SET acknowledged=1 WHERE request_id=?')
-      .run(commandId);
-  }
-
-  /**
-   * What the session left, handed to Code as the one final capture of its writer generation.
-   * The capture is journalled before Code hears of it, so a restart replays that exact commit
-   * and never builds another; what Code does not admit stays here and in Code's held bundles.
-   */
+  /** Stop a session, retain its frozen submission if requested, and preserve local dirt. */
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined> {
     return this.run(this.workKey ?? launch.id, async () => {
       if (!this.host.terminal(launch.id))
@@ -276,7 +221,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
       // what was judged is what is inherited, and the next prepare restores the checkout.
       const head = row.read_only
         ? (JSON.parse(row.attachment_json!) as SessionWorkspace).headOid
-        : await this.finalize(row);
+        : await this.finishSession(row);
       row = this.row(launch.id)!;
       const snapshot = await this.snapshot(row, head);
       this.db

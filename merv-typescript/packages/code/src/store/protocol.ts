@@ -1,15 +1,7 @@
 import { z } from 'zod';
-import { codePendingMergeSchema, gitBranchSchema } from '@merv/contracts/workspace';
+import { codePendingMergeSchema } from '@merv/contracts/workspace';
 import { idSchema as id, oidSchema as oid } from '@merv/contracts/schemas';
 
-const importBranch = gitBranchSchema(255);
-
-/**
- * The second workspace protocol: Code keeps one repository per project and machines move Git
- * bundles to and from it. Everything here is opaque to the API, which forwards these bodies
- * and the bundle bytes unread; only Code and its workspace driver interpret them.
- */
-const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const glob = z
   .string()
   .min(1)
@@ -18,14 +10,6 @@ const glob = z
 
 /** No single transfer is larger, whatever a project's quota allows. */
 export const CODE_BUNDLE_MAX_BYTES = 512 * 1024 * 1024;
-/** The largest body of one part; a server may ask for less. */
-export const CODE_PART_MAX_BYTES = 4 * 1024 * 1024;
-
-const bundle = z.strictObject({
-  sha256,
-  bytes: z.number().int().positive().max(CODE_BUNDLE_MAX_BYTES),
-});
-
 /** What admission found wrong in a transfer. It names the place and never the matched text. */
 const codeFindingSchema = z.strictObject({
   rule: z.string().regex(/^[a-z][a-z0-9_@.]{0,59}$/),
@@ -42,47 +26,6 @@ export const codeAdmissionLimitsSchema = z.strictObject({
 });
 export type CodeAdmissionLimits = z.infer<typeof codeAdmissionLimitsSchema>;
 
-/** One object rather than a union, because a tool's input is described as a single object. */
-export const codeRepositoryImportInputSchema = z
-  .strictObject({
-    source: z.enum(['bundle', 'github']),
-    /** Bundle: the one commit it delivers; the bundle's own ref name authorises nothing. */
-    tip: oid.optional(),
-    bundle: bundle.optional(),
-    /** GitHub: a full ref of the linked repository, such as refs/heads/main. */
-    ref: z
-      .string()
-      .max(255)
-      .regex(/^refs\/(?:heads|tags)\//)
-      .refine(
-        (value) => importBranch.safeParse(value.replace(/^refs\/(?:heads|tags)\//, '')).success,
-      )
-      .optional(),
-    /** Refuse a moving remote ref instead of importing an unselected head. */
-    expectedHead: oid.optional(),
-    /** Freeze the selected GitHub connection when preparation spans retries. */
-    githubBinding: z
-      .strictObject({
-        revision: z.number().int().nonnegative(),
-        repositoryId: z.number().int().positive(),
-        baseBranch: gitBranchSchema(200),
-      })
-      .optional(),
-    requestId: id,
-  })
-  .refine(
-    (value) =>
-      value.source === 'bundle'
-        ? value.tip !== undefined &&
-          value.bundle !== undefined &&
-          value.ref === undefined &&
-          value.githubBinding === undefined &&
-          value.expectedHead === undefined
-        : value.ref !== undefined && value.tip === undefined && value.bundle === undefined,
-    'A bundle import names tip and bundle; a GitHub import names ref',
-  );
-export type CodeRepositoryImportInput = z.infer<typeof codeRepositoryImportInputSchema>;
-
 /** One journalled transfer or ref operation, as everyone allowed to read the project sees it. */
 export interface CodeStoreOperation {
   id: string;
@@ -94,7 +37,7 @@ export interface CodeStoreOperation {
   /** Bundle bytes the server holds, and how many it was promised. */
   received: number;
   bytes: number | null;
-  /** The size of one part the server accepts for this operation. */
+  /** Historical compatibility field; zero because multipart transfers are retired. */
   partBytes: number;
   /** The commit the operation delivers, once it is known. */
   head: string | null;
@@ -129,33 +72,8 @@ export interface CodeStoreWarning {
   message: string;
   at: string;
 }
-/**
- * How a project's work reaches the repository it is published to. Mirroring is the server's
- * own asynchronous work: it never blocks a machine, a handoff or an acceptance, so a mirror
- * that is behind, retrying or blocked is a fact to read here and nothing that holds anyone up.
- */
-export interface CodeMirrorStatus {
-  /** `off` while nothing is linked or write automation is not configured. */
-  state: 'off' | 'idle' | 'pending' | 'retrying' | 'blocked';
-  /** The linked repository, or the reason nothing is published. */
-  repository: string | null;
-  blockedBy: string | null;
-  /** Refs whose canonical commit has not reached the repository yet. */
-  pending: number;
-  oldestPendingAt: string | null;
-  lastError: string | null;
-  /** Refs no push may move without an operator, newest first. */
-  blockedRefs: {
-    operationId: string;
-    unitId: string | null;
-    ref: string;
-    code: string;
-    message: string;
-    at: string;
-  }[];
-}
-
 export const codeWorkspaceManifestSchema = z.strictObject({
+  remote: z.string().regex(/^\/git\/[A-Za-z0-9_-]+\.git$/),
   projectRef: id,
   repositoryId: id,
   objectFormat: z.enum(['sha1', 'sha256']),
@@ -167,11 +85,13 @@ export const codeWorkspaceManifestSchema = z.strictObject({
   branch: z.string().min(1).max(512).nullable(),
   prerequisites: z.array(oid).max(256),
   pendingMerge: codePendingMergeSchema.optional(),
+  submission: z.strictObject({ sessionId: id, parentOid: oid, treeOid: oid }).optional(),
+  submissionRequested: z.boolean().optional(),
 });
 export type CodeWorkspaceManifest = z.infer<typeof codeWorkspaceManifestSchema>;
 
 /** The writer fence an upload is made under; Code checks all of it, whatever carried it here. */
-export const codeUploadFenceSchema = z
+export const codePushFenceSchema = z
   .strictObject({ sessionId: id, runnerId: id, hostRef: id })
   .extend({
     unitId: id,
@@ -180,20 +100,8 @@ export const codeUploadFenceSchema = z
     expectedHead: oid,
     proposedHead: oid,
     treeOid: oid,
-    /** Null when the proposed head is the expected head and nothing needs to move. */
-    bundle: bundle.nullable(),
   });
-/** One upload as Code begins it: a checkpoint under its command, or a unit's final capture. */
-export type CodeUpload = z.infer<typeof codeUploadFenceSchema> &
-  ({ kind: 'checkpoint'; commandId: string; requestId: string } | { kind: 'final' });
-
 export const codeUnitFenceInputSchema = z.object({ unitId: id, requestId: id }).strict();
-export const codeMirrorRetryInputSchema = z.strictObject({
-  operationId: id,
-  acknowledgeRemote: oid.optional(),
-  requestId: id,
-});
-
 /**
  * Who may advance a unit's branch in Code's repository. A generation belongs to one leased
  * session; the next begins only once this one closed or an operator fenced it.

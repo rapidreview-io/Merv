@@ -68,9 +68,15 @@ async function fixture(t: TestContext) {
   };
   const work = currentWork(app.ctx, { directory, source: operator });
   t.after(async () => {
-    await work.close();
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      await work.close();
+    } finally {
+      try {
+        await app.stop();
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
   });
   const task = await currentTask(app.ctx, operator, {
     title: 'Count the checks',

@@ -60,8 +60,10 @@ export const sessionWorkspaceSchema = z
   .unknown()
   .superRefine((value, ctx) => {
     if (
-      !dataRecord(value, fields, ['treeOid', 'pendingMerge']) ||
+      !dataRecord(value, fields, ['treeOid', 'pendingMerge', 'submission']) ||
       !dataRecord(value.stats, stats) ||
+      (value.submission !== undefined &&
+        !dataRecord(value.submission, ['sessionId', 'parentOid', 'treeOid'])) ||
       (value.pendingMerge !== undefined &&
         !dataRecord(value.pendingMerge, [
           'plan',
@@ -87,6 +89,7 @@ export const sessionWorkspaceSchema = z
         baseOid: oid,
         headOid: oid,
         treeOid: oid.optional(),
+        submission: z.strictObject({ sessionId: label, parentOid: oid, treeOid: oid }).optional(),
         pendingMerge: codePendingMergeSchema.optional(),
         stats: z.strictObject({
           commitCount: count,
@@ -99,6 +102,9 @@ export const sessionWorkspaceSchema = z
         (value) =>
           value.baseOid.length === value.headOid.length &&
           (value.treeOid === undefined || value.treeOid.length === value.baseOid.length) &&
+          (!value.submission ||
+            (value.submission.parentOid === value.headOid &&
+              value.submission.treeOid === value.treeOid)) &&
           (!value.pendingMerge ||
             (value.pendingMerge.checkpoint === value.headOid &&
               [

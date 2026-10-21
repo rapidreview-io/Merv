@@ -379,7 +379,7 @@ export class WorkUnitRecords {
     );
     // Only a consolidation, a unit declared to publish to main, has a pull request.
     const published = await sql.all<PublicationRow & { unit_id: string }>(
-      `SELECT u.unit_id,${publicationColumns} FROM code_units u JOIN code_publications p ON p.project_id=u.project_id AND p.proposal_id=u.publication_id WHERE u.project_id=? AND u.publishes_at IS NOT NULL AND u.acceptance_json IS NOT NULL`,
+      `SELECT u.unit_id,${publicationColumns} FROM code_units u JOIN code_publications original ON original.project_id=u.project_id AND original.proposal_id=u.publication_id JOIN code_publications p ON p.project_id=u.project_id AND p.proposal_id=COALESCE(original.successor,original.proposal_id) WHERE u.project_id=? AND u.publishes_at IS NOT NULL AND u.acceptance_json IS NOT NULL`,
       projectId,
     );
     const units = new Map(rows.map((row) => [row.unit_id, row]));
@@ -427,7 +427,6 @@ export class WorkUnitRecords {
       project: await this.code.project(tx, caller.projectId),
       store: null,
       operations: [],
-      mirror: null,
       warnings: await this.code.warnings(tx, caller.projectId),
       units: await mapAsync(
         await tx.all<UnitRow>(
@@ -461,7 +460,7 @@ export class WorkUnitRecords {
     const publication =
       row.publication_id &&
       (await sql.get<PublicationRow>(
-        `SELECT ${publicationColumns} FROM code_publications p WHERE proposal_id=? AND project_id=?`,
+        `SELECT ${publicationColumns} FROM code_publications original JOIN code_publications p ON p.project_id=original.project_id AND p.proposal_id=COALESCE(original.successor,original.proposal_id) WHERE original.proposal_id=? AND original.project_id=?`,
         row.publication_id,
         projectId,
       ));

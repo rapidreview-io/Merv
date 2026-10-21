@@ -1,71 +1,11 @@
 import { z } from 'zod';
-import { check, githubBranchSchema, oidSchema } from '@merv/contracts';
-import type { Caller } from '@merv/contracts';
-import type { CodeStoreOperation } from '@merv/code/store/protocol';
-import type { CodeRepositoryPreparation, CodeRepositoryPrepareInput } from './models.js';
-import type { Code } from './types.js';
+import { oidSchema } from '@merv/contracts';
+import { gitBranchSchema } from '@merv/contracts/workspace';
 
-type PreparationHost = Pick<Code, 'github' | 'importRepository'>;
-
-const oid = oidSchema;
+/** Select exact retained history; an ordinary push alone never advances the research baseline. */
 export const repositoryPrepareSchema = z.strictObject({
-  expectedRevision: z.number().int().nonnegative(),
-  baseBranch: githubBranchSchema,
-  headOid: oid,
-  expectedMainOid: oid.optional(),
+  baseBranch: gitBranchSchema(200),
+  headOid: oidSchema,
+  expectedMainOid: oidSchema,
   requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/),
 });
-
-/**
- * Import the selected branch into the project's hosted repository, then integrate it. Retries
- * keep the administrator's exact selection, which the caller has already parsed.
- */
-export async function prepareRepository(
-  code: PreparationHost,
-  caller: Caller,
-  input: CodeRepositoryPrepareInput,
-  reconcile: (operation: CodeStoreOperation) => Promise<CodeRepositoryPreparation>,
-): Promise<CodeRepositoryPreparation> {
-  const connection = await code.github.status(caller);
-  check(
-    connection.revision === input.expectedRevision && connection.baseBranch === input.baseBranch,
-    'github_conflict',
-    'The repository or selected branch changed; reload its settings',
-    409,
-  );
-  check(
-    connection.repository && connection.automation !== 'off',
-    'github_repository_required',
-    'Select a repository and enable repository access first',
-    409,
-  );
-  const operation = await code.importRepository(caller, {
-    source: 'github',
-    ref: `refs/heads/${input.baseBranch}`,
-    expectedHead: input.headOid,
-    githubBinding: {
-      revision: connection.revision,
-      repositoryId: connection.repository.id,
-      baseBranch: input.baseBranch,
-    },
-    requestId: `${input.requestId}:import`,
-  });
-  // Code checked expectedHead before finding that this history was already retained.
-  // Reconciliation still checks the selected connection, local main and review requirement.
-  if (operation.status === 'failed' && operation.error === 'code_import_current')
-    return reconcile(operation);
-  if (operation.status !== 'completed')
-    return {
-      state: operation.status === 'prepared' ? 'importing' : 'failed',
-      baseBranch: input.baseBranch,
-      headOid: input.headOid,
-      operation,
-    };
-  check(
-    operation.head === input.headOid,
-    'code_branch_changed',
-    'The imported head differs from the selected head',
-    409,
-  );
-  return reconcile(operation);
-}

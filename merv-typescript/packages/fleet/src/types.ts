@@ -26,6 +26,9 @@ export interface FleetAllocation {
   runtime: FleetRuntimeHandle | null;
   /** Durable intent written before create; false proves no provider call has begun. */
   createAttempted: boolean;
+  /** A launched host must acknowledge durable shutdown before provider deletion. */
+  shutdownRequired?: true;
+  shutdownAcknowledged?: true;
   /** When Fleet adopted its current machine, which must be ready within a minute. */
   adoptedAt?: string;
   /** Machines that never became ready, stopped and rented again each under a new create key. */
@@ -115,7 +118,9 @@ export interface FleetOwner {
   valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** Stable bytes for this allocation/epoch across retries, never persisted by Fleet. */
   bootstrap(allocation: FleetAllocation): Promise<string>;
-  /** finished means all required capture/checkpoint work has been retained. */
+  /** Stops producers and returns true only once the host durably retained teardown captures. */
+  prepareStop?(allocation: FleetAllocation): Promise<boolean>;
+  /** finished means ordinary session work has settled; prepareStop gates machine release. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
   /** The model tokens this owner charges `person` for over the UTC days [from, to): read for the
    *  platform admin. */

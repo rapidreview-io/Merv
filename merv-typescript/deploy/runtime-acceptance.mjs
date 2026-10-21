@@ -115,7 +115,7 @@ export async function exerciseRuntime(start) {
     const unit = await app.ctx.codeWork.unit(owner, managed.id);
     assert.notEqual(unit.baseStatus?.status, 'blocked');
     assert.ok(codeStatus.store.quotaBytes > 0);
-    assert.equal(codeStatus.mirror.state, 'off', 'Nothing is published for a synthetic project');
+    assert.equal(codeStatus.mirror, undefined, 'The retired mirror integration is absent');
     console.log(
       JSON.stringify({
         acceptance: 'running',

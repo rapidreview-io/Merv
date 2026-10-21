@@ -2,7 +2,8 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import { ReportService } from '@merv/reports';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { git } from './fixtures/code-store.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -46,7 +47,10 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     boot = await scope.credentials.bootstrap({ projectName: 'Experiments', actorName: 'Operator' });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const result = await scope.credentials.issueActor(operator, { name: role, role });
+    const result = await scope.credentials.issueActor(operator, {
+      name: role,
+      role: role === 'reviewer' ? 'operator' : role,
+    });
     return {
       actorId: result.actor.id,
       projectId: operator.projectId,
@@ -102,7 +106,8 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     content: string,
     extra: Partial<ExperimentAttach> = {},
   ): Promise<ExperimentAttached> => {
-    const author = active.get(experiment.id)?.worker ?? producer;
+    if (!active.has(experiment.id)) active.set(experiment.id, await work.lease(experiment));
+    const author = active.get(experiment.id)!.worker;
     const artifact = await artifacts.create(author, {
       title: role,
       content,
@@ -135,14 +140,17 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
       ...extra,
     };
     parseExperimentInput(experimentTransitionSchema, input);
-    if (transition !== 'submit_results') return experiments.transition(producer, input);
+    if (transition !== 'submit_results' && transition !== 'submit_design')
+      return experiments.transition(active.get(experiment.id)?.worker ?? producer, input);
     const current = await experiments.get(producer, experiment.id);
     const held = active.get(current.id) ?? (await work.lease(current));
     for (const evidence of current.evidence.filter(
       (item) =>
         item.current &&
         item.attemptIndex === current.attempt.index &&
-        ['result', 'report'].includes(item.role) &&
+        (transition === 'submit_design' ? ['plan', 'feasibility'] : ['result', 'report']).includes(
+          item.role,
+        ) &&
         item.createdBy !== held.worker.actorId,
     )) {
       let artifactId = evidence.artifactId;
@@ -171,16 +179,21 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
         (caller, bound) => experiments.attach(caller, bound as unknown as ExperimentAttach),
       );
     }
+    let submitted = false;
     try {
-      return await work.run(
+      const result = await work.run(
         held,
         'experiment.transition',
         { transition, requestId: input.requestId, ...extra },
         (caller, bound) => experiments.transition(caller, bound as unknown as ExperimentTransition),
       );
+      submitted = true;
+      return result;
     } finally {
-      active.delete(current.id);
-      await work.release(held);
+      if (submitted) {
+        active.delete(current.id);
+        await work.release(held);
+      }
     }
   };
   const reviewInput = async (
@@ -188,7 +201,9 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     verdict: ReviewApplication['verdict'] = 'pass',
     returnTo?: string,
   ): Promise<ExperimentReview> => {
-    const review = await reviews.start(reviewer, experiment.reviewId!);
+    const held = active.get(experiment.id) ?? (await work.lease(experiment, reviewer));
+    active.set(experiment.id, held);
+    const review = await reviews.get(held.worker, experiment.reviewId!);
     return {
       reviewId: review.id,
       claimId: review.claimId!,
@@ -206,17 +221,24 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
       ...(returnTo ? { returnTo } : {}),
     };
   };
+  const applyReview = async (experiment: Experiment, input: ExperimentReview) => {
+    const held = active.get(experiment.id)!;
+    const next = (await work.run(
+      held,
+      'review.submit',
+      input as unknown as import('@merv/contracts').Data,
+      (caller, bound) => reviews.apply(caller, bound as unknown as ReviewApplication),
+    )) as Experiment;
+    active.delete(experiment.id);
+    await work.release(held);
+    await managed.code.submissions.reconcile();
+    return next;
+  };
   const submitReview = async (
     experiment: Experiment,
     verdict: ReviewApplication['verdict'] = 'pass',
     returnTo?: string,
-  ) => {
-    const next = (await reviews.apply(
-      reviewer,
-      await reviewInput(experiment, verdict, returnTo),
-    )) as Experiment;
-    return next;
-  };
+  ) => applyReview(experiment, await reviewInput(experiment, verdict, returnTo));
   const execute = async (e: Experiment) => {
     if (!active.has(e.id)) active.set(e.id, await work.lease(e));
     return e;
@@ -264,10 +286,12 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     transition,
     reviewInput,
     submitReview,
+    applyReview,
     running,
     results,
     execute,
     worker: (e: Experiment) => active.get(e.id)?.worker ?? producer,
+    held: (e: Experiment) => active.get(e.id),
     id,
     get experiments() {
       return experiments;
@@ -346,12 +370,9 @@ test('Attempt fail and needs_changes require explicit routes and distinguish new
   e = await f.results(e);
   const input = await f.reviewInput(e, 'fail');
   const before = (await f.state.events(f.operator.projectId)).length;
-  await assert.rejects(
-    async () => await f.reviews.apply(f.reviewer, input),
-    code('invalid_review_return'),
-  );
+  await assert.rejects(async () => await f.applyReview(e, input), code('invalid_review_return'));
   assert.equal((await f.state.events(f.operator.projectId)).length, before);
-  e = (await f.reviews.apply(f.reviewer, { ...input, returnTo: 'running' })) as Experiment;
+  e = (await f.applyReview(e, { ...input, returnTo: 'running' })) as Experiment;
   assert.equal(e.workflow.state, 'running');
   assert.equal(e.attempt.index, 1);
   assert.equal(e.attempt.approvedSubmissionId, approved);
@@ -380,17 +401,18 @@ test('Design rejection starts a new attempt; invalid routes and self review cann
   );
   const input = await f.reviewInput(e, 'fail');
   await assert.rejects(
-    async () => await f.reviews.apply(f.reviewer, { ...input, returnTo: 'running' }),
+    async () => await f.applyReview(e, { ...input, returnTo: 'running' }),
     code('invalid_review_return'),
   );
-  e = (await f.reviews.apply(f.reviewer, input)) as Experiment;
+  e = (await f.applyReview(e, input)) as Experiment;
   assert.equal(e.attempt.index, 2);
   assert.equal(e.workflow.state, 'planned');
 });
 test('Missing bytes and invalid scoped figure references cannot seal a review', async (t) => {
   const f = await fixture(t),
     e = await f.create();
-  const figure = await f.artifacts.create(f.producer, {
+  await f.execute(e);
+  const figure = await f.artifacts.create(f.worker(e), {
     title: 'Figure',
     content: 'not actually an image',
     mediaType: 'text/plain',
@@ -457,7 +479,8 @@ test('Source revocation is checked before replay and before a composed writer co
 test('A fresh storage connection restores attempts, immutable review pins, figures and command receipts', async (t) => {
   const f = await fixture(t);
   let e = await f.create('Restart-proof');
-  const image = await f.artifacts.create(f.producer, {
+  await f.execute(e);
+  const image = await f.artifacts.create(f.worker(e), {
     title: 'Retained figure',
     mediaType: 'image/png',
     encoding: 'base64',
@@ -468,7 +491,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
   assert.deepEqual(evidence.figureIds, [image.id]);
   e = await f.transition(e, 'submit_design');
   const application = await f.reviewInput(e, 'needs_changes', 'planned');
-  e = (await f.reviews.apply(f.reviewer, application)) as Experiment;
+  e = (await f.applyReview(e, application)) as Experiment;
   await f.managed.close();
   const state = await openState(f.directory),
     scope = await createService(new ProjectScope(state)),
@@ -500,7 +523,15 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
     assert.deepEqual(await experiments.get(f.producer, e.id), e);
     assert.deepEqual(e.attempt.feedbackReviewIds, [application.reviewId]);
     assert.deepEqual(e.submissions[0].figureIds, [image.id]);
-    assert.deepEqual(await reviews.apply(f.reviewer, application), e);
+    assert.equal((await reviews.get(f.reviewer, application.reviewId)).verdict, 'needs_changes');
+    assert.ok(
+      await state.read((sql) =>
+        sql.get(
+          'SELECT request_id FROM experiment_commands WHERE request_id=?',
+          application.requestId,
+        ),
+      ),
+    );
     const assignment = await workflows.assignment(f.producer, e.id);
     assert.ok(JSON.stringify(assignment).includes(application.reviewId));
     assert.ok(JSON.stringify(assignment).includes(image.id));
@@ -530,7 +561,7 @@ Risks:
 - One vocabulary size`;
 
 test(
-  'experiment@43 submits its rendered report: drafted from the plan, final PDF, pages as figures',
+  'experiment@45 submits its rendered report: drafted from the plan, final PDF, pages as figures',
   { skip: !reportBrowser() && 'no Chromium for rendering' },
   async (t) => {
     const f = await fixture(t);
@@ -540,7 +571,7 @@ test(
     t.after(async () => await reports.close());
     f.experiments.bindReports(reports);
     let e = await f.create();
-    assert.equal(e.workflow.version, 44);
+    assert.equal(e.workflow.version, 45);
     await f.attach(e, 'plan', REPORTED_PLAN);
     e = await f.transition(e, 'submit_design');
     e = await f.execute(await f.submitReview(e));
@@ -636,6 +667,7 @@ test('a leased planner recovers original request and paginated history through i
   const experiment = await f.create();
   await f.attach(experiment, 'plan', plan + '\nOLD_PLAN');
   await f.attach(experiment, 'plan', plan + '\nNEW_PLAN');
+  await f.work.release(f.held(experiment)!);
   const lease = await f.work.lease(await f.experiments.get(f.producer, experiment.id));
   const read = async (args: import('@merv/contracts').Data) =>
     f.work.run(lease, 'experiment.get_state', args, async (caller, raw) => {
@@ -715,4 +747,67 @@ test('planner and both reviewers receive the original request directly', async (
   e = await f.submitReview(e);
   e = await f.results(e);
   await checkRequest(f.reviewer);
+});
+
+test('plan approval commits the exact frozen working tree and gates execution until Git retention completes', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.create('Frozen-plan-code');
+  await f.attach(experiment, 'plan', plan);
+  const planner = f.held(experiment)!;
+  const parent = git(planner.workspace.path, ['rev-parse', 'HEAD']);
+  const repository = f.managed.core.repositories.paths(f.producer.projectId).repository;
+  const count = () => Number(git(repository, ['rev-list', '--all', '--count']));
+  const before = count();
+  writeFileSync(join(planner.workspace.path, 'plan.py'), 'print("reviewed plan")\n');
+  experiment = await f.transition(experiment, 'submit_design');
+  const submitted = await f.code.capture(
+    f.producer,
+    experiment.submissions.at(-1)!.codeCaptureRef!,
+  );
+  assert.equal(submitted.status, 'ready');
+  assert.equal(submitted.workspace!.headOid, parent);
+  assert.equal(count(), before, 'submitting the planner’s dirty work creates no commit');
+  await f.reviewInput(experiment);
+  const reviewer = f.held(experiment)!;
+  assert.equal(reviewer.workspace.readOnly, true);
+  assert.equal(git(reviewer.workspace.path, ['rev-parse', 'HEAD']), parent);
+  assert.equal(
+    readFileSync(join(reviewer.workspace.path, 'plan.py'), 'utf8'),
+    'print("reviewed plan")\n',
+  );
+  assert.equal(reviewer.workspace.snapshot!.submission?.treeOid, submitted.workspace!.treeOid);
+  const storage = f.code.gitRemote;
+  let unavailable = true;
+  f.code.bindSubmissionStorage({
+    verifySubmission: (...args) => storage.verifySubmission(...args),
+    materializeSubmission: (...args) => {
+      if (unavailable) return Promise.reject(new Error('simulate unavailable Git storage'));
+      return storage.materializeSubmission(...args);
+    },
+  });
+  experiment = await f.submitReview(experiment);
+  assert.equal(experiment.workflow.state, 'running');
+  assert.equal(count(), before, 'a durable verdict alone does not claim durable code');
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      f.code.requireLeasable(f.producer, { unitId: experiment.id, writer: true }, tx),
+    ),
+    { code: 'code_approval_pending' },
+  );
+  unavailable = false;
+  await f.code.submissions.reconcile();
+  const head = await f.state.transaction((tx) => f.code.resumesFrom(f.producer, experiment.id, tx));
+  assert.ok(head && head !== parent);
+  assert.equal(git(repository, ['rev-parse', `${head}^{tree}`]), submitted.workspace!.treeOid);
+  assert.equal(git(repository, ['show', `${head}:plan.py`]), 'print("reviewed plan")');
+  assert.equal(count(), before + 1);
+  await f.code.submissions.reconcile();
+  assert.equal(count(), before + 1, 'approval replay is idempotent');
+  await f.execute(experiment);
+  assert.equal(git(f.held(experiment)!.workspace.path, ['rev-parse', 'HEAD']), head);
+  assert.equal(
+    (await f.code.unit(f.producer, experiment.id)).acceptance,
+    null,
+    'plan approval does not accept experiment results',
+  );
 });

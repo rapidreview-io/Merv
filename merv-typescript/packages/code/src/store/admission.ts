@@ -46,6 +46,8 @@ export interface AdmissionInput {
   limits: AdmissionLimits;
   /** Called after the pack is indexed, for tests that end the process there. */
   indexed?: () => void;
+  /** Native receive-pack already indexed and checked these quarantined objects. */
+  received?: { objects: string; heads: string[]; objectFormat: ObjectFormat };
 }
 export interface Admission {
   objectFormat: ObjectFormat;
@@ -88,6 +90,9 @@ const credentials: [rule: string, pattern: RegExp][] = [
   ['credentials@1.slack_token', /(?<![A-Za-z0-9_])xox[abprs]-[A-Za-z0-9-]{10,}/],
   ['credentials@1.anthropic_key', /(?<![A-Za-z0-9_])sk-ant-[A-Za-z0-9_-]{80,}/],
   ['credentials@1.merv_session', /(?<![A-Za-z0-9_-])ms_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/],
+  ['credentials@1.merv_key', /(?<![A-Za-z0-9_-])mk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/],
+  ['credentials@1.merv_git', /(?<![A-Za-z0-9_-])mg_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/],
+  ['credentials@1.merv_runner', /(?<![A-Za-z0-9_-])mr_[0-9a-f]{64}(?![A-Za-z0-9_-])/],
 ];
 const anyCredential = new RegExp(credentials.map(([, pattern]) => pattern.source).join('|'));
 /** Content is immutable; cache rule names, never a path-dependent exemption or credential text. */
@@ -263,8 +268,15 @@ function parseTree(
  */
 export async function admit(input: AdmissionInput): Promise<Admission> {
   const { git, repository, limits } = input;
-  const objects = join(input.quarantine, 'objects');
-  const header = await bundleHeader(input.bundle);
+  const objects = input.received?.objects ?? join(input.quarantine, 'objects');
+  const header = input.received
+    ? {
+        head: input.head,
+        prerequisites: [],
+        packOffset: 0,
+        objectFormat: input.received.objectFormat,
+      }
+    : await bundleHeader(input.bundle);
   if (header.head !== input.head)
     throw new AdmissionRejected(
       'code_bundle_head',
@@ -318,32 +330,34 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
         `The bundle builds on ${value.slice(0, 12)}, which this project’s repository does not hold`,
       );
 
-  await rm(objects, { recursive: true, force: true });
-  await mkdir(join(objects, 'pack'), { recursive: true, mode: 0o700 });
-  const indexed = await git.run(
-    [
-      'index-pack',
-      '--stdin',
-      '--fix-thin',
-      '--strict',
-      '--fsck-objects',
-      `--max-input-size=${CODE_BUNDLE_MAX_BYTES}`,
-    ],
-    {
-      env: joined,
-      input: createReadStream(input.bundle, { start: header.packOffset }),
-      timeoutMs: INDEX_TIMEOUT_MS,
-    },
-  );
-  // A volume that filled up while indexing says nothing about the pack.
-  if (indexed.code !== 0 && /No space left on device/i.test(indexed.stderr))
-    throw new MervError('code_store_full', 'The Code volume is full', 507);
-  if (indexed.code !== 0)
-    throw new AdmissionRejected(
-      'code_bundle_corrupt',
-      `Git refused the pack: ${(indexed.stderr.split('\n')[0] ?? '').slice(0, 300)}`,
+  if (!input.received) {
+    await rm(objects, { recursive: true, force: true });
+    await mkdir(join(objects, 'pack'), { recursive: true, mode: 0o700 });
+    const indexed = await git.run(
+      [
+        'index-pack',
+        '--stdin',
+        '--fix-thin',
+        '--strict',
+        '--fsck-objects',
+        `--max-input-size=${CODE_BUNDLE_MAX_BYTES}`,
+      ],
+      {
+        env: joined,
+        input: createReadStream(input.bundle, { start: header.packOffset }),
+        timeoutMs: INDEX_TIMEOUT_MS,
+      },
     );
-  input.indexed?.();
+    // A volume that filled up while indexing says nothing about the pack.
+    if (indexed.code !== 0 && /No space left on device/i.test(indexed.stderr))
+      throw new MervError('code_store_full', 'The Code volume is full', 507);
+    if (indexed.code !== 0)
+      throw new AdmissionRejected(
+        'code_bundle_corrupt',
+        `Git refused the pack: ${(indexed.stderr.split('\n')[0] ?? '').slice(0, 300)}`,
+      );
+    input.indexed?.();
+  }
 
   // Q: what the pack put into quarantine, read with no alternate.
   const quarantined = new Map<string, { type: string; size: number }>();
@@ -384,7 +398,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   }
 
   const [[, headType]] = await describe(joined, [input.head]);
-  if (headType !== 'commit')
+  if (headType !== 'commit' && !(input.received && headType === 'tree'))
     throw new AdmissionRejected('code_bundle_head', 'The delivered object is not a commit');
   if (input.expectedHead !== null && input.expectedHead !== input.head) {
     const lineage = await git.run(['merge-base', '--is-ancestor', input.expectedHead, input.head], {
@@ -401,15 +415,18 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   // R: what the head reaches that nothing kept reaches. Git fails when any of it is missing.
   const reached = new Set<string>();
   partial = '';
-  const walked = await git.run(['rev-list', '--objects', input.head, '--not', '--all'], {
-    env: joined,
-    timeoutMs: WALK_TIMEOUT_MS,
-    output: (chunk) => {
-      const rows = (partial + chunk.toString('latin1')).split('\n');
-      partial = rows.pop()!;
-      for (const row of rows) reached.add(row.slice(0, input.head.length));
+  const walked = await git.run(
+    ['rev-list', '--objects', ...(input.received?.heads ?? [input.head]), '--not', '--all'],
+    {
+      env: joined,
+      timeoutMs: WALK_TIMEOUT_MS,
+      output: (chunk) => {
+        const rows = (partial + chunk.toString('latin1')).split('\n');
+        partial = rows.pop()!;
+        for (const row of rows) reached.add(row.slice(0, input.head.length));
+      },
     },
-  });
+  );
   if (walked.code !== 0)
     throw new AdmissionRejected(
       'code_bundle_disconnected',
@@ -428,7 +445,11 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   const fresh = [...quarantined].filter(([oid]) => reached.has(oid));
   const bytes = fresh.reduce((sum, [, object]) => sum + object.size, 0);
   // Git names the head's tree, also when the repository already held that commit.
-  const tree = (await git.ok(['rev-parse', `${input.head}^{tree}`], { env: joined }))
+  const tree = (
+    await git.ok(['rev-parse', headType === 'tree' ? input.head : `${input.head}^{tree}`], {
+      env: joined,
+    })
+  )
     .toString('utf8')
     .trim();
   if (fresh.length > limits.objects) found('object_count', null, null);
@@ -496,9 +517,14 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     },
   );
   const roots: string[] = [];
+  // A frozen submission is a tree, not a hidden preapproval commit.
+  for (const value of input.received?.heads ?? []) if (trees.has(value)) roots.push(value);
   /** Kept trees a fresh tree or commit puts somewhere, with how many directories lie above them. */
   const borrowed: { oid: string; path: string | null; depth: number }[] = [];
   /** Whether what this run judged holds no credential, also once the memo has been cleared. */
+  if (input.received)
+    for (const [value, type] of await describe(joined, input.received.heads))
+      if (type === 'tree' && !trees.has(value)) borrowed.push({ oid: value, path: null, depth: 0 });
   const clean = new Map<string, boolean>();
   const scan = (content: Buffer | null, path: string | null, oid: string) => {
     let rules = credentialMemo.get(oid);

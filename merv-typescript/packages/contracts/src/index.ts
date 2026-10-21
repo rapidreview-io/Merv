@@ -43,7 +43,7 @@ export {
 } from './running.js';
 export * as runningSchema from './running-schema.js';
 export { MAX_TRANSCRIPT_BYTES, sessionSecretPattern } from './session-inputs.js';
-export { CODE_DRIVER, WorkspaceDeferred } from './workspace-driver.js';
+export { CODE_DRIVER, NATIVE_CODE_DRIVER, WorkspaceDeferred } from './workspace-driver.js';
 import type { WorkflowWorkspacePolicy } from './sessions-models.js';
 export type {
   WorkspaceDriver,
@@ -1057,18 +1057,6 @@ declare module 'cordis' {
   }
 }
 
-export {
-  githubRevisionSchema,
-  githubRepositoryInputSchema,
-  githubAutomationSchema,
-  githubBranchSchema,
-} from './code-github.js';
-export type {
-  CodeGitHub,
-  GitHubRepository,
-  GitHubRepositoryInput,
-  GitHubStatus,
-} from './code-github.js';
 export type {
   GitHubBranch,
   GitHubCommit,

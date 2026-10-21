@@ -53,7 +53,7 @@ Domain plugins never import the UI. Adapters import only the public `@merv/ui/ty
 
 `ui.shell` and `ui.home` are the page's own reads, which no agent conversation is offered; `ui.read` is an ordinary catalog tool, offered to a person's agents as well as the browser. No leased worker is listed any of the three: it reads the records with their own tools.
 
-Code's `ui.read` supplies commit receipts and status together, with publication records in `status.publication.records`. The graph and integration list use that one read and refresh after publication mutations. The read requires neither `code-tools` nor `code-work-api`; GitHub account status, connection and automation keep their authenticated `/code/github` HTTP routes, and publication detail, sync and merge are the `code.publication.*` tools.
+Code's `ui.read` supplies commit receipts and status together, with publication records in `status.publication.records`. The graph and integration list use that read and refresh after integration mutations. The read requires neither `code-tools` nor `code-work-api`. The Git page shows the native project remote and retained local integrations; GitHub connection, mirror and PR controls are retired. Historical external publication evidence stays readable.
 
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.

@@ -506,48 +506,17 @@ export function CodeOperations({
   const moving = (status?.operations ?? []).filter((item) => item.status === 'prepared');
   const refused = (status?.operations ?? []).filter((item) => item.status === 'failed');
   const warnings = status?.warnings ?? [];
-  const mirror = status?.mirror;
   const store = status?.store;
-  const blocked = mirror?.blockedRefs ?? [];
   const rows: KVRow[] = [
-    !!mirror && [
-      'Publishing',
-      <span className="cluster">
-        <StatusPill value={mirror.state} />
-        {/* Publishing is off and nothing is published for a reason the server states;
-            the one configuration this fold exists to mend says why, not just that. */}
-        {mirror.repository ? (
-          <span className="mono">{mirror.repository}</span>
-        ) : mirror.blockedBy ? (
-          <span className="muted">{words(mirror.blockedBy)}</span>
-        ) : null}
-        {!!mirror.oldestPendingAt && (
-          <span className="muted">
-            waiting since <Ago at={mirror.oldestPendingAt} />
-          </span>
-        )}
-      </span>,
-    ],
-    // The refusal is a code the server keeps, and is read here as the refused transfers
-    // three rows below are read, rather than one line of machine text beside them.
-    !!mirror?.lastError && ['Last refusal', words(mirror.lastError)],
     !!store?.hosted && ['Disk', `${bytes(store.diskBytes)} of ${bytes(store.quotaBytes)}`],
   ];
   // A fold that opens onto nothing promises machinery it does not hold.
-  if (![...rows, ...blocked, ...moving, ...refused, ...warnings].some(Boolean)) return null;
+  if (![...rows, ...moving, ...refused, ...warnings].some(Boolean)) return null;
   return (
     <details className="code-ops">
       <Summary>Operations</Summary>
       <div className="stack">
         <KV rows={rows} />
-        {blocked.map((ref) => (
-          <div className="cluster code-ops-row" key={ref.operationId}>
-            <code className="mono">{ref.ref}</code>
-            <span className="muted">{ref.message}</span>
-            <Ago at={ref.at} className="faint" />
-            {manages && <MirrorRef blocked={ref} onDone={onDone} />}
-          </div>
-        ))}
         {moving.map((item) => (
           <div className="cluster code-ops-row" key={item.id}>
             <span>{words(item.kind)}</span>
@@ -579,51 +548,5 @@ export function CodeOperations({
         ))}
       </div>
     </details>
-  );
-}
-
-/**
- * One ref the published repository has not taken. A ref that holds a commit this server
- * did not write is somebody's work: it is put back in the queue only against the commit
- * the operator says they kept, which is the acknowledgement the tool requires.
- */
-function MirrorRef({
-  blocked,
-  onDone,
-}: {
-  blocked: NonNullable<CodeProjectStatus['mirror']>['blockedRefs'][number];
-  onDone(): void;
-}) {
-  const [remote, setRemote] = useState('');
-  const diverged = blocked.code === 'code_mirror_diverged';
-  return (
-    <Verb
-      tool="code.write:mirror_retry"
-      input={{
-        operationId: blocked.operationId,
-        ...(diverged && remote.trim() ? { acknowledgeRemote: remote.trim() } : {}),
-      }}
-      label="Retry mirror"
-      title="Publish this ref again?"
-      says="The ref goes back in the queue. Work branches only ever fast-forward, and nothing here forces or deletes anything the repository already holds."
-      // The server refuses a diverged ref without exactly the commit it found there, so
-      // the requirement is said here rather than sent to be refused.
-      blocked={
-        diverged && !remote.trim()
-          ? 'The published ref holds a commit Code did not write; name it once you have kept it somewhere.'
-          : undefined
-      }
-      onDone={onDone}
-    >
-      {diverged && (
-        <Field
-          label="The commit you kept"
-          className="mono"
-          value={remote}
-          onChange={setRemote}
-          spellCheck={false}
-        />
-      )}
-    </Verb>
   );
 }

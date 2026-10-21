@@ -70,44 +70,23 @@ nothing read them.
 
 ## Exact Code observation identities
 
-`Code.capture(caller, ref, tx?)` provides a historical metadata read with one of
-two identities:
+`Code.capture(caller, ref, tx?)` resolves exact evidence identities:
 
 ```ts
+{ kind: 'submission', sessionId: 'session_…' }
 { kind: 'session-final', sessionId: 'session_…' }
 { kind: 'code-commit', commandId: 'codecmd_…' }
 ```
 
-A branch or workspace name may be reused, so neither is a capture identity.
-The result pins project, instance and workflow revision; workflow name/version,
-state, policy hash and original registration ID; actual producing actor/session;
-delegation source; runner/host identity; and read-only policy. A ready result
-contains the exact repository/workspace, mode/branch, base/head OIDs and stats.
-Commit receipts also include the exact parent and tree OIDs. New Runner
-snapshots report the tree observed for their exact head; older snapshots retain
-an absent `treeOid` rather than acquiring an invented value.
+New reviews use `submission`: after the producing process stops, its immutable receipt names the retained parent commit and exact tree, including uncommitted changes. HEAD remains the parent, so the submitted tree may differ from HEAD's tree. The session and producing workflow revision identify this evidence; a reused branch or workspace does not.
 
-Capture statuses are `none` for a session without Git intent, `pending` before
-the exact observation or command receipt exists, `ready` for a final result or
-successful commit receipt, and `failed` for a failed/cancelled Code command.
-Closing or revoking a producer without a final report does not justify guessing
-its head; its final observation can remain pending.
+The result retains project, workflow identity and revision, policy hash and registration, actual actor/session, delegation source, runner/host identity and read-only policy. A ready submission includes the exact repository/workspace, base, parent and tree. It is pending until its frozen objects and receipt are durable. An ordinary session result records the stopped workspace but does not imply a submission or automatic commit.
 
-Sessions owns final attachment/result metadata. Code owns live commit commands
-and receipts and composes this exact reader over both owners. The narrow
-`Sessions.workspaceObservation` read uses current project authority, not the
-original controller's source-owned `get`/`list` control path. It never activates,
-reconciles or renders a session. Another currently authorized project member
-can read a persisted observation after its source credential or actor is
-revoked. This does not restore the old worker's access or authorize a new report.
-`Code.operation` retains its existing worker-only boundary.
+`session-final` and `code-commit` also resolve historical records. Old snapshots without a tree retain that absence; failed or cancelled historical commands remain failed. Closure without a final report does not justify inventing a head. The old command transport and `code.operation` wrapper are retired.
 
-Historical runner-owned captures are source-authenticated machine observations;
-the Runner repository ID identifies its private replica. Current managed Git
-also validates and admits objects into the server-owned repository. Capture,
-object admission, independent review and permission to advance main remain
-separate facts; a legacy capture alone is not proof of current admission. See
-[Always-on Git](ALWAYS_GIT.md) and [Code operations](CODE_OPERATIONS.md).
+Sessions owns attachment/result observations. Code Work composes those observations with immutable submissions and historical command receipts. Its read uses current project authority without activating or reconciling the original session. A currently authorized member can read persisted evidence after the original source was revoked; this restores neither worker access nor reporting authority.
+
+Code verifies retained Git objects separately from source-authenticated Session observations. Independent approval and permission to advance main are separate again. A historical capture alone is not proof of current admission. See [Always-on Git](ALWAYS_GIT.md) and [Code operations](CODE_OPERATIONS.md).
 
 ## Git Experiments without rewriting version 1
 

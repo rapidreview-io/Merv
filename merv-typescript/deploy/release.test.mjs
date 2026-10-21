@@ -77,7 +77,8 @@ test('release.env accepts one registry digest or local image ID and rejects othe
 
 const failures = [
   { name: 'unhealthy release restores a compatible in-process image', noRollback: false },
-  { name: 'unhealthy release refuses a native image', compatible: false },
+  { name: 'unhealthy release refuses an incompatible Sandboxes image', compatible: false },
+  { name: 'native database never authorizes rollback to an unlabeled image', nativeCapable: false },
   { name: 'unhealthy release stops without rollback', noRollback: true },
   // grep -v finds nothing to keep, which once ended the job under set -e before any rollback.
   {
@@ -92,6 +93,7 @@ for (const {
   logs = 'startup failed',
   composeFails = false,
   compatible = true,
+  nativeCapable = true,
 } of failures)
   test(name, () => {
     const dir = mkdtempSync(join(tmpdir(), 'merv-release-fault-'));
@@ -114,11 +116,14 @@ for (const {
 set -euo pipefail
 IMG=merv-typescript:test; IMAGE_ID=sha256:123456789abc
 PREV=merv-typescript:old; PREV_DIR="$PWD/previous"; PREV_ID=sha256:old
+PREV_NATIVE=${nativeCapable}
 SANDBOXES_TS_IMAGE=sbx@sha256:123; BK="$PWD/backup"
 mkdir -p "$BK"
 cp() { :; }; chmod() { :; }
 COMMANDS="$PWD/commands.txt"; RESTORED="$PWD/restored"
 docker() {
+  if [ "$1" = run ]; then echo '{"ready":true,"alreadyNative":true}'; return 0; fi
+  if [ "$1" = stop ] || [ "$1" = start ]; then return 0; fi
   # \`return 0\`, not a bare return: in a trap handler bash 5 returns the status that fired it.
   if [ "$1" = image ]; then echo '${compatible ? 'sbx@sha256:123' : '<no value>'}'; return 0; fi
   if [ "$1" = logs ]; then echo ${JSON.stringify(logs)}; return 0; fi
@@ -128,7 +133,7 @@ docker() {
     return 0
   fi
   if [ "$1" = compose ]; then
-    printf '%s %s\\n' "$(basename "$PWD")" "$*" >> "$COMMANDS"
+    printf '%s %s %s\\n' "$(basename "$PWD")" "$*" "$MERV_TS_IMAGE" >> "$COMMANDS"
     if [ "$4" = up ] && [ "$PWD" = "$PREV_DIR" ]; then touch "$RESTORED";
     elif [ "$4" = up ] && ${composeFails ? 'true' : 'false'}; then return 1; fi
     return 0
@@ -146,13 +151,14 @@ ${job.slice(start, end)}
       assert.equal(result.status, 1, result.stderr);
       const commands = readFileSync(join(dir, 'commands.txt'), 'utf8');
       const status = JSON.parse(readFileSync(join(dir, 'deploy-status.json'), 'utf8'));
-      if (noRollback || !compatible) {
+      if (noRollback || !compatible || !nativeCapable) {
         assert.match(commands, /deploy compose -f compose\.yml down/);
         assert.doesNotMatch(commands, /previous compose/);
         assert.equal(status.noRollback, true);
         assert.equal(status.rolledBack, false);
       } else {
         assert.match(commands, /previous compose -f compose\.yml up -d/);
+        assert.match(commands, /previous compose -f compose\.yml up -d sha256:old/);
         assert.equal(status.rolledBack, true);
         assert.equal(status.previousImage, 'merv-typescript:old');
         assert.equal(status.previousHealth, 'healthy');
@@ -161,6 +167,127 @@ ${job.slice(start, end)}
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+test('Git cutover restart and rollback require exact previous image capability or proven legacy state', () => {
+  for (const [
+    failAt,
+    native,
+    migrated = false,
+    noRollback = false,
+    unreadable = false,
+    nativeCapable = false,
+  ] of [
+    [1, false],
+    [2, false],
+    [0, false],
+    [0, true],
+    [2, true],
+    [2, false, true],
+    [2, false, false, true],
+    [2, false, false, false, true],
+    [2, true, true, false, false, true],
+    [2, true, true, true, false, true],
+    [2, true, true, false, true, true],
+    [0, true, true, false, false, true],
+    [0, false, false, false, false, true],
+  ]) {
+    const job = render(
+      'node:test',
+      'https://example.test',
+      noRollback,
+    )({ release: 'test', archiveSha256: 'a'.repeat(64) });
+    const start = job.indexOf('# The first native-Git release');
+    const block = job.slice(start, job.indexOf('trap rollback EXIT', start));
+    const dir = mkdtempSync(join(tmpdir(), 'merv-cutover-gate-'));
+    try {
+      writeFileSync(join(dir, 'rollback.json'), '{"automaticRollbackAllowed":true}');
+      const result = spawnSync(
+        'bash',
+        [
+          '-c',
+          `set -euo pipefail
+IMG=new; PREV=old; PREV_NATIVE=${nativeCapable}; BK="$PWD"; ALLOW_ROLLBACK=${nativeCapable && !noRollback}; attempts=0
+docker() {
+  echo "$1" >> commands
+  if [ "$1" = run ]; then
+    attempts=$((attempts+1))
+    if [ "$attempts" != "${failAt}" ] || ${!unreadable}; then
+      echo '{"ready":true,"protocolMigrated":${migrated}${native ? ',"alreadyNative":true' : ''}}'
+    fi
+    [ "$attempts" != "${failAt}" ] || return 1
+  fi
+}
+${block}
+echo "$ALLOW_ROLLBACK" > allowed
+`,
+        ],
+        { cwd: dir, encoding: 'utf8' },
+      );
+      assert.equal(result.status, failAt ? 1 : 0, result.stderr);
+      assert.deepEqual(
+        readFileSync(join(dir, 'commands'), 'utf8').trim().split('\n'),
+        failAt === 1
+          ? ['run']
+          : failAt === 2
+            ? [
+                'run',
+                'stop',
+                'run',
+                ...(!noRollback && (nativeCapable || (!native && !migrated && !unreadable))
+                  ? ['start']
+                  : []),
+              ]
+            : ['run', 'stop', 'run'],
+      );
+      if (!failAt)
+        assert.equal(
+          readFileSync(join(dir, 'allowed'), 'utf8').trim(),
+          String(nativeCapable && !noRollback),
+        );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('previous image capability is read by immutable container image ID, not its tag', () => {
+  const job = render(
+    'node:test',
+    'https://example.test',
+    false,
+  )({ release: 'test', archiveSha256: 'a'.repeat(64) });
+  const start = job.indexOf('PREV=$(docker inspect');
+  const block = job.slice(start, job.indexOf('\nALLOW_ROLLBACK=false', start));
+  for (const label of ['1', '<no value>', '2']) {
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        `set -euo pipefail
+docker() {
+  if [ "$1" = inspect ]; then
+    if [ "$3" = '{{.Config.Image}}' ]; then echo mutable-tag;
+    elif [ "$3" = '{{.Image}}' ]; then echo sha256:exact-old;
+    else echo /previous; fi
+  elif [ "$1" = image ]; then
+    [ "$5" = sha256:exact-old ] || return 77
+    echo '${label}'
+  fi
+}
+${block}
+echo "$PREV_ID $PREV_NATIVE"
+`,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), `sha256:exact-old ${label === '1'}`);
+  }
+  assert.match(
+    readFileSync(new URL('./Dockerfile', import.meta.url), 'utf8'),
+    /^LABEL org\.merv\.native-git-protocol=1$/m,
+  );
+});
 
 const sandboxDefinition = source.slice(
   source.indexOf('const sandboxes ='),

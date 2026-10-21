@@ -1,6 +1,4 @@
 import { z } from 'zod';
-import { CodeGitHubService } from '@merv/code/github';
-import { checkPassed } from '@merv/code/github-client';
 import type { CodeUnitStore } from '@merv/code/units';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from './publications-schema.js';
@@ -14,34 +12,19 @@ import {
   now,
   recorded,
   type Caller,
-  type GitHubPullRequest,
   type Scope,
   type Sql,
   type State,
   type Transaction,
-  requireAdministrator,
-  idSchema,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import type { CodePublication, CodePublicationState } from './models.js';
-import {
-  publicationApproval,
-  PublicationIncident,
-  type PublicationHost,
-} from './publication-host.js';
-import type { CodePublicationApi, CodePublicationMerge } from './types.js';
+import type { PublicationHost } from './publication-host.js';
+import type { CodePublicationApi } from './types.js';
 
 export const codePublicationIdSchema = z.strictObject({
   proposalId: z.string().regex(/^codeprop_[A-Za-z0-9_-]+$/),
 });
-export const codePublicationMergeSchema = codePublicationIdSchema
-  .extend({
-    expectedHead: z.string().regex(/^[0-9a-f]{40}$/),
-    expectedBase: z.string().regex(/^[0-9a-f]{40}$/),
-    requestId: idSchema,
-  })
-  .strict() satisfies z.ZodType<CodePublicationMerge>;
-
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
 export interface CodeUnitPublicationSeal {
   publicationId: string;
@@ -73,19 +56,10 @@ interface Row {
   incident_json: string | null;
 }
 
-/**
- * An unsettled unit publication not tried in 30 seconds or, once its pull request is open and
- * waits on a person, in `idle`: ten minutes for Code's own pass, as each read costs ~7 GitHub calls.
- */
+/** Retry local integration without polling any external service. */
 const due = 'settled=0 AND (synced_at<? OR (pull_json IS NULL AND synced_at<?))';
 const since = (idle: number) => [idle, 30_000].map((ms) => new Date(Date.now() - ms).toISOString());
 const IDLE = 600_000;
-const merger = 'A project administrator or their agent must merge';
-
-/** What a unit's publication reads of its pull request: which one, and whether it closed unmerged. */
-const reading = (pull: GitHubPullRequest | null) =>
-  pull ? `${pull.number} ${pull.url} ${pull.state === 'closed' && !pull.merged}` : '';
-
 /** Merv's one word for where a publication stands; it also says where its verdict stands. */
 export const publicationState = (p: Omit<CodePublication, 'state'>): CodePublicationState =>
   p.destination === 'local' && p.verified
@@ -111,7 +85,6 @@ export class CodePublicationService implements CodePublicationApi {
   constructor(
     private state: State,
     private scope: Scope,
-    private github: CodeGitHubService,
     private units: Pick<CodeUnitStore, 'binding'>,
     private host: PublicationHost,
   ) {}
@@ -146,7 +119,7 @@ export class CodePublicationService implements CodePublicationApi {
       id,
       caller.projectId,
     );
-    check(row, 'publication_not_found', 'GitHub publication not found in this project', 404);
+    check(row, 'publication_not_found', 'Code integration not found in this project', 404);
     return row;
   }
   private fresh(caller: Caller, id: string) {
@@ -158,7 +131,7 @@ export class CodePublicationService implements CodePublicationApi {
   async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
     ({ caller, input } = structuredClone({ caller, input }));
     this.state.assertTransaction(tx);
-    const destination = (await this.github.linked(caller.projectId, tx)) ? 'github' : 'local';
+    const destination = 'local' as const;
     const at = now();
     const record: Omit<CodePublication, 'state'> = {
       destination,
@@ -169,7 +142,7 @@ export class CodePublicationService implements CodePublicationApi {
       repositoryId: 0,
       connectionRevision: 0,
       branch: `merv/proposals/${input.publicationId}`,
-      baseBranch: 'main',
+      baseBranch: 'merv-main',
       baseOid: input.baseOid,
       headOid: input.headOid,
       treeOid: input.treeOid,
@@ -232,7 +205,7 @@ export class CodePublicationService implements CodePublicationApi {
       const code =
         error instanceof MervError && /^[a-z_]{1,100}$/.test(error.code)
           ? error.code
-          : 'github_unavailable';
+          : 'code_unavailable';
       await this.state.transaction(async (tx) => {
         const held = await tx.run(
           'UPDATE code_publications SET error=? WHERE proposal_id=? AND lock_id=? AND settled=0',
@@ -245,7 +218,7 @@ export class CodePublicationService implements CodePublicationApi {
         // A base quarantine that reached the accepted unit ends its publication, which would be
         // refused on every pass and hold the repository for good; a successor takes it.
         if (code === 'code_quarantined' && (await this.reached(tx, caller, row)))
-          await this.markStale(caller, this.decode(row), code, null, tx);
+          await this.markStale(caller, this.decode(row), code, tx);
         // A unit reads a failing sync as an operator's wait (unit-store publicationOf).
         else if (row.error !== code) await this.host.reconcile(caller, tx);
       });
@@ -261,25 +234,6 @@ export class CodePublicationService implements CodePublicationApi {
       );
     }
   }
-  /** Whether a pull request still carries exactly the reviewed head onto the reviewed base. */
-  private pins(record: CodePublication, pull: GitHubPullRequest) {
-    return (
-      pull.head.sha === record.headOid &&
-      pull.head.ref === record.branch &&
-      pull.head.repositoryId === record.repositoryId &&
-      pull.base.ref === record.baseBranch &&
-      pull.base.repositoryId === record.repositoryId &&
-      (!record.pull || pull.id === record.pull.id)
-    );
-  }
-  private pinned(record: CodePublication, pull: GitHubPullRequest) {
-    check(
-      this.pins(record, pull),
-      'github_head_changed',
-      'The pull request no longer matches the reviewed proposal; a new proposal and review are required',
-      409,
-    );
-  }
   private async owned(caller: Caller, id: string, lock: string, tx: Transaction) {
     const row = await this.row(caller, id, tx);
     check(
@@ -294,14 +248,6 @@ export class CodePublicationService implements CodePublicationApi {
     return (await this.units.binding(sql, projectId))?.main.oid ?? null;
   }
   /**
-   * Merv's main, read before the transaction that moves it, when `to` holds it and goes past it:
-   * main follows GitHub's only forward, so one holding commits `to` lacks keeps them.
-   */
-  private async behind(projectId: string, to: string) {
-    const ours = await this.state.read((sql) => this.mainOf(sql, projectId));
-    return ours && ours !== to && (await this.host.ancestor(projectId, ours, to)) ? ours : null;
-  }
-  /**
    * An accepted unit publishes once: a row that can no longer merge as reviewed settles stale,
    * and whoever waits on it learns, in the same commit, that a successor must take it.
    */
@@ -309,13 +255,11 @@ export class CodePublicationService implements CodePublicationApi {
     caller: Caller,
     record: CodePublication,
     reason: string,
-    pull: GitHubPullRequest | null,
     tx: Transaction,
   ) {
     await tx.run(
-      'UPDATE code_publications SET stale=1,settled=1,error=?,pull_json=COALESCE(?,pull_json) WHERE proposal_id=?',
+      'UPDATE code_publications SET stale=1,settled=1,error=? WHERE proposal_id=?',
       reason,
-      pull && canonical(pull),
       record.proposalId,
     );
     await this.host.reconcile(caller, tx);
@@ -331,159 +275,6 @@ export class CodePublicationService implements CodePublicationApi {
       caller.projectId,
       this.decode(row).instanceId,
     );
-  }
-  /**
-   * Settles a pull request that main overtook, or whose head is no longer the reviewed one, so
-   * unreviewed commits never reach main. Only once that commits is the pull request closed,
-   * best-effort, so nobody merges it against main by hand.
-   */
-  private async settleStale(
-    caller: Caller,
-    row: Row,
-    lock: string,
-    reason: string,
-    pull: GitHubPullRequest,
-    close: (number: number) => Promise<GitHubPullRequest>,
-    before: (tx: Transaction) => Promise<void> = async () => {},
-  ) {
-    await this.state.transaction(async (tx) => {
-      const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
-      await before(tx);
-      await this.markStale(caller, current, reason, pull, tx);
-    });
-    if (pull.state === 'open')
-      await close(pull.number).then(
-        (closed) =>
-          this.state.transaction((tx) =>
-            tx.run(
-              'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
-              canonical(closed),
-              row.proposal_id,
-            ),
-          ),
-        () => undefined,
-      );
-    return this.decode(await this.fresh(caller, row.proposal_id));
-  }
-  /** `attempt`, but a base quarantine that reached the unit settles it stale as a changed head
-   *  does, closing its pull request, whose head still carries Merv's approval on GitHub. */
-  private async unquarantined<T>(
-    caller: Caller,
-    row: Row,
-    lock: string,
-    pull: GitHubPullRequest | undefined,
-    close: (number: number) => Promise<GitHubPullRequest>,
-    attempt: () => Promise<T>,
-  ) {
-    try {
-      return await attempt();
-    } catch (error) {
-      if (
-        !pull ||
-        !(error instanceof MervError && error.code === 'code_quarantined') ||
-        !(await this.state.read((sql) => this.reached(sql, caller, row)))
-      )
-        throw error;
-      return await this.settleStale(caller, row, lock, 'code_quarantined', pull, close);
-    }
-  }
-  private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
-    const original = this.decode(row);
-    let mainParent: string | undefined;
-    let forward: string | null = null;
-    if (pull.merged && !original.verified) {
-      try {
-        check(
-          this.pins(original, pull),
-          'code_publication_incident',
-          'GitHub merged a head other than the reviewed one',
-          409,
-        );
-        check(
-          !original.incident,
-          'code_publication_incident',
-          'This publication has a retained incident; investigate it without rewriting its approved facts',
-          409,
-        );
-        check(
-          pull.mergeCommitSha && original.merge,
-          'code_publication_incident',
-          'A merge occurred without a retained human intent',
-          409,
-        );
-        mainParent = await this.host.verify(caller, original, pull.mergeCommitSha);
-        forward = await this.behind(caller.projectId, pull.mergeCommitSha);
-      } catch (error) {
-        if (error instanceof MervError && error.code === 'code_publication_incident')
-          await this.state.transaction(async (tx) => {
-            await this.owned(caller, row.proposal_id, lock, tx);
-            await tx.run(
-              "UPDATE code_publications SET incident_json=COALESCE(incident_json,?),pull_json=?,error='code_publication_incident',settled=1 WHERE proposal_id=?",
-              canonical({
-                commitSha: pull.mergeCommitSha,
-                expectedHead: original.headOid,
-                expectedTree: original.treeOid,
-                ...(error instanceof PublicationIncident ? error.observation : {}),
-                at: now(),
-              }),
-              canonical(pull),
-              row.proposal_id,
-            );
-            await this.host.reconcile(caller, tx);
-          });
-        throw error;
-      }
-    }
-    return this.state.transaction(async (tx) => {
-      const current = await this.owned(caller, row.proposal_id, lock, tx);
-      await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-      const record = this.decode(current);
-      this.pinned(record, pull);
-      await tx.run(
-        'UPDATE code_publications SET pull_json=?,error=NULL,settled=? WHERE proposal_id=?',
-        canonical(pull),
-        Number(pull.merged || pull.state === 'closed'),
-        row.proposal_id,
-      );
-      // The merge commit is written before the row is sealed as verified, because a verified
-      // row's merge is immutable, and because what the host tells the unit next reads both.
-      if (pull.merged && record.merge && pull.mergeCommitSha)
-        await tx.run(
-          'UPDATE code_publications SET merge_json=? WHERE proposal_id=?',
-          canonical({
-            ...record.merge,
-            commitSha: pull.mergeCommitSha,
-            ...(mainParent ? { mainParent } : {}),
-          }),
-          row.proposal_id,
-        );
-      if (pull.merged && !record.verified) {
-        await this.host.check(caller, record, tx);
-        await tx.run(
-          'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
-          record.proposalId,
-        );
-        if (forward) await this.host.main(caller, pull.mergeCommitSha!, tx, forward);
-        else await this.host.reconcile(caller, tx);
-        // Commit the wake-up with the verified receipt and admitted main, never with a preview.
-        await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
-          unitId: record.instanceId,
-          commitSha: pull.mergeCommitSha!,
-        });
-      } else if (reading(record.pull) !== reading(pull)) {
-        // A unit's blocker is read back from this row, so it follows the pull request the
-        // moment one opens, and again when it closes unmerged: until then the wait said no
-        // pull request existed, and named nobody who could end it.
-        await this.host.reconcile(caller, tx);
-        // Closed unmerged is a rejection, and whoever waits on it moves on without it.
-        if (pull.state === 'closed' && !pull.merged)
-          await recorded(this.state, tx, caller, 'code.publication_stale', record.proposalId, {
-            unitId: record.instanceId,
-            reason: 'closed',
-          });
-      }
-      return this.decode(await this.row(caller, row.proposal_id, tx));
-    });
   }
   /** A reviewed local integration needs no remote, but retains the same review certificate. */
   private async publishLocal(caller: Caller, row: Row, lock: string) {
@@ -514,7 +305,7 @@ export class CodePublicationService implements CodePublicationApi {
         // unless landing skipped it, which leaves it to a successor like any moved main.
         const { instanceId, manifestHash } = current;
         if (await this.landing?.lands(tx, caller.projectId, instanceId, manifestHash)) return;
-        await this.markStale(caller, current, 'code_main_changed', null, tx);
+        await this.markStale(caller, current, 'code_main_changed', tx);
         return;
       }
       await tx.run(
@@ -545,7 +336,7 @@ export class CodePublicationService implements CodePublicationApi {
     check(
       !caller.session,
       'session_forbidden',
-      'Worker credentials cannot publish pull requests',
+      'Worker credentials cannot integrate accepted code',
       403,
     );
     await this.sync(caller, 30_000);
@@ -570,98 +361,10 @@ export class CodePublicationService implements CodePublicationApi {
           if (Number(row.settled)) return;
           if (this.decode(row).destination === 'local')
             return await this.publishLocal(caller, row, lock);
-          if (row.binding_json === 'null') {
-            row = await this.state.transaction(async (tx) => {
-              await this.owned(caller, row.proposal_id, lock, tx);
-              const binding = await this.github.publicationBinding(caller, tx);
-              await tx.run(
-                'UPDATE code_publications SET binding_json=? WHERE proposal_id=?',
-                canonical(binding),
-                row.proposal_id,
-              );
-              return this.owned(caller, row.proposal_id, lock, tx);
-            });
-          }
-          await this.github.publicationAutomation(
-            caller,
-            'write',
-            JSON.parse(row.binding_json),
-            async (client, token) => {
-              const current = this.decode(row);
-              let pull = current.pull
-                ? await client.pull(token, current.repository, current.pull.number)
-                : undefined;
-              const close = (number: number) =>
-                client.updatePull(token, current.repository, number, { state: 'closed' });
-              await this.host.rules(caller, client, token, current, false);
-              const admit = () =>
-                this.state.transaction((tx) => this.host.check(caller, current, tx));
-              if (await this.unquarantined(caller, row, lock, pull, close, admit)) return;
-              // A pull request already off the reviewed head settles stale below, wherever
-              // its branch now stands.
-              if (!pull || pull.merged || this.pins(current, pull))
-                await this.host.snapshot(caller, current);
-              const proposed = () =>
-                client.pulls(token, current.repository, {
-                  state: 'all',
-                  head: `${current.repository.split('/')[0]}:${current.branch}`,
-                });
-              if (!pull) {
-                const found = await proposed();
-                check(
-                  found.length <= 1,
-                  'github_conflict',
-                  'Multiple pull requests use this proposal branch',
-                  409,
-                );
-                if (found.length) pull = found[0];
-                else {
-                  await client.ensureBranch(
-                    token,
-                    current.repository,
-                    current.branch,
-                    current.headOid,
-                  );
-                  try {
-                    pull = await client.createPull(token, current.repository, {
-                      title: current.title,
-                      head: current.branch,
-                      base: current.baseBranch,
-                      draft: true,
-                      // This body is what a signed-in operator reads before the one
-                      // irreversible action in the design, so it names the kind of work it
-                      // is publishing and what the hash it asks them to trust actually is.
-                      body: `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`,
-                    });
-                  } catch (error) {
-                    const recovered = await proposed();
-                    if (recovered.length !== 1) throw error;
-                    pull = recovered[0];
-                  }
-                }
-              }
-              // A merged head that is not the reviewed one is an incident, which saving retains.
-              if (!pull.merged && !this.pins(current, pull)) {
-                await this.settleStale(caller, row, lock, 'github_head_changed', pull, close);
-                return;
-              }
-              // A unit's publication is opened with its passing review already sealed.
-              if (pull.state === 'open' && current.review?.verdict === 'pass') {
-                await client.appStatus(
-                  token,
-                  current.repository,
-                  current.headOid,
-                  publicationApproval,
-                  true,
-                );
-                if (pull.draft) {
-                  await client.readyPull(token, pull.nodeId);
-                  pull = await client.pull(token, current.repository, pull.number);
-                }
-              }
-              await this.save(caller, row, lock, pull);
-            },
-            (tx) => this.owned(caller, row.proposal_id, lock, tx),
+          throw new MervError(
+            'github_integration_retired',
+            'Historical external publications are read-only',
+            409,
           );
         });
       } catch {
@@ -693,252 +396,6 @@ export class CodePublicationService implements CodePublicationApi {
   async publicationDetails(caller: Caller, proposalId: string) {
     caller = structuredClone(caller);
     const { proposalId: id } = parseCodeInput(codePublicationIdSchema, { proposalId });
-    const row = await this.fresh(caller, id),
-      publication = this.decode(row),
-      pull = publication.pull;
-    const details =
-      pull &&
-      (await this.github.automation(caller, 'read', JSON.parse(row.binding_json), async (c, t) => {
-        const details = await c.pullDetails(t, publication.repository, pull.number);
-        // Settled, it keeps the pull request it ended with: one changed since has no details.
-        if (Number(row.settled) && !this.pins(publication, details.pull)) return null;
-        this.pinned(publication, details.pull);
-        return details;
-      }));
-    if (!details) return { publication, details: null };
-    const { state: _stored, ...fresh } = { ...publication, pull: details.pull };
-    return { publication: { ...fresh, state: publicationState(fresh) }, details };
-  }
-  async mergePublication(caller: Caller, value: CodePublicationMerge) {
-    caller = structuredClone(caller);
-    const input = parseCodeInput(codePublicationMergeSchema, value);
-    requireAdministrator(
-      await this.scope.require(caller, 'admin'),
-      'github_human_required',
-      'A project administrator or their agent must merge the reviewed proposal',
-    );
-    return this.locked(caller, input.proposalId, async (row, lock) => {
-      const record = this.decode(row);
-      const replay = await this.state.transaction(async (tx) => {
-        await this.scope.require(caller, 'admin', tx);
-        const old = await tx.get<{ input_hash: string }>(
-          'SELECT input_hash FROM code_publication_requests WHERE project_id=? AND actor_id=? AND request_id=?',
-          caller.projectId,
-          caller.actorId,
-          input.requestId,
-        );
-        check(
-          !old || old.input_hash === digest(input),
-          'publication_conflict',
-          'Merge request identifier has different input',
-          409,
-        );
-        if (!old)
-          await tx.run(
-            'INSERT INTO code_publication_requests VALUES(?,?,?,?,?)',
-            caller.projectId,
-            caller.actorId,
-            input.requestId,
-            digest(input),
-            canonical({ proposalId: input.proposalId }),
-          );
-        return !!old;
-      });
-      check(
-        !record.incident,
-        'code_publication_incident',
-        'This publication has a retained incident requiring operator investigation',
-        409,
-      );
-      check(
-        !record.stale,
-        'code_publication_stale',
-        'This proposal is stale; integrate main on the same work branch and obtain another review',
-        409,
-      );
-      check(
-        record.review?.verdict === 'pass' && record.pull,
-        'publication_review_required',
-        'An independently approved proposal and its pull request are required',
-        409,
-      );
-      check(
-        record.headOid === input.expectedHead,
-        'github_head_changed',
-        'The selected commit differs from the reviewed proposal',
-        409,
-      );
-      // A lost HTTP reply must be recoverable from the immutable, verified receipt even if
-      // GitHub has since been disconnected. This replays only this actor's exact merge intent.
-      if (
-        replay &&
-        row.settled &&
-        record.pull.merged &&
-        record.merge?.requestId === input.requestId &&
-        record.merge.actorId === caller.actorId &&
-        record.merge.commitSha === record.pull.mergeCommitSha &&
-        !!record.merge.commitSha &&
-        record.verified
-      )
-        return record;
-      // A released publication keeps a passing review and an open pull request, so only its
-      // ending refuses it here. This comes last because a closed, incident or stale publication
-      // is already refused above with the reason that fits it.
-      check(
-        !row.settled,
-        'publication_conflict',
-        'This publication is finished; it can no longer be merged',
-        409,
-      );
-      return this.github.publicationAutomation(
-        caller,
-        'write',
-        JSON.parse(row.binding_json),
-        async (client, token) => {
-          await this.scope.require(caller, 'admin');
-          let pull = await client.pull(token, record.repository, record.pull!.number);
-          if (pull.merged) return this.save(caller, row, lock, pull);
-          const close = (number: number) =>
-            client.updatePull(token, record.repository, number, { state: 'closed' });
-          if (!this.pins(record, pull))
-            return this.settleStale(caller, row, lock, 'github_head_changed', pull, close);
-          const main = await client.branch(token, record.repository, record.baseBranch);
-          await this.host.import(caller, record, main.sha);
-          if (!(await this.host.ancestor(caller.projectId, main.sha, record.headOid))) {
-            const forward = await this.behind(caller.projectId, main.sha);
-            // Quarantined work settles stale for that, closing its pull request, and moves nothing.
-            return this.unquarantined(caller, row, lock, pull, close, () =>
-              this.settleStale(caller, row, lock, 'code_main_changed', pull, close, async (tx) => {
-                await this.scope.require(caller, 'admin', tx);
-                await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-                await this.host.check(caller, record, tx);
-                if (forward) await this.host.main(caller, main.sha, tx, forward);
-              }),
-            );
-          }
-          const requiredChecks = await this.host.rules(caller, client, token, record);
-          check(
-            await client.appStatus(token, record.repository, record.headOid, publicationApproval),
-            'publication_review_required',
-            'The exact approved head must carry merv/consolidation-approved',
-            409,
-          );
-          check(
-            pull.state === 'open' && !pull.draft && pull.base.sha === input.expectedBase,
-            'github_base_changed',
-            'The pull request changed; refresh its current base, checks and review before merging',
-            409,
-          );
-          const inspection = await client.pullDetails(token, record.repository, pull.number);
-          this.pinned(record, inspection.pull);
-          check(
-            inspection.pull.base.sha === input.expectedBase,
-            'github_base_changed',
-            'The base changed during inspection; refresh before merging',
-            409,
-          );
-          check(
-            (await client.requiredChecks(
-              token,
-              record.repository,
-              record.headOid,
-              requiredChecks,
-              inspection.checks,
-            )) &&
-              (inspection.statusCount === 0 || inspection.commitStatus === 'success') &&
-              inspection.checks.every(checkPassed),
-            'github_checks_pending',
-            'GitHub checks must finish successfully before merging',
-            409,
-          );
-          const admit = async (tx: Transaction) => {
-            const actor = await this.scope.require(caller, 'admin', tx);
-            await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-            requireAdministrator(actor, 'github_human_required', merger);
-            const latest = this.decode(await this.owned(caller, record.proposalId, lock, tx));
-            check(
-              latest.review?.verdict === 'pass' &&
-                canonical(latest.review) === canonical(record.review) &&
-                latest.headOid === input.expectedHead &&
-                !latest.stale,
-              'publication_review_required',
-              'The exact approved publication must still be current',
-              409,
-            );
-            await this.host.check(caller, latest, tx);
-            if (latest.merge?.requestId === input.requestId)
-              check(
-                latest.merge.expectedBase === input.expectedBase &&
-                  latest.merge.actorId === caller.actorId,
-                'publication_conflict',
-                'Merge request identifier has different input',
-                409,
-              );
-            const saved = await tx.run(
-              'UPDATE code_publications SET merge_json=? WHERE proposal_id=? AND lock_id=?',
-              canonical({
-                requestId: input.requestId,
-                actorId: caller.actorId,
-                expectedBase: input.expectedBase,
-                requestedAt:
-                  latest.merge?.requestId === input.requestId ? latest.merge.requestedAt : now(),
-                commitSha: null,
-              }),
-              record.proposalId,
-              lock,
-            );
-            check(
-              saved.changes === 1,
-              'publication_busy',
-              'Publication reconciliation was superseded',
-              409,
-            );
-          };
-          const settled = await this.unquarantined(caller, row, lock, pull, close, () =>
-            this.state.transaction(admit),
-          );
-          if (settled) return settled;
-          // GitHub atomically checks the head SHA and enforces protections. Its API has no expected-base CAS.
-          const result = await client.mergePull(
-            token,
-            record.repository,
-            pull.number,
-            input.expectedHead,
-          );
-          check(
-            result.merged,
-            'github_merge_blocked',
-            'GitHub did not merge this pull request; inspect checks and protection rules',
-            409,
-          );
-          pull = await client.pull(token, record.repository, pull.number);
-          check(
-            pull.merged && pull.mergeCommitSha === result.sha,
-            'github_merge_uncertain',
-            'Refresh to reconcile the GitHub merge result',
-            409,
-          );
-          return this.save(caller, await this.fresh(caller, record.proposalId), lock, pull);
-        },
-        async (tx) => {
-          const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
-          requireAdministrator(
-            await this.scope.require(caller, 'admin', tx),
-            'github_human_required',
-            merger,
-          );
-          if (current.merge && !current.verified && !current.stale && !current.incident) {
-            check(
-              current.merge.requestId === input.requestId &&
-                current.merge.actorId === caller.actorId,
-              'publication_conflict',
-              'The human merge intent changed',
-              409,
-            );
-            await this.host.check(caller, current, tx);
-          }
-        },
-      );
-    });
+    return { publication: this.decode(await this.fresh(caller, id)), details: null };
   }
 }

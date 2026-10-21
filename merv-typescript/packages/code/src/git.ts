@@ -1,7 +1,8 @@
 import { MervError } from '@merv/contracts';
-import { spawn, type ChildProcess } from 'node:child_process';
-import type { Readable } from 'node:stream';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { Readable, Writable } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createGitOwner } from './git-owner.js';
 
 export interface GitResult {
   code: number;
@@ -15,29 +16,21 @@ export interface GitOptions {
   input?: Buffer | string | Readable;
   /** Receives stdout as it arrives instead of it being collected. */
   output?: (chunk: Buffer) => void;
+  /** Streams stdout with backpressure; the caller retains ownership of ending the stream. */
+  outputStream?: Writable;
   timeoutMs?: number;
   maxBuffer?: number;
   /** The one network protocol a child may use; every other is refused, as is every protocol without this. */
   protocol?: 'https' | 'file';
-  /** Ends the child; the operation that started it is journalled and can be replayed. */
+  /** Ends the child; the caller must reconcile any durable native outcome. */
   signal?: AbortSignal;
+  /** Private FIFO path retained until native receive outcomes have been reconciled. */
+  durableOwner?: string;
 }
 
 const MINIMUM = [2, 38] as const;
 /** The refusal of Git work whose client was cancelled. */
 export const stopped = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
-
-/**
- * The installation token of one Git child against GitHub: in its environment and nowhere
- * else. A moved repository is linked again, never followed (as GitHubClient's 3xx).
- */
-export const githubGitEnv = (token: string): Record<string, string> => ({
-  GIT_CONFIG_COUNT: '2',
-  GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
-  GIT_CONFIG_KEY_1: 'http.followRedirects',
-  GIT_CONFIG_VALUE_1: 'false',
-});
 
 /** Each child leads its own process group, so cancellation also reaches its descendants. */
 function terminate(child: ChildProcess): void {
@@ -103,7 +96,7 @@ export class ServerGit {
   }
 
   /** The child's exit code and output. Only a child that could not run or finish in time throws. */
-  run(args: string[], options: GitOptions = {}): Promise<GitResult> {
+  async run(args: string[], options: GitOptions = {}): Promise<GitResult> {
     const signals = [this.signal, options.signal].filter(
       (signal): signal is AbortSignal => !!signal,
     );
@@ -113,36 +106,48 @@ export class ServerGit {
     if (this.closed)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
     const maxBuffer = options.maxBuffer ?? 32 * 1024 * 1024;
+    const owner = options.durableOwner ? await createGitOwner(options.durableOwner) : undefined;
+    if (abortSignal?.aborted || this.closed) {
+      owner?.close();
+      throw this.closed ? new MervError('code_unavailable', 'Code is unavailable', 503) : stopped();
+    }
     return new Promise((resolve, reject) => {
-      const child = spawn(
-        this.command,
-        [
-          '-c',
-          'protocol.allow=never',
-          // No repository Code keeps has hooks, and none it is pointed at may run one.
-          '-c',
-          'core.hooksPath=/dev/null',
-          ...(options.protocol ? ['-c', `protocol.${options.protocol}.allow=always`] : []),
-          ...args,
-        ],
-        {
-          cwd: options.cwd ?? this.home,
-          env: {
-            ...options.env,
-            PATH: '/usr/bin:/bin',
-            HOME: this.home,
-            TMPDIR: this.home,
-            GIT_CONFIG_NOSYSTEM: '1',
-            GIT_CONFIG_GLOBAL: '/dev/null',
-            GIT_ATTR_NOSYSTEM: '1',
-            GIT_TERMINAL_PROMPT: '0',
-            GIT_ASKPASS: '/bin/false',
-            LC_ALL: 'C',
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(
+          this.command,
+          [
+            '-c',
+            'protocol.allow=never',
+            // No repository Code keeps has hooks, and none it is pointed at may run one.
+            '-c',
+            'core.hooksPath=/dev/null',
+            ...(options.protocol ? ['-c', `protocol.${options.protocol}.allow=always`] : []),
+            ...args,
+          ],
+          {
+            cwd: options.cwd ?? this.home,
+            env: {
+              ...options.env,
+              PATH: '/usr/bin:/bin',
+              HOME: this.home,
+              TMPDIR: this.home,
+              GIT_CONFIG_NOSYSTEM: '1',
+              GIT_CONFIG_GLOBAL: '/dev/null',
+              GIT_ATTR_NOSYSTEM: '1',
+              GIT_TERMINAL_PROMPT: '0',
+              GIT_ASKPASS: '/bin/false',
+              LC_ALL: 'C',
+            },
+            stdio: owner ? ['pipe', 'pipe', 'pipe', owner.fd] : ['pipe', 'pipe', 'pipe'],
+            detached: process.platform !== 'win32',
           },
-          stdio: ['pipe', 'pipe', 'pipe'],
-          detached: process.platform !== 'win32',
-        },
-      );
+        ) as ChildProcessWithoutNullStreams;
+      } finally {
+        // spawn has duplicated the descriptor into Git before it returns. Only the
+        // actual receiver and its descendants now keep the durable lease alive.
+        owner?.close();
+      }
       this.children.add(child);
       const chunks: Buffer[] = [];
       let bytes = 0,
@@ -160,12 +165,19 @@ export class ServerGit {
       if (abortSignal?.aborted) aborted();
       else abortSignal?.addEventListener('abort', aborted, { once: true });
       child.stdout.on('data', (chunk: Buffer) => {
+        if (options.outputStream) return;
         if (options.output) return options.output(chunk);
         bytes += chunk.length;
         if (bytes > maxBuffer)
           stop(new MervError('code_git_failed', 'A Git operation said more than it may', 500));
         else chunks.push(chunk);
       });
+      const outputClosed = () => stop(stopped());
+      if (options.outputStream) {
+        options.outputStream.once('close', outputClosed);
+        options.outputStream.once('error', outputClosed);
+        child.stdout.pipe(options.outputStream, { end: false });
+      }
       child.stderr.on('data', (chunk: Buffer) => {
         if (stderr.length < 8192) stderr += chunk.toString('utf8');
       });
@@ -184,6 +196,11 @@ export class ServerGit {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', aborted);
         this.children.delete(child);
+        if (options.outputStream) {
+          child.stdout.unpipe(options.outputStream);
+          options.outputStream.removeListener('close', outputClosed);
+          options.outputStream.removeListener('error', outputClosed);
+        }
         // A child that exits before reading all its input leaves the stream (and its file) open.
         if (typeof options.input === 'object' && !Buffer.isBuffer(options.input))
           options.input.destroy();
@@ -225,7 +242,7 @@ export class ServerGit {
     return result.stdout;
   }
 
-  /** Refuse new children and end the running ones; every journalled operation can be replayed. */
+  /** Refuse new children and end the running ones; callers reconcile durable outcomes. */
   close(): void {
     this.closed = true;
     for (const child of this.children) terminate(child);

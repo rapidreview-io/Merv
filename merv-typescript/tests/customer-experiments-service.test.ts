@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { customerDocument } from '../packages/customer-experiments/src/customer-app.js';
+import { SERVICE_VERSION } from '../packages/customer-experiments/src/program.js';
 import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { customerHttp, startHttp } from '../packages/customer-experiments/src/http.js';
@@ -27,6 +29,7 @@ import type {
   RequestFiles,
   StructuredContract,
 } from '../packages/customer-experiments/src/types.js';
+import { migrateNativeWorkflow } from '../packages/workflows/src/native-migration.js';
 import { PaymentsService } from '../packages/payments/src/index.js';
 import { legacyReports } from './fixtures/legacy-reports.js';
 import { managedServices } from './fixtures/managed-services.js';
@@ -570,6 +573,111 @@ test('required files remain planning until content validates; accepted manifest 
   assert.deepEqual(exp.contract, frozen);
 });
 
+test('migrating structured intake from v1 to v6 preserves links, drafts, uploads and declaration provenance', async (t) => {
+  const f = await fixture(t, false, 20, 1);
+  const a = await f.create();
+  const withData: ExperimentPlan = {
+    ...plan,
+    dataRequirements: [
+      {
+        id: 'eval',
+        label: 'Held-out cases',
+        role: 'evaluation',
+        format: 'csv',
+        columns: ['text', 'label'],
+        labelColumn: 'label',
+        minRows: 2,
+      },
+    ],
+  };
+  await f.propose(a.id, withData);
+  const bytes = Buffer.from('text,label\none,positive\ntwo,negative\n');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const upload = await f.send(base + '/' + a.id + '/uploads', a.customerToken, {
+    requirementId: 'eval',
+    filename: 'eval.csv',
+    sha256,
+    size: bytes.length,
+    mediaType: 'text/csv',
+  });
+  assert.equal(upload.status, 200);
+  f.bytes.set(a.id + ':' + sha256, bytes);
+  const record = await f.store.get(a.id);
+  const request = () =>
+    f.state.read((sql) => sql.get('SELECT * FROM customer_experiment_requests WHERE id=?', a.id));
+  const declaration = () =>
+    f.state.read((sql) =>
+      sql.get<{ version: number }>(
+        'SELECT * FROM code_units WHERE unit_id=?',
+        record.experimentId!,
+      ),
+    );
+  const before = {
+    request: await request(),
+    declaration: await declaration(),
+    conversations: structuredClone(f.conversations),
+  };
+  const oldPage = await customerDocument(f.service, a.id, async () => 'document app');
+  assert.equal(before.declaration!.version, 1);
+  const source = await f.experiment(a.id);
+  const migrationCaller = await f.service.caller(record);
+  await f.state.transaction((tx) =>
+    migrateNativeWorkflow(tx, {
+      projectId: source.projectId,
+      instanceId: source.id,
+      expectedRevision: source.workflow.revision,
+      fromVersion: 1,
+      toVersion: 6,
+      actorId: migrationCaller.actorId,
+      reason: 'Preserve structured intake while enabling native Git execution.',
+    }),
+  );
+  assert.equal(SERVICE_VERSION, 5, 'new requests retain the default document intake');
+  assert.equal((await f.experiment(a.id)).workflow.version, 6);
+  assert.deepEqual(await request(), before.request);
+  assert.deepEqual(await declaration(), before.declaration);
+  assert.deepEqual(f.conversations, before.conversations);
+  assert.equal(f.conversations[0]!.profile!.version, 1);
+  assert.equal(await customerDocument(f.service, a.id, async () => 'document app'), oldPage);
+  assert.equal(
+    (await f.send(base + '/' + a.id, a.customerToken)).status,
+    200,
+    'the existing customer capability still acts without sign-in',
+  );
+  assert.equal((await f.send(base + '/' + a.id + '/session', a.customerToken, {})).status, 404);
+  assert.equal(
+    (await f.send(base + '/' + a.id + '/plan', a.customerToken)).body.error.code,
+    'plan_document_unavailable',
+  );
+  const completed = await f.send(
+    base + '/' + a.id + '/uploads/' + upload.body.uploadId + '/complete',
+    a.customerToken,
+    {},
+  );
+  assert.equal(completed.status, 200, JSON.stringify(completed.body));
+  const exp = await f.experiment(a.id);
+  assert.equal(exp.workflow.state, 'ready');
+  assert.deepEqual(exp.contract!.plan, withData);
+  assert.equal(exp.contract!.datasets[0]!.sha256, sha256);
+  assert.deepEqual(f.bytes.get(a.id + ':' + sha256), bytes);
+  assert.equal(
+    (await f.create()).customerUrl,
+    a.customerUrl,
+    'creation replay preserves the original private link',
+  );
+  assert.equal(f.conversations.length, 1);
+  const approval = { contractVersion: exp.contract!.version, email: 'customer@example.com' };
+  assert.equal(
+    (await f.send(base + '/' + a.id + '/accept', a.customerToken, approval)).status,
+    200,
+  );
+  assert.equal(
+    (await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval)).status,
+    200,
+  );
+  assert.deepEqual((await f.experiment(a.id)).contract, exp.contract);
+});
+
 test('a replacement upload invalidates the offer until the newest file validates, then requires approval of its new contract', async (t) => {
   const f = await fixture(t);
   const request = await f.create();
@@ -875,6 +983,109 @@ async function planFixture(t: TestContext) {
 }
 const conflict = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
+
+test('migrating v3 to v5 preserves the accepted contract, checkout replay and payment identity', async (t) => {
+  const f = await planFixture(t);
+  await f.put({ expectedRevision: 0, document: '# Plan\n\nCompare both rules.' });
+  assert.equal(
+    (
+      await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+        expectedRevision: 1,
+        email: 'customer@example.com',
+      })
+    ).status,
+    200,
+  );
+  await f.tool('plan_verify', {
+    revision: 1,
+    decision: 'accept',
+    question: plan.question,
+    criteria: plan.successCriteria,
+    limits: plan.limits,
+  });
+  const checkout = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
+    contractVersion: 1,
+  });
+  assert.equal(checkout.status, 200, JSON.stringify(checkout.body));
+  const exp = await f.experiment(f.a.id);
+  assert.equal(exp.workflow.state, 'awaiting_payment');
+  const preserved = () =>
+    f.state.read(async (sql) => ({
+      request: await sql.get('SELECT * FROM customer_experiment_requests WHERE id=?', f.a.id),
+      contracts: await sql.all(
+        'SELECT * FROM customer_experiment_contracts WHERE experiment_id=?',
+        exp.id,
+      ),
+      acceptances: await sql.all(
+        'SELECT * FROM customer_experiment_acceptances WHERE experiment_id=?',
+        exp.id,
+      ),
+      identity: await sql.get(
+        'SELECT * FROM customer_experiment_identities WHERE request_id=?',
+        f.a.id,
+      ),
+      declaration: await sql.get('SELECT * FROM code_units WHERE unit_id=?', exp.id),
+    }));
+  const before = await preserved();
+  const migrationCaller = await f.service.caller(f.record);
+  await f.state.transaction((tx) =>
+    migrateNativeWorkflow(tx, {
+      projectId: exp.projectId,
+      instanceId: exp.id,
+      expectedRevision: exp.workflow.revision,
+      fromVersion: 3,
+      toVersion: 5,
+      actorId: migrationCaller.actorId,
+      reason: 'Preserve the accepted customer contract and checkout under native Git.',
+    }),
+  );
+  assert.deepEqual(await preserved(), before);
+  assert.deepEqual((await f.experiment(f.a.id)).contract, exp.contract);
+  const replay = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
+    contractVersion: 1,
+  });
+  assert.equal(replay.status, 200, JSON.stringify(replay.body));
+  assert.equal(replay.body.id, checkout.body.id);
+  assert.equal(replay.body.url, checkout.body.url);
+  assert.equal(f.checkoutCalls.length, 2);
+  const { previousId: _old, ...originalInput } = f.checkoutCalls[0]!;
+  const { previousId, ...replayedInput } = f.checkoutCalls[1]!;
+  assert.deepEqual(
+    replayedInput,
+    originalInput,
+    'payment idempotency, contract metadata and amount stay unchanged',
+  );
+  assert.equal(previousId, checkout.body.id);
+  const paid: Paid = {
+    product: CUSTOMER_PRODUCT,
+    eventId: 'evt_legacy_checkout',
+    reference: f.a.id,
+    metadata: { contractHash: exp.contract!.hash },
+    paymentId: 'pi_legacy_checkout',
+    amountUsd: 10,
+    createdAt: new Date().toISOString(),
+  };
+  const webhook = (event: Paid) =>
+    f.send('/customer-experiments/stripe-webhook', undefined, event, {
+      'Stripe-Signature': 'fixture-valid-signature',
+    });
+  assert.equal((await webhook(paid)).status, 200);
+  const running = await f.experiment(f.a.id);
+  assert.equal(running.workflow.version, 5);
+  assert.equal(running.workflow.state, 'running');
+  assert.equal(running.paymentId, paid.paymentId);
+  assert.deepEqual(running.contract, exp.contract);
+  assert.equal((await webhook(paid)).status, 200);
+  assert.equal((await webhook({ ...paid, eventId: 'evt_legacy_checkout_replayed' })).status, 200);
+  assert.equal((await f.experiment(f.a.id)).workflow.revision, running.workflow.revision);
+  const rows = await f.state.read((sql) =>
+    sql.all('SELECT * FROM customer_experiment_payments WHERE experiment_id=?', exp.id),
+  );
+  assert.equal(rows.length, 1);
+  assert.equal((await preserved()).declaration!.version, 3);
+  assert.deepEqual((await preserved()).contracts, before.contracts);
+  assert.deepEqual((await preserved()).acceptances, before.acceptances);
+});
 
 test('the customer and the intake agent co-edit the plan under optimistic revisions', async (t) => {
   const f = await planFixture(t);
@@ -1252,4 +1463,63 @@ test('a stored v8 intake offers nouns, checks nested request IDs, and executes i
     { id: request.id },
   );
   await f.pi.complete(next.token, f.completion(next.input));
+});
+
+test('customer delivery stays pending after a verdict until its exact approved code is durable', async (t) => {
+  const f = await fixture(t, false, 20, 5);
+  const created = await f.create();
+  const record = await f.store.get(created.id);
+  const caller = await f.service.caller(record);
+  const initial = await f.domain.get(caller, record.experimentId!);
+  const artifact = await f.domain.artifacts.create(caller, {
+    title: 'Approved measurements',
+    content: 'Retained result evidence.',
+  });
+  const retainedAt = new Date().toISOString();
+  let durable = false;
+  const result = (): CustomerExperiment => ({
+    ...initial,
+    workflow: { ...initial.workflow, state: 'complete' },
+    codeReady: durable,
+    ...(durable ? { codeReadyAt: retainedAt } : {}),
+    email: 'customer@example.test',
+    acceptedContractId: 'approved-contract',
+    paymentId: 'paid-fixture',
+    submission: {
+      id: 'approved-results',
+      contractId: 'approved-contract',
+      artifactIds: [artifact.id],
+      summary: 'Reviewed results.',
+      producerId: caller.actorId,
+      sessionId: 'producer-fixture',
+      executionRevision: 1,
+      createdAt: retainedAt,
+      report: {
+        sourceArtifactId: artifact.id,
+        pdfArtifactId: artifact.id,
+        pageArtifactIds: [artifact.id],
+      },
+    },
+  });
+  t.mock.method(f.domain, 'get', async () => result());
+  t.mock.method(f.domain, 'reconcile', async () => result());
+  const pending = await f.service.snapshot(record);
+  assert.equal(pending.state, 'finalizing');
+  assert.equal(pending.progress?.stage, 'reviewing');
+  assert.deepEqual(pending.result?.pages, []);
+  assert.deepEqual(pending.result?.artifacts, []);
+  await assert.rejects(f.service.artifact(record, artifact.id), { code: 'not_found' });
+  await f.service.reconcile();
+  assert.equal(f.emails.length, 0);
+  durable = true;
+  const delivered = await f.service.snapshot(record);
+  assert.equal(delivered.state, 'complete');
+  assert.equal(delivered.progress?.stage, 'complete');
+  assert.equal(delivered.progress?.entered.complete, retainedAt);
+  assert.deepEqual(delivered.result?.pages, [artifact.id]);
+  assert.equal(delivered.result?.artifacts.length, 1);
+  await f.service.reconcile();
+  assert.equal(f.emails.length, 1);
+  await f.service.reconcile();
+  assert.equal(f.emails.length, 1, 'durable delivery notification is idempotent');
 });

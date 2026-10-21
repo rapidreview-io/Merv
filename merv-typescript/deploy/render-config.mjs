@@ -170,7 +170,7 @@ set('admin', { admins: process.env.MERV_ADMIN_IDENTITIES ? json('MERV_ADMIN_IDEN
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
-// Accepted work lands on Merv's main in projects without GitHub, once this is `on`.
+// Accepted work lands on Merv's main in every project, once this is `on`.
 const landing = process.env.MERV_CODE_MAIN_LANDING;
 if (landing !== undefined && !['on', 'off'].includes(landing))
   throw new Error('Invalid MERV_CODE_MAIN_LANDING');

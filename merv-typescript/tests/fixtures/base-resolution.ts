@@ -10,7 +10,6 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code-work/types';
-import { enqueueMirror } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../../packages/code-work/src/bases.js';
 import type { CodeUnitService } from '../../packages/code-work/src/units.js';
 import { seededSource } from './code-store.js';
@@ -62,7 +61,7 @@ export async function baseResolutionFixture(
     changed: (tx, projectId) => units.changed(tx, projectId),
     sponsors: (tx, projectId) => units.baseSponsors(tx, projectId),
     serviceWork: f.sessions.serviceWork,
-    resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
+    resolved: async () => {},
   });
   await bases.initialize();
   units.bases = bases;

@@ -4,16 +4,20 @@ import { createService, type Caller } from '@merv/contracts';
 import { ReviewService } from '@merv/reviews';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
+import { migrateNativeWorkflow } from '../packages/workflows/src/native-migration.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
+import { plansDocument } from '../packages/customer-experiments/src/program.js';
 import { validateAgreement } from '../packages/customer-experiments/src/schema.js';
 import {
   SERVICE_MODEL,
+  deliveryReady,
   type CustomerExperiment,
   type ExperimentPlan,
 } from '../packages/customer-experiments/src/types.js';
@@ -51,6 +55,7 @@ const plan: ExperimentPlan = {
 async function fixture(
   t: TestContext,
   compute?: ConstructorParameters<typeof CustomerExperiments>[8],
+  version = 5,
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-customer-experiments-'));
   const state = await openState(dir),
@@ -87,8 +92,8 @@ async function fixture(
       compute,
     ),
   );
-  // These cover the structured offer: requests start on service_experiment@2.
-  service.startVersion = 2;
+  service.startVersion = version === 6 ? 1 : version;
+  // Exercise the active immutable-submission workflow.
   // The worker tools as a leased session calls them, answers included.
   type Handler = (caller: Caller, input: never) => Promise<Record<string, unknown>>;
   const tools = new Map<string, Handler>();
@@ -117,16 +122,53 @@ async function fixture(
   await waitForManagedCode(managed.code, caller);
   let seq = 0;
   const id = () => `request-${++seq}`;
-  const create = () => service.create(caller, { title: plan.title, requestId: id() });
+  const create = async () => {
+    const exp = await service.create(caller, { title: plan.title, requestId: id() });
+    if (version !== 6) return exp;
+    await state.transaction((tx) =>
+      migrateNativeWorkflow(tx, {
+        projectId: exp.projectId,
+        instanceId: exp.id,
+        expectedRevision: exp.workflow.revision,
+        fromVersion: 1,
+        toVersion: 6,
+        actorId: caller.actorId,
+        reason: 'Preserve structured intake while enabling native Git execution.',
+      }),
+    );
+    return service.get(caller, exp.id);
+  };
+  const proposeDocument = async (exp: CustomerExperiment, question = plan.question) => {
+    let document = await service.plan(caller, exp.id);
+    document = await service.writePlan(caller, {
+      id: exp.id,
+      expectedRevision: document.revision,
+      by: 'customer',
+      document: `# ${plan.title}\n\n${question}\n\n${plan.executionSpec}`,
+    });
+    await service.submitPlan(caller, { id: exp.id, expectedRevision: document.revision });
+    await service.verifyPlan(caller, {
+      id: exp.id,
+      revision: document.revision,
+      decision: 'accept',
+      question,
+      criteria: plan.successCriteria,
+      limits: plan.limits,
+      files: [],
+    });
+    return service.get(caller, exp.id);
+  };
   const prepare = async () => {
     const exp = await create();
-    return service.propose(caller, {
-      id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      plan,
-      datasets: [],
-      requestId: id(),
-    });
+    return plansDocument(exp.workflow.version)
+      ? proposeDocument(exp)
+      : service.propose(caller, {
+          id: exp.id,
+          expectedRevision: exp.workflow.revision,
+          plan,
+          datasets: [],
+          requestId: id(),
+        });
   };
   const pay = async () => {
     let exp = await prepare();
@@ -152,7 +194,7 @@ async function fixture(
     machine: { hostname: 'local-test', system: process.platform, architecture: process.arch },
     platforms: [platform],
     capacity: 1,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'code.git.1'],
   });
   await managed.sessions.dispatch.setDispatch(caller, { enabled: true });
   const offer = async () => {
@@ -253,6 +295,7 @@ async function fixture(
     id,
     create,
     prepare,
+    proposeDocument,
     pay,
     offer,
     finish,
@@ -285,14 +328,13 @@ test('customer workflow cannot dispatch before exact acceptance and payment; rec
   });
   assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
   await assert.rejects(
-    f.service.propose(f.caller, {
+    f.service.writePlan(f.caller, {
       id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      plan: { ...plan, title: 'Changed' },
-      datasets: [],
-      requestId: f.id(),
+      expectedRevision: (await f.service.plan(f.caller, exp.id)).revision,
+      document: 'A changed plan after acceptance',
+      by: 'customer',
     }),
-    errorCode('fixed_contract'),
+    errorCode('plan_locked'),
   );
   const payment = {
     id: exp.id,
@@ -368,7 +410,7 @@ test('missing token accounting waits without launching an unbounded replacement'
   assert.equal(budget.unreportedSessions, 1);
   const demand = await f.managed.sessions.dispatch.dispatchDemand(f.caller, {
     platform: { name: 'astra', ...SERVICE_MODEL, enabled: true, parallelism: 1 },
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'code.git.1'],
   });
   assert.equal(demand.candidates.length, 0);
 });
@@ -389,13 +431,7 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
   );
   assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
   await f.finish(reviewer);
-  exp = await f.service.propose(f.caller, {
-    id: exp.id,
-    expectedRevision: exp.workflow.revision,
-    plan: { ...plan, question: 'Does a revised classification rule improve accuracy?' },
-    datasets: [],
-    requestId: f.id(),
-  });
+  exp = await f.proposeDocument(exp, 'Does a revised classification rule improve accuracy?');
   assert.equal(exp.contract!.version, oldContract.version + 1);
   exp = await f.service.approve(f.caller, {
     id: exp.id,
@@ -432,90 +468,148 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
   );
 });
 
-test('results wait for the final code capture, then dispatch a separate Astra reviewer', async (t) => {
-  const f = await fixture(t);
-  let exp = await f.pay();
-  const producer = await f.offer();
-  const epoch = exp.workflow.data.computeEpoch;
-  assert.equal(producer.session.kind, 'work');
-  if (producer.session.kind === 'work') {
-    assert.deepEqual(producer.session.execution.policy.platform, SERVICE_MODEL);
-    assert.equal(producer.session.tokenBudget, 8000);
-    assert.equal(producer.session.execution.references.computeKind, 'experiment');
-    assert.equal(producer.session.execution.references.computeProfile, 'execute');
-  }
-  const artifact = await f.work.run(
-    producer,
-    'artifact.create',
-    { title: 'Results', content: '100 cases: baseline 50%, candidate 100%.' },
-    (caller, input) => f.artifacts.create(caller, input as { title: string; content: string }),
-  );
-  f.reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
-  await f.work.commit(producer, { 'experiment.ts': 'console.log({baseline:0.5,candidate:1});\n' });
-  exp = await f.work.run(
-    producer,
-    'customer_experiment.submit_results',
-    {
-      id: exp.id,
-      expectedRevision: exp.workflow.revision,
-      artifactIds: [artifact.id],
-      reportArtifactId: artifact.id,
-      summary: 'The rule improves accuracy on the agreed fixed cases.',
-      requestId: f.id(),
-    },
-    (caller, input) => f.service.submitResults(caller, input),
-  );
-  assert.equal(exp.workflow.state, 'finalizing');
-  assert.equal(exp.workflow.data.computeEpoch, epoch);
-  assert.equal((await f.service.reconcile(f.caller, exp.id)).workflow.state, 'finalizing');
-  assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
-  producer.stop();
-  const workspace = await producer.driver.capture(producer.launch);
-  await f.managed.sessions.release(f.caller, {
-    sessionId: producer.session.id,
-    runnerId: producer.control.runnerId,
-    usage: { inputTokens: 1000, outputTokens: 500, model: SERVICE_MODEL.model },
+for (const version of [5, 6])
+  test(`v${version} dirty customer results freeze without a commit, then delivery waits for exact approved retention`, async (t) => {
+    const f = await fixture(t, undefined, version);
+    let exp = await f.pay();
+    const producer = await f.offer();
+    const epoch = exp.workflow.data.computeEpoch;
+    assert.equal(producer.session.kind, 'work');
+    if (producer.session.kind === 'work') {
+      assert.deepEqual(producer.session.execution.policy.platform, SERVICE_MODEL);
+      const workspacePolicy = producer.session.execution.policy.workspace;
+      assert.ok(workspacePolicy && workspacePolicy.mode !== 'none');
+      assert.equal(workspacePolicy.driver, 'code.git.1');
+      assert.match(producer.session.assignment.brief, /ordinary Git/);
+      assert.doesNotMatch(producer.session.assignment.brief, /code\.commit/);
+      if (version === 6) {
+        const declaration = await f.state.read((sql) =>
+          sql.get<{ version: number }>('SELECT version FROM code_units WHERE unit_id=?', exp.id),
+        );
+        assert.equal(declaration!.version, 1, 'native execution preserves declaration provenance');
+        assert.match(producer.session.assignment.brief, /dataset SHA-256/);
+        assert.doesNotMatch(
+          producer.session.assignment.brief,
+          /customer_experiment\.file_download/,
+        );
+        await assert.rejects(
+          f.tools.get('customer_experiment.files')!(producer.worker, { id: exp.id } as never),
+          errorCode('not_found'),
+        );
+      }
+      assert.equal(producer.session.tokenBudget, 8000);
+      assert.equal(producer.session.execution.references.computeKind, 'experiment');
+      assert.equal(producer.session.execution.references.computeProfile, 'execute');
+    }
+    const artifact = await f.work.run(
+      producer,
+      'artifact.create',
+      { title: 'Results', content: '100 cases: baseline 50%, candidate 100%.' },
+      (caller, input) => f.artifacts.create(caller, input as { title: string; content: string }),
+    );
+    f.reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    const repository = f.managed.core.repositories.paths(f.caller.projectId).repository;
+    const parent = git(producer.workspace.path, 'rev-parse', 'HEAD');
+    const count = () => Number(git(repository, 'rev-list', '--all', '--count'));
+    const before = count();
+    const content = 'console.log({baseline:0.5,candidate:1});\n';
+    writeFileSync(join(producer.workspace.path, 'experiment.ts'), content);
+    exp = await f.work.run(
+      producer,
+      'customer_experiment.submit_results',
+      {
+        id: exp.id,
+        expectedRevision: exp.workflow.revision,
+        artifactIds: [artifact.id],
+        reportArtifactId: artifact.id,
+        summary: 'The rule improves accuracy on the agreed fixed cases.',
+        requestId: f.id(),
+      },
+      (caller, input) => f.service.submitResults(caller, input),
+    );
+    assert.equal(exp.workflow.state, 'finalizing');
+    assert.equal(exp.workflow.data.computeEpoch, epoch);
+    assert.equal((await f.service.reconcile(f.caller, exp.id)).workflow.state, 'finalizing');
+    assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
+    producer.stop();
+    const workspace = await producer.driver.capture(producer.launch);
+    await f.managed.sessions.release(f.caller, {
+      sessionId: producer.session.id,
+      runnerId: producer.control.runnerId,
+      usage: { inputTokens: 1000, outputTokens: 500, model: SERVICE_MODEL.model },
+    });
+    if (workspace)
+      await f.managed.sessions.workspaceResult(f.caller, { ...producer.control, workspace });
+    await f.managed.events.drain();
+    exp = await f.service.reconcile(f.caller, exp.id);
+    assert.equal(exp.workflow.state, 'results_review');
+    assert.equal(exp.workflow.data.computeEpoch, epoch);
+    assert.equal(exp.submission!.codeHead, parent);
+    assert.equal(count(), before, 'submission must not create a commit');
+    await assert.rejects(
+      f.reviews.start(f.caller, exp.review!.id),
+      errorCode('leased_review_required'),
+    );
+    const reviewer = await f.offer();
+    assert.equal(reviewer.session.execution.references.computeKind, 'experiment');
+    assert.equal(reviewer.session.execution.references.computeProfile, 'check');
+    assert.notEqual(reviewer.worker.actorId, producer.worker.actorId);
+    assert.equal(reviewer.workspace.readOnly, true);
+    assert.equal(readFileSync(join(reviewer.workspace.path, 'experiment.ts'), 'utf8'), content);
+    assert.equal(git(reviewer.workspace.path, 'rev-parse', 'HEAD'), parent);
+    const tree = reviewer.workspace.snapshot!.submission!.treeOid;
+    const storage = f.managed.code.gitRemote;
+    let unavailable = true;
+    f.managed.code.bindSubmissionStorage({
+      verifySubmission: (...args) => storage.verifySubmission(...args),
+      materializeSubmission: (...args) =>
+        unavailable
+          ? Promise.reject(new Error('Git retention unavailable'))
+          : storage.materializeSubmission(...args),
+    });
+    const current = await f.service.get(reviewer.worker, exp.id);
+    assert.ok(current.review?.claimId);
+    const submitted = await f.work.run(
+      reviewer,
+      'review.submit',
+      {
+        reviewId: current.review!.id,
+        claimId: current.review!.claimId!,
+        expectedRevision: current.workflow.revision,
+        verdict: 'pass',
+        notes: 'Checked code and results.',
+        synopsis: 'The retained evidence supports the stated comparison.',
+        findings: [1, 2, 3].map((criterionNumber) => ({
+          criterionNumber,
+          status: 'met',
+          evidenceIds: [artifact.id],
+          notes: 'Verified against retained code and measurements.',
+        })),
+        requestId: f.id(),
+      },
+      (caller, input) =>
+        f.reviews.apply(caller, input as unknown as Parameters<typeof f.reviews.apply>[1]),
+    );
+    assert.equal((submitted as typeof exp).workflow.state, 'complete');
+    await f.managed.code.submissions.reconcile();
+    exp = await f.service.get(f.caller, exp.id);
+    assert.equal(deliveryReady(exp), false, 'customer delivery waits for durable approved code');
+    assert.equal(exp.submission!.codeHead, undefined);
+    assert.equal(count(), before);
+    unavailable = false;
+    await f.managed.code.submissions.reconcile();
+    exp = await f.service.get(f.caller, exp.id);
+    assert.equal(deliveryReady(exp), true);
+    const approved = exp.submission!.codeHead!;
+    assert.notEqual(approved, parent);
+    assert.equal(git(repository, 'rev-parse', `${approved}^{tree}`), tree);
+    assert.equal(git(repository, 'show', `${approved}:experiment.ts`), content.trim());
+    assert.equal(count(), before + 1);
+    await f.managed.code.submissions.reconcile();
+    assert.equal(count(), before + 1);
   });
-  if (workspace)
-    await f.managed.sessions.workspaceResult(f.caller, { ...producer.control, workspace });
-  await f.managed.events.drain();
-  exp = await f.service.reconcile(f.caller, exp.id);
-  assert.equal(exp.workflow.state, 'results_review');
-  assert.equal(exp.workflow.data.computeEpoch, epoch);
-  assert.ok(exp.submission!.codeHead);
-  await assert.rejects(
-    f.reviews.start(f.caller, exp.review!.id),
-    errorCode('leased_review_required'),
-  );
-  const reviewer = await f.offer();
-  assert.equal(reviewer.session.execution.references.computeKind, 'experiment');
-  assert.equal(reviewer.session.execution.references.computeProfile, 'check');
-  assert.notEqual(reviewer.worker.actorId, producer.worker.actorId);
-  const current = await f.service.get(reviewer.worker, exp.id);
-  assert.ok(current.review?.claimId);
-  const submitted = await f.work.run(
-    reviewer,
-    'review.submit',
-    {
-      reviewId: current.review!.id,
-      claimId: current.review!.claimId!,
-      expectedRevision: current.workflow.revision,
-      verdict: 'pass',
-      notes: 'Checked code and results.',
-      synopsis: 'The retained evidence supports the stated comparison.',
-      findings: [1, 2, 3].map((criterionNumber) => ({
-        criterionNumber,
-        status: 'met',
-        evidenceIds: [artifact.id],
-        notes: 'Verified against retained code and measurements.',
-      })),
-      requestId: f.id(),
-    },
-    (caller, input) =>
-      f.reviews.apply(caller, input as unknown as Parameters<typeof f.reviews.apply>[1]),
-  );
-  assert.equal((submitted as typeof exp).workflow.state, 'complete');
-});
 
 test("leased workers and reviewers read the request without the buyer's email or payment id", async (t) => {
   const f = await fixture(t);

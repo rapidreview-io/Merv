@@ -24,6 +24,7 @@ import type { CodeWriterService } from '@merv/code/writers';
 export const codeCaptureRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session-final'), sessionId: idSchema }).strict(),
   z.object({ kind: z.literal('code-commit'), commandId: idSchema }).strict(),
+  z.object({ kind: z.literal('submission'), sessionId: idSchema }).strict(),
 ]);
 /** Whether a capture came from exactly this origin's writable session, and holds its result. */
 export function checkedCapture(
@@ -65,6 +66,9 @@ export class CodeCaptureReader {
       base: string,
       head: string,
     ) => Promise<SessionWorkspace['stats'] | undefined>,
+    private readonly submissions?: {
+      capture(caller: Caller, sessionId: string, tx?: Transaction): Promise<CodeCapture>;
+    },
   ) {}
   /**
    * capture() for each ref this project holds, else null: one read of the sessions and one of
@@ -99,7 +103,10 @@ export class CodeCaptureReader {
         : [],
     );
     return await mapAsync(refs, async (ref) => {
-      if (!('sessionId' in ref ? finals.has(ref.sessionId) : commits.has(ref.commandId)))
+      if (
+        ref.kind !== 'submission' &&
+        !('sessionId' in ref ? finals.has(ref.sessionId) : commits.has(ref.commandId))
+      )
         return null;
       // A record whose session or capture is gone reads as missing, not as a failed request.
       return await this.capture(caller, ref, tx).catch((error: unknown) => {
@@ -114,6 +121,10 @@ export class CodeCaptureReader {
     const ref = parseCodeInput(codeCaptureRefSchema, value);
     if (tx) this.state.assertTransaction(tx);
     await this.scope.require(caller, 'read', tx);
+    if (ref.kind === 'submission') {
+      check(this.submissions, 'code_unavailable', 'Submission evidence is unavailable', 503);
+      return this.submissions.capture(caller, ref.sessionId, tx);
+    }
     if (ref.kind === 'session-final') {
       const observation = await this.sessions.workspaceObservation(caller, ref.sessionId, tx);
       const fenced =
@@ -170,7 +181,10 @@ export class CodeCaptureReader {
         provenance: observation.provenance,
         workspace: observation.workspace?.result ?? null,
         ...(observation.workspace
-          ? { attachedBaseOid: observation.workspace.attachment.baseOid }
+          ? {
+              attachedBaseOid: observation.workspace.attachment.baseOid,
+              attachedWorkspace: observation.workspace.attachment,
+            }
           : {}),
         observedAt: observation.observedAt,
         eventId: observation.eventId,

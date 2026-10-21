@@ -1,5 +1,7 @@
 # Git model
 
+> Current implementation (October 2026): use the [native Git operations guide](CODE_OPERATIONS.md) and [GitHub retirement migration](GITHUB_REPOSITORIES.md). Git clients use `/git/<project-id>.git`; new tasks and experiments use immutable submitted trees, ordinary session closure creates no commit, and planned VM shutdown requires a verified capture receipt. The design below is retained as historical context. Its GitHub, bundle HTTP, wrapper-tool, version and rollout instructions are retired.
+
 Personal agents use noun tools with `{"action":"x","x":{...}}` and a top-level
 `projectId` when selecting a project. Leased workers keep the alias names and flat
 inputs granted by their pinned workflows. See the [tool overview](../README.md#agent-tools).

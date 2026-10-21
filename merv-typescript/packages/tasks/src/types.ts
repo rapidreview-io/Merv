@@ -56,7 +56,7 @@ export interface TaskDelivery {
   taskId: string;
   /** May be empty for a Git task, which delivers its commit. */
   artifactIds: string[];
-  /** A Git task only: this worker's own succeeded code.commit operation. */
+  /** Historical task versions only: the producer’s succeeded commit command. */
   commandId?: string;
   /** Required: one per acceptance check. These are producer claims. */
   confirmations?: TaskConfirmation[];

@@ -3,14 +3,8 @@ import type { NativeMcpConnection, SessionStreamBatch } from '@merv/sessions/typ
 import { label, platformName, SESSION_STATUSES } from '@merv/sessions/rules';
 import { z } from 'zod';
 import {
-  canonical,
   readCapped,
   sessionWorkspaceSchema as workspaceSchema,
-  codeCommitCommandSchema,
-  codeCommandRecordSchema,
-  type CodeCommitCommand,
-  type CodeCommandCompletion,
-  type CodeCommandRecord,
   type WorkspaceTransport,
 } from '@merv/contracts';
 import type {
@@ -163,36 +157,18 @@ export class RunnerClient {
       throw new RunnerControlError('invalid_runner_url', 400);
     this.baseUrl = url.origin;
   }
-  /**
-   * `bytes` sends one part instead of JSON; `octets` expects bytes back. Both belong to the
-   * bundle routes, whose bodies are larger and slower than any control call.
-   */
-  private async request(
-    path: string,
-    body?: unknown,
-    transfer?: { bytes?: Uint8Array; octets?: boolean },
-  ): Promise<any> {
+  private async request(path: string, body?: unknown): Promise<any> {
     let response: Response;
-    const signal = AbortSignal.timeout(
-      transfer ? Math.max(this.timeoutMs, 30_000) : this.timeoutMs,
-    );
+    const signal = AbortSignal.timeout(this.timeoutMs);
     try {
       response = await this.fetcher(`${this.baseUrl}${path}`, {
-        method: transfer?.bytes ? 'PUT' : body === undefined ? 'GET' : 'POST',
+        method: body === undefined ? 'GET' : 'POST',
         headers: {
           authorization: `Bearer ${this.bearer}`,
           'x-merv-project-id': this.projectId,
-          ...(transfer?.bytes
-            ? { 'content-type': 'application/octet-stream' }
-            : body === undefined
-              ? {}
-              : { 'content-type': 'application/json' }),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
-        ...(transfer?.bytes
-          ? { body: new Blob([transfer.bytes as Uint8Array<ArrayBuffer>]) }
-          : body === undefined
-            ? {}
-            : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: 'error',
         credentials: 'omit',
         signal,
@@ -207,14 +183,9 @@ export class RunnerClient {
       let raw: string;
       // Sessions admits four frozen packets of up to 512 KiB each. The complete
       // reply also carries session metadata and workspace receipts.
-      const limit = response.ok
-        ? transfer?.octets
-          ? 4 * 1024 * 1024 + 65_536
-          : 4 * 1024 * 1024
-        : 1024 * 1024;
+      const limit = response.ok ? 4 * 1024 * 1024 : 1024 * 1024;
       try {
         const body = await readCapped(reader, limit, () => new Error());
-        if (response.ok && transfer?.octets) return body;
         raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body);
       } finally {
         reader.releaseLock();
@@ -239,23 +210,17 @@ export class RunnerClient {
     return value;
   }
   /**
-   * The bundle routes as a workspace driver uses them. The bodies are the driver's and the
-   * server plugin's own business: this client authenticates, bounds and forwards them.
+   * Metadata routes used by a workspace driver; Git carries repository bytes directly.
    */
   workspaceTransport(): WorkspaceTransport {
     const route = (value: string) => value.split('/').map(encodeURIComponent).join('/');
     return {
-      call: async (path, body) => await this.request(`/code/v2/${route(path)}`, body, {}),
-      putPart: async (operationId, offset, bytes) =>
-        await this.request(
-          `/code/v2/uploads/${encodeURIComponent(operationId)}/parts/${offset}`,
-          undefined,
-          { bytes },
-        ),
-      readPart: async (exportId, input) =>
-        (await this.request(`/code/v2/downloads/${encodeURIComponent(exportId)}/read`, input, {
-          octets: true,
-        })) as Uint8Array,
+      remoteUrl: (path) => {
+        if (!/^\/git\/[A-Za-z0-9_-]+\.git$/.test(path))
+          throw new RunnerControlError('invalid_control_response', 0);
+        return `${this.baseUrl}${path}`;
+      },
+      call: async (path, body) => await this.request(`/code/v2/${route(path)}`, body),
     };
   }
   private session(
@@ -413,63 +378,6 @@ export class RunnerClient {
       (await this.request(`/sessions/${encodeURIComponent(id)}/heartbeat`, { runnerId }))?.session,
       { id, runnerId, statuses: ['active'] },
     );
-  }
-  async nextCodeCommand(
-    session: Pick<
-      Session,
-      'id' | 'runnerId' | 'actorId' | 'instanceId' | 'expectedRevision' | 'workspace'
-    >,
-    hostRef: string,
-    /** A periodic checkpoint to queue when nothing is outstanding. */
-    checkpoint?: { expectedHead: string; requestId: string },
-  ): Promise<CodeCommitCommand | null> {
-    const value = await this.request('/code/commands/next', {
-      sessionId: session.id,
-      runnerId: session.runnerId,
-      hostRef,
-      ...(checkpoint && { checkpoint }),
-    });
-    if (value?.command === null) return null;
-    const parsed = codeCommitCommandSchema.safeParse(value?.command);
-    if (!parsed.success) throw new RunnerControlError('invalid_control_response', 0);
-    const command = parsed.data;
-    if (
-      command.projectId !== this.projectId ||
-      command.sessionId !== session.id ||
-      command.actorId !== session.actorId ||
-      command.instanceId !== session.instanceId ||
-      command.expectedRevision !== session.expectedRevision ||
-      command.runnerId !== session.runnerId ||
-      command.hostRef !== hostRef ||
-      canonical(command.workspace) !== canonical(session.workspace?.attachment)
-    )
-      throw new RunnerControlError('invalid_control_response', 0);
-    return command;
-  }
-  async completeCodeCommand(
-    command: CodeCommitCommand,
-    outcome: { receipt: NonNullable<CodeCommandRecord['receipt']> } | { error: string },
-  ): Promise<CodeCommandRecord> {
-    const input: CodeCommandCompletion = {
-      sessionId: command.sessionId,
-      runnerId: command.runnerId,
-      hostRef: command.hostRef,
-      commandId: command.id,
-      ...outcome,
-    };
-    const parsed = codeCommandRecordSchema.safeParse(
-      (await this.request('/code/commands/complete', input))?.operation,
-    );
-    if (
-      !parsed.success ||
-      canonical(parsed.data.command) !== canonical(command) ||
-      ('receipt' in outcome
-        ? parsed.data.status !== 'succeeded' ||
-          canonical(parsed.data.receipt) !== canonical(outcome.receipt)
-        : parsed.data.status !== 'failed' || parsed.data.error !== outcome.error)
-    )
-      throw new RunnerControlError('invalid_control_response', 0);
-    return parsed.data;
   }
   /**
    * Close the session, or, once it is closed, report what it used. With no `outcome` a live

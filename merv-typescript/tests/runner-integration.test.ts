@@ -148,8 +148,8 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
         ? []
         : [
             {
-              name: 'code.v2',
-              create: (host, transport) => new CodeWorkspaceDriver(host, transport, { pollMs: 25 }),
+              name: 'code.git.1',
+              create: (host, transport) => new CodeWorkspaceDriver(host, transport),
             },
           ],
       ...(fetcher ? { fetch: fetcher } : {}),

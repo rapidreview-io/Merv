@@ -1,122 +1,61 @@
 # Runner Git workspaces
 
-All new tasks and experiments use managed Git, without requiring GitHub; see [Always-on Git](ALWAYS_GIT.md). A runner has no repository of its own: every Git checkout comes from Code's `code.v2` driver, which needs only `/usr/bin/git`, no local source repository and no GitHub credential. Work that declares no workspace runs in a scratch directory. A live writable worker can request a named commit through `code.commit` when its fixed tool policy permits it, then read the receipt through `code.operation`; the runner also commits a live checkout every five minutes (`merv: checkpoint`), and the final capture happens after the process group stops and before the session is released. Neither publishes code. See [Code operations](CODE_OPERATIONS.md).
+Current tasks and experiments use Code's native Git remote through the `code.git.1` driver. Workers run ordinary Git in their assigned checkouts. Merv creates commits for approved milestones and, when needed, planned VM shutdown capture; it does not make timer or ordinary session-end commits. See [Code operations](CODE_OPERATIONS.md) for transport, admission and authentication.
 
-## Configuration and responsibility
+## Ownership
 
-| Component     | Responsibility                                                                                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Workflows     | Persist the versioned workspace policy and freeze named commit references with the assignment.                            |
-| Sessions      | Bind source, worker, target, policy and runner; accept the attachment and one final workspace result.                     |
-| Code          | Derive and pin bases, serve checkouts, admit uploads under the writer fence, and keep commit requests and their receipts. |
-| Runner        | Own scratch directories, the process and retryable result delivery; the named driver owns checkout, commits and capture.  |
-| Native worker | Read or edit assigned files under the declared sandbox, request allowed commits and perform its allowed MCP handoff.      |
+| Component     | Responsibility                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| Workflows     | Freeze the versioned execution policy and named references.                                |
+| Sessions      | Bind source, worker, runner and host; validate attachments, results and shutdown receipts. |
+| Code          | Serve Git, enforce grants and writer generations, validate objects and retain refs.        |
+| Code Work     | Freeze submission identity, verify review provenance and journal approved milestones.      |
+| Runner        | Own processes, checkout preparation and retryable stopped-process capture.                 |
+| Native worker | Edit the assigned checkout, use Git and perform the allowed workflow handoff.              |
 
-The runner's former local repository (its `workspace` configuration, Code's legacy-local driver and the `git.local` capability) was removed on 2026-10-06. A runner configuration that still names `workspace` is refused. Frozen policies of older versions that name no driver (`task@3`/`task@4`, `experiment@6`/`experiment@7`) are offered to no runner; their records stay readable.
+Current policies require the native driver capability. Old `code.v2` policies remain readable with their published definitions unchanged; unfinished legacy work and old runners must drain before cutover. New runtimes refuse legacy writable leases with `code_legacy_drain_required`. The read-only deployment preflight checks this drain. An old image alone is not a supported rollback after cutover.
 
-## The two Git workspaces
+## Work and review
 
-Every current task and experiment version declares its Git steps with Code Work's `codeWorkspace()`, which produces exactly two shapes:
+Code Work's `codeWorkspace()` declares two shapes, each with the owner's namespace:
 
-| Purpose | Policy                                                                                                                                       | Used by                                                             |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Work    | `mode: "persistent"`, `base: "reference:base"`, `perBase: false`, `retain: true`, `advancesCentral: false`, `driver: "code.v2"`              | a task's producer (`in_progress`), an experiment's `running` worker |
-| Review  | `mode: "ephemeral"`, `base: "reference:code"`, `retain: false`, `driver: "code.v2"`, with `readOnly: true` on the enclosing execution policy | a task's reviewer (`in_review`), an experiment's results reviewer   |
+| Purpose | Policy                                                         | Use                                                                               |
+| ------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Work    | Persistent, retained, `reference:base`, `code.git.1`           | Task producers; experiment planners and executors; customer experiment executors. |
+| Review  | Ephemeral, `reference:code`, `code.git.1`, read-only execution | Independent task, design and results review.                                      |
 
-Each also carries the owner's `namespace`. A work checkout is one per unit: a successor lease (a returned task, a resumed experiment) continues on any machine from the newest head Code admitted for that unit, on the base pinned at the first lease. A review checkout is the exact frozen commit under review, `execution.references.code`, never the branch tip, so a close-time capture added above a delivered commit is not under review; it is removed after the review. Planning and design steps run in scratch directories. `perBase` and `advancesCentral` remain in the declaration only because published policies are immutable; neither changes what the driver does, and nothing is published from a checkout.
+A work unit has one pinned dependency base and one assigned branch. A continuing session on the same work host preserves its working files, including uncommitted changes. Another host can recover durable Git history; unexpected loss of a host can lose untransferred files. Planned teardown or repurpose waits for verified shutdown capture first.
 
-A reference base must be a full lowercase 40- or 64-character commit OID; missing, list-valued or abbreviated references fail, with no fallback.
+The first producing lease derives the base from dependencies' exact durable accepted references. Several dependencies can require a shared merge plan and an independently reviewed resolution task. Missing acceptance or unresolved bases block lease admission. Reading an assignment neither pins nor changes its base. Reference OIDs must be full lowercase 40- or 64-character values.
 
-### The derived base
+Reviewers receive the immutable submission's parent commit plus its exact frozen tree, including submitted uncommitted changes. HEAD identifies the parent; it is not a preapproval commit. The checkout and Git metadata are mounted read-only, with separate writable scratch space. The reviewer cannot access the producer's writable checkout or writer credentials. An execution environment unable to enforce this isolation refuses review work.
 
-A writer's `reference:base` is the base Code derives the base from `dependsOn` prerequisites in its own repository ([the Git model](GIT_MODEL.md)):
+## Submission and approval
 
-- a prerequisite accepted with code contributes exactly its reviewed commit, and nothing beneath it is looked at;
-- a prerequisite that succeeded without code is looked through, to what it depended on;
-- a prerequisite on a workspace version that has no verifiable acceptance (it succeeded before acceptances existed or in another repository) blocks, as does a code-less success whose own prerequisites are unfinished: `code_base_pending`;
-- no commit at all gives the project's imported main; one commit, reached by however many paths, is the base; several commits share a retained merge plan. Conflicts create one reviewed `task@6` per base.
+1. The actual producing session submits through its workflow. Code Work records the request and provenance in the handoff transaction.
+2. Runner confirms the producer process group has stopped, writes the exact Git tree, and pushes retained tree and parent refs with its narrow capture grant. No commit is created by submission.
+3. Code Work verifies the retained objects, current parent and writer generation, then seals the submission receipt. Review dispatch waits for this receipt.
+4. The independent reviewer inspects that frozen checkout. A passing verdict journals its milestone in the same transaction as the approval.
+5. Reconciliation materializes the exact approved tree and parent once, or reuses an already matching verified result. An unchanged tree needs no new commit. The next writer and accepted-code dependents wait until the durable result is recorded.
 
-The base is pinned inside the transaction that acquires the first lease — a task's first producer, an experiment's first planner or, if the design was written by hand, its first running worker — and is immutable: a returned task, a revised plan and a main that has moved since all reuse it. The frozen `references.base` is read from that pin and from nothing else, so reading an assignment never derives or writes. Work whose base cannot be derived is refused at lease admission, so it is never a dispatch candidate, never launched and never counted as a launch failure; Code publishes why as a blocker, which `workflow.status_and_next` gates on, the overview lists under `blocked` and `session.stuck` reports as `work_blocked`. An interactive producer has no checkout and therefore no `base`.
+Rejected submissions remain immutable evidence. A returned producer continues with its retained work and a new session; it cannot replace the earlier submission. Lost replies retry the same receipt and approval identity. Approval reconciliation completes an authorized milestone; it does not perform periodic WIP capture.
 
-## The `code.v2` driver
+## Ordinary end and planned shutdown
 
-A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). Every current task and experiment version, and service-owned resolution tasks, name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Policies that name none are offered to no runner.
+Ordinary session end pushes any agent-created commits, closes the writer generation and reports metadata. It leaves dirty files on the retained work host without creating a commit. A read-only session reports its exact attachment.
 
-What a runner advertises:
+Before planned VM removal, Fleet requests shutdown. The supervisor stops producers, settles requested submissions, then captures remaining writer files if their tree needs a commit. It pushes and verifies the result and reports the exact session, unit, head, tree and operation. Sessions validates that receipt before Fleet may release the host. Outages or lost replies keep shutdown pending. Cleanup credentials authorize only this owned historical work, not new leases or ordinary writes.
 
-- each driver it composed, by name (`code.v2`);
-- `runner.N`, what its protocol tolerates: `runner.1` ignores fields a server adds to lease, settings and session replies; `runner.2` also says it has no repository of its own. Older runners advertised `git.local` for one; nothing offers work for it any more.
+## Restart and result boundary
 
-A managed (hosted) runner advertises only its drivers, because its capabilities must equal its enrolment; its image release is the proof of what it tolerates.
+Checkout intent is durable before preparation, and the stable launch ID is attached before spawn. A controller reconnects to the existing process guardian after restart. Matching retries preserve files; foreign or partial paths are kept for recovery rather than silently adopted or deleted. An unreachable guardian leaves local capacity reserved until the process is proven gone.
 
-The driver belongs to Code and lives beside the runner's ledger under `code-v2/`, with its own tables (`code_v2_repositories`, `code_v2_workspaces`, `code_v2_transfers`); it never touches the runner's repository or tables, needs no local source and holds no GitHub credential.
+Capture requires locally confirmed termination. Server-side lease closure alone is insufficient. A successor cannot take the checkout until the previous launch has finished result reporting and cleanup. Source revocation or a prolonged outage can leave local work awaiting authorized reconciliation; this creates no credential-rotation bypass.
 
-- **Prepare.** The driver asks Code for the session's manifest, which only reads: exactly the newest commit Code admitted for a writer (a resumed unit continues on any machine, including the trailing work the last session left), exactly the referenced commit for a reviewer. It downloads a bundle in parts, telling Code which commits its cache already holds; should that claim be wrong the import fails and the one retry claims nothing. The cache is a bare repository without a remote. A writer's checkout stands on the local branch `merv/work/<unit>`, put on exactly the named head; a reviewer's is detached and removed afterwards.
-- **Commit.** `code.commit` builds the same deterministic commit as the runner's own driver, but keeps it aside under `refs/merv/pending/*`, uploads it under the writer fence and moves HEAD only when Code has admitted it. A commit Code quarantines leaves the checkout exactly as it was and fails the command with `code_capture_quarantined`; the agent removes what was found and commits again under a new request. An interrupted upload continues from the byte Code says it holds.
-- **Final capture.** After the process has stopped, and before the runner releases the session (whose close ends the writer generation), what is uncommitted becomes one `merv: capture <session>` commit. It is journalled before Code hears of it, so a restart hands over that same commit and never builds another. The session's result names the head Code acknowledged: when the final capture is quarantined or its generation was fenced, that is the last admitted head, and the refused work stays in the machine's checkout and in Code's `held/` directory.
-- **Deferral.** When Code, its store or the network cannot serve, the driver raises a deferral with a cause (`code_unavailable`, `transport_unavailable`, `store_busy`, `base_pending`) instead of a failure of the launch. The runner gives the lease back as `preparation_deferred` with that cause: nothing counts it, no hold can form from it, and the target is offered again after the usual backoff. The runner defers for one cause of its own: `driver_absent`, when the named driver is not composed on this machine. A cause or code that is not a lower-case word (`^[a-z][a-z0-9_]{0,63}$`) is sent as `code_unavailable` / `workspace_deferred`. A deferral during a commit or a final capture is simply retried on the next cycle, because the machine still owes that handover.
-- **Publication.** None of this touches GitHub. Code publishes `refs/merv/work/**` and `refs/merv/accepted/**` itself, asynchronously, long after the handoff is complete; a machine holds no credential for it and never waits for it.
+Source-authenticated attachment and result requests carry the exact runner and host identity. Session snapshots include repository/workspace IDs, mode, branch, base and head OIDs, optional tree OID, statistics and, for a frozen submission, `{ sessionId, parentOid, treeOid }`. Writer identity and base stay fixed; a read-only result must equal its full attached snapshot. An identical final result replay succeeds, while a different result conflicts. Late results never reactivate the worker.
 
-## Scratch directories and capture order
+Session results are authenticated machine observations. Code separately verifies admitted Git objects, and Code Work separately verifies submission and review authority. A result by itself does not approve code or authorize movement of managed main.
 
-The runner's own workspace manager keeps only scratch directories: one per launch, or on a work host one per work item, which carries over between its steps. A scratch directory is occupied until its launch has provably stopped and been captured; a launch that finds it still open under another launch is refused. See the [Runner](../packages/runner/README.md) for its ledger and process ownership.
+## Validation
 
-```mermaid
-flowchart LR
-  P[Driver prepares checkout] --> A[Attach launch and snapshot]
-  A --> W[Worker edits files]
-  W --> Q[Allowed code.commit request]
-  Q --> M[Driver uploads, Code admits, receipt]
-  M --> W
-  W --> S[Confirm process-group stop]
-  S --> G[Final capture]
-  G --> R[Report immutable result]
-  R --> K[Acknowledge and clean up]
-```
-
-Attach rechecks current session admission before spawn and does not activate the workflow. The first authenticated worker MCP operation activates it. Runner uses its stable launch ID as `hostRef`; retries or another runner cannot replace that attachment. Capture requires locally confirmed termination; server-side lease closure alone is insufficient. A commit receipt is separate from the final workspace result: later edits or the final capture do not change it.
-
-## Restart and failure behavior
-
-A replacement controller reconnects to the existing process guardian and replays matching preparation without resetting files. If Git created a valid owned checkout but the ready-state commit was interrupted, the manager validates and resumes it. Unverified partial checkouts are preserved rather than adopted, pruned or deleted. An unstarted terminal launch can cancel that preparation and release its remote lease; using that lineage again may require manual investigation.
-
-Runner captures a confirmed finished process before fetching fresh server state. A network outage or source refusal therefore does not discard local WIP. Reporting still requires the original authenticated source authority. Source-key revocation, changed membership or a prolonged outage can leave a retained result awaiting authorized reconciliation; this slice adds no credential-rotation bypass.
-
-A lost attach reply remains ambiguous. Runner closes the remote lease before deciding that no attachment exists, preventing a delayed attach from racing with local checkout release. It can then report the exact attached result even for a closed session. Closing or reporting never reactivates the worker.
-
-An unreachable guardian leaves the launch `uncertain`; its checkout and local capacity stay reserved until the launch is proven gone (a reboot, or no command pinned a minute after it was first found unreachable). No saved PID or remote lifecycle state proves that a process tree stopped. See the [process ownership contract](../packages/runner/README.md).
-
-## Server result contract and trust boundary
-
-Source-authenticated `POST /sessions/:id/attach` carries `runnerId`, `hostRef` and the Git workspace attachment. After capture, `POST /sessions/:id/workspace-result` carries the same runner/host identity and the final workspace object. Session workers cannot use these source-control routes.
-
-Both snapshots contain:
-
-```ts
-interface SessionWorkspace {
-  repositoryId: string;
-  workspaceId: string;
-  mode: 'ephemeral' | 'persistent';
-  branch: string | null;
-  baseOid: string;
-  headOid: string;
-  stats: {
-    commitCount: number;
-    filesChanged: number;
-    insertions: number;
-    deletions: number;
-  };
-}
-```
-
-Sessions exposes `workspace: { attachment, result }`, with `result: null` until reporting. Identity, mode, branch and base must match the attachment. A read-only result must retain the attached head. An identical final-result replay succeeds; a different result conflicts. The result and its `session.workspace_result` event commit together with source, worker, workflow version, state, revision and policy provenance. Late results remain per-session facts and do not overwrite a global instance pointer.
-
-These are **source-authenticated Runner observations**. The server validates authority, schema, identity and replay consistency; it does not fetch Git objects, independently calculate the diff, or prove ancestry. The receipt acknowledges capture; it does not authorize approval or publication.
-
-## Current limits and validation
-
-Native support consists of sandboxed file editing/read-only inspection, policy-granted commit requests through Code, and host-side Runner WIP capture. The worker is not granted arbitrary private Git metadata writes, merge commands or ref updates. The `command` profile is a trusted executable without an equivalent verified sandbox and refuses read-only leases. Private files and process groups do not isolate hostile programs sharing one OS user.
-
-There is no standalone `code.propose` or automatic retention pruning. `code.v2` assignments use Code's repository and bundle transport with admission and ancestry verification; service resolution uses the policy-granted `code.merge` protocol. Publication to GitHub and its release requirements are described in [CODE_OPERATIONS.md](CODE_OPERATIONS.md).
-
-Run `npm run test:runner` for the Runner suite, `tests/runner-workspaces.test.ts` for scratch and work-host directories, or `tests/runner-code-driver.test.ts` for `code.v2` checkouts. Native acceptance launches real agents and is a separate, explicit operation.
+`npm run test:runner` covers runner process and recovery behavior. Native Git HTTP, submission, approval and shutdown tests exercise real Git and PostgreSQL. Hosted review isolation additionally requires the Linux image gates in [hosted runner operations](../scripts/hosted-runner/README.md); a trusted local `command` profile cannot provide that isolation. Production acceptance remains an explicit deployment operation.

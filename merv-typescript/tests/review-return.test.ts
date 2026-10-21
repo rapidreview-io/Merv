@@ -1,3 +1,4 @@
+import type { CodeService } from '@merv/code-work/service';
 import { createService, migrationList } from '@merv/contracts';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
@@ -377,6 +378,7 @@ test('public review.submit exposes a strict optional route and carries it throug
 test('Tasks reject supplied routes before command replay and agree with workflow preflight', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-return-'));
   const app = await createApp({ directory, api: false });
+  let closeWork = async () => {};
   try {
     const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Task fixed routes',
@@ -389,6 +391,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     };
     const producer = operator;
     const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
+    closeWork = () => work.close();
     const task = await currentTask(app.ctx, producer, {
       title: 'Verify',
       goal: 'Verify the result.',
@@ -402,13 +405,12 @@ test('Tasks reject supplied routes before command replay and agree with workflow
       { title: 'Proof', content: '42 was independently verified.' },
       (caller, input) => app.ctx.artifacts.create(caller, input as never),
     );
-    const commandId = await work.commit(writer);
+    await work.commit(writer);
     const pending = await work.run(
       writer,
       'task.submit_delivery',
       confirmedDelivery({
         artifactIds: [proof.id],
-        commandId,
         requestId: 'delivery',
       }),
       (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
@@ -509,6 +511,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     // Whether or not a sweep has closed the session and retired its actor yet, the retry
     // learns the same thing; the sweep runs first here so the order is fixed.
     await app.ctx.sessions.sweep();
+    await (app.ctx.codeWork as CodeService).submissions.reconcile();
     const committed = await durable();
     assert.equal((result as { workflow: { state: string } }).workflow.state, 'done');
     // This worker handed off its lease; a fresh transport cannot revive its successful command.
@@ -528,6 +531,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     assert.deepEqual(await durable(), committed);
     assert.equal(Object.hasOwn(await app.ctx.reviews.get(operator, review.id), 'returnTo'), false);
   } finally {
+    await closeWork();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }

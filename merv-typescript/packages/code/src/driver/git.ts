@@ -1,13 +1,7 @@
 import { execFile } from 'node:child_process';
-import { lstatSync } from 'node:fs';
+import { createReadStream, lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import {
-  oidPattern,
-  sha256Hex,
-  type CodeCommitCommand,
-  type CodeCommitReceipt,
-  type SessionWorkspace,
-} from '@merv/contracts';
+import { oidPattern, sha256Hex, type SessionWorkspace } from '@merv/contracts';
 
 export interface DriverGitResult {
   code: number;
@@ -39,30 +33,6 @@ export const identity = {
   GIT_COMMITTER_NAME: 'Merv Agent Runner',
   GIT_COMMITTER_EMAIL: 'merv@localhost',
 };
-/** What `commit-tree` is given for a command, so that a replay makes exactly the same commit. */
-export const commitInput = (command: CodeCommitCommand) => {
-  const timestamp = `${Math.floor(Date.parse(command.createdAt) / 1000)} +0000`;
-  return {
-    env: { ...identity, GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp },
-    stdin: command.message.endsWith('\n') ? command.message : `${command.message}\n`,
-  };
-};
-/** The receipt of a command whose commit Code or the runner's repository holds. */
-export const commitReceipt = (
-  command: CodeCommitCommand,
-  headOid: string,
-  treeOid: string,
-  stats: SessionWorkspace['stats'],
-): CodeCommitReceipt => ({
-  commandId: command.id,
-  repositoryId: command.workspace.repositoryId,
-  workspaceId: command.workspace.workspaceId,
-  baseOid: command.workspace.baseOid,
-  parentOid: command.expectedHead,
-  headOid,
-  treeOid,
-  stats,
-});
 /** What a checkout changed or staged against its index, by name. */
 export const changedNames = async (git: (args: string[]) => Promise<string>) =>
   new Set(
@@ -78,6 +48,7 @@ export const diffStats = async (
   git: (args: string[]) => Promise<string>,
   base: string,
   head: string,
+  tree = head,
 ): Promise<SessionWorkspace['stats']> => {
   const commitCount = Number((await git(['rev-list', '--count', `${base}..${head}`])).trim());
   const changes = await git([
@@ -87,7 +58,7 @@ export const diffStats = async (
     '--numstat',
     '-z',
     base,
-    head,
+    tree,
   ]);
   let filesChanged = 0,
     insertions = 0,
@@ -121,8 +92,8 @@ const options = [
 
 /**
  * Git as the driver runs it on a machine: nothing of the machine's or the user's
- * configuration reaches it, no transport is allowed at all — history arrives and leaves as
- * bundle files — and a failure comes back as a result instead of one collapsed error.
+ * configuration reaches it. Native fetch and push explicitly enable their transport;
+ * other calls cannot access remotes. Failures return their exit status and diagnostic text.
  */
 export class DriverGit {
   constructor(
@@ -133,7 +104,13 @@ export class DriverGit {
 
   run(
     args: string[],
-    input: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number } = {},
+    input: {
+      cwd?: string;
+      env?: Record<string, string>;
+      stdin?: string;
+      stdinFile?: string;
+      timeoutMs?: number;
+    } = {},
   ): Promise<DriverGitResult> {
     return new Promise((resolve) => {
       // Hosted checkouts become assignment-owned before the worker runs. Never run Git
@@ -183,7 +160,13 @@ export class DriverGit {
             timedOut: !!error?.killed,
           }),
       );
-      child.stdin?.end(input.stdin);
+      if (input.stdinFile) {
+        const stream = createReadStream(input.stdinFile);
+        stream.on('error', () => child.kill());
+        child.on('close', () => stream.destroy());
+        child.stdin?.on('error', () => stream.destroy());
+        stream.pipe(child.stdin!);
+      } else child.stdin?.end(input.stdin);
     });
   }
 

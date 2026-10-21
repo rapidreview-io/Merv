@@ -2,14 +2,21 @@ import { artifactGrants, grant, literal, reviewGrants, target } from '@merv/work
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { type WorkflowExecutionPolicy } from '@merv/contracts';
 import { REPORT_TOOLS } from '@merv/reports/prefill';
-import { type ActiveState, designCheckout, reviewing, rolesFor, writesReport } from './program.js';
+import {
+  type ActiveState,
+  approvalCommits,
+  designCheckout,
+  reviewing,
+  rolesFor,
+  writesReport,
+} from './program.js';
 
 // The fixed tools each assignment of an experiment is granted.
 
 /** Whether an assignment changes nothing in Git: every review, and from experiment@41 a design,
  *  which reads the code execution will start from in a checkout it keeps nothing of. */
 export const readsOnly = (state: ActiveState, version: number) =>
-  reviewing(state) || (state === 'planned' && designCheckout(version));
+  reviewing(state) || (state === 'planned' && designCheckout(version) && !approvalCommits(version));
 
 export function execution(state: ActiveState, version: number): WorkflowExecutionPolicy {
   const experiment = { experimentId: target('instanceId') };
@@ -21,10 +28,10 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
   return {
     readOnly: readsOnly(state, version),
     workspace:
-      state === 'running'
-        ? codeWorkspace('work', 'experiments')
-        : state === 'experiment_review'
-          ? codeWorkspace('review', 'experiment-reviews')
+      state === 'running' || (state === 'planned' && approvalCommits(version))
+        ? codeWorkspace('work', 'experiments', approvalCommits(version))
+        : state === 'experiment_review' || (state === 'design_review' && approvalCommits(version))
+          ? codeWorkspace('review', 'experiment-reviews', approvalCommits(version))
           : designCheckout(version)
             ? codeWorkspace('read', 'experiment-designs')
             : { mode: 'none' },
@@ -62,7 +69,9 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
               })),
             ),
             ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
-            ...(state === 'running' ? [grant('code.commit', {}), grant('code.operation', {})] : []),
+            ...(state === 'running' && !approvalCommits(version)
+              ? [grant('code.commit', {}), grant('code.operation', {})]
+              : []),
             ...(state === 'running' && writesReport(version)
               ? REPORT_TOOLS.map((name) =>
                   grant(name, {

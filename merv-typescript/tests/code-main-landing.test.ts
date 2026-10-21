@@ -38,7 +38,6 @@ async function fixture(t: TestContext, connected = false, enabled = true) {
       f.state,
       (f.code as unknown as { unitStore: CodeUnitService }).unitStore,
       f.repositories,
-      f.code.github,
       f.workflows,
       true,
     );

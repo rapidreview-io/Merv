@@ -17,23 +17,19 @@ import {
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories, ObjectFormat } from './repository.js';
-import { CodeExporter } from './export.js';
 import { CodeReceiver } from './receive.js';
 import {
   columns,
   journalled,
   received,
-  serial,
   StoreCore,
-  type CodeImportRemote,
   type CodeStoreConfig,
   type CodeStoreHooks,
   type FaultPoint,
   type OperationRow,
 } from './core.js';
 
-export type { CodeImportRemote, CodeStoreConfig, CodeStoreHooks, FaultPoint } from './core.js';
-export type { CodeExport } from './export.js';
+export type { CodeStoreConfig, CodeStoreHooks, FaultPoint } from './core.js';
 
 /**
  * The journal of everything that moves objects and refs in a project's repository. A database
@@ -52,7 +48,6 @@ export class CodeStore {
   readonly repositories: CodeRepositories;
   private readonly core: StoreCore;
   private readonly receiver: CodeReceiver;
-  private readonly exporter: CodeExporter;
   private closing?: Promise<void>;
   private timer?: NodeJS.Timeout;
   private waker?: NodeJS.Timeout;
@@ -65,29 +60,19 @@ export class CodeStore {
     config: Pick<CodeStoreConfig, 'root'> & Partial<CodeStoreConfig>,
     hooks: CodeStoreHooks,
     repositories: CodeRepositories,
-    remote?: CodeImportRemote,
     /** Throws at a named boundary, which is how a test ends the process there. */
     fault?: (point: FaultPoint) => void,
   ) {
-    this.core = new StoreCore(state, scope, config, hooks, repositories, remote, fault);
+    this.core = new StoreCore(state, scope, config, hooks, repositories, fault);
     this.config = this.core.config;
     this.repositories = repositories;
     this.receiver = new CodeReceiver(this.core);
-    this.exporter = new CodeExporter(this.core);
   }
 
   /** A project administrator or their agent, never a leased worker. */
   administrator: StoreCore['administrator'] = (...args) => this.core.administrator(...args);
-  importRepository: CodeReceiver['importRepository'] = (...args) =>
-    this.receiver.importRepository(...args);
   contains: CodeReceiver['contains'] = (...args) => this.receiver.contains(...args);
   stats: CodeReceiver['stats'] = (...args) => this.receiver.stats(...args);
-  beginUpload: CodeReceiver['beginUpload'] = (...args) => this.receiver.beginUpload(...args);
-  operation: CodeReceiver['operation'] = (...args) => this.receiver.operation(...args);
-  putPart: CodeReceiver['putPart'] = (...args) => this.receiver.putPart(...args);
-  complete: CodeReceiver['complete'] = (...args) => this.receiver.complete(...args);
-  export: CodeExporter['export'] = (...args) => this.exporter.export(...args);
-  readExport: CodeExporter['readExport'] = (...args) => this.exporter.readExport(...args);
 
   /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
@@ -254,20 +239,13 @@ export class CodeStore {
           }),
         );
         if (!sweep) return;
-        await this.repositories.sweep(
-          async (operationId) => {
-            const row = await this.core.state.read((sql) => this.core.row(sql, operationId));
-            if (!row) return undefined;
-            if (row.status === 'prepared') return false;
-            await this.receiver.hold(row);
-            return true;
-          },
-          undefined,
-          (exportId, take) =>
-            serial(this.exporter.exporting, exportId, async () => {
-              if (await take()) this.exporter.exports.delete(exportId);
-            }),
-        );
+        await this.repositories.sweep(async (operationId) => {
+          const row = await this.core.state.read((sql) => this.core.row(sql, operationId));
+          if (!row) return undefined;
+          if (row.status === 'prepared') return false;
+          await this.receiver.hold(row);
+          return true;
+        });
       } finally {
         this.maintaining = undefined;
       }
@@ -295,7 +273,6 @@ export class CodeStore {
     const timer = setTimeout(() => this.core.cancellation.abort(), this.config.drainSeconds * 1000);
     try {
       await this.maintaining?.catch(() => {});
-      await Promise.allSettled([...this.receiver.parts.values()]);
       while (this.core.active.size || this.receiver.jobs.size)
         await Promise.allSettled([...this.core.active, ...this.receiver.jobs.values()]);
     } finally {

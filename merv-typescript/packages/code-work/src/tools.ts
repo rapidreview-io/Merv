@@ -1,25 +1,12 @@
 import type { NounActions } from '@merv/api/types';
-import {
-  codeCommitInputSchema,
-  codeMergeInputSchema,
-  type Caller,
-  type CodeCommandRecord,
-  type CodeCommitInput,
-  type CodeMergeInput,
-  idSchema,
-} from '@merv/contracts';
-import {
-  codeMirrorRetryInputSchema,
-  codeRepositoryImportInputSchema,
-  codeUnitFenceInputSchema,
-} from '@merv/code/store/protocol';
+import { type Caller, type CodeCommandRecord, idSchema } from '@merv/contracts';
+import { codeUnitFenceInputSchema } from '@merv/code/store/protocol';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { baseControlSchema } from './bases.js';
-import { publicationControlSchema } from './publication-host.js';
 import { repositoryPrepareSchema } from './repository-setup.js';
 import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
-import { codePublicationIdSchema, codePublicationMergeSchema } from './publications.js';
+import { codePublicationIdSchema } from './publications.js';
 
 /** Runner refusals carry only codes; explain limits and recovery without exposing content. */
 const REFUSALS: Record<string, string> = {
@@ -98,7 +85,7 @@ const reads = (ctx: Context): NounActions => ({
     summary:
       'Read Code’s repository at ref: main (default), task/experiment ID (accepted code, else latest admitted commit), or full commit ID. Omit path for root; folders list folders first, then files with byte sizes. Files return text up to 1 MiB; larger/binary files are flagged.',
     description:
-      "Read the project's code as files, the way GitHub shows a repository: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",
+      "Read the project's code as files, the way a repository browser shows files: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",
     input: browseInput,
     output: outputs.files,
     was: ['code.files'],
@@ -116,9 +103,9 @@ const reads = (ctx: Context): NounActions => ({
   },
   status: {
     summary:
-      'Read bases/checks/recovery blockers, current/prior bindings, newest 200 units, store capacity/policies, unfinished transfers oldest first then recent refusals, and GitHub mirror status/errors/blockedRefs. Each blocker has next. code.base.retry and other base controls recover bases; mirror.blockedRefs.operationId feeds code.mirror.retry. Publication is asynchronous and blocks no session/handoff/acceptance.',
+      'Read retained bases, repository binding, units, storage, operations and recovery blockers. code.base.retry retries a failed base. Local integration is asynchronous; source branch pushes do not advance the research baseline.',
     description:
-      'Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, the repositories it was bound to before with when, by whom and why each was left, and durability: code once Code keeps the project’s repository), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.',
+      'Read the project repository binding, work units, retained base pins, project checks, admission limits and pending operations. Each blocker names the recovery action; code.base.retry retries a failed base. Local integrations retain independent review and accepted history.',
     input: z.object({}).strict(),
     output: outputs.status,
     was: ['code.status'],
@@ -126,9 +113,9 @@ const reads = (ctx: Context): NounActions => ({
   },
   unit: {
     summary:
-      'Read unit’s base/dependencies, exact reviewed acceptance and reviewer checkout attachment, writer generation/state, canonicalHead (resume point) and mirroredHead/At. storage code means retained code; receipt identifies its operation; none means no accepted code. Quarantined capture findings: code.status; code.unit.fence resolves them. GitHub publication lag blocks no work.',
+      'Read unit’s base/dependencies, exact reviewed acceptance and reviewer checkout attachment, writer generation/state, canonicalHead (resume point). storage code means retained code; receipt identifies its operation; none means no accepted code. Quarantined capture findings: code.status; code.unit.fence resolves them.',
     description:
-      'Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage code means Code’s own repository holds the accepted code, and receipt names the operation that made it durable; none means the unit was accepted without code. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while an upload its session had in flight when it closed, or the final capture of a worker that ended its own visit, finishes within the grace, closed, or recovery_required while a quarantined capture waits for code.unit.fence); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.',
+      'Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage code means Code’s own repository holds the accepted code, and receipt names the operation that made it durable; none means the unit was accepted without code. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while an upload its session had in flight when it closed, or the final capture of a worker that ended its own visit, finishes within the grace, closed, or recovery_required while a quarantined capture waits for code.unit.fence); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves.',
     input: z.object({ unitId: idSchema }).strict(),
     output: outputs.unit,
     was: ['code.unit.get'],
@@ -136,7 +123,7 @@ const reads = (ctx: Context): NounActions => ({
   },
   operation: {
     description:
-      'Inspect a durable code operation and its immutable commit receipt, by the codecmd_ id code.commit or code.merge returned. A leased worker reads the operations of its own unit of work, its reviewer included. A succeeded receipt identifies the exact committed head, tree, parent and stats; command.workspace only names the checkout. It does not authorize central publication.',
+      'Inspect a retained historical code operation and its immutable receipt by operation id. Current work uses ordinary Git and frozen submissions. A leased worker reads the operations of its own unit of work, its reviewer included. A succeeded receipt identifies the exact committed head, tree, parent and stats; command.workspace only names the checkout. It does not authorize central publication.',
     input: z.object({ commandId: idSchema }).strict(),
     output: outputs.operation,
     was: ['code.operation'],
@@ -194,24 +181,6 @@ const writes = (ctx: Context): NounActions => ({
     was: ['code.unit.fence'],
     handler: (caller, input) => ctx.codeWork.fenceUnit(caller, input),
   },
-  mirror_retry: {
-    summary:
-      'Admin only, no leased worker; stable requestId. Requeue mirror.blockedRefs.operationId from code.status. For code_mirror_diverged, preserve the remote commit first and set acknowledgeRemote to that exact commit. Other repeated failures simply requeue. Never forces/deletes refs: work branches fast-forward; accepted/base refs are create-only. Async publication blocks no session, handoff or acceptance.',
-    description:
-      'Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.',
-    input: codeMirrorRetryInputSchema,
-    was: ['code.mirror.retry'],
-    handler: (caller, input) => ctx.codeWork.retryMirror(caller, input),
-  },
-  repository_import: {
-    summary:
-      'Admin only, no worker. Import hosted history (new projects already hosted). source github reads a linked ref; bundle supplies tip/sha256/size. Use code-import, or PUT /code/v2/uploads/{id}/parts/{offset} then POST /code/v2/uploads/{id}/complete. Bundle bases must be in code.status store.tips; split larger histories. Integrity/connectivity, sizes/counts, paths/modes, links/submodules, deny globs/credentials checked; findings refuse the import without matched text. Retry same requestId/input; changes conflict.',
-    description:
-      'Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker. New projects already have a managed repository. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.',
-    input: codeRepositoryImportInputSchema,
-    was: ['code.repository.import'],
-    handler: (caller, input) => ctx.codeWork.importRepository(caller, input),
-  },
   repository_configure: {
     summary:
       'Admin; stable requestId. Replace denyGlobs and secretExemptGlobs (skip fixture credential checks). Root-relative globs: literals, ? one character, * within segment, ** across segments. Always give check:null (off) or command/timeoutSeconds/image (provider/offerId/optional snapshotId). Runs rented writable merged tree with network, no Merv credentials/environment; verdict records this. Failure creates reviewed conflict-resolution task; missing sandbox connection leaves bases unsealed with code_check_unavailable.',
@@ -223,33 +192,19 @@ const writes = (ctx: Context): NounActions => ({
   },
   repository_prepare: {
     summary:
-      'Admin/agent: import GitHub history using connection revision, branch head/current main if bound; preserve repository identity/main/work pins. New history creates independent integration review. Retry identical input after acceptance to CAS-advance main; moved heads need new preparation. Ready is local integration, publication separately gated. Retry uncertain/importing requests identically; fix findings before new requests.',
+      'Admin/agent: integrate a source branch already pushed to Merv. Pin its exact head and current research main; an independent integration review preserves both histories.',
     description:
-      'Prepare the linked GitHub repository using its selected base branch and exact head. A project administrator or their agent selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.',
+      'Select baseBranch, headOid and expectedMainOid from the retained project remote. New source history opens one independently reviewed integration task. Retry identical inputs after acceptance to advance the baseline by compare-and-swap. Running work keeps its original pins.',
     input: repositoryPrepareSchema,
     was: ['code.repository.prepare'],
     handler: (caller, input) => ctx.codeWork.prepareRepository(caller, input),
   },
   publication_sync: {
     description:
-      'Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.',
+      'Reconcile reviewed integrations and advance the local research baseline after verifying the accepted content and ancestry. Requires project write authority and refuses leased workers.',
     input: z.object({}).strict(),
     was: ['code.publication.sync'],
     handler: (caller) => ctx.codeWork.syncPublications(caller),
-  },
-  publication_merge: {
-    description:
-      'Project administrator or their agent, never a leased worker: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
-    input: codePublicationMergeSchema,
-    was: ['code.publication.merge'],
-    handler: (caller, input) => ctx.codeWork.mergePublication(caller, input),
-  },
-  publication_control: {
-    description:
-      'Project administrator or their agent, never a leased worker: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
-    input: publicationControlSchema,
-    was: ['code.publication.control'],
-    handler: (caller, input) => ctx.codeWork.controlPublication(caller, input),
   },
 });
 
@@ -263,18 +218,18 @@ export const codeToolsPlugin = {
         readOnly: true,
         summary: 'Read repository files, history and Code state.',
         description:
-          "Read the project's code and Code's records: files (a folder or file at a ref, as GitHub shows it), log (history newest first, each commit with its work unit), status (bases, binding, units, blockers, store, transfers, mirror), unit (what Code holds about one work unit) and operation (a code.commit or code.merge operation and its receipt). It changes nothing.",
+          "Read the project's code and Code's records: files (a folder or file at a ref, at an exact revision), log (history newest first, each commit with its work unit), status (bases, binding, units, blockers, store, transfers), unit (what Code holds about one work unit) and operation (a retained operation and its receipt). It changes nothing.",
         actions: reads(ctx),
       }),
     );
     ctx.effect(() =>
       ctx.tools.noun('code.write', {
         summary:
-          'Admin/agent repository controls; no leased workers. Base controls take key from code.status, reason and stable requestId. repository_prepare alone moves main to outside history. publication_control has an inner action.',
+          'Admin/agent repository controls; no leased workers. Base controls take key from code.status, reason and stable requestId. repository_prepare alone moves main to outside history.',
         description:
-          "Change how Code keeps this project's repository; a project administrator or their agent, never a leased worker. base_retry … base_repair control a base by its key from code.read status; unit_fence, mirror_retry; repository_import, repository_configure and repository_prepare (the only way main moves to outside history); publication_sync, publication_merge and publication_control (whose own inner action names the control).",
+          "Change how Code keeps this project's repository; a project administrator or their agent, never a leased worker. base_retry … base_repair control a base by its key from code.read status; unit_fence; repository_configure and repository_prepare (the only way main moves to outside history); publication_sync.",
         actions: writes(ctx),
-        // Its capability is gone (founder): what remains is preparing the linked repository.
+        // Historical bind names point to reviewed integration of an already pushed branch.
         removed: {
           'code.local.bind': 'repository_prepare',
           'code.repository.rebind': 'repository_prepare',
@@ -286,30 +241,11 @@ export const codeToolsPlugin = {
         name: 'code.publication.read',
         tier: 'ui' as const,
         description:
-          'Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.',
+          'Read retained local integration and historical publication evidence. No external service is contacted.',
         inputSchema: codePublicationIdSchema,
         readOnly: true,
-        openWorld: true,
         handler: (caller: Caller, input: { proposalId: string }) =>
           ctx.codeWork.publicationDetails(caller, input.proposalId),
-      },
-      {
-        name: 'code.commit',
-        tier: 'worker' as const,
-        description:
-          'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. It commits what the checkout holds and stages, ignored paths aside; a new or changed file over 50 MiB fails the operation, so keep such data out of Git. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused. The runner also commits this checkout by itself every five minutes ("Checkpoint: …"), which moves HEAD: an expectedHead that only those checkpoints have moved past is taken as the newest of them, so the commit lands on top of them. An operation that failed with workspace_head_conflict means HEAD moved after you read it: read it again and commit under a new requestId.',
-        inputSchema: codeCommitInputSchema,
-        handler: async (caller: Caller, input: CodeCommitInput) =>
-          await attached(ctx.codeWork.commit(caller, input)),
-      },
-      {
-        name: 'code.merge',
-        tier: 'worker' as const,
-        description:
-          'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.',
-        inputSchema: codeMergeInputSchema,
-        handler: async (caller: Caller, input: CodeMergeInput) =>
-          await attached(ctx.codeWork.merge(caller, input)),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
