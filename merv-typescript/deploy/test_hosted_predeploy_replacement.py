@@ -208,9 +208,12 @@ class Replacement(unittest.TestCase):
             original_atomic(path, data, *args)
         with patch.object(vm, 'atomic', atomic), \
              patch.object(vm, 'durable_tree', lambda p: events.append('tree')), \
-             patch.object(vm, 'durable_directory', lambda p: events.append('home' if p == self.home else 'runs')):
+             patch.object(vm, 'durable_directory', lambda p: events.append('home' if p == self.home else 'runs' if p == self.root else 'new-dir')):
             self.step.replace_predeploy({})
-        self.assertEqual(events[-6:], ['replacement.json', 'preflight.json', 'tree', 'runs', 'owner', 'home'])
+        self.assertLess(events.index('preflight.json'), events.index('tree'))
+        self.assertLess(events.index('tree'), events.index('runs'))
+        self.assertLess(events.index('runs'), events.index('owner'))
+        self.assertEqual(events[-1], 'home')
 
     def test_replacement_can_follow_another_failed_gate_with_same_migration(self):
         self.write(self.old, 'replacement', {'successor': 'old', 'predecessor': 'older', 'migration': self.proof})
@@ -231,6 +234,81 @@ class Replacement(unittest.TestCase):
             result = self.root_step('drain', {'driver': 'test', 'arg': {}})
         self.assertEqual(result, {'drained': True})
         self.assertEqual(vm.owner(), 'new')
+
+    def test_gate_receipt_is_durable_before_return(self):
+        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
+        observed = []
+        original = vm.durable_directory
+        def sync(path):
+            if path == self.new and (path / 'gates.json').exists(): observed.append('gates-durable')
+            original(path)
+        with patch.object(vm, 'durable_directory', sync), patch.object(vm.Step, 'gates', return_value={'all': 'pass'}):
+            self.root_step('gates', {'driver': 'test', 'arg': {}})
+        self.assertIn('gates-durable', observed)
+
+    def test_push_cannot_start_until_intent_directory_is_durable(self):
+        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
+        original = vm.durable_directory
+        effects = []
+        def fail(path):
+            if path == self.new and (path / 'mutation-started.json').exists():
+                raise OSError('directory fsync failed')
+            original(path)
+        with patch.object(vm, 'durable_directory', fail), patch.object(vm.Step, 'push', lambda *a: effects.append('push')):
+            with self.assertRaisesRegex(OSError, 'fsync failed'):
+                self.root_step('push', {'driver': 'test', 'arg': {}})
+            # A visible journal left by a failed barrier is not enough on retry either.
+            with self.assertRaisesRegex(OSError, 'fsync failed'):
+                self.root_step('push', {'driver': 'test', 'arg': {}})
+        self.assertEqual(effects, [])
+
+    def test_legacy_requires_birth_during_current_boot(self):
+        original_read = Path.read_text
+        values = {'/proc/sys/kernel/random/boot_id': '12345678-1234-1234-1234-123456789abc',
+                  '/proc/stat': 'cpu x\nbtime 100\n', '/proc/uptime': '900.0 0.0'}
+        def read(path, *a, **kw):
+            return values[str(path)] if str(path) in values else original_read(path, *a, **kw)
+        with patch.object(Path, 'read_text', read), patch.object(vm.time, 'time', return_value=1000):
+            for born in (b'0', b'99', b'100', b'1001', b'unknown'):
+                with self.subTest(born=born), patch.object(vm, 'run', return_value=born):
+                    with self.assertRaises(RuntimeError): vm.legacy_boot_proof(self.old)
+            anchor = {'_EXE': '/usr/bin/sudo', '_COMM': 'sudo', '_BOOT_ID': '12345678123412341234123456789abc',
+                      '__MONOTONIC_TIMESTAMP': '500000000',
+                      'MESSAGE': 'user ; COMMAND=/usr/bin/python3 ' + str(self.old / 'source/deploy/hosted-release-vm.py') + ' preflight ' + str(self.old)}
+            with patch.object(vm, 'run', side_effect=lambda cmd, **kw: b'200' if cmd[0] == 'stat' else json.dumps(anchor).encode()):
+                self.assertEqual(vm.legacy_boot_proof(self.old)['directoryBirthTime'], 200)
+                values['/proc/uptime'] = '50.0 0.0'
+                with self.assertRaises(RuntimeError): vm.legacy_boot_proof(self.old)
+
+    def test_legacy_pipeline_cannot_skip_no_reboot_verification(self):
+        hashes = {b'legacy-js': '4d41a34d18f98037764aa2ee59d9c077917b22bf0ec23738c4ab41cbc25aef28',
+                  b'legacy-py': '27df53c765e319b411ea2e0eb04a5530e1a63c2fab604014564594430b3606b9'}
+        (self.old / 'source/deploy/hosted-release.mjs').write_bytes(b'legacy-js')
+        (self.old / 'source/deploy/hosted-release-vm.py').write_bytes(b'legacy-py')
+        original = vm.sha
+        with patch.object(vm, 'sha', lambda value: hashes[value] if value in hashes else original(value)):
+            with patch.object(vm, 'legacy_boot_proof', side_effect=RuntimeError('no proof')) as proof:
+                self.refuses()
+                proof.assert_called_once_with(self.old)
+            with patch.object(vm, 'legacy_boot_proof', return_value={'bootId': 'verified'}):
+                receipt = self.step.replace_predeploy({})
+                self.assertEqual(receipt['legacyNoReboot'], {'bootId': 'verified'})
+
+    def test_journal_anchor_rejects_reboot_spoof_duplicates_and_bad_time(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        record = {'_EXE': '/usr/bin/sudo', '_COMM': 'sudo', '_BOOT_ID': boot.replace('-', ''),
+                  '__MONOTONIC_TIMESTAMP': '1000000',
+                  'MESSAGE': 'user ; COMMAND=/usr/bin/python3 ' + str(self.old / 'source/deploy/hosted-release-vm.py') + ' preflight ' + str(self.old)}
+        vm.legacy_preflight_anchor([record], self.old, boot, 2)
+        cases = [[], [record, record],
+                 [{**record, '_BOOT_ID': 'other-boot'}],
+                 [{**record, '_EXE': '/usr/bin/logger'}],
+                 [{**record, '__MONOTONIC_TIMESTAMP': '3000000'}],
+                 [{**record, '__MONOTONIC_TIMESTAMP': '-1'}],
+                 [{**record, 'MESSAGE': 'user ; COMMAND=/usr/bin/echo ' + record['MESSAGE']}]]
+        for records in cases:
+            with self.subTest(records=records), self.assertRaises(RuntimeError):
+                vm.legacy_preflight_anchor(records, self.old, boot, 2)
 
     def test_recheck_rejects_migration_change(self):
         with self.assertRaisesRegex(RuntimeError, 'migration changed'):

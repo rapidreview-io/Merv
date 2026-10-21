@@ -282,8 +282,15 @@ requires the exact named active production run, an expired driver lease, and a
 recorded gate failure. It rejects any successful gates receipt, push/catalog
 receipt, mutation intent, backup indicating an interrupted mutation, other
 progress, or unrecognized predecessor pipeline. The legacy d6ade026 pipeline is
-explicitly fingerprinted because it persists a gates receipt before push; absence
-of that receipt proves its failure preceded registry and production mutations.
+explicitly fingerprinted because it records a gates receipt before push. Its old
+receipt writer did not fsync the directory, so absence alone is insufficient after
+a reboot. Replacement requires a unique original preflight invocation in the
+trusted sudo journal, anchored to the current kernel boot ID and monotonic time
+(searching all retained boots). Filesystem birth time, boot time and uptime must
+also agree. Timestamp comparison alone is insufficient; missing, duplicated,
+spoofed or other-boot journal evidence refuses the legacy run. The receipt retains that proof. The new
+writer fsyncs every receipt directory before returning; mutation intent is durable
+before effects, including a retry after a failed fsync.
 Ordinary resume still rejects pipeline drift. Staging is not involved.
 
 Under the maintenance and hosted locks, replacement verifies the exact native

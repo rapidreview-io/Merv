@@ -23,6 +23,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import stat
@@ -149,6 +150,8 @@ def atomic(path, raw, mode=0o600):
         os.fsync(out.fileno())
     os.chmod(tmp, mode)
     os.replace(tmp, path)
+    # The new name must survive power loss before any caller can start external effects.
+    durable_directory(path.parent)
 
 
 def read(path):
@@ -184,6 +187,59 @@ def durable_directory(path):
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def legacy_preflight_anchor(records, directory, boot_id, uptime):
+    expected = ['/usr/bin/python3', str(directory / 'source/deploy/hosted-release-vm.py'), 'preflight', str(directory)]
+    anchors = []
+    for record in records:
+        # Underscore journal fields are supplied by journald, not the message's sender.
+        if record.get('_EXE') != '/usr/bin/sudo' or record.get('_COMM') != 'sudo':
+            continue
+        message = record.get('MESSAGE', '')
+        if not isinstance(message, str) or 'COMMAND=' not in message:
+            continue
+        try:
+            command = shlex.split(message.split('COMMAND=', 1)[1])
+        except ValueError:
+            continue
+        if command == expected:
+            anchors.append(record)
+    need(len(anchors) == 1, 'original preflight has no unique trusted journal anchor')
+    anchor = anchors[0]
+    monotonic = anchor.get('__MONOTONIC_TIMESTAMP', '')
+    need(anchor.get('_BOOT_ID') == boot_id.replace('-', '') and
+         isinstance(monotonic, str) and monotonic.isdigit() and 0 < int(monotonic) <= uptime * 1000000,
+         'original preflight did not run in the current kernel boot')
+    return {'bootId': anchor['_BOOT_ID'], 'monotonicMicroseconds': monotonic,
+            'cursor': anchor.get('__CURSOR'), 'command': expected}
+
+
+def legacy_boot_proof(directory):
+    """Legacy receipts lacked directory fsync: accept their absence only without a reboot.
+    A trusted sudo journal record anchors the unique original preflight to this
+    kernel boot. Birth time is corroboration, never a timestamp-only exception.
+    """
+    boot_path = Path('/proc/sys/kernel/random/boot_id')
+    boot_id = boot_path.read_text().strip()
+    need(re.fullmatch(r'[0-9a-f-]{36}', boot_id), 'kernel boot identity unavailable')
+    boot = [line.split()[1] for line in Path('/proc/stat').read_text().splitlines() if line.startswith('btime ')]
+    need(len(boot) == 1, 'kernel boot time unavailable')
+    started = int(boot[0])
+    uptime = float(Path('/proc/uptime').read_text().split()[0])
+    now = time.time()
+    born_raw = run(['stat', '--format=%W', '--', str(directory)]).decode().strip()
+    need(re.fullmatch(r'[0-9]+', born_raw), 'filesystem birth time unavailable')
+    born = int(born_raw)
+    need(abs(now - uptime - started) < 5 and started < born <= now,
+         'legacy run predates this boot or its no-reboot evidence is unproven')
+    # Search all retained boots, never only the current boot. Resume does not invoke preflight.
+    journal = run(['journalctl', '--no-pager', '--output=json', '_COMM=sudo', '--grep=' + directory.name], timeout=60)
+    anchor = legacy_preflight_anchor([json.loads(line) for line in journal.splitlines()], directory, boot_id, uptime)
+    need(boot_path.read_text().strip() == boot_id, 'kernel boot changed during verification')
+    info = directory.stat()
+    return {'bootId': boot_id, 'bootTime': started, 'directoryBirthTime': born, 'preflightAnchor': anchor,
+            'directoryDevice': info.st_dev, 'directoryInode': info.st_ino}
 
 
 def durable_tree(path):
@@ -725,13 +781,14 @@ class Step:
         for filename in ('gates.json', 'push.json', 'catalog.json', 'finish.json', 'mutation-started.json',
                          'catalog.before', 'catalog.target', 'env.before', 'stage.before'):
             need(not (old / filename).exists(), 'predecessor has later or ambiguous evidence: ' + filename)
-        # These audited drivers persist gates.json before attempting push. With no gates receipt,
-        # neither an interrupted push nor a downstream production mutation is reachable.
+        # Audited drivers record gates before push. The legacy driver lacked directory fsync,
+        # so receipt absence requires a trusted original-preflight boot anchor plus birth-time evidence.
         baseline = {'hosted-release.mjs': '4d41a34d18f98037764aa2ee59d9c077917b22bf0ec23738c4ab41cbc25aef28',
                     'hosted-release-vm.py': '27df53c765e319b411ea2e0eb04a5530e1a63c2fab604014564594430b3606b9'}
         old_pipeline = {n: sha((old / 'source/deploy' / n).read_bytes()) for n in baseline}
         current_pipeline = {n: sha((self.run / 'source/deploy' / n).read_bytes()) for n in baseline}
         need(old_pipeline in (baseline, current_pipeline), 'predecessor pipeline lacks audited pre-push ordering')
+        boot_proof = legacy_boot_proof(old) if old_pipeline == baseline else None
         for archive, key in (('source.tar.gz', 'sourceArchiveSha256'), ('sandboxes.tar.gz', 'sandboxesArchiveSha256')):
             need(re.fullmatch(r'[a-f0-9]{64}', self.plan.get(key, '')) and
                  sha((self.run / archive).read_bytes()) == self.plan[key], 'replacement archive hash mismatch')
@@ -750,6 +807,7 @@ class Step:
             need(not (self.run / filename).exists(), 'replacement run is not fresh')
         receipt = {'predecessor': name, 'successor': self.run.name, 'sourceCommit': self.plan['sourceCommit'],
                    'oldCandidate': build['candidate'], 'migration': migration, 'predecessorPipeline': old_pipeline,
+                   'legacyNoReboot': boot_proof,
                    'evidence': {p.name: sha(p.read_bytes()) for p in old.iterdir() if p.is_file()}}
         atomic(self.run / 'replacement.json', json.dumps(receipt).encode())
         atomic(self.run / 'preflight.json', json.dumps(before).encode())
@@ -1315,6 +1373,8 @@ def step(name, directory, payload):
                 if name in ('push', 'catalog', 'drain', 'switch', 'stage') or (name == 'note' and arg.get('deployAttempted')):
                     if not (directory / 'mutation-started.json').exists():
                         atomic(directory / 'mutation-started.json', json.dumps({'step': name}).encode())
+                    # Retry may see a journal whose earlier directory fsync failed: barrier again.
+                    durable_directory(directory)
                 result = getattr(work, name)(arg)
             if name == 'staging_preflight':
                 atomic(directory / 'preflight.json', json.dumps(result).encode())
