@@ -4,7 +4,7 @@
  * called by a person's agent over MCP, by a page over POST /tools, by a leased worker under a
  * published policy (whose listing is name for name the base one), and by a Pi turn frozen before
  * the release. Results are compared with the captured shapes, never with the noun actions;
- * system.status also retains the approved additive project budgets field.
+ * system.status and code.status retain the approved additive budgets and git fields.
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -223,8 +223,28 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
         .replaceAll('$artifact', seed.id)
         .replaceAll('$task', task.id),
     ) as Record<string, unknown>;
+  const baselineOid = (await app.ctx.codeWork.status(owner)).project!.main.oid;
+  const checkGit = (git: Awaited<ReturnType<typeof app.ctx.codeWork.status>>['git']) => {
+    assert.ok(git);
+    const { observedAt, ...facts } = git;
+    assert.ok(Number.isFinite(Date.parse(observedAt)));
+    assert.deepEqual(facts, {
+      remotePath: `/git/${boot.project.id}.git`,
+      available: true,
+      baselineOid,
+      baselinePolicy: 'reviewed_integration',
+      userBranches: [],
+      truncated: false,
+      localWorkingTree: 'unknown',
+    });
+  };
   const page = async (name: string, token: string, body = input(name)): Promise<Outcome> => {
     const { status, body: answer } = await tool(name.split('#')[0]!, token, body);
+    if (
+      status === 200 &&
+      (name === 'code.status' || (name === 'code.read' && body.action === 'status'))
+    )
+      checkGit(answer.result.git);
     return status === 200 ? { ok: shape(answer.result) } : { status, error: answer.error?.code };
   };
   const client = new Client({ name: 'compat', version: '1' });
@@ -238,6 +258,11 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     const result = await client.callTool({ name: name.split('#')[0]!, arguments: args });
     const [first, ...rest] = result.content as { type: string; text: string }[];
     const value = JSON.parse(first!.text);
+    if (
+      !result.isError &&
+      (name === 'code.status' || (name === 'code.read' && args.action === 'status'))
+    )
+      checkGit(value.git);
     // A look's image comes as an image beside its text, as it always did.
     if (rest.some((part) => part.type === 'image')) value.image = true;
     return result.isError ? { error: value.error.code as string } : { ok: shape(value) };
@@ -396,6 +421,40 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     secret,
   });
   const worker = await app.ctx.sessions.authenticate(secret);
+  await t.test(
+    'leased MCP workers read Git status without gaining account Git credentials',
+    async () => {
+      const client = new Client({ name: 'compat-worker', version: '1' });
+      t.after(() => client.close());
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(`${app.ctx.api.url}/mcp`), {
+          requestInit: { headers: { authorization: `Bearer ${secret}` } },
+        }),
+      );
+      assert.ok(
+        !(await client.listTools()).tools.some(({ name }) => name === 'code.git_credential'),
+      );
+      for (const call of [
+        { name: 'code.status', arguments: {} },
+        { name: 'code.read', arguments: { action: 'status' } },
+      ]) {
+        const answer = await client.callTool(call);
+        assert.ok(!answer.isError);
+        const value = JSON.parse((answer.content as { text: string }[])[0]!.text);
+        assert.deepEqual({ ok: shape(value) }, captured.contracts['code.status']!.owner);
+        checkGit(value.git);
+      }
+      const denied = await client.callTool({
+        name: 'code.git_credential',
+        arguments: { publicKey: 'unused because worker policy refuses the tool', mode: 'write' },
+      });
+      assert.equal(denied.isError, true);
+      assert.equal(
+        JSON.parse((denied.content as { text: string }[])[0]!.text).error.code,
+        'execution_tool_forbidden',
+      );
+    },
+  );
   // Project budget visibility must not widen a leased worker's session-only status.
   for (const [name, args] of [
     ['system.status', {}],
@@ -524,6 +583,21 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     },
   );
   assert.equal(logged.find((row) => row.tool === 'code.operation')?.outcome, 'failed');
+  // Keep the retired-call telemetry assertion independent of this new noun call.
+  await t.test(
+    'noun Git status retains the legacy shape and live-ref values on pages and MCP',
+    async () => {
+      for (const token of [boot.token, reader.token])
+        assert.deepEqual(
+          await page('code.read', token, { action: 'status' }),
+          captured.contracts['code.status']!.owner,
+        );
+      assert.deepEqual(
+        await mcp('code.read', { action: 'status' }),
+        captured.contracts['code.status']!.owner,
+      );
+    },
+  );
 });
 
 test('a Pi turn frozen with a retired name before the release still calls it', async (t) => {

@@ -286,6 +286,7 @@
         "ok": [
           "bases",
           "blockers",
+          "git",
           "landing",
           "operations",
           "project",
@@ -299,6 +300,7 @@
         "ok": [
           "bases",
           "blockers",
+          "git",
           "landing",
           "operations",
           "project",

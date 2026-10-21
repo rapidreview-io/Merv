@@ -95,7 +95,7 @@ async function fixture(t: test.TestContext) {
     await server.stop();
     await tools.close();
   });
-  const mint = async (mode: 'read' | 'write', projectId = f.admin.projectId, key = publicKey) => {
+  const call = async (name: string, args: Record<string, unknown>) => {
     const response = await fetch(base + '/mcp', {
       method: 'POST',
       headers: {
@@ -107,18 +107,20 @@ async function fixture(t: test.TestContext) {
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: { name: 'code.git_credential', arguments: { projectId, publicKey: key, mode } },
+        params: { name, arguments: args },
       }),
     });
     const body = await response.json();
     assert.equal(response.status, 200);
     if (body.error || body.result?.isError) throw new Error(JSON.stringify(body));
-    return JSON.parse(body.result.content[0].text) as {
+    return JSON.parse(body.result.content[0].text);
+  };
+  const mint = async (mode: 'read' | 'write', projectId = f.admin.projectId, key = publicKey) =>
+    (await call('code.git_credential', { projectId, publicKey: key, mode })) as {
       url: string;
       encryptedToken: string;
       expiresAt: string;
     };
-  };
   const access = async (token: string, projectId = f.admin.projectId, write = false) =>
     fetch(
       `${base}/git/${projectId}.git/info/refs?service=git-${write ? 'receive' : 'upload'}-pack`,
@@ -131,6 +133,7 @@ async function fixture(t: test.TestContext) {
     calls,
     base,
     mint,
+    call,
     access,
     principal: await oauth.authenticate(tokens.access_token),
     refresh: async () => {
@@ -271,7 +274,34 @@ test(
       'refs/heads/user/oauth-smoke',
     ]);
     assert.equal(remote.output.trim().split('\t')[0], next);
-    const status = await f.code.status(await f.scope.caller(f.principal, f.admin.projectId));
+    // Read actual pushed refs through native OAuth MCP, including the retained flat alias.
+    const status = (await f.call('code.read', {
+      projectId: f.admin.projectId,
+      action: 'status',
+    })) as Awaited<ReturnType<typeof f.code.status>>;
+    const legacy = (await f.call('code.status', {
+      projectId: f.admin.projectId,
+    })) as typeof status;
+    assert.deepEqual(Object.keys(legacy).sort(), Object.keys(status).sort());
+    const { observedAt, ...facts } = status.git!;
+    const { observedAt: legacyObservedAt, ...legacyFacts } = legacy.git!;
+    assert.ok(Number.isFinite(Date.parse(observedAt)));
+    assert.ok(Number.isFinite(Date.parse(legacyObservedAt)));
+    assert.deepEqual(legacyFacts, facts);
+    assert.deepEqual(Object.keys(status.git!).sort(), [
+      'available',
+      'baselineOid',
+      'baselinePolicy',
+      'localWorkingTree',
+      'observedAt',
+      'remotePath',
+      'truncated',
+      'userBranches',
+    ]);
+    assert.equal(status.git!.remotePath, `/git/${f.admin.projectId}.git`);
+    assert.equal(status.git!.available, true);
+    assert.equal(status.git!.truncated, false);
+    assert.equal(status.git!.userBranches.length, 2);
     assert.equal(
       status.git!.userBranches.find((b) => b.name === 'user/oauth-smoke')!.headOid,
       next,
