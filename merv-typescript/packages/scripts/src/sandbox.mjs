@@ -1,13 +1,10 @@
-// Runtime resource: copied beside the compiled plugin by the build. Plain ESM, so it runs under
-// the permission model without tsx. It runs one script in QuickJS (WebAssembly); its only way out
-// is a `call` message the parent decides on. argv: QuickJS core's module URL, the variant's, and
-// the script's memory in bytes.
+// Build-copied ESM runtime, without tsx. argv: core URL, variant URL, memory bytes.
+// QuickJS can only request calls through the parent’s framed stdio protocol.
 const core = await import(process.argv[2]);
 const variant = (await import(process.argv[3])).default;
 const memory = Number(process.argv[4]);
-// This build cannot measure its blocks (no malloc_usable_size), so QuickJS's own limit counts
-// only per-block overhead: large strings and buffers pass it. The WebAssembly memory's maximum
-// is the hard cap: 16 MiB of startup heap (Emscripten's default initial) plus the script's share.
+// QuickJS accounting misses large strings/buffers without malloc_usable_size.
+// WASM caps actual memory: 16 MiB startup heap plus the script allowance.
 const pages = (bytes) => bytes / 65536;
 const wasmMemory = new WebAssembly.Memory({
   initial: pages(16 << 20),
@@ -42,7 +39,6 @@ process.stdin.on('data', (chunk) => {
     receive(message);
   }
 });
-// The parent is gone: nobody will answer.
 process.stdin.on('end', () => process.exit(0));
 
 function start({ code, names, timeoutMs, stack, calls, logLines, input: inputBytes, returned }) {
@@ -64,7 +60,6 @@ function start({ code, names, timeoutMs, stack, calls, logLines, input: inputByt
       return { code: 'script_memory', message: 'The script ran out of memory' };
     return { code: 'script_error', message: text.slice(0, 2048) };
   };
-  // A job that fails outside any promise (an interrupt, memory) ends the script.
   const jobs = () => {
     const result = runtime.executePendingJobs();
     if (result.error) finish({ type: 'done', ok: false, error: failure(result.error) });
@@ -159,7 +154,6 @@ function start({ code, names, timeoutMs, stack, calls, logLines, input: inputByt
     if (settled.error) return finish({ type: 'done', ok: false, error: failure(settled.error) });
     const value = vm.typeof(settled.value) === 'string' ? vm.getString(settled.value) : undefined;
     settled.value.dispose();
-    // The parent keeps at most `returned` bytes; past that, the start of the JSON text.
     finish(
       value?.length > returned
         ? { type: 'done', ok: true, result: value.slice(0, returned), truncated: true }

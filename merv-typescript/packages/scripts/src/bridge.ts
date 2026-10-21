@@ -20,7 +20,6 @@ export const LIMITS = {
   logLines: 200,
   /** Deeper JSON would overflow the stack of whatever serializes the answer next. */
   depth: 64,
-  /** The largest frame the child may send: a call's input escaped, or a result the child cut. */
   frame: 1 << 20,
 };
 
@@ -42,7 +41,6 @@ export interface ScriptResult {
   calls: ScriptCall[];
   truncated?: true;
 }
-/** Runs one tool call for the script; throws to refuse or fail it. */
 export type ScriptHost = (name: string, input: Record<string, unknown>) => Promise<unknown>;
 
 export const SANDBOX = fileURLToPath(new URL('./sandbox.mjs', import.meta.url));
@@ -50,8 +48,7 @@ export const SANDBOX = fileURLToPath(new URL('./sandbox.mjs', import.meta.url));
 const real = (url: string) => realpathSync(fileURLToPath(url));
 const core = real(import.meta.resolve('quickjs-emscripten-core'));
 const variant = real(import.meta.resolve('@jitl/quickjs-wasmfile-release-sync'));
-/** The package directories of QuickJS's modules (a directory grants all below it): with the
- *  sandbox's own file, all the child may read. */
+/** Only these real module directories and the sandbox file are readable by the child. */
 const readable = [
   core,
   variant,
@@ -66,7 +63,6 @@ const ENDS = new Set([
 ]);
 const unavailable = () => new MervError('script_unavailable', 'Scripts are unavailable here', 503);
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-/** How deeply `text` (valid JSON) nests, read without recursion. */
 export function depth(text: string): number {
   let [level, most, quoted] = [0, 0, false];
   for (let i = 0; i < text.length; i++) {
@@ -84,8 +80,7 @@ export function depth(text: string): number {
 let running = 0;
 let hosting = 0;
 const waiting: { owner: object; go: (run: boolean) => void }[] = [];
-/** Runs `fn` within LIMITS.hostCalls, queued in order beyond it; a queued call whose script
- *  ended (dropQueued) never runs and holds nothing. */
+/** FIFO global host slots; dropQueued cancels waiting calls without occupying slots. */
 async function hostSlot(owner: object, fn: () => Promise<void>) {
   if (hosting < LIMITS.hostCalls) hosting++;
   else if (!(await new Promise<boolean>((go) => waiting.push({ owner, go })))) return;
@@ -102,7 +97,6 @@ function dropQueued(owner: object) {
     if (waiting[i]!.owner === owner) waiting.splice(i, 1)[0]!.go(false);
 }
 
-/** One call message from the child, or undefined for anything a sandbox would not send. */
 export function parseCall(
   message: unknown,
   seen: Set<number>,
@@ -129,8 +123,7 @@ const failure = (error: unknown): ScriptError =>
     ? { code: error.code, message: error.message }
     : { code: 'internal_error', message: 'Internal server error' };
 
-/** The longest start of `text` whose JSON is at most `room` bytes, in whole code points: by
- *  those its size only grows (half a pair would be escaped to six bytes, the pair is four). */
+/** Search whole code points: an escaped half-surrogate costs more than its complete pair. */
 export function cut(text: string, room: number): string {
   if (bytes(text) <= room) return text;
   const points = Array.from(text);
@@ -143,9 +136,7 @@ export function cut(text: string, room: number): string {
   return points.slice(0, low).join('');
 }
 
-/** The whole answer within LIMITS.returned: the result, then as many logs as fit. A result too
- *  large alone, or that the child already cut (`whole` false), comes back as the start of its
- *  JSON text. */
+/** Bound the entire answer; oversized or already truncated results return a JSON-text prefix. */
 export function shape(
   head: Omit<ScriptResult, 'logs' | 'result' | 'truncated'>,
   logs: string[],
@@ -194,12 +185,8 @@ const frame = (message: unknown) => {
   return Buffer.concat([header, body]);
 };
 
-/**
- * Runs `code` in a fresh child (QuickJS in WebAssembly, no environment, no file reads but its
- * own modules, its own process group) whose only request is a tool call, each decided by `host`.
- * The two speak length-prefixed JSON over stdin and stdout. The child is always killed, at the
- * latest its timeout and 1.5 s after it was started; its slot is held until its host calls settle.
- */
+/** QuickJS child: empty environment, narrow read grants, separate process group, framed stdio.
+ * Kill by timeout + 1.5 s; hold its slot until started host calls settle. */
 export async function runScript(
   code: string,
   timeoutMs: number,
@@ -213,10 +200,8 @@ export async function runScript(
   const child = spawn(
     process.execPath,
     [
-      // Explicit, so the parent's own flags (tsx's --import in tests) are not inherited. Node's
-      // stack holds QuickJS's 512 KiB of WebAssembly frames with room to spare. The permission
-      // model of Node 22 walls off files, child processes and workers, not the network or
-      // signals; see the README.
+      // Explicit flags avoid inheriting parent imports. Stack allows QuickJS’s 512 KiB frames.
+      // Node permissions contain files/processes/workers, not network/signals; see README.
       '--permission',
       ...[...readable, entry].map((path) => `--allow-fs-read=${path}`),
       '--stack-size=2000',
@@ -236,7 +221,7 @@ export async function runScript(
       process.kill(-child.pid, 'SIGKILL');
     } catch {}
   };
-  // A write after the child is gone fails with EPIPE, which is no error of the parent's.
+  // Ignore EPIPE after child exit.
   child.stdin!.on('error', () => {});
   // Kept for the server's log when the child dies before it is ready; never the caller's.
   let stderr = '';
@@ -263,7 +248,6 @@ export async function runScript(
         : shape({ ok: true, calls: [...calls] }, logs, outcome.result, outcome.whole),
     );
   };
-  // Before the child is ready, anything else means it never ran the script.
   const forged = () =>
     end(
       started
@@ -317,7 +301,6 @@ export async function runScript(
     }
     switch (message?.type) {
       case 'log':
-        // The sandbox sends no line past the limit.
         if (typeof message.line !== 'string' || logs.length >= LIMITS.logLines) return forged();
         logs.push(cut(message.line, LIMITS.logLine));
         return;
@@ -335,7 +318,6 @@ export async function runScript(
       case 'done': {
         const { ok, result, error, truncated } = message as Record<string, any>;
         if (ok === true && (result === undefined || typeof result === 'string')) {
-          // A whole result is JSON; a cut one is the start of it.
           const whole = truncated !== true;
           try {
             if (whole && result !== undefined) JSON.parse(result);
@@ -378,7 +360,6 @@ export async function runScript(
     end(unavailable());
   };
   child.on('error', dead);
-  // A child that stops before it is ready never ran the script.
   child.on('close', () =>
     started ? end({ code: 'script_error', message: 'The script stopped' }) : dead(),
   );
@@ -386,7 +367,6 @@ export async function runScript(
     () => end({ code: 'script_timeout', message: 'The script ran out of time' }),
     timeoutMs + 1500,
   );
-  // Counted from here, where nothing before has awaited.
   running++;
   try {
     const outcome = await ended;

@@ -5,49 +5,32 @@ import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@mer
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
 
-/**
- * Who lists a tool, one field that MCP and Pi both read. core and deferred are every agent's (an
- * MCP client loads core up front: `_meta["anthropic/alwaysLoad"]`, Claude Code's alone); worker is
- * a bound execution's (a Pi conversation whose profile names it; a leased session as its frozen
- * policy grants); ui is Merv's own pages'. A leased session's listing does not read the tier: its
- * policy, `worker` and `for` decide it, as before tiers.
- */
+/** Agent tiers: core loads up front in Claude, deferred on demand; worker binds to a Pi profile,
+ * ui to pages. Leased sessions use their policy, worker and for fields, never tier. */
 export type ToolTier = 'core' | 'deferred' | 'worker' | 'ui';
 
-/** One action of a noun tool: its own argument object, handler and contract. */
 export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
-  /** Any schema that produces an object, a refined one included: it is unwrapped only to
-   *  describe it, and calls are validated with it as given. */
+  /** Object-producing schema; discovery unwraps it, runtime validation does not. */
   input: S;
-  /** The action's whole contract, on its argument object. */
   description: string;
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
-  /** Fields scripts rely on (ids, states, revisions, lists, cursors), as a passthrough object:
-   *  it types a script's result, and is never a runtime validator. */
+  /** Script output declaration only, never a runtime validator. */
   output?: ZodTypeAny;
-  /** The action only reads, in a noun tool whose other actions write (its `reads`). */
   readOnly?: boolean;
-  /** The action calls a service outside Merv (see ToolDefinition.openWorld). */
   openWorld?: boolean;
-  /** Its retired names' MCP title, as ToolDefinition.act. */
   act?: { title: string };
-  /** The retired names that ran this action. Each stays callable by name as a hidden alias
-   *  (Tools.alias) with this action's flat input and its own description. */
+  /** Hidden callable aliases with the action’s flat input and description. */
   was?: string[];
   /** 'people': its retired names are a person's, never listed to a leased session (as the noun's). */
   for?: 'people';
-  /** As ToolDefinition.present, for this action's result and parsed arguments. */
   present?(result: unknown, input: z.infer<S>): CallToolResult;
 }
 export type NounActions = Record<string, NounAction>;
-/** A noun tool: `action` and the argument object named after it (Tools.noun). Its description has
- *  one clause per action, at most 600 characters with the calling rule the helper adds. */
 export type NounDefinition = Pick<
   ToolDefinition,
   'tier' | 'readOnly' | 'description' | 'for' | 'removed' | 'legacy' | 'conversationProfile'
 > & { actions: NounActions };
 
-/** A tool whose handler receives the input its schema parsed. */
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
@@ -58,54 +41,36 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  may use any schema. A legacy alias still needs an object-root Zod publication. */
   inputJsonSchema?: Tool['inputSchema'];
   readOnly?: boolean;
-  /** The tool calls a service outside Merv (the MCP openWorldHint). A read like this runs outside
-   *  the snapshot other reads hold, so a slow remote call keeps no reader connection; it is
-   *  admitted as any read and decided again before its result leaves. It must not write; a
-   *  database read opens its own. A noun tool's is per action. */
+  /** Open-world reads own their DB snapshots and recheck authority after remote calls.
+   * They must not write or hold reader connections across remote waits. Per action for nouns. */
   openWorld?: boolean;
-  /** For a tool whose other actions write: whether this parsed input only reads. Its reads are
-   *  offered to a reader's agent (its writes refused by their own checks) and run from scripts. */
+  /** Whether parsed input reads; scripts and reader discovery admit it, writes retain checks. */
   reads?(input: z.infer<S>): boolean;
   /** Default 'deferred'. A Pi profile's own tool (conversationProfile) is tier worker. */
   tier?: ToolTier;
-  /** 'people': never listed to a leased session (its every call refuses a session).
-   *  'conversations': listed to Pi conversations only, never to an MCP client. A noun's also keeps
-   *  every retired name of its actions from leased workers, so a noun that takes one of a worker's
-   *  tools takes no `for`. */
+  /** people excludes leased sessions; conversations excludes MCP. Nouns propagate to aliases. */
   for?: 'people' | 'conversations';
-  /** 'never': no leased worker is listed it. It is a person's, whose handler refuses every
-   *  worker, a page's own (ui.home), whose records a worker reads with their own tools, or a noun
-   *  tool, whose retired names workers keep until their published versions drain. Called by name
-   *  it still answers as it would. */
+  /** Exclude from worker discovery only; handlers must enforce call restrictions. */
   worker?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
-  /** What the tool does, in the product's words ('Submit verdict'): its MCP title. */
   act?: { title: string };
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
-  /** What an MCP client (an agent) is shown in place of the JSON result, such as a rendered
-   *  image beside a text summary. Other callers receive the JSON result. */
+  /** MCP presentation override; other callers receive the JSON result. */
   present?(result: unknown, input?: z.infer<S>): CallToolResult;
-  /** A noun tool's actions (built by `noun`): the registry also runs their retired names. */
   actions?: NounActions;
-  /** Retired names with no executable path, each answering tool_renamed with what remains: the
-   *  action of this tool that took its place. */
+  /** Removed names answer tool_renamed with the replacement action. */
   removed?: Record<string, string>;
-  /** A noun tool's name kept from a flat tool (§2.6): a call without `action` is its old flat
-   *  input, which `route` sends to an action, and a leased session is listed that old schema and
-   *  text, as before. */
+  /** Preserve a flat tool’s schema/text for workers; route calls without action to a noun action. */
   legacy?: {
     inputSchema: ZodTypeAny;
     description: string;
     route(input: Record<string, unknown>): [action: string, args: Record<string, unknown>];
   };
-  /** A name kept by hand until drain, spanning two nouns (nisa.research): listed to no outside
-   *  agent, yet admitted for one called by name as this tool is, as a retired name would be. */
+  /** Manually kept alias spanning nouns: hidden from agents, admitted by the target’s rules. */
   became?: string;
 }
-/** How one call is known to rules keyed on a tool's name, whatever form it took: an alias as the
- *  noun action it runs, a noun call as its own action, with that action's arguments flat. `as` is
- *  the name such rules know it by: the action's first retired name, else the tool's. */
+/** Canonical tool/action with flat args; as is the first retired name, else the tool’s name. */
 export interface ToolIdentity {
   tool: string;
   action?: string;
@@ -132,10 +97,8 @@ export interface RemoteToolDefinition extends ToolDescription {
   handler(caller: Caller, input: any): CallToolResult | Promise<CallToolResult>;
 }
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
-/** A native definition, or a remote tool's description without its handler (Tools.list()). */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
-/** A tool as caller rules see it: as registered. A mounted (`remote`) tool is tier deferred and
- *  never `readOnly`, whatever its server says. */
+/** Registration metadata; remote tools are deferred and never trusted as readOnly. */
 export type RegisteredTool = Pick<
   ToolDefinition,
   'name' | 'worker' | 'for' | 'conversationProfile'
@@ -144,37 +107,29 @@ export type RegisteredTool = Pick<
   readOnly: boolean;
   reads?: ToolDefinition['reads'];
   tier: ToolTier;
-  /** A noun tool's actions, as a script's declaration reads them; absent for every other tool. */
   actions?: Record<string, NounDeclaration>;
 };
-/** One noun action as declared to a script: whether its object may be left out, and its declared
- *  output as JSON Schema (NounAction.output). */
+/** Script action declaration: optional argument object and output JSON Schema. */
 export interface NounDeclaration {
   optional: boolean;
   output?: unknown;
 }
-/** A retired name: the tool it became and the action it is. args: every argument the old tool
- *  took, by its new name, and no other; absent, it took its action's own (a noun action's object,
- *  flat), never `action`. A noun action's `was` names are these too. */
+/** Alias argument whitelist/renames; absent means the action’s flat fields, excluding action. */
 export interface ToolAlias {
   tool: string;
   action: string;
   args?: Readonly<Record<string, string>>;
 }
-/** The callers one plugin issues: Pi's conversations, Sessions' managed runners and the admin's
- *  platform readers. */
 export type CallerKind = 'conversation' | 'managed' | 'platform';
 /** How the plugin that issues one kind of caller limits its tools; without them, 503. */
 export interface CallerRules {
-  /** Whether describe lists the tool to such a caller; invoke refuses any other with
-   *  `forbidden`. Absent: such a caller may use no tool, and describe refuses it too. */
+  /** Discovery and invocation allow-list; absent refuses both with forbidden. */
   offers?(tool: RegisteredTool): boolean;
   forbidden: MervError;
   /** Throws to withhold a handler's result from the caller. */
   returns?(result: unknown): void;
 }
-/** Throws to refuse one call, judging the registration that will run it and its parsed input;
- *  invoke runs it where caller rules admit the call. */
+/** Admission checks the captured registration and parsed input at invocation. */
 export type ToolAdmission = (
   tool: RegisteredTool,
   description: ToolDescription,
@@ -183,7 +138,6 @@ export type ToolAdmission = (
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
-  /** A native tool's presentation for MCP clients, from its definition's `present`. */
   mcp?: CallToolResult;
 }
 export interface ToolCatalog {
@@ -249,27 +203,19 @@ export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Builds and registers one noun tool, with its actions' retired names as hidden aliases. */
   noun(name: string, definition: NounDefinition): () => Promise<void>;
-  /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
-   *  MCP, offered every native tool of tier core or deferred (a reader: those that read) plus the
-   *  mounted tools its Access grants. That curates; it is no authority boundary (see POST /tools).
-   *  projectless: no caller and no mounted tool, which only a project's grant lists. names: retired
-   *  names to list too, as the tools they became, such as those a Pi profile names. */
+  /** Detached discovery metadata, curated without granting authority. Agents see core/deferred
+   * reads as permitted and granted mounts; projectless excludes mounts. names adds aliases. */
   describe(
     caller?: Caller,
     agent?: boolean,
     options?: { projectless?: boolean; names?: readonly string[] },
   ): Promise<ToolDescription[]>;
-  /** Every registered tool, for trusted in-process code only: it takes no caller. names: retired
-   *  names to list too, as the tools they became, such as those a Pi profile names. */
+  /** Trusted in-process listing without a caller; names adds explicitly requested aliases. */
   list(names?: readonly string[]): Promise<ListedTool[]>;
-  /** As registered, for caller rules and listings; undefined for an unknown name. */
   tool(name: string): RegisteredTool | undefined;
-  /** How rules keyed on a tool's name know this call (see ToolIdentity); `name` may be an
-   *  address `tool:action`. Undefined for an unknown name. */
+  /** Resolve names or tool:action addresses to rule identity; undefined if unknown. */
   identity(name: string, input: unknown): ToolIdentity | undefined;
-  /** Guidance as its caller calls it: each noun action it names by its address `tool:action` is
-   *  said flat for sessions, legacy calls and `flat` (a worker's context), and as the noun for
-   *  noun calls. */
+  /** Present tool:action guidance flat for sessions, legacy calls or flat; nested for noun calls. */
   guidance<T>(caller: Caller, value: T, flat?: boolean): T;
   /** `name` may be an address `tool:action` with the action's own flat arguments. */
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;

@@ -9,8 +9,7 @@ import type {
   Tools,
 } from './types.js';
 
-/** The object an action's input produces, unwrapped from refinements, defaults and optionality
- *  only to describe it: calls are validated with the input as given. */
+/** Unwrap only for discovery; runtime validation retains every refinement and default. */
 export function objectShape(schema: ZodTypeAny): z.ZodRawShape {
   let inner: ZodTypeAny = schema;
   for (;;) {
@@ -25,7 +24,6 @@ export function objectShape(schema: ZodTypeAny): z.ZodRawShape {
   return inner.shape;
 }
 
-/** The fields of an action's object, and whether it may be left out (every field optional). */
 const fields = (input: ZodTypeAny) => {
   const shape = objectShape(input);
   return {
@@ -37,31 +35,27 @@ const fields = (input: ZodTypeAny) => {
 const listed = (names: string[]) =>
   `{${names.slice(0, 4).join(', ')}${names.length > 4 ? ', …' : ''}}`;
 
-/** A call's action and its arguments: `{action, [action]: {…}}`; an action whose fields are all
- *  optional may leave its object out. */
+/** Action arguments nest under their name; all-optional objects may be omitted. */
 export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy']) {
   const names = Object.keys(actions);
   if (!names.length) throw new MervError('invalid_tool', 'A noun tool has at least one action');
   const shapes = Object.fromEntries(names.map((name) => [name, fields(actions[name]!.input)]));
   const properties = Object.fromEntries(
-    names.map((name) => [
+    Object.entries(actions).map(([name, { input, description }]) => [
       name,
-      actions[name]!.input.describe(
-        `Required when action is "${name}"; omit otherwise. ${actions[name]!.description}`,
-      ).optional(),
+      input
+        .describe(`Required when action is "${name}"; omit otherwise. ${description}`)
+        .optional(),
     ]),
   );
   const object = z
     .object({ action: z.enum(names as [string, ...string[]]), ...properties })
     .strict();
-  // Read before the arguments are: the chosen action's object is required (one whose fields are
-  // all optional reads an omitted object as {}), and every other action's is refused. The
-  // emitted JSON Schema cannot say either, so the server does, naming the fields.
+  // JSON Schema cannot express the required chosen object or forbid other action objects.
   return z.preprocess((value, ctx) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const input = value as Record<string, unknown>;
-    // A kept flat name's old flat input, without action, is checked as it was, then runs as the
-    // action it routes to.
+    // Validate legacy flat input before routing it.
     if (legacy && !('action' in input)) {
       const flat = legacy.inputSchema.safeParse(input);
       if (!flat.success)
@@ -70,7 +64,6 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
       return to ? { action: to, [to]: args } : value;
     }
     const action = input.action;
-    // A missing or unknown action is the enum's own error, which lists the actions.
     if (typeof action !== 'string' || !Object.hasOwn(shapes, action)) return value;
     for (const other of names)
       if (other !== action && input[other] !== undefined)
@@ -80,8 +73,6 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
           message: `"${other}" belongs to action ${other}; this call is action ${action}`,
           fatal: true,
         });
-    // Anything but an object there (an inner field of the same name, with the arguments left
-    // flat) is told where the arguments go.
     const given = input[action];
     if (given && typeof given === 'object' && !Array.isArray(given)) return value;
     if (given === undefined && shapes[action]!.optional) return { ...input, [action]: {} };
@@ -98,19 +89,13 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
 const RULE =
   ' Pass action and that action’s arguments under its own name, {"action":"x","x":{…}}; omit the other actions’ keys.';
 
-/**
- * One noun tool: `action` and the argument object named after it. No worker is listed one in
- * this campaign (worker 'never') but by a name kept from a flat tool (legacy): leased workers keep
- * the retired names, which the registry runs as aliases from each action's `was`. Whether a call
- * reads is its action's.
- */
+/** Nouns dispatch nested actions; workers keep legacy flat names through registry aliases. */
 export function noun(name: string, definition: NounDefinition): ToolDefinition {
   const { actions, legacy } = definition;
   const description = definition.description + RULE;
   if (description.length > 600)
     throw new MervError('invalid_tool', `${name}'s summary is over 600 characters`);
   const openWorld = Object.values(actions).some((action) => action.openWorld);
-  // Whether a call reads is its action's: every one (readOnly), or some (reads).
   const reading = Object.keys(actions).filter(
     (key) => definition.readOnly || actions[key]!.readOnly,
   );
@@ -128,7 +113,6 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
     tier: definition.tier ?? 'deferred',
     ...(definition.conversationProfile && { conversationProfile: definition.conversationProfile }),
     ...(definition.for && { for: definition.for }),
-    // A kept name stays a leased worker's, listed its old input (legacy).
     ...(legacy ? { legacy } : { worker: 'never' as const }),
     actions,
     ...(definition.removed && { removed: definition.removed }),
@@ -143,8 +127,7 @@ export function noun(name: string, definition: NounDefinition): ToolDefinition {
   };
 }
 
-/** Each action as a script's declaration reads it: whether its object may be left out, and its
- *  declared output as JSON Schema. */
+/** Script declarations include optionality and output JSON Schema. */
 export const nounActions = (actions: NounActions): Record<string, NounDeclaration> =>
   Object.fromEntries(
     Object.entries(actions).map(([name, action]) => [
@@ -158,15 +141,9 @@ export const nounActions = (actions: NounActions): Record<string, NounDeclaratio
     ]),
   );
 
-/** A rule's address `tool:action` wherever guidance names one, in text or as a tool. */
 const ADDRESS = /\b[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_.]*:[a-z][a-z0-9_]*\b/g;
 
-/**
- * Guidance as its caller calls it (Tools.guidance). A rule names a noun action by its address: a
- * leased session is told the retired name its frozen policy grants, with flat arguments, exactly
- * as before the nouns. Legacy endpoints and UI reads keep that vocabulary too; noun calls use
- * the noun tool, with the action’s arguments under its own name.
- */
+/** Present flat guidance to sessions and legacy/UI calls, nested guidance to noun calls. */
 export function presented<T>(
   tools: Pick<Tools, 'identity'>,
   caller: Caller,

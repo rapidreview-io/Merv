@@ -13,31 +13,21 @@ CREATE INDEX agent_tool_calls_started ON agent_tool_calls(started_at);
 `,
 };
 
-/** How long a row is kept. */
 const RETAINED_MS = 180 * 86_400_000;
-/** Rows waiting or being written past this are dropped, and said so: the log never holds a call
- *  up or grows without bound. */
+/** Bound pending/in-flight rows; overflow is counted, never blocks calls. */
 const PENDING = 10_000;
 const warn = (event: string, rows: number, error?: unknown) =>
   process.stderr.write(
     `${JSON.stringify({ event, rows, ...(error !== undefined && { error: String(error) }) })}\n`,
   );
-/** Text PostgreSQL holds: no NUL, at most 200 characters. */
 const text = (value: string | undefined) =>
   value === undefined ? null : value.replaceAll('\0', '').slice(0, 200);
-/** A row PostgreSQL refuses the same way on every retry. */
 const permanent = (error: unknown) =>
   error instanceof MervError && ['state_invalid_value', 'state_constraint'].includes(error.code);
 
-/**
- * Every outside agent's call (neither a leased session nor a Pi conversation), per tool and action
- * with its outcome, append-only beside session_tool_calls: no arguments, no results. Rows are
- * written in batches from the plugin's own timer, never inside a call's transaction or snapshot,
- * one flush at a time: a row leaves the queue once it is written, or once PostgreSQL refuses it
- * alone for good, which drops it and counts it. It is telemetry, and accepted as such: rows
- * logged within the last flush interval before shutdown may be lost, since the last flush is one
- * attempt that a failure or a killed process ends, and a call that ends after it is not logged.
- */
+/** Outside-agent telemetry: no arguments or results, serialized batches outside call transactions.
+ * Remove rows only after writing or permanent individual rejection. Shutdown makes one final
+ * attempt; late calls, transient failures or process death can lose the last interval. */
 export class AgentCallLog {
   private pending: AgentToolCall[] = [];
   private flushing?: Promise<void>;
@@ -51,8 +41,7 @@ export class AgentCallLog {
     if (this.pending.length < PENDING) this.pending.push(call);
     else this.dropped++;
   }
-  /** Writes what waits, and once a day drops rows older than 180 days. A flush asked for while
-   *  one runs is that one. */
+  /** Share concurrent flushes; prune once daily. */
   flush(): Promise<void> {
     return (this.flushing ??= this.drain().finally(() => (this.flushing = undefined)));
   }

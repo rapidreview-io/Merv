@@ -1,5 +1,4 @@
-/** A JSON Schema as a TypeScript type, for the line a script author reads; what it cannot say is
- *  `unknown`. At a native tool's root, projectId is the script's own, so it is left out. */
+/** JSON Schema declarations; unknown constructs stay unknown, native projectId is implicit. */
 type Schema = Record<string, unknown>;
 
 const identifier = /^[A-Za-z_$][\w$]*$/;
@@ -43,11 +42,7 @@ export function typeOf(schema: unknown, root = false): string {
   }
 }
 
-/** `tools.a.b(input: …): Promise<…>` under its description, cut at 300 characters. A mounted
- *  (not native) tool's projectId is its own argument, so it stays. A noun tool (registered with
- *  `actions`; any other tool's `action` is one more argument) has one overload per action, its
- *  object required unless every field is optional, typed by its declared output where it has
- *  one. */
+/** Nouns have one overload per action; mounted projectId stays an ordinary argument. */
 export function declaration(
   tool: { name: string; description?: string; inputSchema: unknown; outputSchema?: unknown },
   native = true,

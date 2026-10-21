@@ -11,10 +11,8 @@ import type {
 import type { Scripts } from './index.js';
 import { declaration } from './declare.js';
 
-/** Whether a script may call this tool at all, or with this input: any read of tier core or
- *  deferred its caller could make one call at a time, open-world reads included (they keep their
- *  own budgets), a noun read and a retired read included. A mounted tool's hints are its
- *  server's word. */
+/** Native core/deferred reads, including nouns, aliases and open-world reads, are scriptable.
+ * Mounted tools rely on their server’s read-only and destructive hints. */
 function scriptable(
   tool: RegisteredTool,
   { annotations: hints = {} }: Pick<ToolDescription, 'annotations'>,
@@ -26,24 +24,20 @@ function scriptable(
   return (tool.readOnly || !!reads) && (tool.tier === 'core' || tool.tier === 'deferred');
 }
 
-/** What this caller is offered, each with whether a script may call it as registered now, and a
- *  noun tool's actions. */
 async function offered(tools: Tools, caller: Caller) {
   return (await tools.describe(caller, true)).flatMap((description) => {
     const tool = tools.tool(description.name);
-    if (!tool) return [];
-    return [
-      {
-        description,
-        native: !tool.remote,
-        scriptable: scriptable(tool, description),
-        actions: tool.actions,
-      },
-    ];
+    return tool
+      ? {
+          description,
+          native: !tool.remote,
+          scriptable: scriptable(tool, description),
+          actions: tool.actions,
+        }
+      : [];
   });
 }
 
-/** Decided by the registry on the registration that runs the call. */
 const admit: ToolAdmission = (tool, description, input) => {
   if (!scriptable(tool, description, input))
     throw new MervError('script_tool_refused', `${tool.name} cannot be called from a script`, 403);
@@ -145,62 +139,60 @@ const person = (caller: Caller) =>
   check(!caller.session, 'session_forbidden', 'Scripts are not for leased workers', 403);
 
 export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
-  const list: ToolDefinition = {
-    name: 'script.tools',
-    description:
-      'Find the Merv tools a script.run program can call, each with a TypeScript declaration of its input. Pass query to search names and descriptions, names for exactly those tools, or neither for each namespace with its count and scriptable tools. A tool marked scriptable false cannot be called from a script.',
-    inputSchema: toolsInput,
-    readOnly: true,
-    worker: 'never',
-    handler: async (caller, input: z.infer<typeof toolsInput>) => {
-      person(caller);
-      return await find(tools, caller, input);
+  return [
+    {
+      name: 'script.tools',
+      description:
+        'Find the Merv tools a script.run program can call, each with a TypeScript declaration of its input. Pass query to search names and descriptions, names for exactly those tools, or neither for each namespace with its count and scriptable tools. A tool marked scriptable false cannot be called from a script.',
+      inputSchema: toolsInput,
+      readOnly: true,
+      worker: 'never',
+      handler: async (caller, input: z.infer<typeof toolsInput>) => {
+        person(caller);
+        return await find(tools, caller, input);
+      },
     },
-  };
-  const run: ToolDefinition = {
-    name: 'script.run',
-    description:
-      "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.read({ action: 'get' }); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
-    inputSchema: runInput,
-    readOnly: true,
-    // Not snapshotted: a snapshotted read runs inside one read snapshot its nested reads share
-    // (@merv/state's snapshot), so a script would hold one reader connection for its whole run.
-    // Open-world, each call inside reads on its own snapshot.
-    openWorld: true,
-    worker: 'never',
-    handler: async (caller, { code, timeoutMs = 10_000 }: z.infer<typeof runInput>) => {
-      person(caller);
-      // The names only shape `tools`; each call is judged when it runs. An offered noun's
-      // retired reads are there too: an agent may call them by name for one release.
-      const listed = await offered(tools, caller);
-      const shown = new Set(listed.map(({ description }) => description.name));
-      const retired = (await tools.list()).flatMap((definition) =>
-        'actions' in definition && shown.has(definition.name)
-          ? Object.values(definition.actions ?? {}).flatMap(({ was = [] }) => was)
-          : [],
-      );
-      const names = [
-        ...listed.flatMap(({ description, scriptable }) => (scriptable ? [description.name] : [])),
-        ...retired.filter((name) => {
-          const tool = tools.tool(name);
-          return !!tool && scriptable(tool, {});
-        }),
-      ];
-      // Each call is the caller's own: invoke applies every rule one call from this agent meets.
-      return await scripts.run(code, timeoutMs, names, async (name, input) => {
-        // A native tool's project is its caller's, as over /mcp; a mounted tool's arguments are
-        // its own. The registry reserves names starting with _ for mounted tools.
-        if (!name.startsWith('_')) {
-          const { projectId, ...rest } = input;
-          if (projectId !== undefined && projectId !== caller.projectId)
-            throw new MervError('invalid_input', 'A script works in its own project only');
-          input = rest;
-        }
-        return answer(await tools.invoke(name, caller, input, true, admit));
-      });
+    {
+      name: 'script.run',
+      description:
+        "Run a short JavaScript program on Merv that makes many reads in one call and returns only what it returns: filter and join before answering. The code is an async function body: `const p = await tools.project.read({ action: 'get' }); console.log(p.name); return p.id;` (call(name, input) is the raw form; a refused call rejects with 'code: message'). Limits: 50 calls, 4 at a time; 10 s (timeoutMs up to 30 s); 32 KiB back. Find tools and their inputs with script.tools. Reads only for now.",
+      inputSchema: runInput,
+      readOnly: true,
+      // Each nested read owns its snapshot; holding one for the whole script exhausts readers.
+      openWorld: true,
+      worker: 'never',
+      handler: async (caller, { code, timeoutMs = 10_000 }: z.infer<typeof runInput>) => {
+        person(caller);
+        // Names shape tools, not admission; retain offered nouns’ retired reads for one release.
+        const listed = await offered(tools, caller);
+        const shown = new Set(listed.map(({ description }) => description.name));
+        const retired = (await tools.list()).flatMap((definition) =>
+          'actions' in definition && shown.has(definition.name)
+            ? Object.values(definition.actions ?? {}).flatMap(({ was = [] }) => was)
+            : [],
+        );
+        const names = [
+          ...listed.flatMap(({ description, scriptable }) =>
+            scriptable ? [description.name] : [],
+          ),
+          ...retired.filter((name) => {
+            const tool = tools.tool(name);
+            return !!tool && scriptable(tool, {});
+          }),
+        ];
+        return await scripts.run(code, timeoutMs, names, async (name, input) => {
+          // Native calls use the caller’s project; mounted arguments (reserved _ names) stay intact.
+          if (!name.startsWith('_')) {
+            const { projectId, ...rest } = input;
+            if (projectId !== undefined && projectId !== caller.projectId)
+              throw new MervError('invalid_input', 'A script works in its own project only');
+            input = rest;
+          }
+          return answer(await tools.invoke(name, caller, input, true, admit));
+        });
+      },
     },
-  };
-  return [list, run];
+  ];
 }
 
 export default {
