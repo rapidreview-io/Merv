@@ -16,7 +16,7 @@ Parent maintenance integration advanced to `a5fe8936ca60276d5dfeb4427f943715597b
 
 ## Execution setup and sequence
 
-First perform the original URL-only plugin installation, real browser consent and fresh-chat scenarios in the parent runbook. Do not register direct bearer MCP configuration, preapprove all writes, inject Git credentials, synthesize OAuth consent, or call domain HTTP endpoints to claim native UX. Keep these journey checks separate from action coverage.
+First perform the original URL-only plugin installation, real browser consent and fresh-chat scenarios in the parent runbook. Follow the published guide's one-time, Merv-only permission choice and verify it persists; do not add harness-only approval bypasses or alter unrelated permissions. Do not register direct bearer MCP configuration, inject Git credentials, synthesize OAuth consent, or call domain HTTP endpoints to claim native UX. Keep these journey checks separate from action coverage.
 
 Prepare a run-owned synthetic project with normal website membership. Retain the exact deployed revision, candidate revision, account/project IDs and native CLI versions. Required identities are:
 
