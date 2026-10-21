@@ -1,6 +1,9 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { check, isAgentCaller, MervError, MAX_OBJECT_BYTES, type Artifact } from '@merv/contracts';
+import { boardViewSchema, type Caller } from '@merv/contracts';
+import { pictured } from '@merv/contracts/pictured';
+import type { View } from '@merv/contracts/board-view';
 import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { z } from 'zod';
 import { ArtifactPicture } from './picture.js';
@@ -60,27 +63,27 @@ export const artifactToolsPlugin = {
   apply(ctx: Context) {
     const pictures = new ArtifactPicture();
     ctx.effect(() => () => pictures.close());
+    const picture = async (caller: Caller, id: string, view?: View) => {
+      const artifact = await ctx.artifacts.get(caller, id);
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(artifact.mediaType)) return undefined;
+      check(
+        artifact.size <= MAX_STORED_READ_BYTES,
+        'artifact_picture_size',
+        'Reference images must be at most 16 MiB',
+      );
+      const content = await ctx.artifacts.readStored(caller, id, {
+        length: Math.ceil(artifact.size / 3) * 4,
+      });
+      check(
+        content.encoding === 'base64',
+        'artifact_picture_type',
+        'Expected binary image content',
+      );
+      const image = await pictures.render(content.content, artifact.mediaType, view);
+      return { ...image, html: '', path: `/ui/artifacts/${id}` };
+    };
     ctx.effect(() =>
-      ctx.tools.contributePicture('art_', async (caller, id, _focus, view) => {
-        const artifact = await ctx.artifacts.get(caller, id);
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(artifact.mediaType))
-          return undefined;
-        check(
-          artifact.size <= MAX_STORED_READ_BYTES,
-          'artifact_picture_size',
-          'Reference images must be at most 16 MiB',
-        );
-        const content = await ctx.artifacts.readStored(caller, id, {
-          length: Math.ceil(artifact.size / 3) * 4,
-        });
-        check(
-          content.encoding === 'base64',
-          'artifact_picture_type',
-          'Expected binary image content',
-        );
-        const image = await pictures.render(content.content, artifact.mediaType, view);
-        return { ...image, html: '', path: `/ui/artifacts/${id}` };
-      }),
+      ctx.tools.contributePicture('art_', (caller, id, _focus, view) => picture(caller, id, view)),
     );
     const store = ctx.artifacts;
     ctx.effect(() =>
@@ -146,7 +149,7 @@ export const artifactToolsPlugin = {
         tier: 'core',
         readOnly: true,
         description:
-          "Read project files: list (newest first, a page at a time), get (one file's metadata, a collection's members a page at a time), content (text or base64, whole or by range), download (private URLs to fetch with curl) and storage (whether files up to 512 MiB can be kept).",
+          "Read project files: list (newest first, a page at a time), get (one file's metadata, a collection's members a page at a time), content (text or base64, whole or by range), download (private URLs to fetch with curl), storage (whether files up to 512 MiB can be kept), and look (an image in source pixels).",
         legacy: {
           inputSchema: flat.merge(download).merge(read),
           description:
@@ -264,6 +267,27 @@ export const artifactToolsPlugin = {
               const { artifact, downloads } = await store.downloadFiles(c, artifactId, fileNames);
               return { artifact: brief(artifact), downloads };
             },
+          },
+          look: {
+            description:
+              'See a JPEG, PNG or WebP artifact as an image without anyone’s screen. view controls fit, region (source pixels), pan or zoom. Does not change the artifact.',
+            input: z.object({ artifactId: id, view: boardViewSchema.optional() }).strict(),
+            openWorld: false,
+            handler: async (caller, { artifactId, view }) => {
+              const drawn = await picture(caller, artifactId, view);
+              check(
+                drawn,
+                'invalid_input',
+                'record.look sees boards and JPEG, PNG or WebP image artifacts',
+              );
+              return {
+                page: drawn.path,
+                seen: 'Actual reference image. Viewport coordinates are source pixels; use region for readable details.',
+                image: drawn.image,
+                viewport: drawn.viewport,
+              };
+            },
+            present: pictured,
           },
           storage: {
             description: 'Whether this project can retain files up to 512 MiB.',

@@ -12,7 +12,8 @@ const input = showInput
   .extend({ view: boardViewSchema.optional() })
   .strict();
 
-/** A record with a picture drawer (a board, an image artifact) as drawn for an agent, without
+/** Still used by legacy screen.look, including its HTML fallback. A record with a picture
+ * drawer (a board, an image artifact) as drawn for an agent, without
  *  anyone's screen: its image when it has one, else the drawn page; undefined where none draws it. */
 export async function drawRecord(
   tools: Pick<Tools, 'picture'>,
@@ -33,21 +34,34 @@ export async function drawRecord(
   };
 }
 
-/** record.look: the pixels of a board or image artifact for any caller, as MCP image content. */
-export const recordLookTool = (tools: Pick<Tools, 'picture'>): ToolDefinition => ({
+// One-release dispatcher: workers retain this exact description and flat input.
+export const recordLookTool = (tools: Pick<Tools, 'call'>): ToolDefinition => ({
   name: 'record.look',
   description:
     'See a board or a JPEG, PNG or WebP image artifact as an image, drawn by Merv without anyone’s screen. focus: a board frame, group or shape id. view: fit, region (board units or source pixels), pan or zoom. Does not change the record.',
   inputSchema: input,
   readOnly: true,
+  tier: 'worker',
+  became: 'artifact.read',
   handler: async (caller: Caller, { record, focus, view }: z.infer<typeof input>) => {
-    const seen = await drawRecord(tools, caller, record, focus, view);
+    if (record.startsWith('art_'))
+      return tools.call('artifact.read:look', caller, { artifactId: record, view });
     check(
-      seen && 'seen' in seen,
+      record.startsWith('board_'),
       'invalid_input',
       'record.look sees boards and JPEG, PNG or WebP image artifacts',
     );
-    return seen;
+    const { path, image, viewport } = (await tools.call('board.read:look', caller, {
+      board: record,
+      focus,
+      view,
+    })) as Pick<Picture, 'path' | 'image' | 'viewport'>;
+    return {
+      page: path,
+      seen: 'Actual Excalidraw board image. Coordinates in viewport are board units.',
+      image,
+      viewport,
+    };
   },
   present: pictured,
 });
