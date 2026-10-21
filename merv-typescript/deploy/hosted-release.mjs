@@ -420,7 +420,7 @@ async function main(args) {
     });
   // A host out of reach (a reboot, a network blip) is waited out for about 10 minutes, never taken
   // for a failed step: a repeated step is harmless, and the next one re-arms the host's guard.
-  let stagingSource;
+  let stagingSource, stagingRun;
   const onHost = (run, step, arg = {}) => {
     if (stagingCutover && step === 'native')
       return production('native', { provider: arg.provider });
@@ -501,7 +501,11 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
     return out;
   };
   const production = (action, arg = {}) =>
-    onStaging('staging-gateway', { action, source: stagingSource, ...arg }, values.host);
+    onStaging(
+      'staging-gateway',
+      { action, source: stagingSource, run: stagingRun, ...arg },
+      values.host,
+    );
   const upload = (run, sandboxesCommit) => {
     const src = packageSource();
     const sbx = join(src.dir, 'sandboxes.tar.gz');
@@ -642,6 +646,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     const src = upload(plan.run, target.sandboxesCommit);
     if (src.gitRevision !== head) throw new Error('HEAD moved while planning');
     plan.contentSha256 = src.contentSha256;
+    stagingRun = plan.run;
     onHost(plan.run, 'staging_preflight', plan);
     return drive(plan.run);
   }
@@ -736,7 +741,20 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     let { build, gates, push: pushed, progress = {} } = s;
     if (!!plan?.stagingCutover !== stagingCutover)
       throw new Error('Run scope differs; use --staging-cutover only for a staging run');
-    if (stagingCutover) stagingSource = plan.stagingSource;
+    if (stagingCutover) {
+      stagingSource = plan.stagingSource;
+      stagingRun = run;
+    }
+    if (
+      progress.stagingPropagation &&
+      (mode === 'abandon' ||
+        spawnSync('git', ['diff', '--quiet', plan.sourceCommit, head, '--', ...PIPELINE], {
+          cwd: root,
+        }).status !== 0)
+    )
+      throw new Error(
+        'Ordinary staging propagation owns a forward-only checkpoint; resume the original pipeline',
+      );
     if ((values['prepare-cutover'] || values['accept-cutover']) && !plan?.cutover)
       throw new Error('This existing run was not opened with --prepare-cutover');
     if (plan?.cutover && mode === 'abandon')
@@ -960,7 +978,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       return 0;
     }
     let failure = progress.rollback;
-    if (mode === 'resume' && !failure) {
+    if (mode === 'resume' && !failure && !progress.stagingPropagation) {
       // Forward only with the pipeline this run began with, and only while a rollback could run.
       const why = plan.cutover ? null : unready(previous);
       const moved =
@@ -1035,6 +1053,14 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       ...commits,
     };
     Object.assign(row, { image: next.image, releaseId: next.releaseId });
+    if (progress.stagingPropagation) {
+      const agreed = onHost(run, 'propagation_ready'); // verifies pins/images before repairing catalog readers
+      if (agreed.image !== next.image || agreed.releaseId !== next.releaseId)
+        throw new Error(
+          'Production changed during ordinary staging propagation; preserve ownership',
+        );
+      return finishStaging(entry, next);
+    }
     if (!failure) {
       try {
         if (plan.cutover && progress.cutoverPrepared) {
@@ -1130,41 +1156,53 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`hosted release ${run}: ${outcome}`);
       return code;
     }
-    const staged = plan.cutover
-      ? 'DEFERRED: staging Main protocol compatibility requires separate acceptance'
-      : await stage(entry, next.image);
-    close('pass', { current: next, inputs: build.inputs });
-    record('pass', `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`, staged);
-    console.log(JSON.stringify({ run, ...next, version: row.version, canary: row.canary, staged }));
-    return 0;
+    return finishStaging(entry, next);
+
+    async function finishStaging(entry, target) {
+      const staged = plan.cutover
+        ? 'DEFERRED: staging Main protocol compatibility requires separate acceptance'
+        : await stage(entry, target);
+      close('pass', { current: target, inputs: build.inputs });
+      record('pass', `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`, staged);
+      console.log(
+        JSON.stringify({ run, ...target, version: row.version, canary: row.canary, staged }),
+      );
+      return 0;
+    }
 
     // Production passed, so nothing here rolls back: a failure is only reported. Between the deploy
     // and staging Main's switch, staging's launches are refused, as production's are in step 6.
-    async function stage(entry, image) {
-      const which = Object.keys(STAGING_APPS);
+    async function stage(entry, target) {
+      const which = onHost(run, 'staging_apps').providers;
+      if (!which.length) return 'STAGING NOT UPDATED: Sandboxes serves no staging app';
       const entries = which.map((provider) => ({ ...entry, provider }));
       const releases = Object.fromEntries(entries.map((e) => [e.provider, releaseId(e)]));
+      const flow = (action, arg = {}) => onStaging('staging-flow', { action, run, driver, ...arg });
+      // The production marker also stays open if the coordinator dies after reserving staging.
+      onHost(run, 'note', { stagingPropagation: true });
       try {
-        const served = Object.keys(onHost(run, 'stage', { entries, releases }).releases);
-        if (served.some((p) => onHost(run, 'native', { provider: p }).image !== image)) {
-          onStaging('staging-drain', plan.drainSeconds); // staging's work visits end first, as in 6
-          deploy(next, served);
-          await landed(image, 0, served);
-        }
-        const switched = onStaging(
-          'staging',
-          Object.fromEntries(served.map((p) => [p, releases[p]])),
-        );
-        return `staging ${served.join(' + ')} ${switched.changed ? 'switched' : 'already'} on it`;
+        flow('begin', { releases, image: target.image });
       } catch (error) {
-        try {
-          onStaging('staging-unhold'); // the drain's hold, should staging Main not have switched
-        } catch {
-          // it lapses within the hour
-        }
-        console.error(`staging was not updated (production keeps the release): ${error.message}`);
+        // No ownership was acquired by this call: defer, without catalog/drain/deploy/unhold.
+        // If an older attempt owns it, never close production's resumable checkpoint.
+        if (!error.message.includes('staging is owned by ')) throw error;
         return `STAGING NOT UPDATED: ${brief(error.message)}`;
       }
+      // Once reserved, failures keep BOTH markers. Same-run resume finishes only this phase.
+      const served = Object.keys(onHost(run, 'stage', { entries, releases }).releases);
+      if (served.some((p) => onHost(run, 'native', { provider: p }).image !== target.image)) {
+        flow('drain', { seconds: plan.drainSeconds });
+        for (const provider of served) {
+          flow('touch'); // checks/refreshes the staging lease BEFORE every provider mutation
+          deploy(target, [provider]);
+        }
+        await landed(target.image, 0, served);
+      }
+      const switched = flow('switch', {
+        releases: Object.fromEntries(served.map((p) => [p, releases[p]])),
+      });
+      flow('finish');
+      return `staging ${served.join(' + ')} ${switched.changed ? 'switched' : 'already'} on it`;
     }
   }
 }

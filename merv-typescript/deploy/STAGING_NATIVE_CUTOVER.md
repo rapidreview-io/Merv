@@ -149,3 +149,22 @@ A failed canary leaves the run open; preserve or re-establish the fence before f
 `STAGING_HOSTED_RELEASES.md` records the pipeline source separately from the accepted runner source;
 `staging-hosted-release.json` records accepted production provenance and both pins. Main deployment
 rows remain in `STAGING_RELEASES.md`. No staging attempt is described as a production release.
+
+## Interrupted shared catalog or ordinary staging propagation
+
+A staging catalog apply reserves production's hosted `active` marker with the staging run ID
+before changing the shared file. Its root-only `staging-catalog/<run>/recovery.json`,
+`catalog.before` and `catalog.target` bind the accepted source, both reader images and exact target.
+If either reader recreation fails, use the same staging `--resume` command above. It verifies
+unchanged production state, saved/live pins and images, completes that owned target, and only then
+requires catalog agreement and releases production's marker. A competing production release or
+changed image/pin refuses repair. Never remove the marker or restore an older catalog to bypass it.
+
+Ordinary production releases reserve staging before their entire propagation, including catalog
+registration and each Cloudflare deployment. A prepared/accepting staging cutover makes them defer
+without touching staging. Once ordinary propagation acquires staging, a failure or driver crash
+keeps both the production run and staging's `ordinary-<production-run>` marker open. Resume using
+`node deploy/hosted-release.mjs --host ResearchSuite_Control --resume` from the original committed
+pipeline. It verifies the production pair and finishes only staging; it does not repeat the
+production rollout/canary or roll it back. Driver leases permit same-run takeover after silence;
+expiry never gives a different run permission to steal staging. Success releases both markers.

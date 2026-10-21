@@ -71,7 +71,7 @@ LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STAGING_PROVIDERS = ('cloudflare-fleet-staging', 'cloudflare-fleet-staging-large')
-STEPS = {'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
+STEPS = {'propagation_ready', 'staging_apps', 'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
          'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins', 'prepare_cutover', 'accept_cutover'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
@@ -198,6 +198,23 @@ def owner():
         return (HOME / 'active').read_text().strip()
     except FileNotFoundError:
         return ''
+
+
+AUTHORIZED_OWNER = None
+
+
+@contextlib.contextmanager
+def authorized(name):
+    global AUTHORIZED_OWNER
+    previous, AUTHORIZED_OWNER = AUTHORIZED_OWNER, name
+    try:
+        yield
+    finally:
+        AUTHORIZED_OWNER = previous
+
+
+def require_owner():
+    need(not owner() or owner() == AUTHORIZED_OWNER, 'staging/hosted work is owned by ' + owner())
 
 
 def claim(name):
@@ -350,14 +367,16 @@ def recreate(raw, want, backup=None, restore=True):
     return {'changed': True, 'image': image, 'envSha256Before': sha(raw), 'envSha256After': sha(ENV.read_bytes())}
 
 
-def staging(releases):
+def staging(releases, maintenance_held=False):
     """On the staging host, as root: `ssh <host> sudo -n python3 - staging '<releases>'` with this file on
     stdin. Points staging Main's machines on these apps ({provider: releaseId}) at their releases and
     recreates Main, as `switch` does on production, under the host's maintenance lock."""
+    require_owner()
     need(releases and all(re.fullmatch(r'rt1_[0-9a-f]{64}', r) for r in releases.values()), 'invalid release id')
     MAINTENANCE.parent.mkdir(parents=True, exist_ok=True)
-    with MAINTENANCE.open('a') as maintenance:
-        need(locked(maintenance, 1200), 'deployment or recovery snapshot held the maintenance lock for 20 minutes')
+    with contextlib.nullcontext() if maintenance_held else MAINTENANCE.open('a') as maintenance:
+        need(maintenance_held or locked(maintenance, 1200), 'deployment or recovery snapshot held the maintenance lock for 20 minutes')
+        require_owner()
         raw = ENV.read_bytes()
         need(set(releases) & set(machines(file_env(raw))), 'staging Main runs no machine on these apps')
         want = with_machines(raw, releases)
@@ -486,8 +505,10 @@ def work_drain(limit):
     """The drain of work machines alone, on a host whose apps are about to be replaced: Main holds them
     (HOLD) and this waits, bounded, until Fleet has released every one. One that gives up lifts the
     hold, having changed nothing but the settled machines it stopped."""
+    require_owner()
     deadline = time.monotonic() + limit
     while True:
+        require_owner()
         work = json.loads(main_read(f'WITH {HOLD} {WORK}', write=True)['work'])
         if not work:
             return {'drained': True}
@@ -502,6 +523,7 @@ def work_drain(limit):
 def unhold():
     """Lifts the drain's hold: Fleet rents work machines and admits steps again. Best effort: a hold
     that cannot be lifted lapses within the hour."""
+    require_owner()
     with contextlib.suppress(Exception):
         main_read(UNHOLD, write=True)
 
@@ -813,6 +835,8 @@ class Step:
         quiet(self.plan['drainSeconds'])
         if not backup.exists():
             atomic(backup, raw)
+        if self.plan.get('stagingCatalog'):
+            atomic(self.run / 'catalog.target', doc)
         try:
             apply(doc)
         except BaseException:
@@ -843,6 +867,18 @@ class Step:
         need(arg['releases'][PROVIDER] == arg['releaseId'], 'Sandboxes derives a different release id')
         result = self.add_releases(arg, backup, lambda: self.note({'catalogBroken': True}))
         return {'releaseId': arg['releaseId'], **result}
+
+    def propagation_ready(self, _):
+        need((read(self.run / 'progress.json') or {}).get('stagingPropagation'), 'no staging propagation checkpoint')
+        image = read(self.run / 'push.json')['image']
+        releases = self.releases()[image]
+        current = {'image': image, 'releaseId': releases[PROVIDER], 'releases': releases}
+        verify_production_pair(current)
+        return current
+
+    def staging_apps(self, _):
+        return {'providers': [p['name'] for p in json.loads(env_of(CONTROL)['SANDBOXES_PROVIDERS'])
+                              if p['name'] in STAGING_PROVIDERS]}
 
     def stage(self, arg):
         """Once the release has passed: its copy for each staging app (arg's entries) that Sandboxes serves,
@@ -1010,8 +1046,9 @@ class Step:
 
     def finish(self, arg):
         """Closes the run: the new pins (on success), the drain's hold, the guard, the backups, the marker."""
-        if not self.plan.get('cutover'):
-            unhold()
+        if not self.plan.get('cutover') and owner() in ('', self.run.name):
+            with authorized(self.run.name):
+                unhold()
         if arg.get('state'):
             atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
         for name in ('catalog.before', 'stage.before', 'env.before'):  # they hold secrets
@@ -1040,8 +1077,8 @@ class Step:
         if (self.run / 'finish.json').exists() or owner() != self.run.name:
             subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             return {'guard': 'closed'}
-        if self.plan.get('cutover'):
-            return {'guard': 'cutover: preserve pins; explicit forward resume required'}
+        if self.plan.get('cutover') or (read(self.run / 'progress.json') or {}).get('stagingPropagation'):
+            return {'guard': 'cutover/propagation: preserve pins; explicit forward resume required'}
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:
             return {'guard': 'driver alive'}
@@ -1158,7 +1195,8 @@ def step(name, directory, payload):
         with leased(directory, driver) if name != 'mint_canary' else contextlib.nullcontext():
             if name != 'finish' and not work.plan.get('stagingCutover'):
                 arm(directory, arg)
-            result = getattr(work, name)(arg)
+            with authorized(directory.name):
+                result = getattr(work, name)(arg)
             if name == 'staging_preflight':
                 atomic(directory / 'preflight.json', json.dumps(result).encode())
             if name in RECORDED and not arg.get('restore'):
@@ -1166,8 +1204,8 @@ def step(name, directory, payload):
     return result
 
 
-def staging_source():
-    need(not owner() and not main_release_running(), 'production release is in progress')
+def staging_source(owned=None):
+    need((not owner() or owner() == owned) and not main_release_running(), 'production release is in progress')
     state = read(HOME / 'state.json') or {}
     current = state.get('current') or {}
     need(current and current.get('verified') is not False and
@@ -1215,6 +1253,73 @@ def staging_provider_census():
     return {'drained': True, 'readOnly': True}
 
 
+def ordinary_staging(arg):
+    """Reserve the whole ordinary propagation, including remote provider deployment. A crash
+    keeps the marker; only the same production run may resume after its driver lease expires."""
+    action, run_id = arg['action'], arg['run']
+    need(action in ('begin', 'touch', 'drain', 'switch', 'finish'), 'invalid staging propagation action')
+    need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}', run_id), 'invalid production run')
+    name = 'ordinary-' + run_id
+    HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory = HOME / name
+    with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
+        need(locked(maintenance, 1200) and locked(lock, 1200), 'staging maintenance is busy')
+        need(not RECOVERY_PENDING.exists(), 'staging recovery is pending')
+        need(not main_release_running(), 'staging Main release is running')
+        if action == 'begin':
+            need(not owner() or owner() == name, 'staging is owned by ' + owner())
+            directory.mkdir(mode=0o700, exist_ok=True)
+            expected = {'image': arg['image'], 'releases': arg['releases']}
+            before = read(directory / 'target.json')
+            need(not before or before == expected, 'ordinary staging target changed')
+            atomic(directory / 'target.json', json.dumps(expected).encode())
+            claim(name)
+            (directory / 'finish.json').unlink(missing_ok=True)
+        need(owner() == name, 'ordinary staging propagation does not own staging')
+        with leased(directory, arg['driver']), authorized(name):
+            if action == 'drain':
+                return work_drain(arg['seconds'])
+            if action == 'switch':
+                target = read(directory / 'target.json')['releases']
+                need(arg['releases'] and all(target.get(p) == rid for p, rid in arg['releases'].items()),
+                     'ordinary staging pins differ from reserved target')
+                return staging(arg['releases'], maintenance_held=True)
+            if action == 'finish':
+                unhold()
+                atomic(directory / 'finish.json', b'{"result":"pass"}')
+                (HOME / 'active').unlink()
+                return {'finished': True}
+            return {'reserved': True}
+
+
+def unowned_staging(action):
+    """Compatibility commands cannot enter a reserved flow, including during PREPARED."""
+    HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
+        need(locked(maintenance, 1200) and locked(lock, 1200), 'staging maintenance is busy')
+        need(not RECOVERY_PENDING.exists(), 'staging recovery is pending')
+        require_owner()
+        return action()
+
+
+def verify_catalog_recovery(journal):
+    current = journal['source']['current']
+    need(not main_release_running(), 'a Main release is running during catalog recovery')
+    need((read(HOME / 'state.json') or {}).get('current') == current, 'accepted production state changed')
+    need(all(inspect(c)['Image'] == image for c, image in journal['images'].items()),
+         'production reader image changed during catalog recovery')
+    verify_production_pair(current)
+
+
+def verify_production_pair(current):
+    expected = [current['releaseId'], current['releases']]
+    need(pins(env_of(MAIN)) == pins(file_env(ENV.read_bytes())) == expected,
+         'production pins changed during staging catalog/propagation recovery')
+    apps = [native(p) for p in current['releases']]
+    need(all(n['image'] == current['image'] and not n.get('rollout') for n in apps),
+         'production hosted image changed during staging catalog/propagation recovery')
+
+
 def staging_gateway(arg):
     need(os.geteuid() == 0, 'run as root')
     action = arg['action']
@@ -1223,6 +1328,25 @@ def staging_gateway(arg):
     with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
         need(locked(maintenance, 1200) and locked(lock, 1200), 'production maintenance lock is busy')
         need(not RECOVERY_PENDING.exists(), 'production recovery is pending')
+        name = arg.get('run')
+        if name:
+            need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid staging run')
+        directory = HOME / 'staging-catalog' / name if name else None
+        if owner():
+            need(name and owner() == name and directory.is_dir(),
+                 'production release or another catalog repair is in progress')
+            journal = read(directory / 'recovery.json')
+            need(journal and journal['source'] == arg.get('source'), 'catalog recovery owner/source mismatch')
+            verify_catalog_recovery(journal)
+            target = directory / 'catalog.target'
+            if target.exists():
+                # An owned write may have stopped after either reader. Finish that exact target;
+                # never require the readers to agree before completing the recorded transaction.
+                staging_provider_census()
+                quiet(900)
+                Step(directory, {}).sandboxes_file()[1](target.read_bytes())
+            need(staging_source(name) == journal['source'], 'production source changed during catalog recovery')
+            (HOME / 'active').unlink()
         source = staging_source()
         if action == 'source':
             return source
@@ -1239,17 +1363,20 @@ def staging_gateway(arg):
         served = {p['name'] for p in json.loads(env_of(CONTROL)['SANDBOXES_PROVIDERS'])}
         need(set(STAGING_PROVIDERS) <= served, 'both staging providers must be configured')
         # Keep the accepted source and durable secret backup under a separate staging catalog run.
-        name = arg['run']
-        need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid staging run')
-        directory = HOME / 'staging-catalog' / name
+        need(name, 'catalog requires a staging run')
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         existing = read(directory / 'source.json')
         need(not existing or existing == source, 'staging catalog source changed')
         atomic(directory / 'source.json', json.dumps(source).encode())
-        result = Step(directory, {'cutover': True, 'drainSeconds': 900}).add_releases(
+        journal = {'source': source, 'images': {c: inspect(c)['Image'] for c in (CONTROL, MAIN)}}
+        atomic(directory / 'recovery.json', json.dumps(journal).encode())
+        claim(name)
+        verify_catalog_recovery(journal)
+        result = Step(directory, {'cutover': True, 'stagingCatalog': True, 'drainSeconds': 900}).add_releases(
             {'entries': source['entries'], 'releases': source['releases'],
              'protect': [source['current']['image'].split('@')[1]]}, directory / 'catalog.before')
-        need(staging_source() == source, 'production source changed during catalog update')
+        need(staging_source(name) == source, 'production source changed during catalog update')
+        (HOME / 'active').unlink()
         return result
 
 
@@ -1268,9 +1395,13 @@ if __name__ == '__main__':
     # On the staging host: `staging '<releases>'` switches staging Main; `staging-drain '<seconds>'`
     # holds its work machines and waits, bounded, until none is up, before its apps are replaced;
     # `staging-unhold` lifts that hold when they were not.
-    STAGING = {'staging-gateway': lambda a: staging_gateway(json.loads(a)), 'staging': lambda a: staging(json.loads(a)), 'staging-drain': lambda a: work_drain(int(a)),
-               'staging-unhold': lambda _: unhold() or {'lifted': True}}
+    STAGING = {'staging-gateway': lambda a: staging_gateway(json.loads(a)),
+               'staging-flow': lambda a: ordinary_staging(json.loads(a)),
+               'staging': lambda a: unowned_staging(lambda: staging(json.loads(a), maintenance_held=True)),
+               'staging-drain': lambda a: unowned_staging(lambda: work_drain(int(a))),
+               'staging-unhold': lambda _: unowned_staging(lambda: unhold() or {'lifted': True})}
     if sys.argv[1:2] and sys.argv[1] in STAGING:
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
         os.umask(0o077)
         try:
             print(json.dumps(STAGING[sys.argv[1]](sys.argv[2] if len(sys.argv) > 2 else None)), flush=True)

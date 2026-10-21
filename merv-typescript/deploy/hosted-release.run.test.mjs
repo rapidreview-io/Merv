@@ -90,6 +90,24 @@ const input = fs.readFileSync(0, 'utf8');
 const at = argv.indexOf('python3');
 if (at < 0) { if (argv.includes('bash')) event('upload'); process.exit(0); }
 // Staging Main's switch on its own host: this file's committed host script arrives on stdin.
+if (argv[at + 1] === '-' && argv[at + 2] === 'staging-flow') {
+  const arg=JSON.parse(argv[at+3].slice(1,-1));
+  const out=value=>{save();console.log(JSON.stringify(value));process.exit(0)};
+  event('flow-'+arg.action);
+  if(arg.action==='begin') {
+    if(sim.stagingOwner && sim.stagingOwner!==arg.run) out({error:'staging is owned by '+sim.stagingOwner});
+    sim.stagingOwner=arg.run;out({reserved:true});
+  }
+  if(sim.stagingOwner!==arg.run) out({error:'not staging owner'});
+  if(arg.action==='drain') {event('staging-drain '+arg.seconds);if(sim.fail.stagingDrain)out({error:sim.fail.stagingDrain});}
+  if(arg.action==='switch') {
+    event('staging '+JSON.stringify(arg.releases));
+    if(sim.fail.stagingSwitch)out({error:sim.fail.stagingSwitch});
+    sim.staging.machines=arg.releases;out({changed:true});
+  }
+  if(arg.action==='finish') {sim.stagingOwner=null;event('staging-unhold');}
+  out({reserved:true});
+}
 if (argv[at + 1] === '-' && argv[at + 2] === 'staging-gateway') {
   const arg = JSON.parse(argv[at + 3].slice(1, -1));
   event('gateway-' + arg.action);
@@ -203,6 +221,7 @@ if (step === 'catalog') {
   out({ releaseId: arg.releaseId, releases: arg.releases, changed: true }, true);
 }
 // staging: the staging apps production's Sandboxes serves, and staging Main's machines.
+if (step === 'staging_apps') out({providers:Object.keys(sim.staging?.apps??{})});
 if (step === 'stage') {
   if (fail) err(fail);
   const served = arg.entries.filter((e) => sim.staging?.apps[e.provider]);
@@ -245,6 +264,7 @@ if (step === 'canary') {
   if (fail === 'all' || (fail && arg.releaseId !== previous.releaseId)) err('canary_failed {"status":"interrupted"}');
   out({ status: 'completed', seconds: 42 });
 }
+if (step === 'propagation_ready') out({image:sim.native.image,releaseId:sim.main});
 if (step === 'abandon') {
   const known = { [previous.image]: R.rec.preflight.releases, [R.rec.push?.image]: R.rec.catalog?.releases };
   const target = known[sim.native.image];
@@ -529,7 +549,7 @@ test('once production passes, staging takes the release: catalog copies, its app
   );
   // Staging's work visits end before its apps are replaced, within --drain-minutes.
   assert.ok(r.events.includes('staging-drain 900'), r.events.join('\n'));
-  assert.ok(!r.steps.includes('staging-unhold'));
+  order(r.steps, 'flow-begin', 'stage', 'flow-switch', 'flow-finish', 'staging-unhold');
   const staged = r.steps.indexOf('stage');
   assert.deepEqual(
     r.events.slice(staged).filter((e) => e.startsWith('wrangler')),
@@ -540,6 +560,7 @@ test('once production passes, staging takes the release: catalog copies, its app
   assert.deepEqual(r.steps.slice(r.steps.lastIndexOf('wrangler') + 1, switched), [
     'native',
     'native',
+    'flow-switch',
   ]);
   const next = { [STG]: copy(STG, NEXT, 'e'), [STG_L]: copy(STG_L, NEXT, 'e') };
   assert.deepEqual(r.sim.staging.machines, next);
@@ -559,33 +580,47 @@ test('once production passes, staging takes the release: catalog copies, its app
   );
 });
 
-test('a staging failure is reported in the ledger and never rolls production back', () => {
+test('ordinary staging failures retain both owners and resume only staging forward', () => {
   for (const fail of [
     { deploy: 'staging' },
     { stagingSwitch: 'Main did not take the release' },
     { stagingDrain: 'not_drained_after_900s {"work": ["flt_w"]}' },
   ]) {
-    const r = simulate('staging-fails', { ...STAGING, fail });
-    // Staging Main's hold on its work machines is lifted however staging failed.
-    order(r.steps, 'staging-drain', 'staging-unhold', 'finish');
-    if (fail.stagingDrain)
-      assert.ok(
-        !r.events.some((e) => / cloudflare-fleet-staging/.test(e)),
-        'staging kept its apps',
-      );
-    assert.equal(r.status, 0, r.out);
-    assert.equal(r.sim.main, NEXT_ID);
-    assert.equal(r.sim.native.image, NEXT);
-    assert.ok(!r.events.some((e) => e.startsWith('wrangler aaaa')), 'nothing rolled back');
-    assert.deepEqual(r.sim.staging.machines, STAGING.staging.machines);
-    assert.equal(r.sim.active, null);
-    assert.match(r.out, /staging was not updated \(production keeps the release\)/);
-    assert.match(r.ledger, /\| pass \| Sandboxes \w+; STAGING NOT UPDATED: /);
+    const first = simulate('staging-fails', { ...STAGING, fail });
+    assert.equal(first.status, 3, first.out);
+    assert.ok(first.sim.active && first.sim.stagingOwner);
+    assert.equal(first.sim.main, NEXT_ID);
+    assert.equal(first.sim.native.image, NEXT);
+    assert.ok(!first.steps.includes('staging-unhold'));
+    assert.ok(!first.steps.includes('finish'));
+    editRun(first, (sim) => {
+      sim.fail = {};
+    });
+    const resumed = simulate('staging-fails', {}, { dir: first.dir, args: ['--resume'] });
+    assert.equal(resumed.status, 0, resumed.out);
+    const steps = resumed.steps.slice(first.steps.length);
+    assert.ok(!steps.includes('switch') && !steps.includes('canary') && !steps.includes('build'));
+    assert.equal(resumed.sim.active, null);
+    assert.equal(resumed.sim.stagingOwner, null);
+    assert.ok(!resumed.events.some((e) => e.startsWith('wrangler aaaa')));
   }
-  // Without staging apps in Sandboxes there is nothing to stage, and that is said too.
   const none = simulate('no-staging');
   assert.equal(none.status, 0, none.out);
-  assert.match(none.ledger, /STAGING NOT UPDATED: stage: Sandboxes serves no staging app \|/);
+  assert.match(none.ledger, /STAGING NOT UPDATED: Sandboxes serves no staging app \|/);
+});
+
+test('ordinary propagation defers before any staging mutation when a cutover is prepared or accepting', () => {
+  for (const owner of ['prepared-staging-cutover', 'accepting-staging-cutover']) {
+    const result = simulate('staging-owner', { ...STAGING, stagingOwner: owner });
+    assert.equal(result.status, 0, result.out);
+    assert.equal(result.sim.stagingOwner, owner);
+    assert.ok(!result.steps.includes('stage'));
+    assert.ok(!result.steps.includes('staging-drain'));
+    assert.ok(!result.steps.includes('staging-unhold'));
+    assert.ok(!result.events.some((e) => e.startsWith('wrangler') && e.includes('staging')));
+    assert.deepEqual(result.sim.staging.machines, STAGING.staging.machines);
+    assert.match(result.ledger, /staging is owned by/);
+  }
 });
 
 const editRun = (result, change) => {

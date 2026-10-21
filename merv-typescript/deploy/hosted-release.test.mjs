@@ -1595,7 +1595,8 @@ test('staging catalog gateway reuses forward-only transaction without changing p
   const out = py(`${scratch}
 source={'current':{'image':'registry.cloudflare.com/acct/worker@sha256:'+'a'*64},
  'entries':[{'provider':p} for p in vm.STAGING_PROVIDERS], 'releases':{p:'rt1_'+p for p in vm.STAGING_PROVIDERS}}
-vm.os.geteuid=lambda:0;vm.staging_source=lambda:source;vm.staging_provider_census=lambda:None
+vm.os.geteuid=lambda:0;vm.staging_source=lambda *a:source;vm.staging_provider_census=lambda:None
+vm.inspect=lambda c:{'Image':c+'-image'};vm.verify_catalog_recovery=lambda _:None
 vm.env_of=lambda _:{'SANDBOXES_PROVIDERS':json.dumps([{'name':p} for p in vm.STAGING_PROVIDERS])}
 calls=[]
 def add(self,arg,backup):
@@ -1607,7 +1608,7 @@ try:vm.staging_gateway({'action':'catalog','source':source,'run':'20261021T00000
 except RuntimeError as e:error=str(e)
 print(json.dumps({'calls':calls,'state':(vm.HOME/'state.json').read_text(),'active':vm.owner(),'error':error}))`);
   assert.equal(out.state, 'production-state');
-  assert.equal(out.active, '');
+  assert.equal(out.active, '20261021T000000Z-1234abcd-staging');
   assert.equal(out.calls[0].plan.cutover, true);
   assert.deepEqual(
     out.calls[0].entries.map((e) => e.provider),
