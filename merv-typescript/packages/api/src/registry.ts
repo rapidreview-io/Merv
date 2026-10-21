@@ -68,6 +68,23 @@ function inputBranches(
   }
 }
 
+/** A tuple's `items` list (draft 7) is said as one item schema of fixed length: clients such as
+ *  Codex skip a tool whose schema holds one. Parsing still checks the tuple itself. */
+function withoutTuples<T>(schema: T): T {
+  const node = record(schema);
+  if (!node) return Array.isArray(schema) ? (schema.map(withoutTuples) as T) : schema;
+  const out = Object.fromEntries(Object.entries(node).map(([k, v]) => [k, withoutTuples(v)]));
+  if (Array.isArray(out.items)) {
+    const kinds = [...new Set(out.items.map((item) => JSON.stringify(item)))];
+    const count = out.items.length;
+    out.items =
+      kinds.length === 1 ? out.items[0] : { anyOf: kinds.map((kind) => JSON.parse(kind)) };
+    out.minItems ??= count;
+    out.maxItems ??= count;
+  }
+  return out as T;
+}
+
 /** Canonical public metadata; project selection is a transport envelope, not handler input. A core
  *  tool carries `_meta["anthropic/alwaysLoad"]`, which Claude Code reads (other clients ignore it). */
 export function describeTool(tool: AnyToolDefinition): ToolDescription {
@@ -77,7 +94,9 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
   }
   const schema =
     tool.inputJsonSchema === undefined
-      ? zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' })
+      ? withoutTuples(
+          zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' }),
+        )
       : cloneJson(tool.inputJsonSchema);
   if (!record(schema) || !('type' in schema) || schema.type !== 'object')
     throw new MervError('invalid_tool', 'Tool input must be an object');
