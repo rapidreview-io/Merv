@@ -264,7 +264,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   // A successor is told it may attach what a cut visit to the step retained.
   assert.match(
     action('experiment.write', 'attach').description,
-    /as a worker, evidence any earlier visit to this step at the same revision created/,
+    /an earlier visit’s to this step\/revision/,
   );
   // The exhibit's description names the fields its preview has, and no content field.
   const exhibitTool = action('experiment.read', 'exhibit');

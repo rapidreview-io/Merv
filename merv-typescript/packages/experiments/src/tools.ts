@@ -84,7 +84,7 @@ export const experimentsToolsPlugin = {
           },
           exhibit: {
             summary:
-              'Preview attempt exhibit from retained results, hashes and first execution start. JSON stays observations: no computed score/success judgment. Submission pins the applicable exhibit. Returns report path/hash/bytes/willPin/resultFiles by artifactId; exhibit data included only ≤16,000 bytes, else omitted explains.',
+              'Preview attempt exhibit from retained results, hashes and first execution start. JSON stays observations: no computed score/success judgment. Submission pins the applicable exhibit. Returns report path/hash/bytes/willPin/resultFiles by artifactId; its data under exhibit only when ≤16,000 bytes, else omitted explains.',
             description:
               'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round. You get its path (the filename a report names), hash, bytes, willPin (whether submission pins it) and resultFiles by artifactId; the exhibit itself, which repeats those files’ data, comes under exhibit only up to 16,000 bytes, and otherwise omitted says so.',
             input: experimentExhibitSchema,
