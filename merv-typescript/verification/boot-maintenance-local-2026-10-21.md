@@ -34,3 +34,38 @@ authority still applies. It does not make a hosted end-to-end canary work while 
 schedulers and ordinary worker HTTP requests remain paused. Reopening requires the
 explicit release decision described in the runbook and resumes all normal background
 consumers without changing their durable dispatch/retry decisions.
+
+## Follow-up: executable hosted checkpoint and startup gaps
+
+The hosted pipeline now supports `--prepare-cutover` (durable PREPARED checkpoint,
+exit 5) and `--resume --accept-cutover` after deliberate same-image Main reopening.
+The persisted cutover plan disables automatic rollback, guard pin rewrites and
+abandon; partial failures remain open for forward recovery. Preparation defers
+ordinary HTTP credential validation and uses a read-only empty-ownership census,
+not the normal active-worker drain. It never claims a failed canary is acceptable.
+Staging is deferred until its compatible Main/data migration is accepted.
+
+Independent review findings in `/tmp/merv-launch-maintenance-review/FINDINGS.md`
+were addressed: automatic `CodeGitRemote.initialize()` recovery is fenced while
+request-level/project recovery is unchanged; Sandboxes people startup backfill and
+sign-in provisioning are fenced. Explicit ensure/credit/admin-link request effects
+remain usable. A committed admin change notification is not discarded: normal
+startup deliberately does not relink already-linked projects.
+
+Follow-up validation:
+
+- Real-driver fake-host pipeline suite: 10 passed, including prepare/pause, plain
+  resume, rejection while fenced, explicit real-canary path, failed canary with no
+  old-image rollback, partial switch failure and successful forward retry.
+- Host implementation suite: 40 passed, including maintenance/health and exact
+  Main/hosted/catalog pin checks, read-only drain, deferred preflight HTTP identity
+  check, guard preservation and failed recreation retaining the candidate env.
+- `node --import tsx --test tests/maintenance-startup.test.ts tests/code-smart-http.test.ts`:
+  38 passed, including actual Git/PostgreSQL prepared-journal preservation, ordinary
+  startup recovery and explicit recovery while fenced. People tests assert no
+  automatic provisioning/credits during maintenance and normal-mode resumption.
+- `npm run typecheck`, `node --check deploy/hosted-release.mjs`, Python compilation,
+  formatting and `git diff --check` passed.
+
+All were local tests; production checkpoint, reopening/canary, real provider drain,
+maintenance environment and staging compatibility remain parent-owned release gates.
