@@ -6,6 +6,9 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { Context } from 'cordis';
+import type { UiRow } from '@merv/ui/types';
+import type { HomeSources } from '../packages/ui/src/home.js';
 import { mount, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -250,9 +253,29 @@ for (const [name, days, expected] of [
     /\$0\.00 this month · \$0\.00 today/,
   ],
 ] as const)
-  test(`Home labels ${name} compute coverage honestly`, async (t) => {
+  test(`Fleet home projection renders ${name} compute coverage honestly`, async (t) => {
     t.after(unmount);
-    boot([row('work', 'work', 'lead')], { tasks: [], experiments: [], fleet: days });
+    const { fleetUiPlugin } = await import('../packages/fleet/src/ui.js');
+    const { homeRead } = await import('../packages/ui/src/home.js');
+    const registered: UiRow[] = [];
+    // Capture the actual registration, then use the production trimming boundary.
+    // Only the service response and unrelated identity reads are fixtures.
+    fleetUiPlugin.apply({
+      effect: (fn: () => unknown) => fn(),
+      ui: { register: (part: UiRow) => registered.push(part), contribute: () => {} },
+      fleet: { projectSpend: async () => days },
+      scope: {},
+    } as unknown as Context);
+    const projected = await homeRead(
+      {
+        tools: { call: async () => [] } as unknown as HomeSources['tools'],
+        isolated: async (read) => read(),
+      },
+      registered,
+      { projectId: project.id, actorId: 'actor_1' },
+    );
+    assert.ok(projected && typeof projected === 'object' && !Array.isArray(projected));
+    boot([row('work', 'work', 'lead')], { tasks: [], experiments: [], fleet: projected.fleet });
     await open();
     const card = document.querySelector('.hub-card--spend');
     assert.ok(card);

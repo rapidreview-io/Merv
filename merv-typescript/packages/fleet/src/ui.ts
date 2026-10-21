@@ -61,7 +61,7 @@ export const fleetUiPlugin = {
         },
         // Home's compute card: what the project's machines cost on each day of this month.
         home: {
-          keep: ['day', 'usd'],
+          keep: ['day', 'usd', 'pricedHours', 'unpricedHours'],
           list: async (caller) => await ctx.fleet.projectSpend(caller),
         },
         read: async (caller, params = {}) => {
