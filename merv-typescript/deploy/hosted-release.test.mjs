@@ -166,6 +166,24 @@ test('a gate passes only when every report line passes', () => {
   );
   assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
   assert.equal(passed(workflow({ workHostStepRan: false }), dispatch), false);
+  const reviewChecks = py('print(json.dumps(vm.REVIEW_CHECKS))');
+  const review = {
+    gate: 'linux-review-readonly',
+    ...Object.fromEntries(reviewChecks.map((key) => [key, true])),
+    actualProtectedWorkflow: false,
+    cloudflareEvidence: false,
+  };
+  assert.equal(passed(JSON.stringify(review), 'linux-review-gate.py'), true);
+  for (const key of [...reviewChecks, 'actualProtectedWorkflow', 'cloudflareEvidence']) {
+    const missing = { ...review };
+    delete missing[key];
+    assert.equal(passed(JSON.stringify(missing), 'linux-review-gate.py'), false, key);
+    assert.equal(
+      passed(JSON.stringify({ ...review, [key]: !review[key] }), 'linux-review-gate.py'),
+      false,
+      key,
+    );
+  }
 });
 
 test('inquiry and review gates allow root mount setup while retaining Docker seccomp', () => {
@@ -208,13 +226,18 @@ print(json.dumps(calls))`);
   assert.equal(gates.length, 4);
   assert.deepEqual(
     gates.map((command) => command.includes('seccomp=/run/gate/gate-seccomp.json')),
-    [false, true, false, false],
+    [false, true, false, true],
   );
   for (const command of gates) {
     assert.equal(command[command.indexOf('--name') + 1], profile);
     assert.equal(command.includes(`apparmor=${profile}`), command.includes('SYS_ADMIN'));
     assert.ok(!command.includes('--privileged') && !command.includes('seccomp=unconfined'));
   }
+  assert.ok(
+    gates[3].includes(
+      '/run/gate/bundle/review-launch-fixture.mjs:/opt/merv/runtime/review-launch-fixture.mjs:ro',
+    ),
+  );
   assert.deepEqual(rest.slice(4), [
     [['docker', 'rm', '-f', profile], null],
     [['apparmor_parser', '--skip-cache', '--remove'], add[1]],

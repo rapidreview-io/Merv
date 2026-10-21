@@ -6,6 +6,19 @@ import { build } from 'esbuild';
 const destination = resolve(process.argv[2] ?? 'output/hosted-runner');
 mkdirSync(destination, { recursive: true });
 const inputs = new Set();
+// Gate-only launcher fixture: generated from production policy/buildLaunch, mounted
+// into the disposable test container. The image Dockerfile never copies it.
+await build({
+  entryPoints: ['scripts/hosted-runner/review-launch-fixture.ts'],
+  outfile: `${destination}/review-launch-fixture.mjs`,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node22',
+  banner: {
+    js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+  },
+});
 function record(result) {
   for (const input of Object.keys(result.metafile.inputs)) inputs.add(input);
 }

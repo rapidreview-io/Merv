@@ -161,6 +161,8 @@ function codexArgs(
   { request, url, sealed, internet, servers }: LaunchFacts,
   safeEnvironment: Record<string, string>,
 ): string[] {
+  const reviewScratch =
+    !!profile.isolatedLauncher && request.session.execution.policy.readOnly && !sealed;
   const args = [
     'exec',
     '--ignore-user-config',
@@ -168,8 +170,7 @@ function codexArgs(
     // Only a session that may be continued keeps its conversation.
     ...(request.session.continuity ? [] : ['--ephemeral']),
     '--skip-git-repo-check',
-    '--sandbox',
-    sealed ? 'read-only' : 'workspace-write',
+    ...(reviewScratch ? [] : ['--sandbox', sealed ? 'read-only' : 'workspace-write']),
     '--json',
     '--color',
     'never',
@@ -178,6 +179,18 @@ function codexArgs(
   ];
   const config = (key: string, value: string) => args.push('-c', `${key}=${value}`);
   config('approval_policy', quote('never'));
+  // The launcher has already mounted the review checkout read-only. Declaring it
+  // workspace-write makes Codex's bwrap create missing .git/.agents/.codex/.aws
+  // mount targets there before the shell starts, which fails with EROFS. Keep
+  // Codex's read-only baseline and grant scratch alone; never alter the snapshot
+  // to accommodate sandbox setup. Legacy sandbox settings override this profile.
+  if (reviewScratch) {
+    config('default_permissions', quote('merv-review'));
+    config(
+      'permissions.merv-review',
+      `{extends=":read-only",filesystem={":slash_tmp"="write"},network={enabled=${!!profile.hosted}}}`,
+    );
+  }
   // Native shell remains available inside the declared filesystem sandbox. Unrelated
   // account integrations, hooks and agents must not broaden this lease's tool surface.
   for (const feature of [
@@ -250,7 +263,7 @@ function codexArgs(
   if (profile.isolatedLauncher)
     Object.assign(shellEnvironment, {
       XDG_CACHE_HOME: '/tmp/cache',
-      UV_CACHE_DIR: join(request.cwd, '.uv-cache'),
+      UV_CACHE_DIR: reviewScratch ? '/tmp/cache/uv' : join(request.cwd, '.uv-cache'),
     });
   // Codex applies include_only after set; retain the safe override names as well.
   // Default exclusions remove *TOKEN*, so bypass them only behind this exact name list.
@@ -260,15 +273,20 @@ function codexArgs(
       JSON.stringify([...Object.keys(shellEnvironment), 'HF_TOKEN', 'HF_ENDPOINT']),
     );
   config('shell_environment_policy.set', table(shellEnvironment));
-  config('sandbox_workspace_write.writable_roots', '[]');
   // A hosted machine holds no provider key and the server caps its step, so its shell commands
   // may use the network, and it is given Merv's internet reads. Codex's own web search stays
   // disabled, and a sealed review stays read-only and offline.
-  config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
-  config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
   // An isolated assignment's /tmp is its own machine's, emptied after every step; anywhere else it
   // is shared with the person's own programs.
-  config('sandbox_workspace_write.exclude_slash_tmp', profile.isolatedLauncher ? 'false' : 'true');
+  if (!reviewScratch) {
+    config('sandbox_workspace_write.writable_roots', '[]');
+    config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
+    config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
+    config(
+      'sandbox_workspace_write.exclude_slash_tmp',
+      profile.isolatedLauncher ? 'false' : 'true',
+    );
+  }
   // Codex sees what Merv's server lists to this session, as Claude does through the whole
   // mcp__merv prefix: every read in the project and the writes this lease was granted. Sessions
   // enforce the manifest and its argument bindings on every call, and a fixed list here hid the
