@@ -1,6 +1,6 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
 /** Standard Git smart HTTP. Git owns its wire protocol; Merv owns admission and retained refs. */
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, createPublicKey, publicEncrypt, constants } from 'node:crypto';
 import { createServer } from 'node:net';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -43,9 +43,16 @@ interface Grant extends GitGrantInput {
   audience: 'runner' | 'agent' | 'shutdown' | 'capture';
   cleanup?: { allocationId: string; epoch: number; credentialHash: string };
 }
+interface AccountGitGrant {
+  audience: 'account';
+  projectId: string;
+  mode: 'read' | 'write';
+  expiresAt: string;
+}
 interface Access {
   caller: Caller;
   grant?: Grant;
+  accountGrant?: AccountGitGrant;
 }
 interface Update {
   old: string;
@@ -164,6 +171,72 @@ $merv$;
       ),
     );
     for (const row of pending) await this.reconcile(row.id, JSON.parse(row.payload_json) as Push);
+  }
+
+  /** A native MCP user delegates one project's Git access without exposing a bearer to chat.
+   * Every Git request and push admission rechecks the source key's live membership. */
+  async issueAccount(caller: Caller, input: { publicKey: string; mode: 'read' | 'write' }) {
+    check(
+      caller.key && !caller.session && !caller.managed,
+      'code_git_account_required',
+      'Use the signed-in account connection; workers must use assigned Git credentials',
+      403,
+    );
+    check(
+      input.mode === 'read' || input.mode === 'write',
+      'invalid_input',
+      'Invalid Git access mode',
+    );
+    check(
+      typeof input.publicKey === 'string' &&
+        input.publicKey.length <= 4096 &&
+        input.publicKey.startsWith('-----BEGIN PUBLIC KEY-----'),
+      'invalid_input',
+      'Supply an RSA public key',
+    );
+    let key;
+    try {
+      key = createPublicKey(input.publicKey);
+    } catch {
+      throw new MervError('invalid_input', 'Supply an RSA public key', 400);
+    }
+    check(
+      key.asymmetricKeyType === 'rsa' &&
+        [2048, 3072, 4096].includes(key.asymmetricKeyDetails?.modulusLength ?? 0),
+      'invalid_input',
+      'Use a 2048, 3072 or 4096 bit RSA public key',
+    );
+    const token = `mg_${randomBytes(32).toString('base64url')}`;
+    const grant: AccountGitGrant = {
+      audience: 'account',
+      projectId: caller.projectId,
+      mode: input.mode,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    };
+    const encryptedToken = publicEncrypt(
+      { key, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+      Buffer.from(token),
+    ).toString('base64');
+    await this.state.transaction(async (tx) => {
+      // Ordinary user Git pushes require admin, not merely the ability to write a task.
+      await this.scope.require(caller, input.mode === 'write' ? 'admin' : 'read', tx);
+      await tx.run(
+        'INSERT INTO code_git_credentials(token_hash,project_id,caller_json,grant_json,created_at) VALUES(?,?,?,?,?)',
+        hash(token),
+        caller.projectId,
+        canonical(caller),
+        canonical(grant),
+        now(),
+      );
+    });
+    return {
+      url: `/git/${encodeURIComponent(caller.projectId)}.git`,
+      username: 'merv',
+      mode: grant.mode,
+      expiresAt: grant.expiresAt,
+      encryption: 'RSA-OAEP-SHA256',
+      encryptedToken,
+    };
   }
 
   /** The workspace protocol checked runner ownership before minting these separate capabilities. */
@@ -458,7 +531,7 @@ $merv$;
       const colon = value.indexOf(':');
       if (colon > 0) token = value.slice(colon + 1);
     } else if (/^Bearer [^\s]+$/i.test(header)) token = header.slice(7);
-    check(token && token.length <= 4096, 'unauthorized', 'Use a Merv key as the Git password', 401);
+    check(token && token.length <= 4096, 'unauthorized', 'Use a Merv Git credential', 401);
     if (token.startsWith('mg_')) {
       const row = await this.state.read((sql) =>
         sql.get<{ caller_json: string; grant_json: string }>(
@@ -468,7 +541,12 @@ $merv$;
         ),
       );
       check(row, 'unauthorized', 'Invalid Git credential', 401);
-      const grant = JSON.parse(row.grant_json) as Grant;
+      const grant = JSON.parse(row.grant_json) as Grant | AccountGitGrant;
+      if (grant.audience === 'account') {
+        const access = { caller: JSON.parse(row.caller_json) as Caller, accountGrant: grant };
+        await this.authorized(access, write);
+        return access;
+      }
       await this.state.read((sql) => this.live(sql, grant, write));
       return { caller: JSON.parse(row.caller_json) as Caller, grant };
     }
@@ -523,6 +601,25 @@ $merv$;
   }
 
   private async authorized(access: Access, write: boolean, tx?: Transaction): Promise<void> {
+    if (access.accountGrant) {
+      const grant = access.accountGrant;
+      check(
+        access.caller.key &&
+          !access.caller.session &&
+          !access.caller.managed &&
+          grant.projectId === access.caller.projectId &&
+          Date.parse(grant.expiresAt) > Date.now(),
+        'unauthorized',
+        'Git credential expired; renew through the signed-in MCP connection',
+        401,
+      );
+      check(
+        !write || grant.mode === 'write',
+        'code_git_read_only',
+        'This Git credential is read-only',
+        403,
+      );
+    }
     if (access.grant) {
       // A derived grant must not outlive revoked source authority. Cleanup has its own
       // deliberately narrower authorization after an allocation stops granting work.

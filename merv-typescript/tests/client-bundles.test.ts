@@ -34,7 +34,7 @@ test('published client bundle matches source and has one remote connection per c
     undefined,
     'portable root must not shadow the supported Codex bundle',
   );
-  for (const name of ['research', 'operations', 'owners-agent'])
+  for (const name of ['research', 'operations', 'owners-agent', 'git-access'])
     assert.equal(
       clientBundle[`codex/skills/${name}/SKILL.md`],
       clientBundle[`claude-code/skills/${name}/SKILL.md`],

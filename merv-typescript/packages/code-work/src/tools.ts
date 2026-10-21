@@ -238,6 +238,19 @@ export const codeToolsPlugin = {
     );
     const definitions = [
       {
+        name: 'code.git_credential',
+        tier: 'core' as const,
+        worker: 'never' as const,
+        description:
+          'Prepare short-lived Git access through the signed-in account for this explicit projectId. Supply an ephemeral RSA public key (SPKI PEM, 2048–4096 bits); returns an RSA-OAEP-SHA256 encrypted token for local decryption directly into Git credential-cache. Never print decrypted credentials or put them in URLs, command arguments, files or chat. Read mode supports clone/fetch; write requires project admin and preserves normal push admission. Renew before expiry through this tool with saved MCP auth; no Settings key or second login.',
+        inputSchema: z.strictObject({
+          publicKey: z.string().max(4096),
+          mode: z.enum(['read', 'write']).default('read'),
+        }),
+        handler: (caller: Caller, input: { publicKey: string; mode: 'read' | 'write' }) =>
+          ctx.codeWork.gitRemote.issueAccount(caller, input),
+      },
+      {
         name: 'code.publication.read',
         tier: 'ui' as const,
         description:

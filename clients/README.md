@@ -46,3 +46,13 @@ See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and
 Edit skills in `claude-code/skills/` and copy to `codex/skills/`. After editing any
 bundle file, run `npm run build:clients` in `merv-typescript/`. The generated
 server-side bundle is checked against the originals in the bundle tests.
+
+
+Terminal Git uses the same saved account connection: the git-access skill calls
+`code.git_credential` with an ephemeral RSA public key and explicit projectId, then
+decrypts the reply directly into Git's built-in memory credential cache. No Settings
+key, manual token copy, second login, Merv daemon or helper installation is needed.
+The agent renews ten-minute credentials through MCP for later Git batches. Native
+Git outside an active agent cannot renew through the client's private MCP session.
+Read access follows current membership; pushes retain the existing admin requirement
+and all repository admission checks. Revoking the account grant revokes derived access.

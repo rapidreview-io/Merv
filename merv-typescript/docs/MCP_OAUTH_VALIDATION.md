@@ -301,3 +301,50 @@ authorize without a project field, and revoke a connection without project-shell
 The account key page is also linked from the project chooser. Plugin version 0.5.2
 updates both clients' skills and fresh-chat guidance. These checks use local fixtures;
 production rollout and real-client consent validation of this change remain release checks.
+
+## Git through the saved native account connection
+
+`code.git_credential` is a non-read-only core MCP tool, unavailable to leased workers.
+It accepts explicit projectId, a 2048/3072/4096-bit RSA SPKI public key, and read/write
+mode. It requires a live user-key membership; write mode retains the ordinary Git
+admin requirement. It stores only a token hash and the source caller, project,
+mode and ten-minute expiry in the existing Git credential table. No schema change
+is needed. The response carries an RSA-OAEP-SHA256 ciphertext, never a bearer.
+
+The 0.5.3 git-access skill generates an ephemeral local key pair, sends only the
+public key through MCP, and decrypts directly to Git's native credential-cache over
+stdin. The private key is removed. Git commands use a private cache socket,
+credential.useHttpPath and disabled redirects; credentials are absent from remotes,
+command arguments, environment variables, plaintext files and model/tool output.
+Both bundled clients follow the same workflow with Python 3, OpenSSL and native Git.
+No Merv helper installation or native-client OAuth store access is involved.
+
+Git requests and each push authorization recheck source-key liveness and current
+membership, mode and expiry. Role replacement invalidates the old membership-bound
+credential. Source OAuth refresh preserves access; source-grant revocation rejects
+all derived credentials. Project switches mint a separate path-bound credential
+with the same account connection. Worker/reviewer assignment grants and all push
+admission, reserved refs, generation fencing and machine/CI keys are unchanged.
+
+The agent renews before later Git batches or after authentication expiry, through
+its saved native MCP connection. Standalone Git outside an active authenticated
+agent cannot renew through that client's private connection; doing so would require
+a separate helper or OAuth-store integration. Expiry/revocation of the account grant
+itself still requires the native client's normal sign-in flow.
+
+Local regression coverage includes actual MCP OAuth minting; encrypted-only tool
+responses/call logs; native credential-cache clone and push; protected-ref rejection;
+refresh/renewal; source revocation; A→B→A project minting and credential isolation;
+read-only credentials; role downgrade/removal; expiry; invalid/weak recipient keys;
+and refusal of worker, managed and actor-only callers. The exact published Python
+snippets are executed against an encrypted fixture and native Git cache, checking
+path separation and private-key removal. Real installed-client execution against
+the deployed release remains a release validation step.
+
+Implementation validation on integration base `c6418544e`: the focused Git/bundle
+run passed 5/5 checks, including all three new account-Git tests. The broader
+Git/writer/noun/compatibility run passed 75/77. Both failures are application startup
+failures for `knowledge-tools` in `tool-compat.test.ts`; rerunning that file with the
+unchanged integration-base Git implementation reproduces both. Server build and
+typecheck pass. This inherited startup failure is a separate release check, not a
+claim that the full application suite is green.

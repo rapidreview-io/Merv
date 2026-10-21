@@ -102,3 +102,19 @@ the flattened build layout, bundle regeneration, actual setup handlers and both
 production/nonproduction plugin archives. It also verifies source hashes, omission
 of dirty/untracked inputs and credential-shaped files, and that a committed skill
 change changes the release content hash.
+
+For normal agent Git access, use plugin 0.5.3's git-access skill and the
+`code.git_credential` MCP tool. Do not require a Settings key or token copy-paste.
+The already authenticated agent mints ten-minute access, encrypted to an ephemeral
+local public key, and supplies it to Git's built-in memory credential cache over
+stdin. It renews through MCP for later batches. Project pushes retain admin checks;
+read roles can fetch. The documented local path requires Python 3, OpenSSL and Git
+credential-cache. No Merv daemon/helper is installed. An unattended terminal Git
+process cannot renew through a native client's private MCP session without an
+active agent; this release does not claim a universal Git OAuth helper.
+
+Before release acceptance, use both real installed native clients to follow the
+published skill with their saved OAuth grants: clone/fetch, an authorized reversible
+user-branch push, fresh-chat renewal, and a project switch. Confirm no plaintext
+credential in tool output, command arguments, remote URLs or config. The machine/CI
+key path remains supported, but is not the default user onboarding path.

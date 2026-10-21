@@ -171,7 +171,10 @@ test('a noun call takes its action and that action’s object, and names what it
 test('a noun tool describes every action through lossless schemas, core loaded up front', async () => {
   const { tools } = registry();
   const described = new Map((await tools.describe(owner, true)).map((tool) => [tool.name, tool]));
-  assert.deepEqual([...described.keys()], ['code.read', 'code.write']);
+  assert.deepEqual([...described.keys()], ['code.git_credential', 'code.read', 'code.write']);
+  const gitCredential = described.get('code.git_credential')!;
+  assert.equal(gitCredential.annotations?.readOnlyHint, false);
+  described.delete('code.git_credential');
   for (const tool of described.values()) {
     const schema = expanded(tool.inputSchema);
     assert.equal(schema.type, 'object');
