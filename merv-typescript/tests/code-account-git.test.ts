@@ -9,7 +9,7 @@ import {
   constants,
 } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import { OAuth } from '@merv/scope/oauth';
@@ -68,6 +68,29 @@ async function fixture(t: test.TestContext) {
   });
   server.mount('/git', (req, res, r) => f.code.gitRemote.handle(req, res, r.url), { public: true });
   const base = await server.start();
+  const initialized = await fetch(base + '/mcp', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${tokens.access_token}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 0,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'git-orientation-test', version: '1' },
+      },
+    }),
+  });
+  assert.equal(initialized.status, 200);
+  const instructions = (await initialized.json()).result.instructions as string;
+  assert.match(instructions, /code.git_credential/);
+  assert.match(instructions, /connect\/bundle.json/);
+  assert.match(instructions, /experiment pins/);
   t.after(async () => {
     await server.stop();
     await tools.close();
@@ -132,6 +155,22 @@ test(
   { timeout: 90_000 },
   async (t) => {
     const f = await fixture(t);
+    const operator = await f.scope.members.acceptVerifiedIdentity({
+      issuer: f.person.user.issuer,
+      subject: 'sync-admin',
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    });
+    await f.scope.members.addMember(f.person, f.admin.projectId, {
+      subject: 'sync-admin',
+      role: 'operator',
+    });
+    await f.scope.members.changeMemberRole(operator, f.admin.projectId, {
+      subject: f.person.user.subject,
+      role: 'producer',
+    });
+    await f.lease('pinned-cloud-work');
+    const pinned = (await f.unit()).base;
+    assert.ok(pinned);
     const grant = await f.mint('write');
     const token = decrypt(grant.encryptedToken);
     assert.ok(token.startsWith('mg_'));
@@ -179,21 +218,23 @@ test(
       'http.followRedirects=false',
     ];
     const checkout = join(f.directory, 'oauth-clone');
-    const cloned = await git([...options, 'clone', url.href, checkout]);
+    const cloned = await git([...options, 'clone', '--origin', 'merv', url.href, checkout]);
     assert.equal(cloned.code, 0, cloned.output);
     assert.ok(!readFileSync(join(checkout, '.git/config'), 'utf8').includes(token));
+    await git(['-C', checkout, 'remote', 'add', 'origin', 'https://example.invalid/user/repo.git']);
+    writeFileSync(join(checkout, 'local-only.txt'), 'not committed or synchronized');
     const pushed = await git([
       ...options,
       '-C',
       checkout,
       'push',
-      'origin',
+      'merv',
       'HEAD:refs/heads/user/oauth-smoke',
     ]);
     assert.equal(pushed.code, 0, pushed.output);
-    await git([...options, '-C', checkout, 'push', 'origin', 'HEAD:refs/heads/merv-main']);
+    await git([...options, '-C', checkout, 'push', 'merv', 'HEAD:refs/heads/merv-main']);
     // Send a changed commit to exercise reserved admission rather than Git's no-op path.
-    f.source.commit({ 'oauth.txt': 'new content\n' });
+    const next = f.source.commit({ 'oauth.txt': 'new content\n' });
     const protectedPush = await git([
       ...options,
       '-C',
@@ -204,6 +245,75 @@ test(
     ]);
     assert.notEqual(protectedPush.code, 0);
     assert.match(protectedPush.output, /reserved|protected|main/i);
+    const synced = await git([
+      ...options,
+      '-C',
+      f.source.repository,
+      'push',
+      url.href,
+      'HEAD:refs/heads/user/oauth-smoke',
+    ]);
+    assert.equal(synced.code, 0, synced.output);
+    const separate = await git([
+      ...options,
+      '-C',
+      f.source.repository,
+      'push',
+      url.href,
+      `${f.root}:refs/heads/user/other-agent`,
+    ]);
+    assert.equal(separate.code, 0, separate.output);
+    const remote = await git([
+      ...options,
+      'ls-remote',
+      '--refs',
+      url.href,
+      'refs/heads/user/oauth-smoke',
+    ]);
+    assert.equal(remote.output.trim().split('\t')[0], next);
+    const status = await f.code.status(await f.scope.caller(f.principal, f.admin.projectId));
+    assert.equal(
+      status.git!.userBranches.find((b) => b.name === 'user/oauth-smoke')!.headOid,
+      next,
+    );
+    assert.equal(
+      status.git!.userBranches.find((b) => b.name === 'user/other-agent')!.headOid,
+      f.root,
+    );
+    assert.equal(status.git!.baselineOid, f.root);
+    assert.equal(status.git!.baselinePolicy, 'reviewed_integration');
+    assert.equal(status.git!.localWorkingTree, 'unknown');
+    assert.deepEqual((await f.unit()).base, pinned);
+    assert.ok(!status.git!.userBranches.some((b) => b.name.startsWith('merv')));
+    const rollback = await git([
+      ...options,
+      '-C',
+      f.source.repository,
+      'push',
+      '--force',
+      url.href,
+      `${f.root}:refs/heads/user/oauth-smoke`,
+    ]);
+    assert.notEqual(rollback.code, 0);
+    const deletion = await git([
+      ...options,
+      '-C',
+      f.source.repository,
+      'push',
+      url.href,
+      ':refs/heads/user/oauth-smoke',
+    ]);
+    assert.notEqual(deletion.code, 0);
+    assert.equal(
+      (await git(['-C', checkout, 'remote', 'get-url', 'origin'])).output.trim(),
+      'https://example.invalid/user/repo.git',
+    );
+    assert.equal(
+      readFileSync(join(checkout, 'local-only.txt'), 'utf8'),
+      'not committed or synchronized',
+    );
+    const machine = await f.scope.userKeys.create(f.person, { projectId: f.admin.projectId });
+    assert.equal((await f.access(machine.token, f.admin.projectId, true)).status, 200);
     await f.refresh();
     const renewed = decrypt((await f.mint('write')).encryptedToken);
     assert.notEqual(renewed, token);
@@ -271,6 +381,12 @@ test(
     });
     assert.equal((await f.access(write, a, true)).status, 403);
     assert.equal((await f.access(read)).status, 403); // role replacement invalidates the old membership
+    await assert.rejects(f.mint('write'));
+    assert.equal((await f.access(decrypt((await f.mint('read')).encryptedToken))).status, 200);
+    await f.scope.members.changeMemberRole(second, a, {
+      subject: f.person.user.subject,
+      role: 'reviewer',
+    });
     await assert.rejects(f.mint('write'));
     assert.equal((await f.access(decrypt((await f.mint('read')).encryptedToken))).status, 200);
     await f.scope.members.removeMember(second, a, f.person.user.subject);

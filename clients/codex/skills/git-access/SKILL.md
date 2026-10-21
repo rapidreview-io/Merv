@@ -1,19 +1,19 @@
 ---
 name: git-access
-description: Use native terminal Git with Merv after the saved MCP sign-in. Automatically obtain and renew encrypted, short-lived project Git access for clone, fetch or authorized push. No Settings key, token copy-paste, helper installation or second browser login.
+description: Keep code-linked Merv work synchronized through native Git and the saved MCP sign-in. Sync the selected user branch, verify freshness, preserve origin and research pins, and renew short-lived Git access without a Settings key or second login.
 ---
 
 # Git through the signed-in Merv account
 
-When the person's requested work needs Git, do this yourself as part of that work.
+For code-linked project work, perform this synchronization throughout the active task.
 Use the existing native MCP connection; do not send the person to Settings/Keys or
 ask them for a token. List projects and choose the intended explicit projectId,
 asking only if ambiguous. Read its brief and code status. Git is optional for
-ordinary research tasks. A reader/reviewer can clone or fetch; ordinary user pushes
-still require project admin. Workers use their assigned credentials, never this flow.
+non-code research tasks. A reader/reviewer can clone or fetch; producer/operator
+users can push ordinary user branches. Workers use their assigned credentials, never this flow.
 
 The `code.git_credential` tool takes `{projectId, publicKey, mode}`. Use `read` for
-clone/fetch or `write` only for an authorized push. It returns a relative Git URL,
+clone/fetch or `write` for the user-branch synchronization authorized by normal code-linked work. It returns a relative Git URL,
 username `merv`, mode, expiresAt, encryption `RSA-OAEP-SHA256`, and encryptedToken.
 The token expires in ten minutes and loses access immediately if the source grant
 or membership is revoked. A role change invalidates existing derived credentials;
@@ -26,6 +26,85 @@ Use Python 3, OpenSSL and Git's built-in `credential-cache`, as below. These are
 ordinary local commands, not an installed Merv helper. Do not substitute Git's
 plaintext credential store or enable tracing. If these commands are unavailable,
 report the missing prerequisite; do not create a long-lived key as a workaround.
+
+## Keep code-linked work synchronized while you work
+
+For a code-linked project, synchronization is the default part of normal work, not
+another setup step. Use the selected project's repository and current intended user
+branch. If the repository/project mapping or branch is ambiguous, resolve that
+ambiguity before uploading; do not upload an unrelated working directory. In a
+fresh chat, rediscover the branch and remote instead of inheriting another chat's
+selection. Each agent keeps its own intended branch; never switch to another agent's
+branch merely because it is newer. Readers/reviewers fetch and report local-only
+changes; producer/operator members can push user branches through the same login.
+
+1. Read the project brief and `code.read` status. Inspect the local repository root,
+   current branch, HEAD, and `git status --porcelain=v1` (including untracked files).
+   Inspect remote names and compare URLs in memory; never print credential-bearing
+   URLs. Do not change `origin`, existing remotes, or the branch's upstream.
+2. Reuse a remote whose credential-free URL exactly matches this project's Merv
+   remote. Otherwise add a separate `merv` remote; if that name is occupied, choose
+   an unused project-specific name. Preserve the occupied remote. For a new remote,
+   scope fetch configuration to the selected branch and `merv-main`, e.g.
+   `git remote add -t "$branch" -t merv-main "$remote" "$url"`. Validate branch names
+   with `git check-ref-format --branch`. If HEAD is detached or the current branch
+   is Merv-owned, select/create an ordinary user branch appropriate to the work
+   before pushing. Never push `merv`, `merv/*`, `merv-main`, `merv-main/*`, tags or
+   retained refs. Do not use `--mirror`, `--all`, force, ref deletion or broad refspecs.
+3. Use the credential flow below automatically. Inspect the selected remote ref with
+   `git <gitOptions> ls-remote --refs "$remote" "refs/heads/$branch"`. If it exists,
+   fetch that exact branch into its corresponding remote-tracking ref, without a
+   force prefix. Compare local and fetched heads with `git rev-list --left-right
+   --count HEAD..."refs/remotes/$remote/$branch"` and ancestry checks. A missing
+   branch is a normal first push, not an authentication failure. Surface remote
+   rewrites, divergence or conflicts. Resolve by normal merge/fast-forward according
+   to the person's intent; never silently reset, stash, rebase unrelated work or
+   force a resolution. A dirty tree must not be silently overwritten.
+4. Initially sync the selected branch's existing commits, then push newly committed
+   user work after each meaningful change and before cloud work:
+   `git <gitOptions> push "$remote" "HEAD:refs/heads/$branch"`.
+   Do not set upstream (`-u`) or push every branch. Make focused commits of your
+   authorized task changes at meaningful checkpoints, unless the person asked to
+   leave them uncommitted. Inspect staged content and use explicit paths. Do not auto-stage
+   ignored files, secrets, unrelated changes or use `git add -A` as a sync step.
+   Server admission is a second check, not permission to upload secrets. Uncommitted
+   and ignored/local-only inputs remain **unsynced**; name needed omissions without
+   dumping their contents. Use explicit artifact transfer for appropriate required
+   datasets/files instead of silently adding them to Git.
+5. After every push, re-read the exact remote ref and fetch it, then compare with
+   local HEAD again. A successful command alone is not proof of current equality:
+   another agent may have advanced the ref. Read `code.read` status for the baseline
+   and pinned work. Report the source branch, local HEAD, observed remote HEAD and
+   observation time, ahead/behind/diverged state, dirty/local-only state, and research
+   baseline commit. Say **commits synchronized** only when fetched remote and local
+   heads match. A dirty tree is still partly unsynced even when those heads match.
+
+`code.read` status includes `git.remotePath`, `git.userBranches` (ref and current
+headOid), `git.observedAt`, `git.baselineOid`, and the baseline policy. It uses live
+Git refs, not a parallel sync database. A truncated list requires querying the exact
+ref with Git. `git.localWorkingTree` is unknown to the server: only the local agent
+can attest local freshness. Cloud agents should name their actual pinned commit
+and compare it with this status before claiming to use the user's latest code.
+
+### User branch sync and the research baseline
+
+A push retains the user branch; it never silently replaces `merv-main` or a running
+experiment's files. The baseline follows **reviewed integration**, not every push.
+When intended cloud work needs newly synced code, an operator uses `code.write`
+`repository_prepare` with the selected baseBranch, observed headOid, current
+expectedMainOid and stable requestId. Follow the returned integration task/review;
+after acceptance, retry the identical request as instructed and verify the updated
+baseline. If the caller lacks that permission, report the exact pending integration
+and involve the project operator; do not claim the baseline is synchronized or
+launch work that assumes the new code is already present. Producer branch sync
+itself needs no administrator or setup ceremony.
+
+Existing running/completed work keeps its pinned commits and reproducible evidence.
+New work must name/verify the intended baseline or an explicitly supported pinned
+input; never rewrite old pins to erase drift. Report user-branch freshness and
+baseline integration status separately. Keep syncing during the active task and
+before handoff; do not promise synchronization while the agent is offline or install
+a background Merv daemon. No GitHub account/integration inside Merv is involved.
 
 ## Prepare an ephemeral receiving key
 

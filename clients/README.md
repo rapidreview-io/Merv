@@ -54,5 +54,16 @@ decrypts the reply directly into Git's built-in memory credential cache. No Sett
 key, manual token copy, second login, Merv daemon or helper installation is needed.
 The agent renews ten-minute credentials through MCP for later Git batches. Native
 Git outside an active agent cannot renew through the client's private MCP session.
-Read access follows current membership; pushes retain the existing admin requirement
-and all repository admission checks. Revoking the account grant revokes derived access.
+Read access follows current membership; producer/operator users can push user branches, while readers/reviewers retain read-only
+access. All protected-ref and repository admission checks remain. Revoking the account grant revokes derived access.
+
+
+For code-linked work, the installed agents sync the selected branch by default:
+add/reuse a separate Merv remote, preserve origin, push existing and newly committed
+work, then fetch/compare exact heads before reporting success or starting cloud work.
+Other branches, ignored files and unrelated uncommitted changes are not swept in.
+Divergence and dirty/local-only inputs are reported explicitly. `code.read` status
+exposes live user-branch heads, observation time and the research baseline commit.
+User-branch sync does not advance the baseline: reviewed integration governs new
+baseline code, and running/completed experiments retain their pinned commits.
+Synchronization runs while the agent is active, with no offline-daemon promise.

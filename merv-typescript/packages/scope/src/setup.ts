@@ -94,14 +94,22 @@ pasting credentials. Revoke OAuth connections in Merv Settings → Keys (label �
 or at ${origin}/ui/account/keys, even with no projects.
 
 ## Terminal Git without another sign-in
-When the requested work needs Git, use the bundled git-access skill. Through the saved MCP
+For code-linked project work, use the bundled git-access skill by default. Direct MCP
+clients without loaded skills can fetch ${origin}/connect/bundle.json and read
+codex/skills/git-access/SKILL.md (identical for Claude); an already connected client
+does not need another installation or sign-in. Preserve origin;
+configure a separate Merv remote, sync the selected user branch initially and after meaningful
+commits, and verify fetched remote heads before reporting success or starting cloud work.
+Report dirty/local-only files and divergence; do not auto-commit unrelated work or push all
+branches. Branch sync is separate from reviewed baseline integration; experiments keep pins. Through the saved MCP
 connection, code.git_credential accepts an ephemeral RSA public key and explicit projectId,
 and returns encrypted ten-minute Git access. Decrypt directly into Git's built-in memory
 credential cache; never expose the token in URLs, commands, logs, files or chat. No Settings
 key, manual token copy, second browser login, Merv daemon or helper installation is needed.
 The agent renews access through MCP before later Git batches. Standalone Git outside an active
 agent cannot renew through the native client's private MCP session. Reader roles can fetch;
-ordinary user pushes still require admin and pass all existing repository admission checks.
+producer/operator users can push user branches; all existing repository admission checks
+and protected refs remain. Sync continues while the agent is active, not while it is offline.
 
 ## Migrate an older installation
 Back up client configuration privately before changes. Disable/uninstall the old skills-only
@@ -161,7 +169,7 @@ codex mcp login ${name}</pre><p>The login command authenticates the installed pl
 claude plugin install ${name}@${name} --scope user</pre><p>Open <code>/mcp</code>, select Merv and authenticate. Reload plugins or restart only if your client requires it.</p>
 <h2>3. Sign in and authorize your account</h2><p>Complete Merv's browser sign-in. Review the client and callback address and authorize. No project or repository is required. Your agent follows your current project permissions, including memberships added later. If no projects are accessible yet, create or join one on the website and ask your agent to list again; no reconnect is needed.</p>
 <h2>4. Save your tool permission preference</h2><p>Sign-in and tool approval are separate. For Merv to act on your behalf without repeated tool prompts, choose a persistent permission scoped to this plugin. The <a href="/connect/agent.md">full guide</a> shows Codex’s per-tool Always allow and server-specific policy, and Claude Code’s user-level /permissions rule. Existing organization restrictions still apply.</p>
-<h2>Git access</h2><p>When your requested work needs terminal Git, the installed plugin obtains and renews short-lived project credentials through the same saved connection. No Settings key or second login is needed. Git access follows your current permissions.</p>
+<h2>Git access</h2><p>For code-linked work, your agent keeps the selected user branch synchronized with a separate Merv remote, preserving origin. It verifies commits after pushing and reports uncommitted files or conflicts. The installed plugin obtains and renews short-lived project credentials through the same saved connection. No Settings key or second login is needed. Git access follows your current permissions.</p>
 <h2>5. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys or <a href="/ui/account/keys">Account keys and connections</a> under its “OAuth:” label, even with no projects. Reconnect through your client's sign-in action when authorization expires.</p>
 <p><a href="/connect/agent.md">Full setup, direct-connection alternatives and migration guide</a></p></body></html>`);
       return;

@@ -60,6 +60,16 @@ const outputs = {
     ),
   }),
   status: output({
+    git: output({
+      remotePath: z.string(),
+      available: z.boolean(),
+      observedAt: z.string(),
+      baselineOid: z.string().nullable(),
+      baselinePolicy: z.literal('reviewed_integration'),
+      userBranches: z.array(z.object({ name: z.string(), ref: z.string(), headOid: z.string() })),
+      truncated: z.boolean(),
+      localWorkingTree: z.literal('unknown'),
+    }).optional(),
     project: output({}).nullable(),
     bases: z.array(output({ key: z.string() })),
     units: z.array(output({})),
@@ -218,7 +228,7 @@ export const codeToolsPlugin = {
         readOnly: true,
         summary: 'Read repository files, history and Code state.',
         description:
-          "Read the project's code and Code's records: files (a folder or file at a ref, at an exact revision), log (history newest first, each commit with its work unit), status (bases, binding, units, blockers, store, transfers), unit (what Code holds about one work unit) and operation (a retained operation and its receipt). It changes nothing.",
+          "Read the project's code and Code's records: files (a folder or file at a ref, at an exact revision), log (history newest first, each commit with its work unit), status (bases, binding, units, blockers, store, transfers, live Git user-branch heads and baseline policy), unit (what Code holds about one work unit) and operation (a retained operation and its receipt). It changes nothing.",
         actions: reads(ctx),
       }),
     );
@@ -242,7 +252,7 @@ export const codeToolsPlugin = {
         tier: 'core' as const,
         worker: 'never' as const,
         description:
-          'Prepare short-lived Git access through the signed-in account for this explicit projectId. Supply an ephemeral RSA public key (SPKI PEM, 2048–4096 bits); returns an RSA-OAEP-SHA256 encrypted token for local decryption directly into Git credential-cache. Never print decrypted credentials or put them in URLs, command arguments, files or chat. Read mode supports clone/fetch; write requires project admin and preserves normal push admission. Renew before expiry through this tool with saved MCP auth; no Settings key or second login.',
+          'Prepare short-lived Git access through the signed-in account for this explicit projectId. Supply an ephemeral RSA public key (SPKI PEM, 2048–4096 bits); returns an RSA-OAEP-SHA256 encrypted token for local decryption directly into Git credential-cache. Never print decrypted credentials or put them in URLs, command arguments, files or chat. Read mode supports clone/fetch; write follows project write permission for user branches and preserves normal push admission. Renew before expiry through this tool with saved MCP auth; no Settings key or second login.',
         inputSchema: z.strictObject({
           publicKey: z.string().max(4096),
           mode: z.enum(['read', 'write']).default('read'),

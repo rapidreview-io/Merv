@@ -306,12 +306,11 @@ production rollout and real-client consent validation of this change remain rele
 
 `code.git_credential` is a non-read-only core MCP tool, unavailable to leased workers.
 It accepts explicit projectId, a 2048/3072/4096-bit RSA SPKI public key, and read/write
-mode. It requires a live user-key membership; write mode retains the ordinary Git
-admin requirement. It stores only a token hash and the source caller, project,
+mode. It requires a live user-key membership; write mode follows project write permission for user branches. It stores only a token hash and the source caller, project,
 mode and ten-minute expiry in the existing Git credential table. No schema change
 is needed. The response carries an RSA-OAEP-SHA256 ciphertext, never a bearer.
 
-The 0.5.3 git-access skill generates an ephemeral local key pair, sends only the
+The 0.5.4 git-access skill generates an ephemeral local key pair, sends only the
 public key through MCP, and decrypts directly to Git's native credential-cache over
 stdin. The private key is removed. Git commands use a private cache socket,
 credential.useHttpPath and disabled redirects; credentials are absent from remotes,
@@ -348,3 +347,36 @@ failures for `knowledge-tools` in `tool-compat.test.ts`; rerunning that file wit
 unchanged integration-base Git implementation reproduces both. Server build and
 typecheck pass. This inherited startup failure is a separate release check, not a
 claim that the full application suite is green.
+
+
+## Default active Git synchronization
+
+The follow-up expands user-owned credential push admission from admin to project
+write permission: operators already worked; producer members now work too. Reader
+and reviewer memberships remain read-only. Independent actor credentials keep the
+previous admin rule, and assigned worker grants keep the separate fenced path.
+Ordinary user refs still reject protected refs, deletion and non-fast-forward writes.
+
+`code.read status.git` reads current refs directly and reports the Git remote path,
+observed user-branch heads, observation time, baseline OID, reviewed-integration policy,
+and truncation. It explicitly marks local working-tree state unknown; agents combine
+that with local status and fetched ahead/behind counts to report freshness. No parallel
+sync state, GitHub integration or background process is added.
+
+The native regression now runs as a producer and pushes two successive user-branch
+commits, verifies the remote head and status, preserves a second agent branch and
+origin, rejects forced rollback/deletion/protected refs, and leaves local uncommitted
+files untouched. The baseline and an active work unit's non-null base pin are unchanged.
+Both reader and reviewer memberships are tested against credential minting and reads.
+The existing baseline integration/review mechanism remains responsible for advancing
+new research work; existing work is never retargeted by branch synchronization.
+
+Follow-up validation: 36 sync/baseline/status/bundle tests and 48 native-Git/writer
+fence tests passed. Actual MCP initialize responses now advertise active sync and
+route direct clients to the Git skill in `/connect/bundle.json`. Publication checks
+pass their three isolated schema/compatibility cases; the full application listing
+measurement still stops at the inherited `knowledge-tools` startup failure above.
+The metadata fixture changes only the new credential tool and `code.read`'s changed
+status declaration. All worker hashes and unrelated schemas/hashes are preserved;
+the historical total and 25% reduction threshold are unchanged. Full application
+inventory measurement must be rerun with the separate startup fix before release.

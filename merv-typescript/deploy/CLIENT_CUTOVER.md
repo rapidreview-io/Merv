@@ -103,12 +103,13 @@ production/nonproduction plugin archives. It also verifies source hashes, omissi
 of dirty/untracked inputs and credential-shaped files, and that a committed skill
 change changes the release content hash.
 
-For normal agent Git access, use plugin 0.5.3's git-access skill and the
+For normal agent Git access, use plugin 0.5.4's git-access skill and the
 `code.git_credential` MCP tool. Do not require a Settings key or token copy-paste.
 The already authenticated agent mints ten-minute access, encrypted to an ephemeral
 local public key, and supplies it to Git's built-in memory credential cache over
-stdin. It renews through MCP for later batches. Project pushes retain admin checks;
-read roles can fetch. The documented local path requires Python 3, OpenSSL and Git
+stdin. It renews through MCP for later batches. User-branch pushes follow project write authority (producer/operator);
+reader/reviewer roles can fetch. Independent machine actors retain their previous
+admin boundary; assigned workers retain their own branch/lease fences. The documented local path requires Python 3, OpenSSL and Git
 credential-cache. No Merv daemon/helper is installed. An unattended terminal Git
 process cannot renew through a native client's private MCP session without an
 active agent; this release does not claim a universal Git OAuth helper.
@@ -118,3 +119,14 @@ published skill with their saved OAuth grants: clone/fetch, an authorized revers
 user-branch push, fresh-chat renewal, and a project switch. Confirm no plaintext
 credential in tool output, command arguments, remote URLs or config. The machine/CI
 key path remains supported, but is not the default user onboarding path.
+
+
+Code-linked work now follows the active sync workflow in research, owners-agent and
+git-access: preserve origin, sync the selected user branch and verify the fetched
+head after each meaningful commit and before cloud work. `code.read status.git`
+reports live user branches and the baseline without storing a second sync ledger.
+Server status cannot know local dirty files. Baseline advancement remains a reviewed
+integration; no automatic branch-follow switch or rewriting of experiment pins is
+introduced. Validate a producer pushing two successive commits, separate agent
+branches, read-only refusal, divergence/deletion refusal, baseline drift reporting,
+and unchanged active work pins before live release.

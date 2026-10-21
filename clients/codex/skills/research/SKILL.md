@@ -22,9 +22,13 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
    Ask which project when ambiguous, including in fresh chats; never silently inherit a
    previous chat's selection. If none are accessible, explain how to create/join one on the
    website, then list again without reconnecting. Change the explicit projectId to switch
-   projects and read its brief to check your role. Git is optional. When terminal Git is
-   needed, use the bundled git-access skill to obtain short-lived access through this MCP
-   connection; never ask the person to create/copy a Settings key or sign in a second time.
+   projects and read its brief to check your role. For code-linked work, use the bundled
+   git-access skill by default: preserve origin,
+   configure a separate Merv remote, sync the intended user branch initially and after
+   meaningful commits, and verify remote freshness before cloud work. The same saved
+   connection supplies Git access; no Settings key or second sign-in. Report dirty/local-only
+   data as unsynced and distinguish branch sync from reviewed baseline integration.
+   Research work without local code needs no repository.
 1. `project.read` (brief): your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on

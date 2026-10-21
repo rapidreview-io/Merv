@@ -18,6 +18,17 @@ level. For example, `project.read` takes `{"projectId":"<chosen-id>","action":"b
 `script.tools` discovers available tools and action types; `script.run` can combine
 permitted reads. Neither gives you more authority than direct calls.
 
+## Code freshness
+
+For code-linked work, load git-access and keep the selected user branch synchronized
+with a separate Merv remote throughout the active task, after meaningful commits and
+before cloud work. Preserve origin and other agents' branches. Verify remote heads
+before reporting success; report uncommitted/local-only data and divergence explicitly.
+Use current project write permission for user-branch pushes, never a manual Settings key.
+Report the user branch's last synced commit separately from Merv's research baseline;
+new baseline code follows reviewed integration and existing experiments keep their pins.
+Do not auto-commit unrelated work, upload secrets, force-push, or claim offline sync.
+
 ## How to work
 
 - For an operational status question, read `project.read` (status) first. It reports dispatch,

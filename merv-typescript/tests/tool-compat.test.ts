@@ -157,6 +157,7 @@ const all = Object.values(retired).flat();
 /** Retired with no executable path: they answer tool_renamed. */
 const removed = ['code.local.bind', 'code.repository.rebind'];
 const nouns = [
+  'code.git_credential',
   'code.read',
   'code.write',
   'experiment.read',

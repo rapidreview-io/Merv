@@ -5,6 +5,7 @@
     "artifact.write": 3647,
     "board.read": 3395,
     "board.write": 11740,
+    "code.git_credential": 1131,
     "code.read": 6694,
     "code.write": 16518,
     "experiment.read": 2676,

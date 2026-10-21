@@ -173,6 +173,51 @@ $merv$;
     for (const row of pending) await this.reconcile(row.id, JSON.parse(row.payload_json) as Push);
   }
 
+  /** Read live refs, not a second synchronization ledger. Local working trees are unknowable here. */
+  async syncStatus(caller: Caller) {
+    await this.scope.require(caller, 'read');
+    const project = await this.state.read((sql) =>
+      sql.get<{ main_json: string }>(
+        'SELECT main_json FROM code_projects WHERE project_id=?',
+        caller.projectId,
+      ),
+    );
+    const baselineOid = project ? (JSON.parse(project.main_json) as { oid: string }).oid : null;
+    const available = await this.repositories.exists(caller.projectId);
+    const lines = available
+      ? (
+          await this.repositories.git.ok(
+            ['for-each-ref', '--count=201', '--format=%(refname) %(objectname)', 'refs/heads/'],
+            { env: this.repositories.environment(caller.projectId) },
+          )
+        )
+          .toString()
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+      : [];
+    const userBranches = lines.slice(0, 200).flatMap((line) => {
+      const [ref, headOid] = line.split(' ');
+      const name = ref!.slice('refs/heads/'.length);
+      return name === 'merv' ||
+        name.startsWith('merv/') ||
+        name === 'merv-main' ||
+        name.startsWith('merv-main/')
+        ? []
+        : [{ name, ref: ref!, headOid: headOid! }];
+    });
+    return {
+      remotePath: `/git/${encodeURIComponent(caller.projectId)}.git`,
+      available,
+      observedAt: now(),
+      baselineOid,
+      baselinePolicy: 'reviewed_integration' as const,
+      userBranches,
+      truncated: lines.length > 200,
+      localWorkingTree: 'unknown' as const,
+    };
+  }
+
   /** A native MCP user delegates one project's Git access without exposing a bearer to chat.
    * Every Git request and push admission rechecks the source key's live membership. */
   async issueAccount(caller: Caller, input: { publicKey: string; mode: 'read' | 'write' }) {
@@ -218,8 +263,8 @@ $merv$;
       Buffer.from(token),
     ).toString('base64');
     await this.state.transaction(async (tx) => {
-      // Ordinary user Git pushes require admin, not merely the ability to write a task.
-      await this.scope.require(caller, input.mode === 'write' ? 'admin' : 'read', tx);
+      // User branches follow project write permission; protected refs stay admission-owned.
+      await this.scope.require(caller, input.mode === 'write' ? 'write' : 'read', tx);
       await tx.run(
         'INSERT INTO code_git_credentials(token_hash,project_id,caller_json,grant_json,created_at) VALUES(?,?,?,?,?)',
         hash(token),
@@ -639,7 +684,15 @@ $merv$;
       }
       if (tx) await this.live(tx, access.grant, write);
       else await this.state.read((sql) => this.live(sql, access.grant!, write));
-    } else await this.scope.require(access.caller, write ? 'admin' : 'read', tx);
+    } else {
+      // User-owned keys follow live membership roles. Independent machine actors keep their
+      // existing admin boundary; assigned workers take the fenced grant path above.
+      await this.scope.require(
+        access.caller,
+        write ? (access.caller.key ? 'write' : 'admin') : 'read',
+        tx,
+      );
+    }
   }
 
   private async prepare(projectId: string): Promise<void> {
