@@ -136,6 +136,11 @@ export interface PersonUse<Limit = number> {
   own: boolean;
 }
 export type ModelTokens = PersonUse;
+/** One day's machine dollars of a project. */
+export interface FleetDaySpend {
+  day: string;
+  usd: number;
+}
 /** A person's Fleet use over a window. */
 export interface FleetPersonUsage {
   /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. Its
@@ -331,6 +336,9 @@ export interface Fleet {
   /** For the platform admin only, never a tool: each of `persons`' use over the UTC days
    *  [from, to), in order. */
   peopleUsage(persons: readonly string[], from: string, to: string): Promise<FleetPersonUsage[]>;
+  /** What the project's machines cost on each UTC day of this month so far, at the prices
+   *  stamped when Fleet reserved them: an estimate, one point per day from the first. */
+  projectSpend(caller: Caller): Promise<FleetDaySpend[]>;
   /** For the platform admin only, never a tool: sets `person`'s own daily machine dollars or
    *  model tokens, or clears it (null) so the deployment's holds again. */
   setPersonLimit(person: string, of: 'usd' | 'tokens', limit: number | null): Promise<void>;

@@ -38,6 +38,7 @@ import { ModelRelay } from './model-relay.js';
 import { rentedWork } from './running.js';
 import type {
   Fleet,
+  FleetDaySpend,
   FleetAllocation,
   FleetError,
   FleetIntent,
@@ -384,6 +385,34 @@ export class FleetService implements Fleet {
           tokens: (await meter?.modelTokens!(person, sql, from, to)) ?? null,
         });
       return rows;
+    });
+  }
+  async projectSpend(caller: Caller): Promise<FleetDaySpend[]> {
+    const now = this.clock();
+    const first = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
+    const DAY = 86_400_000;
+    return this.state.read(async (sql) => {
+      await this.scope.require(caller, 'read');
+      // A machine of the month can be older: a day in the queue, a day of work and a lease to stop.
+      const rows = await sql.all<Row>(
+        `SELECT data_json FROM fleet_allocations WHERE project_id=? AND created_at>=?`,
+        caller.projectId,
+        new Date(first - 3 * DAY).toISOString(),
+      );
+      const days: FleetDaySpend[] = [];
+      for (let at = first; at <= now; at += DAY)
+        days.push({ day: new Date(at).toISOString().slice(0, 10), usd: 0 });
+      for (const a of rows.map(decode)) {
+        if (!a.runtime || !a.usdPerHour) continue;
+        const start = Math.max(first, Date.parse(a.createdAt));
+        const end = Math.min(now, a.phase === 'released' ? Date.parse(a.updatedAt) : now);
+        for (const day of days) {
+          const open = Date.parse(`${day.day}T00:00:00.000Z`);
+          const held = Math.min(end, open + DAY) - Math.max(start, open);
+          if (held > 0) day.usd += (held / 3_600_000) * a.usdPerHour;
+        }
+      }
+      return days;
     });
   }
   async setPersonLimit(person: string, of: 'usd' | 'tokens', limit: number | null) {
@@ -878,7 +907,9 @@ export class FleetService implements Fleet {
             a.phase = 'provisioning';
             // The machine's time starts here; waiting in the queue does not spend it.
             a.deadlineAt = this.deadline(a.seconds);
-            if (capped(a)) a.usdPerHour = price(a);
+            // The offer's price is kept wherever one was read: a cap holds a person to it, and
+            // the project's spend is read from it with or without a cap.
+            a.usdPerHour = price(a);
             count++;
             byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
           }

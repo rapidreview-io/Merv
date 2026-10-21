@@ -75,6 +75,8 @@ export interface HomeData {
   research: MapCycle[] | null;
   workflows: { workflows: WorkflowDecision[] } | null;
   reflections: ReflectionSummary[] | null;
+  /** What the project's machines cost on each UTC day of this month, where Fleet runs. */
+  fleet?: { day: string; usd: number }[] | null;
 }
 /** One read for the rail and Home; asking twice joins one request. */
 export const useHome = (every = 10000) => useTool<HomeData>('ui.home', {}, { every });

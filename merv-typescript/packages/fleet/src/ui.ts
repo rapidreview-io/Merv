@@ -59,6 +59,11 @@ export const fleetUiPlugin = {
           spec: collection as Json,
           record: record as Json,
         },
+        // Home's compute card: what the project's machines cost on each day of this month.
+        home: {
+          keep: ['day', 'usd'],
+          list: async (caller) => await ctx.fleet.projectSpend(caller),
+        },
         read: async (caller, params = {}) => {
           check(
             Object.keys(params).every((key) => key === 'id'),

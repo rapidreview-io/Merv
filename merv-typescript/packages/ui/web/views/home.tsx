@@ -1,252 +1,632 @@
+import { useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import type { UiRowDescription } from '@merv/ui/rows';
-import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import type { Artifact } from '@merv/contracts/artifact-models';
-import type { PaperKind, PaperWorkspace } from '@merv/paper/models';
+import { keyKind, type RunningBoard } from '@merv/contracts/running';
+import type { ArtifactListing as Artifact } from '@merv/contracts/artifact-models';
+import type { PaperWorkspace } from '@merv/paper/models';
+import type { BoardScene, BoardSummary } from '@merv/board/models';
+import type { CodeProjectStatus } from '@merv/code-work/models';
 import { useTool } from '../api';
-import { Ago, KindLabel, StatusPill, cx, words } from '../components';
-import { Icon } from '../icons';
-import { recordNames } from '../markdown';
+import { Ago, StatusPill, cx, words } from '../components';
+import { Icon, fileIcon } from '../icons';
 import { pathOf } from '../navigation';
+import { ended } from '../process';
 import { useSession } from '../session';
 import type { ShellData } from '../shell-types';
+import { fileType } from './artifacts';
 import { newest, type HomeData } from './map-data';
-import { NeedsYou, Part, useNow } from './needs-you';
-import { labels as paperTitles } from './paper-entries';
-import { useActorNames } from './people';
-import { Phrase, Reading } from './running-phrase';
-import { currentCycle } from './work';
-import { useLive } from './work-map';
+import { NeedsYou, useNow } from './needs-you';
+import { chained, currentCycle } from './work';
+import { needs, useLive } from './work-map';
 
 /**
- * Home: the project's pulse, in the order a person asks it. Where the project stands — its
- * name and the cycle it is on — then what needs the reader, then which agents are working and
- * what each is doing this moment, then what was lately decided, filed or written. Each part
- * reads one answer the app already asks for (the rail's home read, the Work page's board, the
- * file list and the paper), and stands or fails on its own: a read that fails costs its own
- * part one line, never the page.
+ * Home: the home of everything. What needs the reader first, then one card per place, each
+ * a doorway with one picture and one number: the cycle's units as a ring, Pi as an orb, the
+ * month's compute as bars, the fleet as machines with their agents, Git's main line, the
+ * newest files, the paper's outline, the last board and the people. A card stands only where
+ * its row is registered, reads what that row's page already reads, and fails alone.
  */
 
-/** The project's name, and the cycle it is on: its state, and how much of its work is done. */
-function Head({ shell, home }: { shell: ShellData; home: HomeData | undefined }) {
-  const { project } = useSession();
-  const rows = shell.rows;
-  const cycle = currentCycle(home?.research ?? undefined, shell.workflows);
-  const cycles = pathOf(rows, 'research');
-  const work = pathOf(rows, 'work');
-  // Research counts its selected work and how much of it ended well.
-  const { settled: done, total } = cycle?.progress ?? { settled: 0, total: 0 };
-  return (
-    <header className="home-head">
-      <h1 className="page-title">{project.name}</h1>
-      {cycle && (
-        <p className="home-cycle">
-          <span className="running-kind">Cycle</span>
-          {cycles ? (
-            <Link to={`${cycles}/${cycle.id}`}>{cycle.name}</Link>
-          ) : (
-            <span>{cycle.name}</span>
-          )}
-          <StatusPill value={cycle.workflow.state} />
-          {total > 0 && (
-            <span className="home-progress" title={`${done} of ${total} done`}>
-              <span className="home-meter" aria-hidden="true">
-                <span style={{ width: `${(100 * done) / total}%` }} />
-              </span>
-              {done} of {total} done
-            </span>
-          )}
-          {work && (
-            <Link className="home-more" to={work}>
-              Open Work <Icon name="arrow-right" size={14} />
-            </Link>
-          )}
-        </p>
-      )}
-    </header>
-  );
-}
-
-/**
- * The agents working now, read from the board the Work map reads: each one's unit of work,
- * its role, and what it is doing at this moment, with how long. Each is the way to its unit's
- * sidebar on the Work page, where its live stream is.
- */
-function LiveNow({ rows }: { rows: UiRowDescription[] }) {
-  const { board, now } = useLive();
-  const nameOf = useActorNames();
-  const work = pathOf(rows, 'work');
-  const data = board.data;
-  const units = new Map((data?.lanes.work.nodes ?? []).map((node) => [node.key, node]));
-  const working = (data?.lanes.sessions.nodes ?? []).filter(
-    (node) => node.dot === 'live' || node.dot === 'moving',
-  );
-  return (
-    <Part
-      title="Live now"
-      count={working.length}
-      failed={!data && board.error ? 'Could not read what is running.' : undefined}
-      loading={!data && !board.error}
-      empty={data && !working.length ? 'No agent is working.' : undefined}
-    >
-      <Reading.Provider value={{ now, nameOf, open: () => undefined }}>
-        {working.map((node) => {
-          const unit = node.links?.find((link) => units.has(link.to))?.to ?? node.links?.[0]?.to;
-          // Sessions writes the agent's newest action as the node's first line.
-          const doing = node.attention?.says ?? node.lines[0] ?? [];
-          const face = (
-            <>
-              <span
-                className={cx('live-dot', `live-dot--${now.stale ? 'live' : node.dot}`)}
-                aria-hidden="true"
-              />
-              <span className="home-live-unit">
-                {(unit && units.get(unit)?.title) || node.name || node.title}
-              </span>
-              <span className="home-live-who">{node.title}</span>
-              <span className="home-live-doing">
-                <Phrase value={doing} />
-              </span>
-            </>
-          );
-          return (
-            <li key={node.key}>
-              {work ? (
-                <Link className="home-live" to={`${work}?key=${unit ?? node.key}`}>
-                  {face}
-                </Link>
-              ) : (
-                <span className="home-live">{face}</span>
-              )}
-            </li>
-          );
-        })}
-      </Reading.Provider>
-    </Part>
-  );
-}
-
-/** One thing lately recorded: what kind, its name, what happened, and when. */
-interface Recorded {
-  key: string;
+/** A card: its name, the way to its page, its picture and its one line. */
+function Card({
+  kind,
+  title,
+  to,
+  figure,
+  line,
+  className,
+}: {
   kind: string;
+  title: string;
+  to: string;
+  figure: ReactNode;
+  line: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cx('hub-card', `hub-card--${kind}`, className)} aria-label={title}>
+      <h2 className="hub-title">
+        {title}
+        <Link className="hub-go" to={to} aria-label={`Open ${title}`}>
+          <Icon name="arrow-right" size={14} />
+        </Link>
+      </h2>
+      <div className="hub-figure">{figure}</div>
+      <p className="hub-line">{line}</p>
+    </section>
+  );
+}
+/** The card's one number and its qualifier. */
+const Big = ({ n, says }: { n: ReactNode; says: ReactNode }) => (
+  <>
+    <strong className="hub-big">{n}</strong> {says}
+  </>
+);
+
+// ─── Work: the cycle's units as one ring, in order, each a way to its record ───────────────
+
+interface Unit {
+  id: string;
+  kind: 'tasks' | 'experiments';
   name: string;
   to: string;
-  says: ReactNode;
+  state: string;
   at: string;
+  standing: 'done' | 'live' | 'stuck' | 'open';
+}
+const R = 130;
+const r = 120;
+const C = 180;
+
+function Ring({ units }: { units: Unit[] }) {
+  const navigate = useNavigate();
+  const [hover, setHover] = useState<number | null>(null);
+  const n = units.length;
+  const gap = n > 1 ? 0.02 : 0;
+  const at = (i: number, edge: 0 | 1) => -Math.PI / 2 + ((i + edge) * 2 * Math.PI) / n;
+  const point = (a: number, rr: number) => `${C + rr * Math.cos(a)},${C + rr * Math.sin(a)}`;
+  const seg = (i: number) => {
+    const [a0, a1] = [at(i, 0) + gap, at(i, 1) - gap];
+    return `M${point(a0, R)} A${R},${R} 0 0 1 ${point(a1, R)} L${point(a1, r)} A${r},${r} 0 0 0 ${point(a0, r)} Z`;
+  };
+  const chevron = -Math.PI / 2 - 0.09;
+  const cx0 = C + ((R + r) / 2) * Math.cos(chevron);
+  const cy0 = C + ((R + r) / 2) * Math.sin(chevron);
+  const held = hover === null ? undefined : units[hover];
+  const mid = hover === null ? 0 : at(hover, 0) + Math.PI / n;
+  const done = units.filter((u) => u.standing === 'done').length;
+  return (
+    <div className="hub-ring">
+      <svg viewBox={`0 0 ${2 * C} ${2 * C}`} role="list" aria-label="Units of the cycle">
+        {units.map((unit, i) => (
+          <path
+            key={unit.id}
+            role="link"
+            tabIndex={0}
+            aria-label={`${unit.name}, ${words(unit.state)}`}
+            className={cx('hub-seg', `hub-seg--${unit.standing}`, hover === i && 'on')}
+            d={n === 1 ? `M${C},${C - R} a${R},${R} 0 1 1 -0.01,0 Z` : seg(i)}
+            onMouseEnter={() => setHover(i)}
+            onMouseLeave={() => setHover(null)}
+            onFocus={() => setHover(i)}
+            onBlur={() => setHover(null)}
+            onClick={() => navigate(unit.to)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                navigate(unit.to);
+              }
+            }}
+          >
+            <title>{unit.name}</title>
+          </path>
+        ))}
+        {n > 0 && (
+          <>
+            <line className="hub-tick" x1={C} y1={C - R - 10} x2={C} y2={C - R - 2} />
+            <path
+              className="hub-chevron"
+              d={`M${cx0 - 6},${cy0 - 5} L${cx0},${cy0} L${cx0 - 6},${cy0 + 5}`}
+            />
+          </>
+        )}
+        <text className="hub-count" x={C} y={C - 4} textAnchor="middle">
+          {done}
+        </text>
+        <text className="hub-of" x={C} y={C + 22} textAnchor="middle">
+          of {n} ended
+        </text>
+      </svg>
+      {held && (
+        <div
+          className="hub-tip"
+          style={{
+            left: `${50 + 50 * ((R + 8) / C) * Math.cos(mid)}%`,
+            top: `${50 + 50 * ((R + 8) / C) * Math.sin(mid)}%`,
+          }}
+        >
+          <strong>{held.name}</strong>
+          <span>
+            {words(held.kind === 'tasks' ? 'task' : 'experiment')} ·{' '}
+            <StatusPill value={held.state} /> · <Ago at={held.at} />
+          </span>
+        </div>
+      )}
+    </div>
+  );
 }
 
-/** How many recorded things Home lists, and how many of each it asks for. */
-const LATEST = 8;
-const FILES = 5;
+function Work({ shell, home }: { shell: ShellData; home: HomeData | undefined }) {
+  const live = useLive();
+  const rows = shell.rows;
+  const [tasks, experiments] = [pathOf(rows, 'tasks'), pathOf(rows, 'experiments')];
+  const work = pathOf(rows, 'work');
+  const cycle = currentCycle(home?.research ?? undefined, shell.workflows);
+  const nodes = new Map((live.board.data?.lanes.work.nodes ?? []).map((n) => [n.key, n]));
+  const stale = live.now.stale;
+  const units = useMemo(() => {
+    const named = new Set(cycle?.researchDependencies);
+    const all = [
+      ...(home?.tasks ?? []).map((task) => ({
+        id: task.id,
+        kind: 'tasks' as const,
+        name: task.title,
+        to: `${tasks}/${task.id}`,
+        flow: task.workflow,
+        end: task,
+      })),
+      ...(home?.experiments ?? []).map((item) => ({
+        id: item.id,
+        kind: 'experiments' as const,
+        name: item.name,
+        to: `${experiments}/${item.id}`,
+        flow: item.workflow,
+        end: item,
+      })),
+    ]
+      .filter((u) => !cycle || named.has(u.id) || !ended(shell.workflows, u.flow, u.end))
+      .map((u) => ({ ...u, at: u.flow.updatedAt }));
+    // In the order the Work page draws them: what waits on nothing first, then down the chains.
+    return chained(all, home?.tasks ?? [])
+      .sort((a, b) => a.depth - b.depth || a.at.localeCompare(b.at))
+      .map((u): Unit => {
+        const node = nodes.get(`work:${u.id}`);
+        const over = ended(shell.workflows, u.flow, u.end);
+        return {
+          id: u.id,
+          kind: u.kind,
+          name: u.name,
+          to: u.to,
+          state: u.flow.state,
+          at: u.at,
+          standing:
+            (node && needs(node)) || u.end.failed
+              ? 'stuck'
+              : !stale && (node?.dot === 'live' || node?.dot === 'moving')
+                ? 'live'
+                : over
+                  ? 'done'
+                  : 'open',
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [home, cycle?.id, live.board.data, stale, shell.workflows]);
+  if (!work) return null;
+  const count = (standing: Unit['standing']) => units.filter((u) => u.standing === standing).length;
+  return (
+    <Card
+      kind="work"
+      title={cycle ? cycle.name : 'Work'}
+      to={work}
+      className="hub-card--wide"
+      figure={<Ring units={units} />}
+      line={
+        <span className="hub-legend">
+          <span>
+            <i className="hub-dot hub-dot--done" /> {count('done')} done
+          </span>
+          <span>
+            <i className="hub-dot hub-dot--live" /> {count('live')} live
+          </span>
+          <span>
+            <i className="hub-dot hub-dot--stuck" /> {count('stuck')} stuck
+          </span>
+        </span>
+      }
+    />
+  );
+}
 
-/**
- * What was lately recorded, newest first: review verdicts from the home read, the newest
- * files, and the paper's sections as they were last revised. Each is the way to its record.
- */
-function Latest({
-  rows,
-  home,
-  lost,
-}: {
-  rows: UiRowDescription[];
-  home?: HomeData;
-  lost: boolean;
-}) {
-  const reviewsPath = pathOf(rows, 'reviews');
-  const filesPath = pathOf(rows, 'artifacts');
-  const paperPath = pathOf(rows, 'paper');
-  const files = useTool<Artifact[]>(
-    filesPath ? 'artifact.read:list' : null,
-    { limit: FILES },
+// ─── Pi: the orb, the whole card the way in ────────────────────────────────────────────────
+
+function Pi({ to }: { to: string }) {
+  return (
+    <Link className="hub-card hub-card--pi" to={to} aria-label="Pi">
+      <h2 className="hub-title">
+        Pi
+        <span className="hub-go">
+          <Icon name="arrow-right" size={14} />
+        </span>
+      </h2>
+      <div className="hub-figure">
+        <div className="hub-orb" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </div>
+      </div>
+      <p className="hub-line">Ask anything about this project</p>
+    </Link>
+  );
+}
+
+// ─── Compute: this month's machine dollars, one bar a day ──────────────────────────────────
+
+const usd = (n: number) => `$${n < 10 ? n.toFixed(2) : Math.round(n).toLocaleString()}`;
+
+function Spend({ days, to }: { days: { day: string; usd: number }[]; to: string }) {
+  const month = days.reduce((sum, d) => sum + d.usd, 0);
+  const today = days[days.length - 1]?.usd ?? 0;
+  const peak = Math.max(1e-9, ...days.map((d) => d.usd));
+  const n = Math.max(days.length, 28);
+  return (
+    <Card
+      kind="spend"
+      title="Compute spend"
+      to={to}
+      figure={
+        <svg className="hub-bars" viewBox={`0 0 ${n * 10} 100`} preserveAspectRatio="none">
+          {days.map((d, i) => (
+            <rect
+              key={d.day}
+              className={cx('hub-bar', i === days.length - 1 && 'on')}
+              x={i * 10 + 1}
+              y={100 - (100 * d.usd) / peak}
+              width={8}
+              height={Math.max(1, (100 * d.usd) / peak)}
+            >
+              <title>
+                {d.day} · {usd(d.usd)}
+              </title>
+            </rect>
+          ))}
+        </svg>
+      }
+      line={<Big n={usd(month)} says={`this month · ${usd(today)} today`} />}
+    />
+  );
+}
+
+// ─── Agents: every agent at work as a mark, and every machine still being rented as a hollow one ──
+
+function Agents({ board, stale, to }: { board: RunningBoard; stale: boolean; to: string }) {
+  const nodes = board.lanes.sessions.nodes;
+  // A session that works; a Fleet request is not an agent until a session runs on its machine.
+  const working = nodes.filter(
+    (n) => keyKind(n.key) === 'session' && (n.dot === 'live' || n.dot === 'moving'),
+  );
+  const renting = nodes.filter((n) => keyKind(n.key) === 'fleet' && n.dot === 'starting');
+  return (
+    <Card
+      kind="agents"
+      title="Agents"
+      to={to}
+      figure={
+        <div className="hub-room-floor">
+          {working.map((agent) => (
+            <span
+              key={agent.key}
+              className={cx('hub-agent', stale && 'hub-agent--stale')}
+              title={agent.title}
+            />
+          ))}
+          {renting.map((machine) => (
+            <span
+              key={machine.key}
+              className="hub-agent hub-agent--renting"
+              title={machine.title}
+            />
+          ))}
+        </div>
+      }
+      line={
+        <Big
+          n={working.length}
+          says={`working${renting.length ? ` · ${renting.length} machine${renting.length === 1 ? '' : 's'} starting` : ''}`}
+        />
+      }
+    />
+  );
+}
+
+// ─── Git: main's accepted units as dots on a line, what waits to merge as dashed branches ──
+
+function Git({ row }: { row: UiRowDescription }) {
+  const read = useTool<{ status?: CodeProjectStatus }>(
+    'ui.read',
+    { rowId: row.id },
     { every: 30_000 },
   );
-  const paper = useTool<PaperWorkspace>(paperPath ? 'paper.read' : null, {}, { every: 60_000 });
-  const nameOf = useActorNames();
-  const names = recordNames(undefined, home, rows);
-  const items: Recorded[] = [
-    ...(reviewsPath ? (home?.reviews ?? []) : [])
-      .filter((review) => review.status === 'submitted' && review.verdict)
-      .map((review) => ({
-        key: review.id,
-        kind: 'reviews',
-        name: names.get(review.subjectId)?.name ?? 'Review',
-        to: `${reviewsPath}/${review.id}`,
-        says: (
-          <>
-            <span className={`crit-word crit-word--${review.verdict}`}>
-              {words(review.verdict!)}
-            </span>
-            {/* The verdict word keeps its own gap. */}
-            {nameOf(review.reviewerId ?? undefined) && `· ${nameOf(review.reviewerId!)}`}
-          </>
-        ),
-        at: review.createdAt,
-      })),
-    ...(files.data ?? []).slice(0, FILES).map((file) => ({
-      key: file.id,
-      kind: 'artifacts',
-      name: file.title,
-      to: `${filesPath}/${file.id}`,
-      says: 'New file',
-      at: file.createdAt,
-    })),
-    ...Object.entries(paper.data?.documents ?? {}).flatMap(([kind, { current }]) =>
-      current.revision > 0 && current.updatedAt
-        ? [
-            {
-              key: `paper:${kind}`,
-              kind: 'paper',
-              name: paperTitles[kind as PaperKind] ?? words(kind),
-              to: paperPath!,
-              says: `Revision ${current.revision}${nameOf(current.updatedBy ?? '') ? ` · ${nameOf(current.updatedBy!)}` : ''}`,
-              at: current.updatedAt,
-            },
-          ]
-        : [],
-    ),
-  ];
-  const failed = [
-    files.error && !files.data && 'files',
-    paper.error && !paper.data && 'the paper',
-    reviewsPath && (lost || home?.reviews === null) && 'reviews',
-  ].filter(Boolean);
-  const shown = newest(items, (item) => item.at).slice(0, LATEST);
+  const units = read.data?.status?.units ?? [];
+  const accepted = newest(
+    units.filter((u) => u.acceptance),
+    (u) => u.acceptance!.acceptedAt,
+  );
+  const waiting = units.filter((u) => u.publication && u.publication.state !== 'published');
+  const week = Date.now() - 7 * 86_400_000;
+  const recent = accepted.filter((u) => Date.parse(u.acceptance!.acceptedAt) >= week).length;
+  const dots = accepted.slice(0, 7).reverse();
   return (
-    <Part
-      title="Latest"
-      failed={failed.length ? `Could not read ${failed.join(' or ')}.` : undefined}
-      loading={!shown.length && (files.loading || paper.loading || (!home && !lost))}
-      empty={!shown.length && !failed.length ? 'Nothing recorded yet.' : undefined}
-    >
-      {shown.map((item) => (
-        <li key={item.key} className="home-latest">
-          <KindLabel kind={item.kind} />
-          <Link className="ov-name" to={item.to}>
-            {item.name}
-          </Link>
-          <span className="home-latest-says">{item.says}</span>
-          <Ago className="home-latest-at" at={item.at} />
-        </li>
-      ))}
-    </Part>
+    <Card
+      kind="git"
+      title="Git"
+      to={row.path}
+      figure={
+        <svg className="hub-git" viewBox="0 0 320 100">
+          <line className="hub-trunk" x1={10} y1={60} x2={290} y2={60} />
+          {dots.map((u, i) => (
+            <circle
+              key={u.unitId}
+              className={cx('hub-commit', Date.parse(u.acceptance!.acceptedAt) >= week && 'on')}
+              cx={40 + i * 36}
+              cy={60}
+              r={5}
+            >
+              <title>{u.branch}</title>
+            </circle>
+          ))}
+          {waiting.slice(0, 2).map((u, i) => {
+            const y = i ? 92 : 28;
+            return (
+              <g key={u.unitId} className="hub-branch">
+                <path d={`M250,60 C262,60 262,${y} 274,${y} L300,${y}`} />
+                <circle cx={292} cy={y} r={5}>
+                  <title>{u.branch}</title>
+                </circle>
+              </g>
+            );
+          })}
+          <text className="hub-trunk-name" x={296} y={64}>
+            main
+          </text>
+        </svg>
+      }
+      line={
+        <Big
+          n={read.data ? recent : '—'}
+          says={`accepted this week${waiting.length ? ` · ${waiting.length} waiting to merge` : ''}`}
+        />
+      }
+    />
+  );
+}
+
+// ─── Files: the newest as a mosaic, images as pictures and the rest by type ────────────────
+
+const RECENT = 12;
+function Files({ to }: { to: string }) {
+  const files = useTool<Artifact[]>('artifact.read:list', { limit: 200 }, { every: 60_000 });
+  const all = files.data ?? [];
+  const week = Date.now() - 7 * 86_400_000;
+  const fresh = all.filter((f) => Date.parse(f.createdAt) >= week).length;
+  return (
+    <Card
+      kind="files"
+      title="Files"
+      to={to}
+      figure={
+        <div className="hub-mosaic">
+          {all.slice(0, RECENT).map((file) => {
+            const image = fileIcon(file.mediaType, file.title) === 'file-image';
+            return (
+              <Link
+                key={file.id}
+                className={cx(
+                  'hub-tile',
+                  image && 'hub-tile--image',
+                  Date.parse(file.createdAt) >= week && 'on',
+                )}
+                to={`${to}/${file.id}`}
+                title={file.title}
+              >
+                {image ? <Icon name="file-image" size={18} /> : fileType(file).label.slice(0, 5)}
+              </Link>
+            );
+          })}
+        </div>
+      }
+      line={
+        <Big
+          n={files.data ? `${all.length}${all.length === 200 ? '+' : ''}` : '—'}
+          says={fresh ? `· ${fresh} new this week` : ''}
+        />
+      }
+    />
+  );
+}
+
+// ─── Paper: the outline, written sections solid ────────────────────────────────────────────
+
+function Paper({ to }: { to: string }) {
+  const paper = useTool<PaperWorkspace>('paper.read', {}, { every: 60_000 });
+  const sections = Object.values(paper.data?.documents ?? {}).flatMap((doc) =>
+    doc.current.sections.map((s) => ({ id: s.id, written: s.content.trim().length > 0 })),
+  );
+  const written = sections.filter((s) => s.written).length;
+  return (
+    <Card
+      kind="paper"
+      title="Paper"
+      to={to}
+      figure={
+        <div className="hub-page">
+          {(sections.length
+            ? sections
+            : Array.from({ length: 5 }, (_, i) => ({ id: String(i), written: false }))
+          )
+            .slice(0, 8)
+            .map((s) => (
+              <i key={s.id} className={cx('hub-rule', s.written && 'on')} />
+            ))}
+        </div>
+      }
+      line={<Big n={paper.data ? written : '—'} says={`of ${sections.length} sections written`} />}
+    />
+  );
+}
+
+// ─── Board: the last board, sketched ───────────────────────────────────────────────────────
+
+function Board({ to }: { to: string }) {
+  const boards = useTool<{ boards: BoardSummary[] }>('board.read', {}, { every: 60_000 });
+  const live = (boards.data?.boards ?? []).filter((b) => !b.archived);
+  const last = newest(live, (b) => b.updatedAt)[0];
+  const scene = useTool<BoardScene>(
+    last ? 'board.scene' : null,
+    { id: last?.id },
+    { every: 60_000 },
+  );
+  const shapes = (scene.data?.elements ?? []).filter((e) => !e.isDeleted).slice(0, 40);
+  const box = shapes.reduce(
+    (b, e) => ({
+      x0: Math.min(b.x0, e.x),
+      y0: Math.min(b.y0, e.y),
+      x1: Math.max(b.x1, e.x + e.width),
+      y1: Math.max(b.y1, e.y + e.height),
+    }),
+    { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity },
+  );
+  const view = shapes.length
+    ? `${box.x0 - 20} ${box.y0 - 20} ${box.x1 - box.x0 + 40} ${box.y1 - box.y0 + 40}`
+    : '0 0 320 120';
+  return (
+    <Card
+      kind="board"
+      title="Board"
+      to={last ? `${to}/${last.id}` : to}
+      figure={
+        <svg className="hub-sketch" viewBox={view} preserveAspectRatio="xMidYMid meet">
+          {shapes.map((e) =>
+            e.type === 'ellipse' ? (
+              <ellipse
+                key={e.id}
+                cx={e.x + e.width / 2}
+                cy={e.y + e.height / 2}
+                rx={e.width / 2}
+                ry={e.height / 2}
+              />
+            ) : e.type === 'rectangle' || e.type === 'diamond' || e.type === 'text' ? (
+              <rect
+                key={e.id}
+                x={e.x}
+                y={e.y}
+                width={e.width}
+                height={e.height}
+                rx={e.type === 'text' ? 0 : 8}
+                className={e.type === 'text' ? 'hub-sketch-text' : undefined}
+              />
+            ) : Array.isArray(e.points) ? (
+              <polyline
+                key={e.id}
+                points={(e.points as [number, number][])
+                  .map(([x, y]) => `${e.x + x},${e.y + y}`)
+                  .join(' ')}
+              />
+            ) : null,
+          )}
+        </svg>
+      }
+      line={
+        <Big
+          n={boards.data ? live.length : '—'}
+          says={
+            <>
+              board{live.length === 1 ? '' : 's'}
+              {last && (
+                <>
+                  {' '}
+                  · edited <Ago at={last.updatedAt} />
+                </>
+              )}
+            </>
+          }
+        />
+      }
+    />
+  );
+}
+
+// ─── People ────────────────────────────────────────────────────────────────────────────────
+
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .map((w) => w[0] ?? '')
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+function People({ home, to }: { home: HomeData | undefined; to: string }) {
+  const { actor } = useSession();
+  // The people: every active actor that is not an agent's, which a session or a thread owns.
+  const people = (home?.actors ?? []).filter(
+    (a) => a.active !== false && !a.sessionId && !a.threadId,
+  );
+  return (
+    <Card
+      kind="people"
+      title="People"
+      to={to}
+      figure={
+        <div className="hub-people">
+          {people.slice(0, 8).map((p) => (
+            <span key={p.id} className={cx('hub-face', p.id === actor.id && 'on')} title={p.name}>
+              {initials(p.name)}
+            </span>
+          ))}
+        </div>
+      }
+      line={
+        <Big n={home?.actors ? people.length : '—'} says={`· you are the ${words(actor.role)}`} />
+      }
+    />
   );
 }
 
 export function HomeView({ shell }: { shell: ShellData }) {
-  const { home, lines } = useNow(shell.rows);
+  const rows = shell.rows;
+  const { project } = useSession();
+  const { home, lines } = useNow(rows);
+  const live = useLive();
+  const row = (kind: string) => rows.find((r) => r.view.kind === kind);
+  const [pi, sessions, code, files, paper, boards, people] = [
+    pathOf(rows, 'pi'),
+    pathOf(rows, 'sessions'),
+    row('code'),
+    pathOf(rows, 'artifacts'),
+    pathOf(rows, 'paper'),
+    pathOf(rows, 'boards'),
+    pathOf(rows, 'settings'),
+  ];
+  const spend = home.data?.fleet;
   return (
-    <div className="page-stage home">
-      <Head shell={shell} home={home.data} />
-      <div className="home-parts">
-        <div className="home-main">
-          <NeedsYou rows={shell.rows} lines={lines} load={home} />
-        </div>
-        <div className="home-side">
-          <LiveNow rows={shell.rows} />
-          {/* A home read that never answered is said, never loaded for ever. */}
-          <Latest rows={shell.rows} home={home.data} lost={!home.data && !!home.error} />
-        </div>
+    <div className="page-stage hub">
+      <h1 className="page-title">{project.name}</h1>
+      <div className="hub-needs">
+        <NeedsYou rows={rows} lines={lines} load={home} />
+      </div>
+      <div className="hub-grid">
+        <Work shell={shell} home={home.data} />
+        {pi && <Pi to={pi} />}
+        {spend && <Spend days={spend} to={pathOf(rows, 'sandboxes') ?? sessions ?? '/'} />}
+        {sessions && live.board.data && (
+          <Agents board={live.board.data} stale={live.now.stale} to={sessions} />
+        )}
+        {code && <Git row={code} />}
+        {files && <Files to={files} />}
+        {paper && <Paper to={paper} />}
+        {boards && <Board to={boards} />}
+        {people && <People home={home.data} to={people} />}
       </div>
     </div>
   );

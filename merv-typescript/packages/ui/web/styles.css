@@ -3192,141 +3192,521 @@ pre.math--source {
   }
 }
 
-/* Home: the project's pulse (views/home.tsx). Its name and its cycle, then what needs the
-   reader, and beside it on a wide page who is at work and what was lately recorded. Every
-   part is a heading over hairline rows, the same anatomy as the rest of the app. */
-.home {
-  container: home / inline-size;
+/* Home (views/home.tsx): the home of everything. What needs the reader, then one card per
+   place: a doorway with one picture and one number. Cards sit apart on the ground with no
+   border; the Work card leads at the top left and spans two rows. Nothing here is a copy of
+   another page: each picture is the place's own shape, in ink, with blue only where the
+   reader acts and the kind's colours only where the record wears them. */
+.hub {
+  container: hub / inline-size;
 }
-.home-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.hub-needs {
+  margin-top: var(--space-5);
 }
-.home-cycle {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  max-width: none;
-  font-size: var(--text-sm);
-  color: var(--muted);
+/* What needs the reader: the same cards as before, laid side by side as cards. */
+.hub-needs .ov-block {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
-.home-cycle > a:not(.home-more) {
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--text);
+.hub-needs .ov-h {
+  display: none;
 }
-.home-progress {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-variant-numeric: tabular-nums;
-}
-/* How much of the cycle's work is done: drawn, never read, so it wears the steel. */
-.home-meter {
-  width: 72px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--line);
-}
-.home-meter > span {
-  display: block;
-  height: 100%;
-  background: var(--steel);
-}
-.home-more {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-left: auto;
-  font-weight: 500;
-  color: var(--text);
-}
-.home-parts {
+.hub-needs .ov-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  column-gap: calc(2 * var(--space-5));
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: var(--space-4);
 }
-@container home (min-width: 960px) {
-  .home-parts {
-    grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
-    align-items: start;
-  }
+.hub-needs .ov-list > li {
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg-elev);
 }
-.home-quiet {
+.hub-needs .ov-row {
+  align-items: center;
+}
+.hub-needs .ov-move {
+  margin-top: 0;
+}
+.hub-needs .home-quiet {
   padding-block: var(--space-2);
   font-size: var(--text-sm);
   color: var(--muted);
 }
-.home-failed {
+.hub-needs .home-failed {
   color: var(--refutes);
 }
 /* Nothing to do is good news, and wears the colour of it. */
-.home-clear {
+.hub-needs .home-clear {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   color: var(--supports);
 }
-/* An agent at work: its unit, its role, and on the line under them what it is doing now. */
-.home-live {
+.hub-grid {
   display: grid;
-  grid-template-columns: 7px minmax(0, 1fr) auto;
+  grid-template-columns: 1.25fr 1fr 1fr;
+  grid-template-areas:
+    'work pi spend'
+    'work agents git'
+    'board files paper'
+    'people . .';
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+@container hub (min-width: 1700px) {
+  .hub-grid {
+    grid-template-columns: 1.3fr 1fr 1fr 1fr;
+    grid-template-areas:
+      'work pi spend agents'
+      'work git files paper'
+      'board people . .';
+  }
+}
+@container hub (max-width: 980px) {
+  .hub-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      'work work'
+      'pi spend'
+      'agents git'
+      'board files'
+      'paper people';
+  }
+}
+@container hub (max-width: 600px) {
+  .hub-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'work' 'pi' 'spend' 'agents' 'git' 'board' 'files' 'paper' 'people';
+  }
+  .hub-needs .ov-list {
+    grid-template-columns: 1fr;
+  }
+}
+.hub-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 220px;
+  padding: 20px 22px;
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: inherit;
+}
+.hub-card--work {
+  grid-area: work;
+  min-height: 480px;
+}
+.hub-card--pi {
+  grid-area: pi;
+}
+.hub-card--spend {
+  grid-area: spend;
+}
+.hub-card--agents {
+  grid-area: agents;
+}
+.hub-card--git {
+  grid-area: git;
+}
+.hub-card--files {
+  grid-area: files;
+}
+.hub-card--paper {
+  grid-area: paper;
+}
+.hub-card--board {
+  grid-area: board;
+}
+.hub-card--people {
+  grid-area: people;
+}
+.hub-title {
+  display: flex;
   align-items: baseline;
-  gap: 2px var(--space-3);
-  padding-block: var(--space-2);
-  color: var(--text);
-}
-.home-live > .live-dot {
-  align-self: center;
-}
-.home-live-unit {
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.home-live-who,
-.crit-says dt {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-.home-live-doing {
-  grid-column: 2 / -1;
-  overflow: hidden;
+  justify-content: space-between;
+  gap: var(--space-3);
   font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
-a.home-live:hover .home-live-unit {
+/* The way to the place, in the one accent, at the title's right. */
+.hub-go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 500;
   color: var(--active);
 }
-/* A recorded thing: its kind and when, its name, what happened. */
-.home-latest {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px var(--space-3);
-  padding-block: var(--space-2);
+.hub-figure {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  margin: var(--space-3) 0;
 }
-.home-latest > .ov-name {
-  grid-column: 1 / -1;
-}
-.home-latest-says {
-  grid-column: 1 / -1;
+.hub-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   font-size: var(--text-sm);
   color: var(--muted);
 }
-.home-latest-at {
-  grid-row: 1;
-  grid-column: 2;
+.hub-big {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* Work: the cycle's units as one ring, clockwise from the tick, the chevron where it stands. */
+.hub-ring {
+  position: relative;
+  width: min(360px, 100%);
+}
+.hub-ring > svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+.hub-seg {
+  fill: var(--ghost);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity var(--motion-fast);
+}
+.hub-seg--open {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  opacity: 1;
+}
+.hub-seg--live {
+  fill: var(--stage-live);
+  opacity: 0.95;
+}
+.hub-seg--stuck {
+  fill: var(--refutes);
+  opacity: 0.95;
+}
+.hub-seg.on {
+  fill: var(--active);
+  opacity: 1;
+}
+.hub-tick {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+.hub-chevron {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.hub-count {
+  fill: var(--text);
+  font-size: 44px;
+  font-weight: 600;
+  letter-spacing: -1.5px;
+}
+.hub-of {
+  fill: var(--muted);
+  font-size: 13px;
+}
+/* The hovered unit: its name, kind, state and when, beside the segment it is. */
+.hub-tip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 260px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  pointer-events: none;
+  transform: translate(-50%, 10px);
+}
+.hub-tip > strong {
   font-size: var(--text-sm);
+  color: var(--text);
+}
+.hub-legend {
+  display: flex;
+  gap: var(--space-5);
+  width: 100%;
+  justify-content: center;
+}
+.hub-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--ghost);
+  vertical-align: 0;
+}
+.hub-dot--live {
+  background: var(--stage-live);
+}
+.hub-dot--stuck {
+  background: var(--refutes);
+}
+
+/* Pi: the orb. It breathes slowly and glows faintly; the whole card is the way in. */
+.hub-card--pi:hover .hub-go {
+  text-decoration: underline;
+}
+.hub-orb {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 40% 35%,
+    #93c5fd 0%,
+    var(--active-fill) 35%,
+    #172554 75%,
+    var(--bg-elev) 100%
+  );
+  box-shadow:
+    0 0 40px rgba(var(--active-rgb), 0.22),
+    0 0 90px rgba(var(--active-rgb), 0.12);
+  animation: hub-breathe 6s ease-in-out infinite;
+}
+.hub-orb > i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 65% 70%, rgba(var(--active-rgb), 0.55), transparent 55%);
+  mix-blend-mode: screen;
+  animation: hub-drift 9s ease-in-out infinite;
+}
+.hub-orb > i:nth-child(2) {
+  background: radial-gradient(circle at 30% 70%, rgba(147, 197, 253, 0.35), transparent 50%);
+  animation-duration: 13s;
+  animation-direction: reverse;
+}
+.hub-orb > i:nth-child(3) {
+  inset: -14px;
+  border: 1px solid rgba(var(--active-rgb), 0.18);
+  background: transparent;
+  animation: hub-ring 6s ease-in-out infinite;
+}
+@keyframes hub-breathe {
+  50% {
+    transform: scale(1.04);
+  }
+}
+@keyframes hub-drift {
+  50% {
+    transform: rotate(180deg);
+  }
+}
+@keyframes hub-ring {
+  50% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hub-orb,
+  .hub-orb > i {
+    animation: none;
+  }
+}
+
+/* Compute: one bar a day, today in the accent. */
+.hub-bars {
+  width: 100%;
+  height: 100px;
+}
+.hub-bar {
+  fill: var(--line-strong);
+}
+.hub-bar.on {
+  fill: var(--active);
+}
+
+/* Agents: a mark per agent at work, lit; a machine still being rented is hollow and dashed. */
+.hub-room-floor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  min-height: 56px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.hub-agent {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--bg);
+}
+.hub-agent::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: var(--stage-live);
+}
+.hub-agent--stale::after {
+  background: var(--ghost);
+}
+.hub-agent--renting {
+  border-style: dashed;
+}
+.hub-agent--renting::after {
+  content: none;
+}
+.hub-seg:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+}
+
+/* Git: the main line and its accepted units, what waits to merge dashed in the refusal's colour. */
+.hub-git {
+  width: 100%;
+  height: 100px;
+}
+.hub-trunk {
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+.hub-commit {
+  fill: var(--steel);
+}
+.hub-commit.on {
+  fill: var(--active);
+}
+.hub-branch > path {
+  fill: none;
+  stroke: var(--refutes);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.hub-branch > circle {
+  fill: var(--bg-elev);
+  stroke: var(--refutes);
+  stroke-width: 1.5;
+}
+.hub-trunk-name {
+  fill: var(--faint);
+  font-size: 11px;
+}
+
+/* Files: the newest twelve as tiles; an image shows as a picture, the rest say their type. */
+.hub-mosaic {
+  display: grid;
+  grid-template-columns: repeat(6, 48px);
+  gap: 6px;
+}
+.hub-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  border-radius: 3px;
+  background: var(--bg-soft);
+  font-size: var(--text-xs);
   color: var(--faint);
+  overflow: hidden;
+}
+.hub-tile--image {
+  color: var(--ghost);
+}
+.hub-tile.on::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--active);
+}
+
+/* Paper: the outline, a rule per section, written ones in the paper's colour. */
+.hub-page {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 140px;
+  padding: 16px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+.hub-rule {
+  display: block;
+  height: 7px;
+  border-radius: 3.5px;
+  background: var(--line);
+}
+.hub-rule.on {
+  background: var(--steel);
+}
+.hub-rule:nth-child(2n) {
+  width: 80%;
+}
+
+/* Board: the last board's shapes, in outline. */
+.hub-sketch {
+  width: 100%;
+  height: 120px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--bg);
+}
+.hub-sketch > * {
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.hub-sketch > .hub-sketch-text {
+  stroke: none;
+  fill: var(--line);
+}
+
+/* People: the faces. */
+.hub-people {
+  display: flex;
+  gap: var(--space-2);
+}
+.hub-face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--bg-soft);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+}
+.hub-face.on {
+  border-color: var(--active);
 }
 
 /* Legacy history reader. -------------------------------------------------- */

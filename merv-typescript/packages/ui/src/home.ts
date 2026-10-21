@@ -53,7 +53,7 @@ export async function homeRead(
   };
   // The shell's own parts, and the fields of each person they read.
   await read('project', () => tools.call('project.read:get', caller, {}));
-  const people = ['id', 'name', 'role', 'kind', 'active', 'sessionId'];
+  const people = ['id', 'name', 'role', 'kind', 'active', 'sessionId', 'threadId'];
   await read('actors', () => tools.call('project.read:actors', caller, {}), people);
   // A blocker's next move names actions by address, said as this caller calls them.
   await read('workflows', async () => (gates ? tools.guidance(caller, await gates(caller)) : null));

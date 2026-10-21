@@ -242,7 +242,7 @@ async function main() {
     machine: { hostname: 'mac-studio', system: process.platform, architecture: process.arch },
     platforms: [{ name: 'demo', harness: 'codex', enabled: true, parallelism: 4 }],
     capacity: 4,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'code.git.1'],
   });
   /** A demo runner's offer of one record to a fresh agent, and the bearer that agent works with. */
   const offerTo = async (
@@ -251,12 +251,26 @@ async function main() {
     runnerId = 'local-demo',
   ) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
-    const session = await app.ctx.sessions.offer(owner, {
-      instanceId: record.id,
-      expectedRevision: record.workflow.revision,
-      runnerId,
-      requestId,
-      secret: token,
+    const offer = () =>
+      app.ctx.sessions.offer(owner, {
+        instanceId: record.id,
+        expectedRevision: record.workflow.revision,
+        runnerId,
+        requestId,
+        secret: token,
+      });
+    // The offer waits out the retention of code a verdict just approved.
+    const session = await offer().catch(async (error: { code?: string }) => {
+      for (let tries = 0; tries < 40; tries++) {
+        if (error.code !== 'code_approval_pending') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        try {
+          return await offer();
+        } catch (again) {
+          error = again as { code?: string };
+        }
+      }
+      throw error;
     });
     return { session, token };
   };
@@ -303,6 +317,7 @@ async function main() {
     producer: p,
     producerCaller,
     reviewer: r,
+    reviewerCaller,
     offerTo,
     sweep: {
       taskId: sweepTask.id,

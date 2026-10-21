@@ -78,14 +78,14 @@ const studio: DemoMachine = {
     },
   ],
   capacity: 4,
-  capabilities: ['code.v2'],
+  capabilities: ['code.v2', 'code.git.1'],
 };
 const lab: DemoMachine = {
   runnerId: 'lab-gpu-01',
   machine: { hostname: 'lab-gpu-01', system: 'linux', architecture: 'x86_64' },
   platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
   capacity: 4,
-  capabilities: ['code.v2'],
+  capabilities: ['code.v2', 'code.git.1'],
 };
 
 /** What a person asked for, as a text brief that carries the goal and every check. */
@@ -159,6 +159,7 @@ export async function seedRunning(
     producer: Tool;
     producerCaller: Caller;
     reviewer: Tool;
+    reviewerCaller: Caller;
     offerTo: (
       record: { id: string; workflow: { revision: number } },
       requestId: string,
@@ -199,6 +200,113 @@ export async function seedRunning(
     };
     leases.push(lease);
     return lease;
+  };
+
+  /**
+   * The producer's design visit: since native Git only the producing session attaches its
+   * plan and feasibility and submits the design, so each is written and attached from one
+   * leased visit that is released once the design is out for review. A continuing producer's
+   * next offer waits out the previous visit's conversation grace, and the retention of code a
+   * verdict just approved.
+   */
+  const lease = async (record: { id: string; workflow: { revision: number } }) => {
+    for (let tries = 0; ; tries++)
+      try {
+        return await work.lease(record, input.producerCaller);
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (!['conversation_pending', 'code_approval_pending'].includes(code ?? '') || tries > 40)
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+  };
+  const designed = async (
+    record: { id: string; attempt: { index: number }; workflow: { revision: number } },
+    files: {
+      role: 'plan' | 'feasibility';
+      path: string;
+      title: string;
+      content: string;
+      mediaType: string;
+    }[],
+    prefix: string,
+  ) => {
+    const held = await lease(record);
+    const revision = async () =>
+      (await ctx.experiments.get(input.producerCaller, record.id)).workflow.revision;
+    const made: Record<string, { id: string }> = {};
+    for (const { role, path, ...file } of files) {
+      const artifact = await work.run(held, 'artifact.create', file, (caller, bound) =>
+        ctx.artifacts.create(caller, bound),
+      );
+      made[role] = artifact;
+      await work.run(
+        held,
+        'experiment.attach',
+        {
+          experimentId: record.id,
+          artifactId: artifact.id,
+          role,
+          path,
+          attemptIndex: record.attempt.index,
+          expectedRevision: await revision(),
+          requestId: `${prefix}-attach-${role}`,
+        },
+        (caller, bound) => ctx.experiments.attach(caller, bound),
+      );
+    }
+    await work.run(
+      held,
+      'experiment.transition',
+      {
+        experimentId: record.id,
+        transition: 'submit_design',
+        expectedRevision: await revision(),
+        requestId: `${prefix}-design`,
+      },
+      (caller, bound) => ctx.experiments.transition(caller, bound),
+    );
+    await work.release(held);
+    return made;
+  };
+
+  /**
+   * The reviewer's verdict on the open review of `subject`, given from an isolated review
+   * checkout as approval now requires: one leased review visit, released with its verdict.
+   */
+  const judged = async (
+    subject: { id: string },
+    requestId: string,
+    verdict: Record<string, unknown>,
+    finding: (index: number) => { status: 'met' | 'not_met'; notes: string },
+  ) => {
+    const open = ((await r('review.list')) as any[]).find(
+      (item) => item.subjectId === subject.id && item.status !== 'submitted',
+    );
+    if (!open) throw new Error(`The demo found no open review of ${subject.id}`);
+    const current = await ctx.experiments.get(input.reviewerCaller, subject.id);
+    const held = await work.lease(current, input.reviewerCaller);
+    const asked = await work.run(held, 'review.get', { reviewId: open.id }, (caller, bound) =>
+      ctx.reviews.get(caller, bound.reviewId as string),
+    );
+    await work.run(
+      held,
+      'review.submit',
+      {
+        reviewId: open.id,
+        ...(asked.claimId ? { claimId: asked.claimId } : {}),
+        findings: asked.criteria.map((_: string, index: number) => ({
+          criterionNumber: index + 1,
+          evidenceIds: [...asked.artifactIds],
+          ...finding(index),
+        })),
+        expectedRevision: asked.subjectRevision,
+        requestId,
+        ...verdict,
+      },
+      (caller, bound) => ctx.reviews.apply(caller, bound as never),
+    );
+    await work.release(held);
   };
   /** A task the producer asked for with a brief of its own, pinned at creation. */
   const task = async (
@@ -384,89 +492,67 @@ export async function seedRunning(
     details: 'The same one-layer transformer and harness as the p = 97 reproduction.',
     requestId: 'demo-running-experiment',
   });
-  const plan = await p('artifact.create', {
-    title: `Plan: ${name}`,
-    content: [
-      '# Summary',
-      intent,
-      '',
-      '# Objective and hypothesis',
-      'The grokking step falls as weight decay grows, at p = 113 as at p = 97.',
-      '',
-      '# Evaluation',
-      'One run per decay in {0.3, 1.0, 3.0}, reporting the step at which validation crosses 95%.',
-    ].join('\n'),
-    mediaType: 'text/markdown',
-  });
-  const feasibility = await p('artifact.create', {
-    title: `Feasibility: ${name}`,
-    content: JSON.stringify({
-      formatVersion: 1,
-      resources: [
-        {
-          kind: 'data',
-          name: 'modular addition p=113',
-          unit: 'examples',
-          required: 12769,
-          available: 12769,
-          basis: 'The harness generates the whole table.',
-        },
-        {
-          kind: 'compute',
-          name: 'single GPU',
-          unit: 'hours',
-          required: 3,
-          available: 8,
-          basis: 'lab-gpu-01 reports eight idle hours.',
-        },
-      ],
-      dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
-      blockers: [],
-    }),
-    mediaType: 'application/json',
-  });
-  const revision = async () =>
-    (await p('experiment.get_state', { experimentId: experiment.id })).workflow.revision;
-  for (const [role, artifact, path] of [
-    ['plan', plan, 'plan.md'],
-    ['feasibility', feasibility, 'feasibility.json'],
-  ] as const)
-    await p('experiment.attach', {
-      experimentId: experiment.id,
-      artifactId: artifact.id,
-      role,
-      path,
-      attemptIndex: experiment.attempt.index,
-      expectedRevision: await revision(),
-      requestId: `demo-running-attach-${role}`,
-    });
-  await p('experiment.transition', {
-    experimentId: experiment.id,
-    transition: 'submit_design',
-    expectedRevision: await revision(),
-    requestId: 'demo-running-design',
-  });
-  const design = ((await r('review.list')) as any[]).find(
-    (item) => item.subjectId === experiment.id && item.status !== 'submitted',
+  const { plan } = await designed(
+    experiment,
+    [
+      {
+        role: 'plan',
+        path: 'plan.md',
+        title: `Plan: ${name}`,
+        content: [
+          '# Summary',
+          intent,
+          '',
+          '# Objective and hypothesis',
+          'The grokking step falls as weight decay grows, at p = 113 as at p = 97.',
+          '',
+          '# Evaluation',
+          'One run per decay in {0.3, 1.0, 3.0}, reporting the step at which validation crosses 95%.',
+        ].join('\n'),
+        mediaType: 'text/markdown',
+      },
+      {
+        role: 'feasibility',
+        path: 'feasibility.json',
+        title: `Feasibility: ${name}`,
+        content: JSON.stringify({
+          formatVersion: 1,
+          resources: [
+            {
+              kind: 'data',
+              name: 'modular addition p=113',
+              unit: 'examples',
+              required: 12769,
+              available: 12769,
+              basis: 'The harness generates the whole table.',
+            },
+            {
+              kind: 'compute',
+              name: 'single GPU',
+              unit: 'hours',
+              required: 3,
+              available: 8,
+              basis: 'lab-gpu-01 reports eight idle hours.',
+            },
+          ],
+          dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
+          blockers: [],
+        }),
+        mediaType: 'application/json',
+      },
+    ],
+    'demo-running',
   );
-  if (!design) throw new Error('The demo found no design review for its experiment');
-  const claim = await r('review.start', { reviewId: design.id });
-  const pinned = await r('review.get', { reviewId: design.id });
-  await r('review.submit', {
-    reviewId: design.id,
-    claimId: claim.claimId ?? pinned.claimId,
-    verdict: 'pass',
-    synopsis: 'The design can answer its question on the stated resources.',
-    findings: pinned.criteria.map((_: string, index: number) => ({
-      criterionNumber: index + 1,
-      status: 'met',
-      evidenceIds: [...pinned.artifactIds],
-      notes: 'Checked against the pinned plan and feasibility statement.',
-    })),
-    notes: 'Approving the design.',
-    expectedRevision: pinned.subjectRevision,
-    requestId: 'demo-running-design-verdict',
-  });
+  await judged(
+    experiment,
+    'demo-running-design-verdict',
+    {
+      verdict: 'pass',
+      synopsis: 'The design can answer its question on the stated resources.',
+      notes: 'Approving the design.',
+    },
+    () => ({ status: 'met', notes: 'Checked against the pinned plan and feasibility statement.' }),
+  );
   const running = await p('experiment.get_state', { experimentId: experiment.id });
   const runner = await agent('demo-running-p113', lab, running);
   runner.says = saying(runner.held.control, [
@@ -494,112 +580,94 @@ export async function seedRunning(
     details: 'The p = 97 reproduction with and without warmup, three seeds each.',
     requestId: 'demo-running-warmup',
   });
-  const warmupPlan = await p('artifact.create', {
-    title: 'Plan: lr-warmup-ablation',
-    content: [
-      '# Summary',
-      'Does a 500-step linear warmup move the grokking step at p = 97?',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  D[p = 97 table] --> A[No warmup]',
-      '  D --> B[500-step warmup]',
-      '  A --> M[Grokking step]',
-      '  B --> M',
-      '  M --> X{Later by 10%?}',
-      '```',
-      '',
-      '# Objective and hypothesis',
-      'Warmup delays memorisation and so moves the grokking step later by at least 10%.',
-      '',
-      '# Evaluation',
-      '| Arm | Warmup | Seeds |',
-      '|---|---|---|',
-      '| Control | none | 7, 11, 23 |',
-      '| Warmup | 500 steps, linear | 7, 11, 23 |',
-      '',
-      '**Measure:** the step where validation accuracy crosses 95%.',
-      '**Success:** every warmup seed groks at least 10% later than its control.',
-      '**Budget:** 2 GPU-hours on lab-gpu-01.',
-      '',
-      '- Seed spread may swamp a 10% shift.',
-    ].join('\n'),
-    mediaType: 'text/markdown',
-  });
-  const warmupFeasibility = await p('artifact.create', {
-    title: 'Feasibility: lr-warmup-ablation',
-    content: JSON.stringify({
-      formatVersion: 1,
-      resources: [
-        {
-          kind: 'data',
-          name: 'modular addition p=97',
-          unit: 'examples',
-          required: 9409,
-          available: 9409,
-          basis: 'The harness generates the whole table.',
-        },
-        {
-          kind: 'compute',
-          name: 'single GPU',
-          unit: 'hours',
-          required: 2,
-          available: 8,
-          basis: 'lab-gpu-01 reports eight idle hours.',
-        },
-      ],
-      dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
-      blockers: [],
-    }),
-    mediaType: 'application/json',
-  });
-  const warmupRevision = async () =>
-    (await p('experiment.get_state', { experimentId: warmup.id })).workflow.revision;
-  for (const [role, artifact, path] of [
-    ['plan', warmupPlan, 'plan.md'],
-    ['feasibility', warmupFeasibility, 'feasibility.json'],
-  ] as const)
-    await p('experiment.attach', {
-      experimentId: warmup.id,
-      artifactId: artifact.id,
-      role,
-      path,
-      attemptIndex: warmup.attempt.index,
-      expectedRevision: await warmupRevision(),
-      requestId: `demo-running-warmup-attach-${role}`,
-    });
-  await p('experiment.transition', {
-    experimentId: warmup.id,
-    transition: 'submit_design',
-    expectedRevision: await warmupRevision(),
-    requestId: 'demo-running-warmup-design',
-  });
-  const returned = ((await r('review.list')) as any[]).find(
-    (item) => item.subjectId === warmup.id && item.status !== 'submitted',
+  await designed(
+    warmup,
+    [
+      {
+        role: 'plan',
+        path: 'plan.md',
+        title: 'Plan: lr-warmup-ablation',
+        content: [
+          '# Summary',
+          'Does a 500-step linear warmup move the grokking step at p = 97?',
+          '',
+          '```mermaid',
+          'flowchart LR',
+          '  D[p = 97 table] --> A[No warmup]',
+          '  D --> B[500-step warmup]',
+          '  A --> M[Grokking step]',
+          '  B --> M',
+          '  M --> X{Later by 10%?}',
+          '```',
+          '',
+          '# Objective and hypothesis',
+          'Warmup delays memorisation and so moves the grokking step later by at least 10%.',
+          '',
+          '# Evaluation',
+          '| Arm | Warmup | Seeds |',
+          '|---|---|---|',
+          '| Control | none | 7, 11, 23 |',
+          '| Warmup | 500 steps, linear | 7, 11, 23 |',
+          '',
+          '**Measure:** the step where validation accuracy crosses 95%.',
+          '**Success:** every warmup seed groks at least 10% later than its control.',
+          '**Budget:** 2 GPU-hours on lab-gpu-01.',
+          '',
+          '- Seed spread may swamp a 10% shift.',
+        ].join('\n'),
+        mediaType: 'text/markdown',
+      },
+      {
+        role: 'feasibility',
+        path: 'feasibility.json',
+        title: 'Feasibility: lr-warmup-ablation',
+        content: JSON.stringify({
+          formatVersion: 1,
+          resources: [
+            {
+              kind: 'data',
+              name: 'modular addition p=97',
+              unit: 'examples',
+              required: 9409,
+              available: 9409,
+              basis: 'The harness generates the whole table.',
+            },
+            {
+              kind: 'compute',
+              name: 'single GPU',
+              unit: 'hours',
+              required: 2,
+              available: 8,
+              basis: 'lab-gpu-01 reports eight idle hours.',
+            },
+          ],
+          dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
+          blockers: [],
+        }),
+        mediaType: 'application/json',
+      },
+    ],
+    'demo-running-warmup',
   );
-  if (!returned) throw new Error('The demo found no design review for its warmup experiment');
-  const returning = await r('review.start', { reviewId: returned.id });
-  const asked = await r('review.get', { reviewId: returned.id });
-  await r('review.submit', {
-    reviewId: returned.id,
-    claimId: returning.claimId ?? asked.claimId,
-    verdict: 'needs_changes',
-    returnTo: 'planned',
-    synopsis:
-      'Three seeds cannot separate a 10% shift from seed noise; the plan needs a power estimate or more seeds.',
-    findings: asked.criteria.map((_: string, index: number) => ({
-      criterionNumber: index + 1,
-      status: index === 1 ? 'not_met' : 'met',
-      evidenceIds: [...asked.artifactIds],
-      notes:
-        index === 1
-          ? 'Seed-to-seed spread at p = 97 is about 15% of the grokking step, larger than the effect sought.'
-          : 'Checked against the pinned plan and feasibility statement.',
-    })),
-    notes: 'Returning the design for a power estimate.',
-    expectedRevision: asked.subjectRevision,
-    requestId: 'demo-running-warmup-verdict',
-  });
+  await judged(
+    warmup,
+    'demo-running-warmup-verdict',
+    {
+      verdict: 'needs_changes',
+      returnTo: 'planned',
+      synopsis:
+        'Three seeds cannot separate a 10% shift from seed noise; the plan needs a power estimate or more seeds.',
+      notes: 'Returning the design for a power estimate.',
+    },
+    (index) =>
+      index === 1
+        ? {
+            status: 'not_met',
+            notes:
+              'Seed-to-seed spread at p = 97 is about 15% of the grokking step, larger than the effect sought.',
+          }
+        : { status: 'met', notes: 'Checked against the pinned plan and feasibility statement.' },
+  );
 
   // An experiment that ran and passed both reviews: its report stands alone.
   const decay = await currentExperiment(ctx, input.producerCaller, {
@@ -608,114 +676,88 @@ export async function seedRunning(
     details: 'Three decays on the p = 97 reproduction, one seed each.',
     requestId: 'demo-running-decay',
   });
-  const decayRevision = async () =>
-    (await p('experiment.get_state', { experimentId: decay.id })).workflow.revision;
-  const decayPlan = await p('artifact.create', {
-    title: 'Plan: decay-sweep-p97',
-    content: [
-      '# Summary',
-      'Does the grokking step fall as weight decay grows at p = 97?',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  D[p = 97 table] --> A[decay 0.3]',
-      '  D --> B[decay 1.0]',
-      '  D --> C[decay 3.0]',
-      '  A & B & C --> M[Grokking step]',
-      '  M --> X{Falls with decay?}',
-      '```',
-      '',
-      '# Objective and hypothesis',
-      'Stronger weight decay makes the network grok sooner.',
-      '',
-      '# Evaluation',
-      '| Arm | Weight decay |',
-      '|---|---|',
-      '| Low | 0.3 |',
-      '| Mid | 1.0 |',
-      '| High | 3.0 |',
-      '',
-      '- Primary measure: the step where validation accuracy crosses 95%.',
-      '- Success: the step falls monotonically with decay.',
-      '- Budget: 3 GPU-hours.',
-    ].join('\n'),
-    mediaType: 'text/markdown',
-  });
-  const decayFeasibility = await p('artifact.create', {
-    title: 'Feasibility: decay-sweep-p97',
-    content: JSON.stringify({
-      formatVersion: 1,
-      resources: [
-        {
-          kind: 'data',
-          name: 'modular addition p=97',
-          unit: 'examples',
-          required: 9409,
-          available: 9409,
-          basis: 'The harness generates the whole table.',
-        },
-        {
-          kind: 'compute',
-          name: 'single GPU',
-          unit: 'hours',
-          required: 3,
-          available: 8,
-          basis: 'lab-gpu-01 reports eight idle hours.',
-        },
-      ],
-      dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
-      blockers: [],
-    }),
-    mediaType: 'application/json',
-  });
-  for (const [role, artifact, path] of [
-    ['plan', decayPlan, 'plan.md'],
-    ['feasibility', decayFeasibility, 'feasibility.json'],
-  ] as const)
-    await p('experiment.attach', {
-      experimentId: decay.id,
-      artifactId: artifact.id,
-      role,
-      path,
-      attemptIndex: decay.attempt.index,
-      expectedRevision: await decayRevision(),
-      requestId: `demo-running-decay-attach-${role}`,
-    });
-  await p('experiment.transition', {
-    experimentId: decay.id,
-    transition: 'submit_design',
-    expectedRevision: await decayRevision(),
-    requestId: 'demo-running-decay-design',
-  });
-  /** The reviewer passes the open review of `subject`, every criterion met. */
-  const pass = async (subject: string, requestId: string) => {
-    const open = ((await r('review.list')) as any[]).find(
-      (item) => item.subjectId === subject && item.status !== 'submitted',
-    );
-    if (!open) throw new Error(`The demo found no open review of ${subject}`);
-    const claimed = await r('review.start', { reviewId: open.id });
-    const asked = await r('review.get', { reviewId: open.id });
-    await r('review.submit', {
-      reviewId: open.id,
-      claimId: claimed.claimId ?? asked.claimId,
-      verdict: 'pass',
-      synopsis: 'The evidence answers the question as planned.',
-      findings: asked.criteria.map((_: string, index: number) => ({
-        criterionNumber: index + 1,
-        status: 'met',
-        evidenceIds: [...asked.artifactIds],
-        notes: 'Checked against the pinned evidence.',
-      })),
-      notes: 'Passing.',
-      expectedRevision: asked.subjectRevision,
-      requestId,
-    });
-  };
-  await pass(decay.id, 'demo-running-decay-design-verdict');
-  const decayRun = await work.lease(
-    await p('experiment.get_state', { experimentId: decay.id }),
-    input.producerCaller,
+  await designed(
+    decay,
+    [
+      {
+        role: 'plan',
+        path: 'plan.md',
+        title: 'Plan: decay-sweep-p97',
+        content: [
+          '# Summary',
+          'Does the grokking step fall as weight decay grows at p = 97?',
+          '',
+          '```mermaid',
+          'flowchart LR',
+          '  D[p = 97 table] --> A[decay 0.3]',
+          '  D --> B[decay 1.0]',
+          '  D --> C[decay 3.0]',
+          '  A & B & C --> M[Grokking step]',
+          '  M --> X{Falls with decay?}',
+          '```',
+          '',
+          '# Objective and hypothesis',
+          'Stronger weight decay makes the network grok sooner.',
+          '',
+          '# Evaluation',
+          '| Arm | Weight decay |',
+          '|---|---|',
+          '| Low | 0.3 |',
+          '| Mid | 1.0 |',
+          '| High | 3.0 |',
+          '',
+          '- Primary measure: the step where validation accuracy crosses 95%.',
+          '- Success: the step falls monotonically with decay.',
+          '- Budget: 3 GPU-hours.',
+        ].join('\n'),
+        mediaType: 'text/markdown',
+      },
+      {
+        role: 'feasibility',
+        path: 'feasibility.json',
+        title: 'Feasibility: decay-sweep-p97',
+        content: JSON.stringify({
+          formatVersion: 1,
+          resources: [
+            {
+              kind: 'data',
+              name: 'modular addition p=97',
+              unit: 'examples',
+              required: 9409,
+              available: 9409,
+              basis: 'The harness generates the whole table.',
+            },
+            {
+              kind: 'compute',
+              name: 'single GPU',
+              unit: 'hours',
+              required: 3,
+              available: 8,
+              basis: 'lab-gpu-01 reports eight idle hours.',
+            },
+          ],
+          dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
+          blockers: [],
+        }),
+        mediaType: 'application/json',
+      },
+    ],
+    'demo-running-decay',
   );
+  /** The reviewer passes the open review of `subject`, every criterion met. */
+  const pass = (subject: { id: string }, requestId: string) =>
+    judged(
+      subject,
+      requestId,
+      {
+        verdict: 'pass',
+        synopsis: 'The evidence answers the question as planned.',
+        notes: 'Passing.',
+      },
+      () => ({ status: 'met', notes: 'Checked against the pinned evidence.' }),
+    );
+  await pass(decay, 'demo-running-decay-design-verdict');
+  const decayRun = await lease(await p('experiment.get_state', { experimentId: decay.id }));
   const made = async (title: string, content: string, mediaType: string) =>
     await work.run(decayRun, 'artifact.create', { title, content, mediaType }, (caller, input) =>
       ctx.artifacts.create(caller, input),
@@ -807,7 +849,7 @@ export async function seedRunning(
     (caller, input) => ctx.experiments.transition(caller, input),
   );
   await work.release(decayRun);
-  await pass(decay.id, 'demo-running-decay-results-verdict');
+  await pass(decay, 'demo-running-decay-results-verdict');
 
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
   await currentExperiment(ctx, input.producerCaller, {
