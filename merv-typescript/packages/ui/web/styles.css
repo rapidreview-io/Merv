@@ -3203,7 +3203,7 @@ pre.math--source {
 .hub-needs {
   margin-top: var(--space-5);
 }
-/* What needs the reader: the same cards as before, laid side by side as cards. */
+/* What needs the reader: one line per move, its name, its sentence and its control. */
 .hub-needs .ov-block {
   margin-top: 0;
   padding-top: 0;
@@ -3218,13 +3218,33 @@ pre.math--source {
   gap: var(--space-4);
 }
 .hub-needs .ov-list > li {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   border: 0;
   border-radius: 10px;
   background: var(--bg-elev);
 }
 .hub-needs .ov-row {
   align-items: center;
+}
+.hub-needs .ov-body {
+  gap: 0;
+}
+.hub-needs .ov-name {
+  padding-block: 0;
+  margin-block: 0;
+}
+.hub-needs .ov-say {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hub-needs .ov-meta,
+.hub-needs .ov-said,
+.hub-needs .kind {
+  display: none;
 }
 .hub-needs .ov-move {
   margin-top: 0;
@@ -3358,9 +3378,9 @@ pre.math--source {
   color: var(--muted);
 }
 .hub-big {
-  font-size: 28px;
+  font-size: var(--text-lg);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -3612,10 +3632,10 @@ pre.math--source {
   font-size: 11px;
 }
 
-/* Files: the newest twelve as tiles; an image shows as a picture, the rest say their type. */
+/* Files: the newest sixteen as small tiles, each its type's glyph; a new one carries a dot. */
 .hub-mosaic {
   display: grid;
-  grid-template-columns: repeat(6, 48px);
+  grid-template-columns: repeat(8, 30px);
   gap: 6px;
 }
 .hub-tile {
@@ -3623,23 +3643,21 @@ pre.math--source {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 52px;
-  border-radius: 3px;
+  height: 30px;
+  border-radius: 4px;
   background: var(--bg-soft);
-  font-size: var(--text-xs);
   color: var(--faint);
-  overflow: hidden;
 }
-.hub-tile--image {
-  color: var(--ghost);
+.hub-tile:hover {
+  color: var(--text);
 }
 .hub-tile.on::after {
   content: '';
   position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--active);
 }

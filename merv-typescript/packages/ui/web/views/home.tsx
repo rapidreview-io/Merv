@@ -13,7 +13,6 @@ import { pathOf } from '../navigation';
 import { ended } from '../process';
 import { useSession } from '../session';
 import type { ShellData } from '../shell-types';
-import { fileType } from './artifacts';
 import { newest, type HomeData } from './map-data';
 import { NeedsYou, useNow } from './needs-you';
 import { chained, currentCycle } from './work';
@@ -403,7 +402,7 @@ function Git({ row }: { row: UiRowDescription }) {
 
 // ─── Files: the newest as a mosaic, images as pictures and the rest by type ────────────────
 
-const RECENT = 12;
+const RECENT = 16;
 function Files({ to }: { to: string }) {
   const files = useTool<Artifact[]>('artifact.read:list', { limit: 200 }, { every: 60_000 });
   const all = files.data ?? [];
@@ -416,23 +415,16 @@ function Files({ to }: { to: string }) {
       to={to}
       figure={
         <div className="hub-mosaic">
-          {all.slice(0, RECENT).map((file) => {
-            const image = fileIcon(file.mediaType, file.title) === 'file-image';
-            return (
-              <Link
-                key={file.id}
-                className={cx(
-                  'hub-tile',
-                  image && 'hub-tile--image',
-                  Date.parse(file.createdAt) >= week && 'on',
-                )}
-                to={`${to}/${file.id}`}
-                title={file.title}
-              >
-                {image ? <Icon name="file-image" size={18} /> : fileType(file).label.slice(0, 5)}
-              </Link>
-            );
-          })}
+          {all.slice(0, RECENT).map((file) => (
+            <Link
+              key={file.id}
+              className={cx('hub-tile', Date.parse(file.createdAt) >= week && 'on')}
+              to={`${to}/${file.id}`}
+              title={file.title}
+            >
+              <Icon name={fileIcon(file.mediaType, file.title)} size={16} />
+            </Link>
+          ))}
         </div>
       }
       line={
