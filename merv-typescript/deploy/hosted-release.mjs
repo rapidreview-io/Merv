@@ -354,6 +354,7 @@ async function main(args) {
       resume: { type: 'boolean' },
       abandon: { type: 'boolean' },
       'prepare-cutover': { type: 'boolean' },
+      'replace-predeploy-cutover': { type: 'string' },
       'accept-cutover': { type: 'boolean' },
       'staging-cutover': { type: 'boolean' },
       'canary-project': { type: 'string' },
@@ -361,10 +362,15 @@ async function main(args) {
   });
   if (values.help) {
     console.log(
-      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--staging-cutover --canary-project ID] [--prepare-cutover | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--staging-cutover --canary-project ID] [--prepare-cutover [--replace-predeploy-cutover RUN] | --resume --accept-cutover] [--dry-run | --resume | --check | --abandon | --mint-canary]',
     );
     return 0;
   }
+  const replaceRun = values['replace-predeploy-cutover'];
+  if (replaceRun !== undefined &&
+      (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(replaceRun) || !values['prepare-cutover'] ||
+       ['resume', 'abandon', 'check', 'mint-canary', 'accept-cutover', 'staging-cutover'].some(k => values[k])))
+    throw new Error('--replace-predeploy-cutover RUN requires --prepare-cutover and cannot combine with other modes');
   if (values['accept-cutover'] && (!values.resume || values['prepare-cutover'] || values.abandon))
     throw new Error('--accept-cutover requires --resume and cannot prepare or abandon');
   if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
@@ -609,7 +615,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     return problems.length ? 2 : 0;
   }
   const mode = values.abandon ? 'abandon' : 'resume';
-  if (live.active) {
+  if (replaceRun && live.active !== replaceRun)
+    throw new Error('Replacement requires the exact active predecessor; use --resume if ownership already transferred');
+  if (live.active && !replaceRun) {
     const doing = { abandon: 'abandoning it', resume: 'finishing it' }[mode];
     console.log(
       `hosted run ${live.active} is open; ${dryRun ? 'a real run finishes it first' : doing}`,
@@ -666,9 +674,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     sandboxesCommit,
     changed,
     sandboxChanged,
-    lane: classify(changed, sandboxChanged),
+    lane: replaceRun ? 'boundary' : classify(changed, sandboxChanged),
     current,
     cutover: values['prepare-cutover'] === true,
+    ...(replaceRun ? { replaces: replaceRun } : {}),
     canary,
     nodeImage: NODE_IMAGE,
     drainSeconds: Number(values['drain-minutes']) * 60,
@@ -691,6 +700,14 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     return 2;
   }
   plan.contentSha256 = src.contentSha256;
+  plan.sourceArchiveSha256 = src.archiveSha256;
+  plan.sandboxesArchiveSha256 = sha256(readFileSync(join(src.dir, 'sandboxes.tar.gz')));
+  if (replaceRun) {
+    // Replacement either commits the owner transfer atomically, or leaves the original run open.
+    // Never call finish/abandon on failure: that would erase evidence or release ownership.
+    onHost(run, 'replace_predeploy', plan);
+    return drive(run);
+  }
   try {
     const problems = pinProblems(current, templates, onHost(run, 'preflight', plan));
     if (problems.length)

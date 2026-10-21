@@ -265,3 +265,48 @@ The preflight uses the candidate's Compose `control` service with `run --rm
 This preserves Compose dotenv interpolation, shared raw environment values, and
 both service networks while running only the read-only cutover check. Candidate
 startup and preflight use the immutable image ID, and schema checks are unchanged.
+
+### Replace a native cutover candidate that failed before push
+
+When a reviewed source or gate fix is necessary, commit that fix together with the
+reviewed replacement support and run from that exact clean checkout:
+
+```sh
+node deploy/hosted-release.mjs --prepare-cutover \
+  --replace-predeploy-cutover 20261021T125719Z-d6ade026 \
+  --sandboxes /absolute/path/to/the-original-sandboxes-checkout
+```
+
+Retain the original canary credential and other preparation settings. This command
+requires the exact named active production run, an expired driver lease, and a
+recorded gate failure. It rejects any successful gates receipt, push/catalog
+receipt, mutation intent, backup indicating an interrupted mutation, other
+progress, or unrecognized predecessor pipeline. The legacy d6ade026 pipeline is
+explicitly fingerprinted because it persists a gates receipt before push; absence
+of that receipt proves its failure preceded registry and production mutations.
+Ordinary resume still rejects pipeline drift. Staging is not involved.
+
+Under the maintenance and hosted locks, replacement verifies the exact native
+Main image, boot maintenance, completed native migration and empty ownership,
+provider state, catalog and live/saved pins. Sandboxes commit/archive, current
+release, canary and preparation settings must be unchanged. New archives are hash
+checked. A new run directory receives the original preflight and a receipt hashing
+the predecessor's evidence, with a native migration proof. Sources and receipts
+are fsynced before one atomic rename transfers the active owner; ownership is
+never cleared and the old run is never finished, abandoned, edited or deleted.
+
+The new run rebuilds from its committed source and runs the full boundary gate
+set. It does not reuse the failed candidate or its gate results. Before push and
+initial catalog mutation it rechecks the original production state; native Main,
+maintenance and migration remain checked through preparation. A first-mutation
+journal prevents replacement after an interrupted push or deployment. Partial
+provider deployment continues through the existing forward-only resume path.
+
+If the handoff loses its response, inspect the active owner. If it is the new run,
+use `--resume` from its exact committed pipeline; do not replace the original again.
+If it is still the predecessor, the same replacement command may be retried; an
+unowned new directory is retained as evidence. Failed replacement never calls
+finish or abandon. A replacement that fails another gate can itself be replaced
+only with the same pre-push proofs, an audited pipeline and unchanged migration
+lineage. Successful preparation still pauses with exit 5; reopening and explicit
+`--resume --accept-cutover` remain separate operator actions.

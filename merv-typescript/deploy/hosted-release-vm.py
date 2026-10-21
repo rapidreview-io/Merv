@@ -71,7 +71,7 @@ LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STAGING_PROVIDERS = ('cloudflare-fleet-staging', 'cloudflare-fleet-staging-large')
-STEPS = {'propagation_ready', 'staging_apps', 'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
+STEPS = {'replace_predeploy', 'propagation_ready', 'staging_apps', 'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
          'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins', 'prepare_cutover', 'accept_cutover'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
@@ -176,6 +176,25 @@ def main_read(query, *params, write=False, url=None):
                            *(['-e', 'MERV_W=1'] if write else []), *(['-e', 'MERV_URL=' + url] if url else []),
                            '-w', '/app', MAIN, 'node',
                            '--input-type=module', '-e', MAIN_READ]))
+
+
+def durable_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def durable_tree(path):
+    entries = list(path.rglob('*'))
+    for file in entries:
+        if file.is_file() and not file.is_symlink():
+            with file.open('rb') as stream:
+                os.fsync(stream.fileno())
+    for directory in sorted((p for p in entries if p.is_dir() and not p.is_symlink()), key=lambda p: len(p.parts), reverse=True):
+        durable_directory(directory)
+    durable_directory(path)
 
 
 def sbx(**env):
@@ -658,6 +677,90 @@ class Step:
         self.cutover_maintenance(False)
         need(self.staging_pair() == checkpoint, 'prepared staging pair changed')
         return {'accepted': True}
+
+    def migration_proof(self):
+        report = json.loads(run(['docker', 'exec', '-w', '/app', MAIN, 'node', '--import', 'tsx',
+                                 'deploy/git-cutover-preflight.mjs']))
+        need(report.get('ready') is True and report.get('protocolMigrated') is True and
+             report.get('alreadyNative') is True, 'native migration is not complete and ready')
+        rows = main_read("SELECT (SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text)::text FROM {s}.component_migrations t) AS components, "
+                         "(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text)::text FROM {s}.wf_protocol_migrations t) AS protocols")
+        need(rows.get('components') and rows.get('protocols'), 'native migration ledger is missing')
+        return {'report': report, 'ledgerSha256': sha(json.dumps(rows, sort_keys=True).encode())}
+
+    def replacement_safety(self, before, migration=None):
+        self.cutover_maintenance(True)
+        self.cutover_census()
+        state = inspect(MAIN)
+        need(state['Image'] == before['cutoverMainImage'] and
+             state['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
+             'native Main image changed')
+        proof = self.migration_proof()
+        need(migration is None or proof == migration, 'native migration changed since replacement')
+        return proof
+
+    def replace_predeploy(self, _):
+        """Transfer ownership only from a provably failed gate, retaining all predecessor evidence.
+        Caller holds BOTH shared maintenance and hosted locks. The active-file rename is the commit.
+        A crash before it leaves an unowned new directory; a crash after it resumes the new run.
+        """
+        name = self.plan.get('replaces', '')
+        need(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,120}', name) and name != self.run.name,
+             'invalid replacement predecessor')
+        old = RUNS / name
+        need(owner() == name and old.is_dir() and not old.is_symlink(), 'predecessor is not the active run')
+        need(not main_release_running(), 'a Main release job is running')
+        lease = read(old / 'lease.json') or {}
+        need(lease.get('seen') is not None and time.time() - lease['seen'] >= LEASE,
+             'predecessor driver lease is still fresh or unproven')
+        plan, before, build = [read(old / (n + '.json')) for n in ('plan', 'preflight', 'build')]
+        need(plan and before and build and plan.get('cutover') is True and not plan.get('stagingCutover'),
+             'predecessor is not a built production cutover')
+        need(self.plan.get('cutover') is True and not self.plan.get('stagingCutover'), 'replacement must be a production cutover')
+        for key in ('current', 'sandboxesCommit', 'canary', 'nodeImage', 'drainSeconds'):
+            need(self.plan.get(key) == plan.get(key), 'replacement changed ' + key)
+        progress = read(old / 'progress.json') or {}
+        need(set(progress) == {'cutoverFailure'} and progress['cutoverFailure'].startswith('gates: '),
+             'predecessor is not a failed gate with no later progress')
+        for filename in ('gates.json', 'push.json', 'catalog.json', 'finish.json', 'mutation-started.json',
+                         'catalog.before', 'catalog.target', 'env.before', 'stage.before'):
+            need(not (old / filename).exists(), 'predecessor has later or ambiguous evidence: ' + filename)
+        # These audited drivers persist gates.json before attempting push. With no gates receipt,
+        # neither an interrupted push nor a downstream production mutation is reachable.
+        baseline = {'hosted-release.mjs': '4d41a34d18f98037764aa2ee59d9c077917b22bf0ec23738c4ab41cbc25aef28',
+                    'hosted-release-vm.py': '27df53c765e319b411ea2e0eb04a5530e1a63c2fab604014564594430b3606b9'}
+        old_pipeline = {n: sha((old / 'source/deploy' / n).read_bytes()) for n in baseline}
+        current_pipeline = {n: sha((self.run / 'source/deploy' / n).read_bytes()) for n in baseline}
+        need(old_pipeline in (baseline, current_pipeline), 'predecessor pipeline lacks audited pre-push ordering')
+        for archive, key in (('source.tar.gz', 'sourceArchiveSha256'), ('sandboxes.tar.gz', 'sandboxesArchiveSha256')):
+            need(re.fullmatch(r'[a-f0-9]{64}', self.plan.get(key, '')) and
+                 sha((self.run / archive).read_bytes()) == self.plan[key], 'replacement archive hash mismatch')
+        need(self.plan['sandboxesArchiveSha256'] == sha((old / 'sandboxes.tar.gz').read_bytes()),
+             'replacement Sandboxes archive changed')
+        live = self.pins()
+        need(all(live.get(k) == before.get(k) for k in ('apps', 'mainReleaseId', 'fileReleaseId', 'releases', 'fileReleases', 'catalog')),
+             'production provider state, catalog or pins changed')
+        need(live['apps'] and all(not a.get('rollout') for a in live['apps'].values()), 'provider rollout is active')
+        prior = read(old / 'replacement.json')
+        need(prior is None or (prior.get('successor') == name and prior.get('migration')), 'invalid predecessor replacement receipt')
+        migration = self.replacement_safety(before, prior['migration'] if prior else None)
+        # Fresh runs must rebuild and rerun every boundary gate, even for a gate-only source fix.
+        need(self.plan.get('lane') == 'boundary', 'replacement must run all boundary gates')
+        for filename in ('build.json', 'gates.json', 'push.json', 'catalog.json', 'progress.json', 'finish.json'):
+            need(not (self.run / filename).exists(), 'replacement run is not fresh')
+        receipt = {'predecessor': name, 'successor': self.run.name, 'sourceCommit': self.plan['sourceCommit'],
+                   'oldCandidate': build['candidate'], 'migration': migration, 'predecessorPipeline': old_pipeline,
+                   'evidence': {p.name: sha(p.read_bytes()) for p in old.iterdir() if p.is_file()}}
+        atomic(self.run / 'replacement.json', json.dumps(receipt).encode())
+        atomic(self.run / 'preflight.json', json.dumps(before).encode())
+        # No finish, unhold, cleanup, guard teardown, or edits to the predecessor. Never clear active.
+        # Persist every new source/artifact and both directory entries before the owner commit.
+        # Without directory fsync, a power loss could retain active but lose its preflight receipt.
+        durable_tree(self.run)
+        durable_directory(RUNS)
+        atomic(HOME / 'active', (self.run.name + '\n').encode())
+        durable_directory(HOME)
+        return receipt
 
     def preflight(self, _):
         """Claims the host for this run, then reads the live pins; changes nothing else."""
@@ -1168,7 +1271,10 @@ def step(name, directory, payload):
     need(directory.is_dir() and not directory.is_symlink(), f'no hosted run at {directory}')
     need(directory.stat().st_uid == 0 and directory.stat().st_mode & 0o077 == 0, 'run directory must be root-private')
     driver, arg = payload.get('driver'), payload.get('arg') or {}
-    if name in ('preflight', 'staging_preflight', 'mint_canary', 'pins'):  # the plan arrives with the first step of a run
+    if name in ('replace_predeploy', 'preflight', 'staging_preflight', 'mint_canary', 'pins'):  # the plan arrives with the first step of a run
+        if name == 'replace_predeploy':
+            existing = read(directory / 'plan.json')
+            need(existing is None or existing == arg, 'replacement plan is immutable')
         atomic(directory / 'plan.json', json.dumps(arg).encode())
         arg = {}
     work = Step(directory, json.loads((directory / 'plan.json').read_bytes()))
@@ -1190,12 +1296,25 @@ def step(name, directory, payload):
             return {'guard': 'busy'}
         if name == 'guard':
             return work.guard(arg)
-        if name not in ('preflight', 'staging_preflight', 'mint_canary', 'finish'):
+        if name not in ('replace_predeploy', 'preflight', 'staging_preflight', 'mint_canary', 'finish'):
             need(owner() == directory.name, f'hosted run {directory.name} does not hold {HOME / "active"}')
         with leased(directory, driver) if name != 'mint_canary' else contextlib.nullcontext():
-            if name != 'finish' and not work.plan.get('stagingCutover'):
+            if name not in ('finish', 'replace_predeploy') and not work.plan.get('stagingCutover'):
                 arm(directory, arg)
             with authorized(directory.name):
+                replacement = read(directory / 'replacement.json')
+                if replacement and name in ('push', 'catalog', 'drain', 'switch', 'prepare_cutover'):
+                    before = read(directory / 'preflight.json')
+                    work.replacement_safety(before, replacement['migration'])
+                    if name == 'push' or (name == 'catalog' and not (directory / 'catalog.before').exists() and not (directory / 'catalog.json').exists()):
+                        live = work.pins()
+                        need(all(live.get(k) == before.get(k) for k in ('apps', 'mainReleaseId', 'fileReleaseId', 'releases', 'fileReleases', 'catalog')),
+                             'production changed before replacement mutation')
+                    if name == 'drain' and not (read(directory / 'progress.json') or {}).get('deployAttempted'):
+                        need(work.pins()['apps'] == before['apps'], 'provider state changed before replacement deployment')
+                if name in ('push', 'catalog', 'drain', 'switch', 'stage') or (name == 'note' and arg.get('deployAttempted')):
+                    if not (directory / 'mutation-started.json').exists():
+                        atomic(directory / 'mutation-started.json', json.dumps({'step': name}).encode())
                 result = getattr(work, name)(arg)
             if name == 'staging_preflight':
                 atomic(directory / 'preflight.json', json.dumps(result).encode())

@@ -98,3 +98,17 @@ test('prestart retry requires explicit no-rollback and skips hosted work', () =>
     assert.match(result.stderr, /--retry-prestart requires/);
   }
 });
+
+test('hosted replacement requires explicit production preparation and an exact safe predecessor', () => {
+  for (const args of [
+    ['--replace-predeploy-cutover', 'old'],
+    ['--replace-predeploy-cutover', '../old', '--prepare-cutover'],
+    ...['--resume', '--abandon', '--check', '--accept-cutover', '--staging-cutover'].map(mode =>
+      ['--replace-predeploy-cutover', 'old', '--prepare-cutover', mode]),
+  ]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('hosted-release.mjs', import.meta.url)), ...args], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--replace-predeploy-cutover RUN requires/);
+    assert.equal(result.stdout, '');
+  }
+});
