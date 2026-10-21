@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({ data: { values: { email_addresses: [email] } } }),
     },
   );
-  if (!person.ok) return new Response("Upstream", { status: 502 });
+  if (!person.ok) return upstream("person", person);
   const { data } = await person.json();
 
   const entry = await fetch(`${ATTIO}/lists/${list}/entries`, {
@@ -46,5 +46,13 @@ export async function POST(req: Request) {
       },
     }),
   });
-  return new Response(null, { status: entry.ok ? 204 : 502 });
+  return entry.ok
+    ? new Response(null, { status: 204 })
+    : upstream("entry", entry);
+}
+async function upstream(step: string, res: Response) {
+  console.error(
+    `attio ${step} ${res.status}: ${(await res.text()).slice(0, 500)}`,
+  );
+  return new Response("Upstream", { status: 502 });
 }
