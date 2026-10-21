@@ -43,6 +43,17 @@ async function fixture(t: TestContext) {
     secretEnv: env,
   };
   let app = await createApp({ directory, config, port: 0 });
+  const host = {
+    get sessions() {
+      return app.ctx.sessions;
+    },
+    get codeWork() {
+      return app.ctx.codeWork;
+    },
+    get domainEvents() {
+      return app.ctx.domainEvents;
+    },
+  };
   const clients = new Set<Client>();
   const clientSecrets = new WeakMap<Client, string>();
   const checkouts = new Map<
@@ -114,7 +125,7 @@ async function fixture(t: TestContext) {
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
       capacity: 4,
-      capabilities: ['code.v2'],
+      capabilities: ['code.git.1'],
     });
     const input = {
       instanceId: target.id,
@@ -130,7 +141,7 @@ async function fixture(t: TestContext) {
       project.id,
     );
     assert.equal(result.status, 200, JSON.stringify(result.body));
-    const work = currentWork(app.ctx, {
+    const work = currentWork(host, {
       directory: join(directory, result.body.session.id),
       source: await source(),
     });
@@ -178,12 +189,9 @@ async function fixture(t: TestContext) {
         terminal: () => true,
       },
       {
+        remoteUrl: (path) => `${app.ctx.api.url}${path}`,
         call: (route, body) => app.ctx.codeWork.v2!.call(sourceCaller, route, body),
-        putPart: (id, offset, bytes) =>
-          app.ctx.codeWork.v2!.putPart(sourceCaller, id, offset, Buffer.from(bytes)),
-        readPart: (id, input) => app.ctx.codeWork.v2!.readPart!(sourceCaller, id, input),
       },
-      { pollMs: 10 },
     );
     try {
       await driver.capture(stored.held.launch);

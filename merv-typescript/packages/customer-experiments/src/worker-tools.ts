@@ -5,6 +5,7 @@ import type {} from '@merv/api/types';
 import type { CustomerExperiments } from './domain.js';
 import type { FilesService } from './files.js';
 import { progressSchema, submitResultsSchema } from './schema.js';
+import { plansDocument } from './program.js';
 import { isDocumentContract, seenBy } from './types.js';
 
 /** Deliberately no create/approve/payment tool: customer authority stays at the HTTP edge. */
@@ -16,7 +17,12 @@ export function registerWorkerTools(
   /** v3: the customer's files, read-only and only once the contract froze them. */
   const frozen = async (caller: Caller, id: string) => {
     const exp = await service.get(caller, id);
-    check(exp.workflow.version >= 3, 'not_found', 'This experiment has no request files', 404);
+    check(
+      plansDocument(exp.workflow.version),
+      'not_found',
+      'This experiment has no request files',
+      404,
+    );
     check(
       exp.acceptedContractId && exp.contract && isDocumentContract(exp.contract),
       'files_not_frozen',
@@ -41,7 +47,7 @@ export function registerWorkerTools(
       name: 'customer_experiment.submit_results',
       tier: 'worker',
       description:
-        "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures; cite any other by id in the report. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.",
+        "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures; cite any other by id in the report. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends and freezes its complete code tree, including uncommitted edits. An independent Astra reviewer verifies that exact tree and the results; passing review retains the approved commit before customer delivery. Never change scope; explain deviations or infeasibility in the report.",
       inputSchema: submitResultsSchema,
       handler: async (caller: Caller, input: unknown) =>
         seenBy(caller, await service.submitResults(caller, input)),

@@ -167,7 +167,7 @@ refuses a checkout without a driver, the former `central` base, `perBase: true`
 and `advancesCentral: true`; persistent policies still carry the two flags as
 `false`, because registered versions' pinned fingerprints include them. The
 machine Runner implements [Git resolution, preparation and capture](WORKSPACES.md),
-plus the fixed [Code commit protocol](CODE_OPERATIONS.md).
+plus the native [Code Git protocol](CODE_OPERATIONS.md).
 
 Omitted workspace policy means `none` through `effectiveWorkspace()`. That default
 is not materialized into old manifests, so existing pinned policy hashes and Task
@@ -175,40 +175,12 @@ versions remain valid. New explicit declarations participate in policy hashing.
 
 ## Worker code operations
 
-The independent Code provider depends on State, Scope and Sessions. Its tool
-adapter exposes `code.commit` and `code.operation`; its HTTP adapter exposes
-source-owned command retrieval and completion. It does not schedule assignments
-or launch another process. The existing machine Runner polls the durable queue
-and executes a fixed commit operation against its owned checkout.
+Workers use ordinary Git with credentials restricted to the assigned project, work branch, session and writer generation. The native remote admits objects and verifies the writer fence. Reviewers receive read-only code and Git metadata, writable scratch and no writer credential. The runner owns preparation and stopped-process metadata; it does not poll a commit-command queue.
 
-Only a live writable session with an explicit `code.commit` grant and an attached
-Git workspace can queue a request. The worker supplies an expected HEAD, message
-and request ID, never a path or Git command line. Runner reports an immutable
-operation receipt before the worker's handoff; final stopped-worker capture is
-a separate Session result. Read-only workers cannot request commits.
-
-Command retrieval and completion use the original source credential, not the
-worker credential. Already-dispatched commands remain recoverable after lease
-closure, so lost replies cannot strand an unknown outcome. Closed queued work
-is cancelled; recovery never reactivates the worker. The Git page displays
-operation status through its optional UI adapter. See [CODE_OPERATIONS.md](CODE_OPERATIONS.md).
+Submission freezes a producer's exact tree and parent after its process stops, without creating a commit. Review dispatch waits for the immutable receipt. A passing review journals a milestone whose durable commit gates the next writer and dependent code. Ordinary session end preserves uncommitted work on the host. Planned host teardown uses a separate verified capture receipt before Fleet may remove it. See [Code operations](CODE_OPERATIONS.md).
 
 ## Remaining runner work
 
-The [machine Runner](MACHINE_RUNNER.md) now consumes these controls through HTTP
-with durable launch intent, private secret derivation, owned process groups,
-offline deadlines and controller restart reconciliation. Native Codex profiles
-support bounded local shell work and enforce read-only assignment policy.
+The [machine Runner](MACHINE_RUNNER.md) consumes these controls through HTTP with durable launch intent, private secret derivation, owned process groups, offline deadlines and controller restart reconciliation. Sessions accepts attachment and final metadata from the exact source, runner and host; it owns no filesystem paths or Git operations. Late results cannot revive a lease. Code verifies Git objects and Code Work verifies submission and approval provenance independently of those observations.
 
-Git base resolution, persistent/ephemeral checkouts, fixed live commit requests,
-immutable operation/capture receipts and acknowledged cleanup are integrated. Sessions accepts attachment and final metadata
-from the exact source/runner/host through its HTTP adapter; it owns no filesystem
-paths or Git operations. A final report may arrive after lease closure without
-reviving that lease. Domain Events delivers the captured result to interested
-programs. See [workspace ownership and recovery](WORKSPACES.md).
-
-`code.propose`, general merges, durable reviewed publication, cross-machine Git object transport, machine pairing,
-source rotation, editable operational settings, trace delivery and telemetry remain
-open. The historical native Git capture acceptance uses one machine and a
-synthetic managed workflow; it predates Code operations and does not establish
-those remaining capabilities. New Code acceptance is recorded separately.
+Native Git transport, dependency resolution, immutable review and reviewed integration are implemented. Machine pairing, source rotation, editable operational settings and additional operational telemetry remain separate work. Historical native acceptance runs document their original boundaries; they do not establish acceptance of a newly proposed hosted image. See [workspace ownership and recovery](WORKSPACES.md) for current validation requirements.

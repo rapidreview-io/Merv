@@ -5,11 +5,14 @@ import type { WorkflowDefinition } from '@merv/contracts';
  *  intake agent co-edit; the agent verifies it and its acceptance freezes the contract.
  *  service_experiment@4 (2026-10-18): the executor may post progress to the customer's status
  *  page (customer_experiment.progress), which version 3 told it to but never granted.
+ *  service_experiment@5: immutable uncommitted review and durable approval commits.
+ *  service_experiment@6: native Git with the structured intake of migrated version-1 requests.
  *  Earlier versions stay registered, unchanged, for requests started on them. */
-export const SERVICE_VERSIONS = [1, 2, 3, 4] as const;
-export const SERVICE_VERSION = 4;
+export const SERVICE_VERSIONS = [1, 2, 3, 4, 5, 6] as const;
+export const SERVICE_VERSION = 5;
 export const writesReport = (version: number) => version >= 2;
-export const plansDocument = (version: number) => version >= 3;
+/** Version 6 preserves structured intake; new requests still start on version 5. */
+export const plansDocument = (version: number) => version >= 3 && version !== 6;
 export const postsProgress = (version: number) => version >= 4;
 
 /** Separate graph: customer acceptance is its sole design approval gate. */
@@ -43,3 +46,5 @@ export const SERVICE_EXPERIMENT: WorkflowDefinition = {
     ),
   ],
 };
+
+export const approvalCommits = (version: number) => version >= 5;

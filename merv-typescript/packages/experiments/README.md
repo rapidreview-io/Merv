@@ -147,15 +147,15 @@ terminal corpus capture. Reflection waves and code consolidation remain separate
 implementation work.
 This program does not publish code.
 
-New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). From `experiment@41`, planning and design review read a read-only checkout of the experiment's pinned base, project main with its accepted prerequisites' code, which the planner's lease pins (on `experiment@40` they use scratch space and are told to read the prerequisites' delivery evidence instead); execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.
+New experiments (`experiment@45`) use native Git on the assigned work branch. Planning and execution keep a writable checkout. Submitting a plan or results stops the producer and freezes its exact tree and parent without making a commit. An independent reviewer mounts that immutable tree with read-only Git metadata and an external scratch directory. A passing review durably journals the approval; Code retains the exact approved tree as a commit before admitting another writer or exposing accepted results to dependent work. Rejected submissions remain immutable evidence and do not create approval commits. Earlier published versions remain readable and must drain on the previous runtime before cutover. See [Always-on Git](../../docs/ALWAYS_GIT.md).
 
 ### Producer continuity (experiment@44)
 
 New experiments use one producer thread across planning, execution, rejected-design rework,
 execution repair and later attempts. Versions 40–43 keep their separate planning/execution
 keys; existing conversations are never merged. Each visit gets a new lease, credential,
-frozen grants and stage-specific workspace. Planning stays read-only; execution gets its own
-writable checkout. Reviewers remain separate, with a fresh thread per review round.
+frozen grants and stage-specific workspace. On version 44 planning remains read-only;
+version 45 planning and execution share the persistent writable work branch. Reviewers remain separate, with a fresh thread per review round.
 
 Execution's current assignment names the exact approved submission and review, includes the
 approval findings, and instructs the producer to follow the pinned plan, feasibility limits,

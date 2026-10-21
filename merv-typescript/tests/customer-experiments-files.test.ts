@@ -519,6 +519,52 @@ test('the sweeper deletes every object and the bucket at deleteAt and records it
   assert.equal((await f.files.list(other)).files.length, 1);
 });
 
+test('v1 to v6 migration never enrolls legacy buckets in document-plan retention or its file manager', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const r = await f.request(1);
+  // Legacy dataset storage shares this bucket name. Seed an existing lifecycle row as well
+  // to prove the sweep guard preserves bytes even if bookkeeping already exists.
+  await f.storage.provisionFiles(r.id);
+  const file = {
+    key: 'dataset-sha256',
+    size: 4,
+    etag: 'legacy',
+    uploaded: new Date().toISOString(),
+  };
+  f.storage.buckets.get(r.id)!.set(file.key, file);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO customer_experiment_files(request_id,provisioned_at,last_activity_at) VALUES(?,?,?)',
+      r.id,
+      new Date(0).toISOString(),
+      new Date(0).toISOString(),
+    ),
+  );
+  f.lifecycles.set(r.id, { version: 6, state: 'complete', updatedAt: new Date(0).toISOString() });
+  await f.files.sweep();
+  assert.deepEqual(f.storage.destroyed, []);
+  assert.deepEqual(await f.storage.listFiles(r.id), [file]);
+  await assert.rejects(f.files.list(r), code('not_found'));
+  await assert.rejects(f.files.download(r, file.key), code('not_found'));
+  const fresh = await f.request(6);
+  await f.files.warm(fresh);
+  assert.equal(
+    f.storage.buckets.has(fresh.id),
+    false,
+    'structured intake does not provision a document-plan bucket',
+  );
+  assert.equal(
+    (await f.state.read((sql) =>
+      sql.get<{ deleted_at: string | null }>(
+        'SELECT deleted_at FROM customer_experiment_files WHERE request_id=?',
+        r.id,
+      ),
+    ))!.deleted_at,
+    null,
+  );
+});
+
 test('files HTTP: the customer writes, the agent only lists and downloads', async () => {
   const f = await fixture();
   const r = await f.request();

@@ -100,7 +100,6 @@ export function UnitCode({
       .join(' '),
   );
   const base = basedOn(unit, names);
-  const lagging = !!unit.canonicalHead && unit.canonicalHead !== unit.mirroredHead;
   const publication = unit.publication;
   // The blockers this read carries: what a base would refuse now, and the one Code keeps
   // about a publication, which is the only opinion it holds about work that has ended.
@@ -156,14 +155,6 @@ export function UnitCode({
             <>
               <StatusPill value={unit.writerState} />
               <Short value={unit.canonicalHead} />
-              {/* Mirror lag is an element on the canvas and one clause here, never a count.
-                  The clause names the commit the mirror holds, which is the one it is about
-                  and never the head beside it; a lane the mirror never reached says nothing. */}
-              {lagging && unit.mirroredHead && unit.mirroredAt && (
-                <span className="muted">
-                  the mirror is at <Short value={unit.mirroredHead} /> <Ago at={unit.mirroredAt} />
-                </span>
-              )}
             </>,
           ],
           !!accepted && [

@@ -83,6 +83,8 @@ export interface Caller {
     epoch: number;
     credentialHash: string;
     boundSessionId?: string;
+    /** Teardown-only authority, rechecked against the pending allocation shutdown. */
+    cleanup?: true;
   };
   /** A project's credential-free service acting for a person, never set by a transport. */
   service?: { vouchedBy: DelegationSource };

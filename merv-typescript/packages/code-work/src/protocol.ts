@@ -1,19 +1,15 @@
 import { z } from 'zod';
 import {
   check,
-  CODE_DRIVER,
+  NATIVE_CODE_DRIVER as CODE_DRIVER,
   effectiveWorkspace,
   MervError,
   type Caller,
   type State,
   oidPattern,
 } from '@merv/contracts';
-import { idSchema as id, oidSchema as oid } from '@merv/contracts/schemas';
-import {
-  CODE_PART_MAX_BYTES,
-  codeUploadFenceSchema,
-  type CodeWorkspaceManifest,
-} from '@merv/code/store/protocol';
+import { idSchema as id } from '@merv/contracts/schemas';
+import { codePushFenceSchema, type CodeWorkspaceManifest } from '@merv/code/store/protocol';
 import { live, ownEnd } from '@merv/sessions/rules';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
@@ -21,37 +17,20 @@ import { parseCodeInput } from '@merv/code/input';
 import type { CodeStore } from '@merv/code/store/operations';
 import { workBranch } from '@merv/code/store/refs';
 import type { CodeWriterService } from '@merv/code/writers';
+import type { CodeGitRemote } from '@merv/code/store/http';
+import type { CodeSubmissionService } from './submissions.js';
 
-/** The session a machine names as its own; an export is read only by the machine that runs it. */
+/** The session a machine names as its own. */
 const codeWorkspaceManifestInputSchema = z.strictObject({
   sessionId: id,
   runnerId: id,
   hostRef: id.optional(),
 });
-const codeUploadBeginSchema = codeUploadFenceSchema
-  .extend({ kind: z.literal('checkpoint'), commandId: id, requestId: id })
-  .strict();
-/** The one capture a machine may hand over after its session closed; the server names the request. */
-const codeUploadFinalizeSchema = codeUploadFenceSchema
-  .extend({ kind: z.literal('final') })
-  .strict();
-const codeDownloadBeginSchema = codeWorkspaceManifestInputSchema
-  .extend({
-    /** Commits the machine says it holds. A wrong claim only breaks that machine's import. */
-    haves: z.array(oid).max(256),
-  })
-  .strict();
-const codeDownloadReadSchema = codeWorkspaceManifestInputSchema
-  .extend({
-    offset: z.number().int().nonnegative().safe(),
-    length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
-  })
-  .strict();
 
 /**
- * The second workspace protocol, as machines speak it. The API forwards a route and an opaque
+ * Workspace control metadata alongside ordinary Git transport. The API forwards a route and an opaque
  * body; everything is decided here. A machine proves a session is its own the way it does for
- * commands: Sessions only hands a session to the source that leased it, and the runner and
+ * session control: Sessions only hands a session to the source that leased it, and the runner and
  * launch it names must be the ones the session records.
  */
 export class CodeWorkspaceProtocol {
@@ -60,91 +39,133 @@ export class CodeWorkspaceProtocol {
     private readonly sessions: Sessions,
     private readonly writers: CodeWriterService,
     private readonly store: CodeStore,
+    private readonly git: CodeGitRemote,
+    private readonly submissions: CodeSubmissionService,
   ) {}
 
   async call(caller: Caller, route: string, body: unknown): Promise<unknown> {
     caller = structuredClone(caller);
-    check(!caller.session, 'session_forbidden', 'A leased worker cannot move bundles', 403);
-    if (route === 'workspace')
-      return await this.manifest(caller, parseCodeInput(codeWorkspaceManifestInputSchema, body));
-    if (route === 'uploads') {
-      const input = parseCodeInput(codeUploadBeginSchema, body);
-      const session = await this.controlled(caller, input, 'refused');
+    check(!caller.session, 'session_forbidden', 'A leased worker cannot control workspaces', 403);
+    if (caller.managed?.cleanup)
       check(
-        live(session),
-        'session_closed',
-        'Only the final capture is taken after a session ended',
-        409,
-      );
-      const command = await this.state.read(
-        async (sql) =>
-          await sql.get<{ status: string }>(
-            'SELECT status FROM code_commands WHERE id=? AND project_id=? AND session_id=?',
-            input.commandId,
-            caller.projectId,
-            session.id,
-          ),
-      );
-      check(
-        command?.status === 'dispatched',
-        'code_command_not_found',
-        'An upload delivers a commit command this session was handed',
-        404,
-      );
-      return { operation: await this.store.beginUpload(caller, input) };
-    }
-    if (route === 'finalize') {
-      const input = parseCodeInput(codeUploadFinalizeSchema, body);
-      // Taken from a live session, or from one its worker ended by its own hand (a handoff, a
-      // question to its owner), which Sessions closes before its machine stops the process; the
-      // writer fence decides. A session that never attached has no launch to compare; its
-      // final can move nothing.
-      const session = await this.controlled(caller, input, 'any');
-      check(
-        session.hostRef !== null || input.bundle === null,
-        'session_forbidden',
-        'A session that never attached has nothing to hand over',
+        [
+          'submission-status',
+          'end',
+          'submissions',
+          'capture-credential',
+          'shutdown-credential',
+          'pushed',
+        ].includes(route),
+        'managed_shutdown_only',
+        'Only shutdown capture is available',
         403,
       );
-      return {
-        operation: await this.store.beginUpload(
-          caller,
-          input,
+    if (route === 'workspace')
+      return await this.manifest(caller, parseCodeInput(codeWorkspaceManifestInputSchema, body));
+    if (route === 'git-credential') {
+      const input = parseCodeInput(codeWorkspaceManifestInputSchema, body);
+      const manifest = await this.manifest(caller, input);
+      return await this.git.issue(caller, {
+        ...input,
+        unitId: manifest.unitId,
+        generation: manifest.generation,
+        leaseId: input.sessionId,
+        mode: manifest.mode,
+      });
+    }
+    if (route === 'capture-credential') {
+      const input = parseCodeInput(
+        codeWorkspaceManifestInputSchema.extend({ stopped: z.literal(true) }),
+        body,
+      );
+      const session = await this.controlled(caller, input, 'any');
+      const row = await this.state.read((sql) =>
+        this.writers.row(sql, caller.projectId, session.instanceId),
+      );
+      check(
+        row && row.writer_session_id === session.id,
+        'code_generation_stale',
+        'Another writer owns this branch',
+        409,
+      );
+      return await this.git.issueCapture(caller, {
+        ...input,
+        unitId: session.instanceId,
+        generation: Number(row.generation),
+        leaseId: session.id,
+      });
+    }
+    if (route === 'pushed') {
+      const input = parseCodeInput(
+        codePushFenceSchema.extend({
+          kind: z.enum(['checkpoint', 'final']),
+          commandId: id.optional(),
+        }),
+        body,
+      );
+      check(
+        !caller.managed?.cleanup || input.kind === 'final',
+        'managed_shutdown_only',
+        'Shutdown may acknowledge only final capture',
+        403,
+      );
+      await this.controlled(caller, input, 'any');
+      return { operation: await this.git.acknowledge(caller, input) };
+    }
+    if (route === 'submission-status' || route === 'end' || route === 'shutdown-credential') {
+      const input = parseCodeInput(codeWorkspaceManifestInputSchema, body);
+      const session = await this.controlled(caller, input, 'any');
+      const row = await this.state.read((sql) =>
+        this.writers.row(sql, caller.projectId, session.instanceId),
+      );
+      check(
+        row && row.writer_session_id === session.id,
+        'code_generation_stale',
+        'Another writer owns this branch',
+        409,
+      );
+      const head = row.head_oid ?? this.writers.base(row);
+      const requested = await this.submissions.requested(caller.projectId, session.id);
+      if (route === 'submission-status')
+        return {
+          requested,
+          head,
+          cleanup: !!caller.managed?.cleanup,
+          writerClosed: row.writer_state === 'closed',
+          frozen: requested && (await this.submissions.frozen(caller.projectId, session.id)),
+        };
+      if (route === 'shutdown-credential')
+        return await this.git.issueShutdown(caller, {
+          ...input,
+          unitId: session.instanceId,
+          generation: Number(row.generation),
+          leaseId: session.id,
+        });
+      check(
+        !requested,
+        'code_submission_required',
+        'Seal the requested submission before ending this writer',
+        409,
+      );
+      await this.state.transaction((tx) =>
+        this.writers.settle(
+          tx,
+          {
+            projectId: caller.projectId,
+            unitId: session.instanceId,
+            sessionId: session.id,
+            generation: Number(row.generation),
+            leaseId: session.id,
+            expectedHead: head,
+            moves: false,
+          },
           !live(session) && ownEnd(session.closeReason),
         ),
-      };
+      );
+      return { head };
     }
-    if (route === 'downloads') {
-      const input = parseCodeInput(codeDownloadBeginSchema, body);
-      const manifest = await this.manifest(caller, input);
-      return {
-        download: await this.store.export(caller, {
-          sessionId: input.sessionId,
-          head: manifest.head,
-          haves: input.haves,
-          ...(manifest.pendingMerge ? { secondParent: manifest.pendingMerge.secondParent } : {}),
-        }),
-      };
-    }
-    const operation = /^uploads\/([A-Za-z0-9_]{1,80})(\/complete)?$/.exec(route);
-    if (!operation) throw new MervError('not_found', 'Unknown Code route', 404);
-    return {
-      operation: operation[2]
-        ? await this.store.complete(caller, operation[1])
-        : await this.store.operation(caller, operation[1]),
-    };
-  }
-
-  async putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer) {
-    return await this.store.putPart(caller, operationId, offset, bytes);
-  }
-
-  async readPart(caller: Caller, exportId: string, value: unknown): Promise<Buffer> {
-    caller = structuredClone(caller);
-    check(!caller.session, 'session_forbidden', 'A leased worker cannot move bundles', 403);
-    const input = parseCodeInput(codeDownloadReadSchema, value);
-    await this.controlled(caller, input, 'offered');
-    return await this.store.readExport(caller, exportId, input);
+    if (route === 'submissions') return { capture: await this.submissions.freeze(caller, body) };
+    throw new MervError('not_found', 'Unknown Code route', 404);
   }
 
   private async controlled(
@@ -191,7 +212,12 @@ export class CodeWorkspaceProtocol {
       'This project’s repository has not been imported into Code',
       409,
     );
-    const shared = { projectRef: caller.projectId, ...stored, unitId: session.instanceId };
+    const shared = {
+      projectRef: caller.projectId,
+      ...stored,
+      unitId: session.instanceId,
+      remote: `/git/${caller.projectId}.git`,
+    };
     let manifest: CodeWorkspaceManifest;
     if (policy.readOnly) {
       const name = workspace.base.startsWith('reference:')
@@ -214,6 +240,20 @@ export class CodeWorkspaceProtocol {
         branch: null,
         prerequisites: [],
       };
+      const submissionId =
+        session.kind === 'inquiry' ? undefined : session.execution.references.submission;
+      if (typeof submissionId === 'string') {
+        const capture = await this.submissions.capture(caller, submissionId);
+        check(
+          capture.status === 'ready' &&
+            capture.workspace?.submission &&
+            capture.workspace.headOid === head,
+          'code_submission_pending',
+          'The producer has not frozen its submitted code yet',
+          409,
+        );
+        manifest.submission = capture.workspace.submission;
+      }
     } else {
       const unit = await this.state.read((sql) =>
         this.writers.row(sql, caller.projectId, session.instanceId),

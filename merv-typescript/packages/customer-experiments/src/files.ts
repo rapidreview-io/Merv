@@ -3,6 +3,7 @@ import { check, MervError, type State, type Transaction } from '@merv/contracts'
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { RequestRecord, RequestStore } from './store.js';
 import type { RequestFiles } from './types.js';
+import { plansDocument } from './program.js';
 
 /** service_experiment@3: any files the customer brings, in the request's own bucket. */
 export const FILES_LIMIT_BYTES = 1_000_000_000_000;
@@ -231,7 +232,7 @@ export class FilesService implements RequestFiles {
   async warm(record: RequestRecord) {
     if (!this.storage) return;
     const lifecycle = await this.lifecycle(record);
-    if (lifecycle.version < 3 || lifecycle.state !== 'planning') return;
+    if (!plansDocument(lifecycle.version) || lifecycle.state !== 'planning') return;
     const row = await this.row(record.id);
     if (row?.provisioned_at || row?.deleted_at) return;
     await this.storage.provisionFiles(record.id);
@@ -250,7 +251,7 @@ export class FilesService implements RequestFiles {
     const storage = this.storage;
     check(storage, 'files_unavailable', 'File storage is not configured', 503);
     const lifecycle = await this.lifecycle(record);
-    check(lifecycle.version >= 3, 'not_found', 'This request has no file manager', 404);
+    check(plansDocument(lifecycle.version), 'not_found', 'This request has no file manager', 404);
     const row = await this.row(record.id);
     if (write) {
       check(!row?.deleted_at, 'files_deleted', 'These files were deleted', 410);
@@ -600,7 +601,7 @@ export class FilesService implements RequestFiles {
       try {
         const record = await this.store.get(row.request_id);
         const lifecycle = await this.lifecycle(record);
-        if (lifecycle.version < 3 || !this.storage) continue;
+        if (!plansDocument(lifecycle.version) || !this.storage) continue;
         // A bucket made ahead of a first upload that never came goes after half an hour of quiet;
         // the next upload makes it again.
         const quietSince = Date.parse(row.last_activity_at ?? row.provisioned_at!);

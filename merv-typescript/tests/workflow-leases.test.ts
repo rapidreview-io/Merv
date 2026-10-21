@@ -30,7 +30,9 @@ import { confirmedDelivery } from './fixtures/task-evidence.js';
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-workflow-leases-'));
   const app = await createApp({ directory, api: false });
+  let closeWork = async () => {};
   t.after(async () => {
+    await closeWork();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -51,6 +53,7 @@ async function fixture(t: TestContext) {
     requestId: 'create',
   });
   const work = currentWork(app.ctx, { directory: join(directory, 'work'), source });
+  closeWork = () => work.close();
   const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
   t.after(() => {
     for (const lease of held.values()) lease.driver?.dispose();
@@ -60,7 +63,7 @@ async function fixture(t: TestContext) {
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
     capacity: 4,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'code.git.1'],
   });
   let sequence = 0;
   const offer = async (target: Task = task) => {
@@ -89,7 +92,7 @@ async function fixture(t: TestContext) {
         held.set(session.id, lease);
       }
       lease.worker = caller;
-      input = { ...input, commandId: await work.commit(lease) };
+      await work.commit(lease);
     }
     const invocation = await app.ctx.sessions.invocations.prepare(caller, tool, input);
     return await app.ctx.sessions.invocations.run(invocation, handler);

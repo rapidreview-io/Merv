@@ -245,14 +245,6 @@ export const codeFile = (ref: string, path: string) =>
     bytes: true,
   });
 
-/** The project's GitHub connection, read, or changed where a body is sent. */
-export const githubRequest = <T>(action = '', body?: unknown) =>
-  accountRequest<T>(`/code/github${action}`, {
-    scoped: true,
-    credentials: 'same-origin',
-    ...(body === undefined ? {} : { method: 'POST', body }),
-  });
-
 /** One tool call over the same-origin JSON endpoint agents use. `name` may be an address
  *  `tool:action`, which takes that action's own arguments. */
 export async function call<T>(name: string, input: Record<string, unknown> = {}): Promise<T> {

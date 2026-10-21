@@ -10,7 +10,7 @@ import { CodeService } from './service.js';
 
 export const codePlugin = {
   name: 'merv-code-work',
-  /** `mainLanding`: accepted work lands on Merv's main where no GitHub is linked (landing.ts). */
+  /** `mainLanding`: accepted work lands on Merv's main on the local research baseline (landing.ts). */
   Config: z
     .object({ mainLanding: z.boolean().default(false) })
     .strict()

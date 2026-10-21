@@ -1,16 +1,14 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
-import type { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
-import { enqueueMirror, type CodeMirrorService } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { Caller, Reviews, Scope, Sql, State, Transaction, Workflows } from '@merv/contracts';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
   check,
   CODE_DRIVER,
-  codeCommandCompletionSchema,
+  NATIVE_CODE_DRIVER,
   createService,
   digest,
   forRead,
@@ -26,10 +24,11 @@ import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
 import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
-import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
+import { repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
 import type { Code, ResolutionWorkCreator } from './types.js';
 import { CodeUnitService } from './units.js';
+import { CodeSubmissionService, type SubmissionStorage } from './submissions.js';
 import { acceptance, pin, unitColumns, type UnitRow } from './unit-store.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
@@ -67,15 +66,18 @@ export class CodeService implements Code {
   /** The durable runner commands; this service adds Code's admission to their completion. */
   private readonly commands: CodeCommandService;
   private captureReader!: CodeCaptureReader;
+  submissions!: CodeSubmissionService;
+  private submissionStorage?: SubmissionStorage;
+  bindSubmissionStorage(storage: SubmissionStorage) {
+    this.submissionStorage = storage;
+  }
   private unitStore!: CodeUnitService;
   private readonly writerStore: CodeWriterService;
   // Set by initialize(); close() also runs after an initialization that failed half-way.
   private store!: CodeStore;
-  private mirrorStore!: CodeMirrorService;
   private baseStore!: CodeBaseService;
   private landing?: MainLanding;
   private protocol!: CodeWorkspaceProtocol;
-  readonly github: CodeGitHubService;
   private publicationStore!: CodePublicationService;
   private publicationHost!: PublicationHost;
   private readonly board: CodeRunningReader;
@@ -103,12 +105,12 @@ export class CodeService implements Code {
     private readonly reviews: Reviews,
     private readonly utility: Pick<
       CodeUtility,
-      | 'github'
       | 'writers'
       | 'units'
       | 'openStore'
       | 'declareManaged'
       | 'repositories'
+      | 'gitRemote'
       | 'browse'
       | 'raw'
       | 'log'
@@ -118,8 +120,7 @@ export class CodeService implements Code {
     /** The plugin's config: whether accepted work lands on main (landing.ts). */
     private readonly options: { mainLanding?: boolean } = {},
   ) {
-    this.commands = new CodeCommandService(state, scope, sessions, workflows);
-    this.github = utility.github;
+    this.commands = new CodeCommandService(state, scope, sessions);
     this.writerStore = utility.writers;
     this.board = new CodeRunningReader(state, scope, workflows, {
       unit: (caller, unitId, tx) => this.unitStore.records.unit(caller, unitId, tx),
@@ -131,12 +132,33 @@ export class CodeService implements Code {
   async initialize(): Promise<void> {
     await this.commands.initialize();
     const { state, scope, sessions, utility, repositories } = this;
+    this.submissions = new CodeSubmissionService(
+      state,
+      scope,
+      sessions,
+      this.writerStore,
+      this.reviews,
+      {
+        verifySubmission: (...args) => {
+          check(this.submissionStorage, 'code_unavailable', 'Git remote is unavailable', 503);
+          return this.submissionStorage.verifySubmission(...args);
+        },
+        materializeSubmission: (...args) => {
+          check(this.submissionStorage, 'code_unavailable', 'Git remote is unavailable', 503);
+          return this.submissionStorage.materializeSubmission(...args);
+        },
+      },
+      (tx, projectId, value) => this.unitStore.acceptFrozen(tx, projectId, value),
+    );
+    this.bindSubmissionStorage(utility.gitRemote);
+    await this.submissions.initialize();
     this.captureReader = new CodeCaptureReader(
       state,
       scope,
       sessions,
       this.writerStore,
       async (projectId, base, head) => await this.store.stats(projectId, base, head),
+      this.submissions,
     );
     try {
       this.unitStore = await createService(
@@ -168,7 +190,6 @@ export class CodeService implements Code {
         serviceWork: sessions.serviceWork,
         resolved: async (tx, projectId, key, commit) => {
           await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
-          await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
           this.store?.wake();
         },
         message: async (sql, projectId, key) =>
@@ -181,27 +202,27 @@ export class CodeService implements Code {
       const opened = await utility.openStore(
         {
           changed: (tx, projectId, unitId) => this.unitStore.changed(tx, projectId, unitId),
-          workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
+          workspaces: async (projectId, tx) => [
+            ...new Set([
+              ...(await sessions.holdingWorkspace(projectId, CODE_DRIVER, tx)),
+              ...(await sessions.holdingWorkspace(projectId, NATIVE_CODE_DRIVER, tx)),
+            ]),
+          ],
           network: (operation) => this.network(operation),
         },
         repositories,
       );
       this.store = opened.store;
       this.releaseChanges = opened.release;
-      this.mirrorStore = opened.mirror;
       this.publicationHost = new PublicationHost(
-        state,
-        scope,
         this.reviews,
         utility.repositories,
-        this.github,
         this.writerStore,
-        { store: opened.store, transport: opened.transport, units: this.unitStore },
+        { units: this.unitStore },
       );
       this.publicationStore = new CodePublicationService(
         state,
         scope,
-        this.github,
         utility.units,
         this.publicationHost,
       );
@@ -210,16 +231,23 @@ export class CodeService implements Code {
         state,
         this.unitStore,
         utility.repositories,
-        this.github,
         this.workflows,
         !!this.options.mainLanding,
       );
       await landing.initialize();
       this.landing = this.unitStore.landing = this.publicationStore.landing = landing;
-      this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, opened.store);
+      this.protocol = new CodeWorkspaceProtocol(
+        state,
+        sessions,
+        this.writerStore,
+        opened.store,
+        utility.gitRemote,
+        this.submissions,
+      );
       bases.start();
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
+      this.submissions.start();
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
@@ -239,47 +267,22 @@ export class CodeService implements Code {
       throw error;
     }
   }
+  expectSubmission: Code['expectSubmission'] = (...args) => this.submissions.expect(...args);
+  approveSubmission: Code['approveSubmission'] = async (caller, input, tx) => {
+    await this.unitStore.validateFrozenApproval(caller, input, tx);
+    await this.submissions.approve(caller, input, tx);
+  };
   capture: Code['capture'] = (...args) => this.captureReader.capture(...args);
   captures: Code['captures'] = (...args) => this.captureReader.captures(...args);
   checkCapture: Code['checkCapture'] = async (caller, ref, origin, tx) =>
     checkedCapture(await this.capture(caller, ref, tx), caller.projectId, origin);
   list: Code['list'] = (...args) => this.commands.list(...args);
   operation: Code['operation'] = (...args) => this.commands.operation(...args);
-  commit: Code['commit'] = (...args) => this.commands.commit(...args);
-  merge: Code['merge'] = (...args) => this.commands.merge(...args);
-  nextCommand: Code['nextCommand'] = (...args) => this.commands.nextCommand(...args);
-  async completeCommand(caller: Caller, value: unknown) {
-    caller = structuredClone(caller);
-    const input = parseCodeInput(codeCommandCompletionSchema, value);
-    const complete = async (tx: Transaction) => {
-      const command = await tx.get<{ command_json: string; status: string }>(
-        'SELECT command_json,status FROM code_commands WHERE id=? AND project_id=?',
-        input.commandId,
-        caller.projectId,
-      );
-      // Replay still checks controller ownership and the exact retained receipt.
-      if (command?.status === 'succeeded') return this.commands.completeCommand(caller, input);
-      // A receipt succeeds only for the upload Code admitted under this command.
-      if (command)
-        await this.writerStore.requireAdmitted(
-          input,
-          JSON.parse(command.command_json) as { projectId: string; instanceId: string },
-          tx,
-        );
-      return this.commands.completeCommand(caller, input);
-    };
-    const tx = this.state.ambient;
-    return tx ? complete(tx) : this.state.transaction(complete);
-  }
-  controlPublication: Code['controlPublication'] = (...args) =>
-    this.publicationHost.control(...args);
   publications: Code['publications'] = (caller) => this.publicationStore.publications(caller);
   syncPublications: Code['syncPublications'] = (caller) =>
     this.network(() => this.publicationStore.syncPublications(caller));
   publicationDetails: Code['publicationDetails'] = (...args) =>
     this.network(() => this.publicationStore.publicationDetails(...args));
-  mergePublication: Code['mergePublication'] = (...args) =>
-    this.network(() => this.publicationStore.mergePublication(...args));
   /** The runner that executes a project check. */
   bindChecks(checks: import('./check-types.js').SandboxChecks): () => void {
     const bases = this.baseStore;
@@ -356,13 +359,13 @@ export class CodeService implements Code {
     if (args[0].data.settled !== false) this.store.wake();
   }
   controlBase: Code['controlBase'] = (...args) => this.baseStore.control(this.scope, ...args);
-  retryMirror: Code['retryMirror'] = (...args) => this.mirrorStore.retry(...args);
   async requireLeasable(
     caller: Caller,
     input: { unitId: string; writer: boolean },
     tx: Transaction,
   ): Promise<void> {
     await this.scope.require(caller, 'read', tx);
+    if (input.writer) await this.submissions.requireSettled(caller.projectId, input.unitId, tx);
     // A board's guidance asks this of each unit more than once; one snapshot answers once.
     const blocked = await this.state.remember(
       `code-work:leasable:${caller.projectId}:${input.unitId}:${input.writer}`,
@@ -525,7 +528,6 @@ export class CodeService implements Code {
     const publication = status.project
       ? {
           publication: {
-            controls: await this.publicationHost.status(caller),
             records: await this.publicationStore.publications(caller),
           },
         }
@@ -539,15 +541,10 @@ export class CodeService implements Code {
       landing: await this.landing!.status(caller.projectId),
       ...technical,
       store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
-      mirror: await this.mirrorStore.describe(caller.projectId),
     });
   }
-  importRepository = async (caller: Caller, input: unknown) => {
-    await this.administered(caller);
-    return this.store.importRepository(caller, input);
-  };
-  /** A project from before Code initialized on creation gets its repository on an import, as on
-   *  new work, once the caller is known to be one who may import: nobody else's call initializes
+  /** A project from before Code initialized on creation gets its repository on configuration, as on
+   *  new work, once the caller is known to be an administrator: nobody else's call initializes
    *  or maintains anything. */
   private async administered(caller: Caller) {
     await this.state.transaction(async (tx) => {
@@ -560,16 +557,12 @@ export class CodeService implements Code {
     caller = structuredClone(caller);
     const input = parseCodeInput(repositoryPrepareSchema, value);
     await this.administered(caller);
-    return prepareRepository(this, caller, input, (operation) =>
-      reconcileRepository(
-        this.state,
-        this.utility.repositories,
-        this.github,
-        this.unitStore,
-        caller,
-        input,
-        operation,
-      ),
+    return reconcileRepository(
+      this.state,
+      this.utility.repositories,
+      this.unitStore,
+      caller,
+      input,
     );
   }
   configureRepository = async (caller: Caller, input: unknown) =>
@@ -581,28 +574,27 @@ export class CodeService implements Code {
   get v2() {
     return this.publicationClosed ? undefined : this.protocol;
   }
+  get gitRemote() {
+    return this.utility.gitRemote;
+  }
   async close(): Promise<void> {
     this.publicationClosed = true;
     this.releaseProvenance?.();
     this.releaseProvenance = undefined;
     clearInterval(this.publicationTimer);
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
-    const mirroring = this.mirrorStore?.close();
     const landing = this.landing?.close();
     // No new merge starts from here; one that is running is waited for below, because every
     // read must be refused before this method first yields.
     const merging = this.baseStore?.close();
     this.captureReader?.close();
+    await this.submissions?.close();
     this.unitStore?.close();
     this.releaseChanges?.();
     this.commands.close();
-    // Every read is refused from here on. Running admissions and GitHub calls still reach the
-    // database, which outlives Code, and are waited for before the writer lock is given up. The
-    // store drains alongside them: its deadline ends a GitHub import it owns (up to ten minutes
-    // of fetch otherwise), which the next process retries.
+    // Finish admitted local operations before releasing repository ownership.
     await Promise.all([
       merging,
-      mirroring,
       landing,
       Promise.allSettled([...this.networkOperations]),
       this.store?.close(),

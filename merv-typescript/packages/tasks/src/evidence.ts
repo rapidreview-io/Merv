@@ -14,7 +14,7 @@ export const acceptanceChecks = (checks: string[]) =>
 /** `git` adds the one sentence a Git task's producer needs; every other brief stays byte-identical. */
 export function renderBrief(
   input: { title: string; goal: string; checks: string[] },
-  git = false,
+  git: boolean | 'ordinary' = false,
 ): string {
   return [
     `# ${input.title}`,
@@ -33,9 +33,11 @@ export function renderBrief(
       'Each confirmation records checkNumber, status (met or not_met), evidenceIds and notes explaining what you checked and found. ' +
       'A met claim requires evidence from the submitted artifactIds. Report unmet checks honestly. ' +
       'The server validates coverage and evidence references; an independent reviewer determines whether the goal was achieved.' +
-      (git
-        ? ' This is a Git task: work in the private Git checkout provided, record the work with code.commit, and deliver that operation’s commandId in task.submit_delivery; artifactIds may then be empty, and a met claim that cites no evidenceIds is backed by the delivered commit.'
-        : ''),
+      (git === 'ordinary'
+        ? ' Work in the assigned Git checkout with ordinary Git. Submit this working tree with task.submit_delivery, then stop so the runner can freeze it for independent review. No commit is required before submission. Passing review durably commits the exact approved tree. ArtifactIds may be empty, and a met claim without evidenceIds is backed by the submitted code.'
+        : git
+          ? ' This is a Git task: work in the private Git checkout provided, record the work with code.commit, and deliver that operation’s commandId in task.submit_delivery; artifactIds may then be empty, and a met claim that cites no evidenceIds is backed by the delivered commit.'
+          : ''),
     '',
   ].join('\n');
 }
@@ -114,6 +116,16 @@ export function renderDeliveredCommit(
   },
 ): string {
   const { workspace, provenance } = capture;
+  if (capture.ref.kind === 'submission')
+    return [
+      `# Submitted code: ${title}`,
+      '',
+      `- Immutable submission: ${capture.ref.sessionId}`,
+      `- Producer: ${provenance.actorId}`,
+      `- Work revision: ${provenance.revision}`,
+      '',
+      'The producer stops after submitting. The runner retains its exact Git tree and parent history without making a commit. Independent review is unavailable until those immutable objects are durable. The reviewer receives that frozen tree in an isolated read-only checkout; HEAD is its parent, not a preapproval commit. Acceptance commits precisely that tree, only after the independent passing verdict.',
+    ].join('\n');
   return [
     `# Delivered commit: ${title}`,
     '',

@@ -6,13 +6,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import {
-  CODE_PART_MAX_BYTES,
-  type CodeFinding,
-  type CodeRepositoryImportInput,
-  type CodeAdmissionLimits,
-  type CodeStoreOperation,
-} from './protocol.js';
+import { type CodeFinding, type CodeAdmissionLimits, type CodeStoreOperation } from './protocol.js';
 import { lstat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WriterFence } from '../writers.js';
@@ -24,17 +18,11 @@ export interface CodeStoreConfig extends CodeRepositoryConfig {
   sweepSeconds: number;
   /** How long unloading waits for running operations before it ends their Git children. */
   drainSeconds: number;
-  /** The part size the server asks machines to send. */
-  partBytes: number;
   /** A transfer nobody sent a byte to for this long is given up. */
   abandonSeconds: number;
-  /** How many transfers of one project may be receiving at once. */
-  receiving: number;
   /** What a project may keep of bundles admission refused; the oldest make room. */
   heldBundles: number;
   heldBytes: number;
-  /** How long a completing call waits for admission before it answers with the state so far. */
-  settleMs: number;
   limits: typeof defaultLimits;
 }
 export const defaultStoreConfig: Omit<CodeStoreConfig, 'root'> = {
@@ -42,18 +30,14 @@ export const defaultStoreConfig: Omit<CodeStoreConfig, 'root'> = {
   reservedFreeBytes: 2 * 1024 * 1024 * 1024,
   sweepSeconds: 300,
   drainSeconds: 45,
-  partBytes: CODE_PART_MAX_BYTES,
   abandonSeconds: 24 * 3600,
-  receiving: 4,
   heldBundles: 8,
   heldBytes: 1024 * 1024 * 1024,
-  settleMs: 5_000,
   limits: defaultLimits,
 };
 
 /** The boundaries between the database and Git at which a test ends the process. */
 export type FaultPoint =
-  | 'after_part'
   | 'after_index'
   | 'after_admitting'
   | 'after_migrate'
@@ -63,19 +47,6 @@ export type FaultPoint =
   | 'after_rebind_marker'
   | 'before_ack';
 
-/** How Code reads the repository a project is linked to; the credential ends with the call. */
-export interface CodeImportRemote {
-  read<T>(
-    caller: Caller,
-    use: (target: {
-      url: string;
-      protocol: 'https' | 'file';
-      repository: { id: number; fullName: string };
-      env: Record<string, string>;
-    }) => Promise<T>,
-    binding?: CodeRepositoryImportInput['githubBinding'],
-  ): Promise<T>;
-}
 /** What the owner of work units answers for the store; all but `maintained` in its transaction. */
 export interface CodeStoreHooks {
   /** A project's repository gained history or a binding: what waited for it is derived again. */
@@ -132,7 +103,7 @@ export type ImportPayload = { format: 1; actorId: string } & (
       source: 'github';
       ref: string;
       expectedHead?: string;
-      githubBinding?: CodeRepositoryImportInput['githubBinding'];
+      githubBinding?: { revision: number; repositoryId: number; baseBranch: string };
     }
 );
 /**
@@ -212,32 +183,13 @@ export const received = (row: Pick<OperationRow, 'payload_json' | 'progress_json
 export const columns =
   'id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,error,created_at,completed_at,unit_id,generation,phase,progress_json,detail_json,updated_at';
 export const journalled = ['admitting', 'objects_durable', 'refs_applied'];
-/** One job at a time per key, in the order asked; a job runs whatever the one before ended in. */
-export function serial<T>(
-  chains: Map<string, Promise<void>>,
-  key: string,
-  job: () => Promise<T>,
-): Promise<T> {
-  const run = (chains.get(key) ?? Promise.resolve()).then(job);
-  const settled = run.then(
-    () => {},
-    () => {},
-  );
-  chains.set(key, settled);
-  void settled.then(() => {
-    if (chains.get(key) === settled) chains.delete(key);
-  });
-  return run;
-}
-export const FETCH_TIMEOUT_MS = 10 * 60_000;
 /** One line of a busy refusal: what is in flight, how much of it, and the first twenty names. */
 export const held = (what: string, names: string[]) =>
   names.length ? [`${what} ${names.length} (${names.slice(0, 20).join(', ')})`] : [];
 
 /**
  * What every part of the store shares: the services it was opened with, the journal's rows, who
- * may touch them, and the work it owns until it closes. Receiving, downloads and rebinding are
- * collaborators that take it, and `CodeStore` composes them (operations.ts).
+ * may touch them, and the work it owns until it closes. The legacy recovery engine and native Git service share these operation views.
  */
 export class StoreCore {
   readonly config: CodeStoreConfig;
@@ -251,7 +203,6 @@ export class StoreCore {
     readonly hooks: CodeStoreHooks,
     /** Opened and closed by their owner, which holds the writer lock. */
     readonly repositories: CodeRepositories,
-    readonly remote?: CodeImportRemote,
     /** Throws at a named boundary, which is how a test ends the process there. */
     readonly fault: (point: FaultPoint) => void = () => {},
   ) {
@@ -289,25 +240,6 @@ export class StoreCore {
 
   assertOpen(): void {
     check(!this.closed, 'code_unavailable', 'Code is unavailable', 503);
-  }
-
-  managedSession(caller: Caller, sessionId: string): void {
-    check(
-      !caller.managed || caller.managed.boundSessionId === sessionId,
-      'managed_runner_forbidden',
-      'A managed runner may transfer code only for its bound session',
-      403,
-    );
-  }
-
-  async managedRead(caller: Caller, sessionId: string): Promise<void> {
-    if (!caller.managed) return;
-    await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        await this.scope.require(caller, 'read', tx);
-        this.managedSession(caller, sessionId);
-      }),
-    );
   }
 
   async administrator(caller: Caller, tx: Transaction): Promise<void> {
@@ -363,7 +295,7 @@ export class StoreCore {
       generation: row.generation === null ? null : Number(row.generation),
       received: progress.received ?? 0,
       bytes: this.declared(row),
-      partBytes: this.config.partBytes,
+      partBytes: 0,
       head: progress.target ?? payload.tip ?? null,
       error:
         row.error ??

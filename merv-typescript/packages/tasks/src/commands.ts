@@ -41,6 +41,8 @@ import type {
 } from './types.js';
 import type { TasksContext } from './index.js';
 import { producing, serviceOwned, taskVersion } from './workflow.js';
+import { artifactReview } from './legacy-artifact-review.js';
+import { migrateNativeWorkflow } from '@merv/workflows/native-migration';
 import { reviewReturn } from '@merv/reviews/returns';
 import { contextInputs, contextType, newestType } from './context.js';
 import { isProducer, producerOrAdmin, unleased } from './lease.js';
@@ -160,7 +162,7 @@ export async function createTask(
       if (input.briefId === undefined) {
         // A brief rendered here is checked as written: its input is plain text, without NUL or
         // a lone surrogate, so it reads back unchanged. It is the producer's own text document.
-        content = renderBrief({ ...input, checks }, true);
+        content = renderBrief({ ...input, checks }, 'ordinary');
         brief = await ctx.artifacts.create(
           caller,
           { title: composedBriefTitle(input.title), content },
@@ -286,6 +288,12 @@ export async function checkDelivery(
   await ctx.scope.require(caller, 'write', tx);
   const row = await ctx.row(tx, caller, current.id);
   check(
+    !artifactReview(current.version),
+    'legacy_artifact_review_only',
+    'The historical artifact contract can only finish its existing review',
+    409,
+  );
+  check(
     await isProducer(ctx, caller, row, current, tx),
     'forbidden',
     'Only this task’s producer may submit its delivery',
@@ -368,6 +376,30 @@ export async function deliveredCommit(
   commandId: unknown,
   tx: Transaction,
 ) {
+  if (snapshot.version >= 46) {
+    check(caller.session, 'session_required', 'Submit from the actual producing session', 403);
+    const capture = await ctx.code.capture(
+      caller,
+      { kind: 'session-final', sessionId: caller.session.id },
+      tx,
+    );
+    check(
+      capture.status === 'pending' &&
+        capture.attachedWorkspace &&
+        !capture.provenance.readOnly &&
+        capture.provenance.instanceId === snapshot.id &&
+        capture.provenance.actorId === caller.actorId &&
+        capture.provenance.revision === snapshot.revision,
+      'task_commit_provenance',
+      'The actual attached producing session must submit its own working tree',
+      409,
+    );
+    return {
+      ...capture,
+      ref: { kind: 'submission' as const, sessionId: caller.session.id },
+      workspace: capture.attachedWorkspace,
+    };
+  }
   check(
     typeof commandId === 'string' && commandId.length > 0 && caller.session,
     'task_commit_required',
@@ -411,6 +443,12 @@ export async function checkFailure(
   ctx: TasksContext,
   { caller, snapshot, tx, input }: WorkflowCheckContext,
 ): Promise<void> {
+  check(
+    !artifactReview(snapshot.version),
+    'legacy_artifact_review_only',
+    'The historical artifact contract can only finish its existing review',
+    409,
+  );
   await ctx.scope.require(caller, 'write', tx);
   const row = await ctx.row(tx, caller, snapshot.id);
   await producerOrAdmin(ctx, caller, row, snapshot, tx);
@@ -602,13 +640,23 @@ export async function submitDelivery(
         tx,
         input: { ...input },
       }))!;
-      const commit = delivered.commit;
+      const commit =
+        current.version >= 46
+          ? {
+              ...delivered.commit,
+              ...(await ctx.code.expectSubmission(caller, tx)),
+              workspace: delivered.commit.workspace,
+            }
+          : delivered.commit;
       // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
       // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
       const codeArtifact = await ctx.artifacts.create(
         caller,
         {
-          title: clip(`Delivered commit: ${row.title}`, 300),
+          title: clip(
+            `${current.version >= 46 ? 'Submitted code' : 'Delivered commit'}: ${row.title}`,
+            300,
+          ),
           content: renderDeliveredCommit(row.title, commit),
         },
         tx,
@@ -629,11 +677,15 @@ export async function submitDelivery(
       );
       const deliveryIds = [...input.artifactIds, codeArtifact.id, assessment.id];
       const deliveryCode: TaskDeliveryCode = {
-        ref: { kind: 'code-commit', commandId: input.commandId! },
         sessionId: commit.provenance.sessionId,
         revision: commit.provenance.revision,
-        headOid: commit.workspace.headOid,
-        treeOid: commit.workspace.treeOid ?? null,
+        ...(current.version >= 46
+          ? { ref: { kind: 'submission' as const, sessionId: caller.session!.id } }
+          : {
+              ref: { kind: 'code-commit' as const, commandId: input.commandId! },
+              headOid: commit.workspace.headOid,
+              treeOid: commit.workspace.treeOid ?? null,
+            }),
       };
       const moved = await advance(
         ctx,
@@ -705,7 +757,9 @@ export async function submitDelivery(
         reviewId: review.id,
         snapshotHash: review.snapshotHash,
         artifactIds: deliveryIds,
-        headOid: deliveryCode.headOid,
+        ...('headOid' in deliveryCode
+          ? { headOid: deliveryCode.headOid }
+          : { submissionSessionId: deliveryCode.ref.sessionId }),
       });
       return row.id;
     },
@@ -836,7 +890,32 @@ export async function submitReview(
         tx,
       );
       // Acceptance records the exact reviewed commit in the same transaction.
-      if (input.verdict === 'pass')
+      if (artifactReview(current.version) && input.verdict === 'needs_changes')
+        await migrateNativeWorkflow(tx, {
+          projectId: caller.projectId,
+          instanceId: row.id,
+          expectedRevision: moved.revision,
+          fromVersion: 2,
+          toVersion: 46,
+          actorId: caller.actorId,
+          reason:
+            'The independent artifact review requested changes; continue this task under the native Git contract.',
+        });
+      if (input.verdict === 'pass' && current.version >= 46)
+        await ctx.code.approveSubmission(
+          caller,
+          {
+            unitId: row.id,
+            terminalRevision: moved.revision,
+            submissionRef: review.snapshotHash,
+            reviewRef: review.id,
+            codeRef: (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
+            reviewSessionId: caller.session?.id ?? null,
+            kind: 'task',
+          },
+          tx,
+        );
+      else if (input.verdict === 'pass')
         await ctx.code.acceptUnit(
           caller,
           {
@@ -844,8 +923,10 @@ export async function submitReview(
             terminalRevision: moved.revision,
             submissionRef: review.snapshotHash,
             reviewRef: review.id,
-            // The accept guard has just re-derived a Git task's delivered commit from Code.
-            codeRef: (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
+            // Artifact reviews make no claim about a Git commit.
+            codeRef: artifactReview(current.version)
+              ? null
+              : (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
             reviewSessionId: caller.session?.id ?? null,
           },
           tx,

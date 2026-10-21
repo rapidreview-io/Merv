@@ -24,13 +24,9 @@
       "code.files",
       "code.local.bind",
       "code.log",
-      "code.mirror.retry",
       "code.operation",
-      "code.publication.control",
-      "code.publication.merge",
       "code.publication.sync",
       "code.repository.configure",
-      "code.repository.import",
       "code.repository.prepare",
       "code.repository.rebind",
       "code.status",
@@ -172,19 +168,13 @@
       "code.base.resume",
       "code.base.retry",
       "code.base.suspend",
-      "code.commit",
       "code.files",
       "code.local.bind",
       "code.log",
-      "code.merge",
-      "code.mirror.retry",
       "code.operation",
-      "code.publication.control",
-      "code.publication.merge",
       "code.publication.read",
       "code.publication.sync",
       "code.repository.configure",
-      "code.repository.import",
       "code.repository.prepare",
       "code.repository.rebind",
       "code.status",
@@ -297,7 +287,6 @@
           "bases",
           "blockers",
           "landing",
-          "mirror",
           "operations",
           "project",
           "publication",
@@ -311,7 +300,6 @@
           "bases",
           "blockers",
           "landing",
-          "mirror",
           "operations",
           "project",
           "publication",
@@ -498,35 +486,6 @@
         "error": "forbidden"
       }
     },
-    "code.mirror.retry": {
-      "input": {
-        "operationId": "cop_missing",
-        "requestId": "mirror"
-      },
-      "owner": {
-        "status": 404,
-        "error": "code_operation_not_found"
-      },
-      "reader": {
-        "status": 403,
-        "error": "forbidden"
-      }
-    },
-    "code.repository.import": {
-      "input": {
-        "source": "github",
-        "ref": "refs/heads/main",
-        "requestId": "import"
-      },
-      "owner": {
-        "status": 503,
-        "error": "github_unconfigured"
-      },
-      "reader": {
-        "status": 403,
-        "error": "forbidden"
-      }
-    },
     "code.repository.configure": {
       "input": {
         "denyGlobs": [],
@@ -544,14 +503,14 @@
     },
     "code.repository.prepare": {
       "input": {
-        "expectedRevision": 0,
         "baseBranch": "main",
         "headOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "requestId": "prepare"
+        "requestId": "prepare",
+        "expectedMainOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "owner": {
         "status": 409,
-        "error": "github_conflict"
+        "error": "code_branch_changed"
       },
       "reader": {
         "status": 403,
@@ -564,37 +523,6 @@
         "ok": {
           "array": "empty"
         }
-      },
-      "reader": {
-        "status": 403,
-        "error": "forbidden"
-      }
-    },
-    "code.publication.merge": {
-      "input": {
-        "proposalId": "codeprop_missing",
-        "expectedHead": "cccccccccccccccccccccccccccccccccccccccc",
-        "expectedBase": "dddddddddddddddddddddddddddddddddddddddd",
-        "requestId": "merge"
-      },
-      "owner": {
-        "status": 403,
-        "error": "github_human_required"
-      },
-      "reader": {
-        "status": 403,
-        "error": "forbidden"
-      }
-    },
-    "code.publication.control": {
-      "input": {
-        "action": "clear",
-        "reason": "Capture",
-        "requestId": "control"
-      },
-      "owner": {
-        "status": 403,
-        "error": "github_human_required"
       },
       "reader": {
         "status": 403,

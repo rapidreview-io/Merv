@@ -613,7 +613,9 @@ test('references are read once, at the offer: a lease check needs no program cal
 test('Tasks sessions are admitted by fixed producer and reviewer policies, without rendering or checkpoint grant expansion', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-execution-'));
   const app = await createApp({ directory, api: false });
+  let closeWork = async () => {};
   t.after(async () => {
+    await closeWork();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -629,9 +631,10 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
     capacity: 4,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'code.git.1'],
   });
   const codeWork = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
+  closeWork = () => codeWork.close();
   let sequence = 0;
   const offer = async (target: { id: string; workflow: { revision: number } }) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
@@ -699,12 +702,12 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
   );
   const held = work.held;
   held.worker = producer;
-  const commandId = await codeWork.commit(held);
+  await codeWork.commit(held);
   const pending = await sessions.invocations.run(
     await sessions.invocations.prepare(
       producer,
       'task.submit_delivery',
-      confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery', commandId }),
+      confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery' }),
     ),
     async (caller, input) => await tasks.submitDelivery(caller, input as never),
   );

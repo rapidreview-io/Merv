@@ -5,13 +5,11 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
   check,
-  checkpointRequestId,
   effectiveWorkspace,
   sessionSecretPattern,
   sessionUsageReportSchema,
   sha256Hex,
   WorkspaceDeferred,
-  type CodeCommitCommand,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
 } from '@merv/contracts';
@@ -212,12 +210,6 @@ type Owed<Facts> =
 type Transcript = Owed<TranscriptFacts>;
 const kinds = ['transcript', 'conversation'] as const;
 type Kind = (typeof kinds)[number];
-/**
- * How often a live writer's checkout is committed to Code, as the agent's own code.commit would
- * be, when it holds changes Code has not admitted. A session's close ends its writer generation
- * at what Code admitted, so losing a machine costs at most about this much work.
- */
-const checkpointMs = 5 * 60_000;
 /** Ten PUTs at most, a minute apart after a failure, one at a time off the tick; the delivery
  *  after the tenth only confirms it. */
 const transcriptTries = 10,
@@ -754,6 +746,7 @@ export class MachineRunner implements Runner {
             secret,
             mcpUrl: `${this.client.baseUrl}/mcp`,
             cwd: workspace.path,
+            git: driver.agentGit?.(record.id),
             ...(launcher.skills
               ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
               : {}),
@@ -808,75 +801,8 @@ export class MachineRunner implements Runner {
       }
       if (this.deadline(session) > record.deadline + 60_000)
         await this.host.extendDeadline(record.id, this.deadline(session));
-      await this.reconcileCodeCommands(record, session);
     }
     return false;
-  }
-  private async reconcileCodeCommands(record: LaunchRecord, session?: SessionView): Promise<void> {
-    const driver = this.driverOf(record);
-    check(driver, 'workspace_driver_missing', 'This runner does not carry that driver');
-    if (!driver.pendingCommits) return; // A lifecycle-only driver runs no Code commands.
-    const workspaces = driver as Required<WorkspaceDriver>; // The contract: all four or none.
-    const perform = async (command: CodeCommitCommand) => {
-      // A restart may owe only a receipt, even after the worker or workspace has closed.
-      // The manager distinguishes proven outcomes from an interrupted Git operation.
-      if (!workspaces.commitOutcome(command.id)) {
-        record = await this.host.inspect(record.id);
-        if (terminalLaunch(record)) await workspaces.capture(record);
-      }
-      try {
-        await workspaces.checkpointCommit(record, command);
-      } catch (error) {
-        if (!workspaces.commitOutcome(command.id)) throw error;
-      }
-      const outcome = workspaces.commitOutcome(command.id);
-      check(outcome, 'code_operation_uncertain', 'Git operation has no proven outcome', 503);
-      await this.answer(() => this.client.completeCodeCommand(command, outcome));
-      workspaces.acknowledgeCommit(command.id);
-    };
-    for (const command of workspaces.pendingCommits(record.id)) await perform(command);
-    if (
-      !session ||
-      (record.status !== 'running' && !terminalLaunch(record)) ||
-      !session.workspace ||
-      session.execution.policy.readOnly ||
-      !session.execution.policy.tools.some((tool) => tool.name === 'code.commit')
-    )
-      return;
-    const checkpoint = await this.checkpointDue(record, workspaces);
-    const command = await this.answer(() =>
-      this.client.nextCodeCommand(session, record.id, checkpoint),
-    );
-    // Answered: the checkpoint asked for was made, or will never be; the next is a new one.
-    if (checkpoint) this.save(record.id, { checkpoint: null });
-    if (!command) return;
-    // A lost next-command response may have left only a server-side dispatch.
-    // Terminal launches recover its descriptor after capture has revoked the
-    // workspace owner fence; perform can then report a stopped-safe outcome.
-    await perform(command);
-  }
-  /**
-   * The periodic checkpoint a running writer asks Code for, every `checkpointMs`, when its
-   * checkout holds changes on Code's head; else none. Each is asked under its own request id, so
-   * a lost reply asks for the same one again.
-   */
-  private async checkpointDue(
-    record: LaunchRecord,
-    workspaces: Required<WorkspaceDriver>,
-  ): Promise<{ expectedHead: string; requestId: string } | undefined> {
-    if (record.status !== 'running' || !workspaces.checkpointHead) return undefined;
-    const pending = record.metadata.checkpoint as
-      { expectedHead: string; requestId: string } | null | undefined;
-    if (pending) return pending;
-    const last = Number(record.metadata.checkpointedAt ?? record.createdAt);
-    if (this.clock() - last < checkpointMs) return undefined;
-    record = this.save(record.id, { checkpointedAt: this.clock() });
-    const expectedHead = await workspaces.checkpointHead(record.id);
-    if (!expectedHead) return undefined;
-    const count = Number(record.metadata.checkpoints ?? 0) + 1;
-    const checkpoint = { expectedHead, requestId: checkpointRequestId(count) };
-    this.save(record.id, { checkpoints: count, checkpoint });
-    return checkpoint;
   }
   /**
    * What an ended launch owes, in order: its transcript's declaration, its capture (before the
@@ -916,7 +842,6 @@ export class MachineRunner implements Runner {
         // Work the capture moved aside or rescued is reported, never passed over in silence.
         const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
         if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
-        await this.reconcileCodeCommands(record, sessionOf(record));
         // Only an attached checkout has a result to report; the session is closed by now.
         if (
           result &&
@@ -1362,6 +1287,30 @@ export class MachineRunner implements Runner {
           : {}),
       };
     });
+  }
+  /** Planned VM teardown. Failure leaves the runner stopped but its data and journal open
+   * for retry; the caller must not release the machine until this receipt is acknowledged. */
+  async prepareShutdown() {
+    if (!this.started || this.stopped)
+      throw new Error('Runner must be open to prepare VM shutdown');
+    this.stopping = true;
+    this.state = 'stopping';
+    if (this.timer) clearInterval(this.timer);
+    await this.current;
+    await this.stopOwned();
+    const settled: string[] = [];
+    for (const record of this.ledger.open()) {
+      if (!terminalLaunch(record) || !(await this.settle(record)))
+        throw new Error('Writer shutdown is not fully settled');
+      settled.push(record.id);
+    }
+    this.ledger.settle(settled);
+    if (this.resetAssignment) await this.resetAssignment();
+    const captures = [];
+    for (const driver of this.drivers.values())
+      captures.push(...((await driver.shutdownCapture?.()) ?? []));
+    if (this.resetAssignment) await this.resetAssignment();
+    return { captures, empty: captures.length === 0 };
   }
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;

@@ -30,6 +30,7 @@ for (let step = 1; ; step++) {
   const file = join(directory, `step-${step}.json`);
   while (!existsSync(file)) await delay(20);
   let result;
+  let finishing = false;
   // Reading the step belongs inside the guard: a step this worker cannot read is one failed
   // step to report, never a reason to die on the test mid-conversation.
   try {
@@ -42,6 +43,9 @@ for (let step = 1; ; step++) {
       mkdirSync(dirname(join(process.cwd(), input.path)), { recursive: true });
       if (input.content === null) rmSync(join(process.cwd(), input.path), { force: true });
       else writeFileSync(join(process.cwd(), input.path), input.content);
+      result = { ok: true, value: null };
+    } else if (kind === 'exit') {
+      finishing = true;
       result = { ok: true, value: null };
     } else if (kind === 'git')
       result = {
@@ -60,4 +64,8 @@ for (let step = 1; ; step++) {
     result = { ok: false, error: String(error?.message ?? error) };
   }
   publish(`step-${step}.result.json`, result);
+  if (finishing) {
+    await client.close();
+    break;
+  }
 }

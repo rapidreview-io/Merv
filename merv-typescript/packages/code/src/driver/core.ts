@@ -21,12 +21,6 @@ import {
 } from '@merv/contracts';
 import { DriverGit, hash, oid, WorkspaceError } from './git.js';
 
-export interface CodeDriverOptions {
-  /** How often an admission that outlasts its request is asked about again. */
-  pollMs?: number;
-  /** How long one call waits for an admission before it gives the cycle back. */
-  admissionMs?: number;
-}
 export interface WorkspaceRow {
   launch_id: string;
   session_id: string;
@@ -50,22 +44,22 @@ export interface WorkspaceRow {
 export interface TransferRow {
   request_id: string;
   launch_id: string;
-  kind: 'checkpoint' | 'final';
+  kind: 'final';
   command_json: string | null;
   expected_head: string;
   tree_oid: string | null;
-  merge_tree: string | null;
   target_oid: string | null;
-  index_path: string | null;
-  bundle_path: string | null;
-  bundle_hash: string | null;
-  bundle_bytes: number | null;
   operation_id: string | null;
   receipt_json: string | null;
   error: string | null;
   acknowledged: number;
 }
 export type TransportFailure = { code?: unknown; status?: unknown };
+export interface GitAccess {
+  url: string;
+  token: string;
+  agentToken: string;
+}
 
 /** The driver's own storage under the runner's ledger, refused as a foreign path when unsafe. */
 export const driverDirectory = (path: string) =>
@@ -103,36 +97,6 @@ export const stageAssignmentBundle = (source: string, target: string, owner?: nu
     closeSync(input);
   }
 };
-/** Code examined the upload and did not admit it. */
-export class UploadRefused extends WorkspaceError {}
-/** Refusals that end an upload for good; everything else is tried again. */
-export const terminal = [
-  // Every replay sends the identical request, so a refusal of its shape — a bundle larger
-  // than one transfer may be, above all — is the same refusal however often it is sent.
-  'invalid_code_input',
-  'code_generation_stale',
-  'code_writer_closed',
-  'code_head_conflict',
-  'code_capture_quarantined',
-  'request_conflict',
-  'session_closed',
-  'session_forbidden',
-  'session_not_found',
-  'code_command_not_found',
-  'code_unit_not_found',
-];
-/**
- * Refusals of this checkout's own content. They are read from the files that are lying there,
- * so every later attempt on the same checkout finds exactly the same answer.
- */
-export const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
-/** How long a final capture may keep failing locally before the generation is handed over. */
-export const CAPTURE_FAILING_MS = 10 * 60_000;
-/**
- * A pause this long between a failed capture and the next attempt's start means nothing was
- * trying: the bound restarts. How long an attempt itself takes to fail never counts as a pause.
- */
-export const CAPTURE_GAP_MS = 2 * 60_000;
 /** The lock files under a directory, descending only into real directories, never links. */
 export function lockFiles(directory: string): string[] {
   if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return [];
@@ -147,16 +111,7 @@ export function deferral(error: unknown): WorkspaceDeferred | null {
   if (error instanceof WorkspaceDeferred) return error;
   const { code, status } = (error ?? {}) as TransportFailure;
   if (typeof code !== 'string' || typeof status !== 'number') return null;
-  // A download whose export Code no longer holds is asked for again from the beginning; that
-  // it went is the server's business and never a fault of this launch or this machine.
-  if (
-    [
-      'code_store_full',
-      'code_store_unavailable',
-      'code_operation_unresolved',
-      'code_export_not_found',
-    ].includes(code)
-  )
+  if (['code_store_full', 'code_store_unavailable', 'code_operation_unresolved'].includes(code))
     return new WorkspaceDeferred('store_busy', code);
   if (code === 'code_writer_busy' || code === 'code_base_pending')
     return new WorkspaceDeferred('base_pending', code);
@@ -171,8 +126,6 @@ export abstract class DriverCore {
   protected readonly db: DatabaseSync;
   protected readonly root: string;
   protected readonly git: DriverGit;
-  protected readonly pollMs: number;
-  protected readonly admissionMs: number;
   protected readonly assignmentRoot?: string;
   /** The one work item a hosted machine keeps; set exactly when `assignmentRoot` is. */
   protected readonly workKey?: string;
@@ -182,10 +135,7 @@ export abstract class DriverCore {
   constructor(
     protected readonly host: WorkspaceDriverHost,
     protected readonly transport: WorkspaceTransport,
-    options: CodeDriverOptions = {},
   ) {
-    this.pollMs = options.pollMs ?? 1000;
-    this.admissionMs = options.admissionMs ?? 120_000;
     this.root = realpathSync(driverDirectory(join(host.directory, 'code-v2')));
     const template = driverDirectory(join(this.root, 'empty-template'));
     // A hosted machine is a work host: its assignment root holds exactly one work item.
@@ -239,12 +189,15 @@ export abstract class DriverCore {
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
-      DROP TABLE IF EXISTS code_v2_capture_failing;
-      CREATE TABLE IF NOT EXISTS code_v2_capture_attempts (
-        launch_id TEXT PRIMARY KEY, since INTEGER NOT NULL, last INTEGER NOT NULL
-      ) STRICT;
       CREATE TABLE IF NOT EXISTS code_v2_review_restores (
         launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS code_git_access (
+        launch_id TEXT PRIMARY KEY, url TEXT NOT NULL, token TEXT NOT NULL, agent_token TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS code_git_submissions (
+        launch_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, parent_oid TEXT NOT NULL,
+        tree_oid TEXT NOT NULL
       ) STRICT;
       CREATE TRIGGER IF NOT EXISTS code_v2_transfers_identity BEFORE UPDATE ON code_v2_transfers
         WHEN NEW.request_id IS NOT OLD.request_id OR NEW.launch_id IS NOT OLD.launch_id OR NEW.kind IS NOT OLD.kind OR NEW.command_json IS NOT OLD.command_json OR NEW.expected_head IS NOT OLD.expected_head
@@ -291,6 +244,70 @@ export abstract class DriverCore {
     )?.path;
   }
 
+  protected access(launchId: string): GitAccess {
+    const access = this.db
+      .prepare('SELECT url,token,agent_token AS agentToken FROM code_git_access WHERE launch_id=?')
+      .get(launchId) as unknown as GitAccess | undefined;
+    if (!access) throw new WorkspaceError('workspace_git_access_missing');
+    return access;
+  }
+
+  protected async credentials(
+    control: { sessionId: string; runnerId: string; hostRef: string },
+    remote: string,
+  ): Promise<GitAccess> {
+    const known = this.db
+      .prepare('SELECT launch_id FROM code_git_access WHERE launch_id=?')
+      .get(control.hostRef);
+    if (known) return this.access(control.hostRef);
+    const value = (await this.ask(() =>
+      this.transport.call('git-credential', control),
+    )) as GitAccess;
+    if (
+      value.url !== remote ||
+      !/^mg_[A-Za-z0-9_-]{43}$/.test(value.token) ||
+      !/^mg_[A-Za-z0-9_-]{43}$/.test(value.agentToken)
+    )
+      throw new WorkspaceError('workspace_invalid_git_access');
+    const url = this.transport.remoteUrl(value.url);
+    const parsed = new URL(url);
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      !(
+        parsed.protocol === 'https:' ||
+        (parsed.protocol === 'http:' &&
+          ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname))
+      )
+    )
+      throw new WorkspaceError('workspace_invalid_git_access');
+    this.db
+      .prepare('INSERT INTO code_git_access(launch_id,url,token,agent_token) VALUES(?,?,?,?)')
+      .run(control.hostRef, url, value.token, value.agentToken);
+    return this.access(control.hostRef);
+  }
+
+  protected gitEnvironment(url: string, token: string): Record<string, string> {
+    return {
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: `http.${url}.extraHeader`,
+      GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${token}`).toString('base64')}`,
+      GIT_CONFIG_KEY_1: 'http.followRedirects',
+      GIT_CONFIG_VALUE_1: 'false',
+    };
+  }
+
+  protected submission(launchId: string): import('@merv/contracts').SessionWorkspace['submission'] {
+    const row = this.db
+      .prepare(
+        'SELECT session_id AS sessionId,parent_oid AS parentOid,tree_oid AS treeOid FROM code_git_submissions WHERE launch_id=?',
+      )
+      .get(launchId) as import('@merv/contracts').SessionWorkspace['submission'];
+    return row ? { ...row } : undefined;
+  }
+
   protected preservedPath(): string {
     return join(driverDirectory(join(this.root, 'preserved')), hash(this.workKey!));
   }
@@ -331,10 +348,11 @@ export abstract class DriverCore {
       )
       .get(row.launch_id) as
       { target_oid: string | null; receipt_json: string | null; error: string | null } | undefined;
+    const receipt = transfer?.receipt_json
+      ? (JSON.parse(transfer.receipt_json) as { head?: string; headOid?: string })
+      : null;
     return transfer &&
-      (transfer.error ||
-        (transfer.receipt_json &&
-          (JSON.parse(transfer.receipt_json) as { head: string }).head !== transfer.target_oid))
+      (transfer.error || (receipt && (receipt.headOid ?? receipt.head) !== transfer.target_oid))
       ? transfer.target_oid
       : null;
   }

@@ -167,13 +167,59 @@ async function fixture(t: TestContext) {
       requestId = 'commit',
       expectedHead = oid('a'),
     ) {
-      return (
-        await app.ctx.codeWork.commit(worker.caller, {
+      // Seed historical evidence directly. The current runtime cannot queue or execute it.
+      const command: CodeCommitCommand = {
+        id: `codecmd_${randomBytes(12).toString('hex')}`,
+        projectId: source.projectId,
+        sessionId: worker.session.id,
+        actorId: worker.caller.actorId,
+        instanceId: worker.session.instanceId,
+        expectedRevision: 0,
+        runnerId: worker.control.runnerId,
+        hostRef: worker.control.hostRef,
+        workspace: attachment,
+        expectedHead,
+        message: 'Retain exact source evidence',
+        createdAt: new Date().toISOString(),
+      };
+      await app.ctx.state.transaction((tx) =>
+        tx.run(
+          "INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status) VALUES(?,?,?,?,?,'historical',?,'queued')",
+          command.id,
+          command.projectId,
+          command.sessionId,
+          command.actorId,
           requestId,
-          expectedHead,
-          message: 'Retain exact source evidence',
-        })
-      ).command;
+          JSON.stringify(command),
+        ),
+      );
+      return command;
+    },
+    async complete(input: {
+      commandId: string;
+      receipt?: CodeCommitReceipt;
+      error?: string;
+      cancelled?: boolean;
+    }) {
+      await app.ctx.state.transaction(async (tx) => {
+        if (!input.cancelled)
+          await tx.run("UPDATE code_commands SET status='dispatched' WHERE id=?", input.commandId);
+        const status = input.cancelled ? 'cancelled' : input.receipt ? 'succeeded' : 'failed';
+        await tx.run(
+          'UPDATE code_commands SET status=?,receipt_json=?,error=? WHERE id=?',
+          status,
+          input.receipt ? JSON.stringify(input.receipt) : null,
+          input.error ?? null,
+          input.commandId,
+        );
+        await app.ctx.state.appendEvent(tx, {
+          projectId: source.projectId,
+          actorId: source.actorId,
+          type: `code.command_${status}`,
+          subjectId: input.commandId,
+          data: {},
+        });
+      });
     },
     snapshot: async () =>
       await app.ctx.state.read(async (sql) => ({
@@ -196,11 +242,10 @@ test('Exact command captures retain historical parent/head/tree/provenance after
     command = await f.queue(worker);
   const ref = { kind: 'code-commit' as const, commandId: command.id };
   assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'pending');
-  await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
   assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'pending');
   const source = { ...f.source };
   await admitUpload(f.app.ctx.state, command, receipt(command));
-  const completing = f.app.ctx.codeWork.completeCommand(source, {
+  const completing = f.complete({
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),
@@ -245,9 +290,8 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   assert.equal(expected.eventId, event.id);
   assert.equal(expected.observedAt, event.createdAt);
   const second = await f.queue(worker, 'second', oid('b'));
-  await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
   await admitUpload(f.app.ctx.state, second, receipt(second, 'd'));
-  await f.app.ctx.codeWork.completeCommand(f.source, {
+  await f.complete({
     ...worker.control,
     commandId: second.id,
     receipt: receipt(second, 'd'),
@@ -304,8 +348,7 @@ test('Failed, cancelled and undelivered command observations never claim a succe
   const failedWorker = await f.offer(),
     failed = await f.queue(failedWorker);
   const failedRef = { kind: 'code-commit' as const, commandId: failed.id };
-  await f.app.ctx.codeWork.nextCommand(f.source, failedWorker.control);
-  await f.app.ctx.codeWork.completeCommand(f.source, {
+  await f.complete({
     ...failedWorker.control,
     commandId: failed.id,
     error: 'workspace_changed',
@@ -328,7 +371,7 @@ test('Failed, cancelled and undelivered command observations never claim a succe
     'Observation does not cancel a queued command by itself',
   );
   assert.deepEqual(await f.snapshot(), pending);
-  assert.equal(await f.app.ctx.codeWork.nextCommand(f.source, cancelledWorker.control), null);
+  await f.complete({ commandId: cancelled.id, cancelled: true, error: 'session_closed' });
   const cancelledCapture = await f.app.ctx.codeWork.capture(f.reader, cancelledRef);
   assert.equal(cancelledCapture.status, 'failed');
   assert.equal(cancelledCapture.workspace, null);
@@ -358,9 +401,8 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
   const f = await fixture(t),
     worker = await f.offer(),
     command = await f.queue(worker);
-  await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
   await admitUpload(f.app.ctx.state, command, receipt(command));
-  await f.app.ctx.codeWork.completeCommand(f.source, {
+  await f.complete({
     ...worker.control,
     commandId: command.id,
     receipt: receipt(command),

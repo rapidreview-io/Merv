@@ -5,6 +5,7 @@ import base64
 import contextlib
 import datetime
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -24,7 +25,17 @@ PAYLOADS = ('database.dump', 'code.tar')
 
 
 class Failure(Exception):
-    pass
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
+
+
+def exclusive(method):
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        with self.phase(method.__name__), self.resources():
+            return method(self, *args, **kwargs)
+    return run
 
 
 def require(ok, message):
@@ -84,6 +95,8 @@ class Recovery:
         self.resume = self.state / 'resume.json'
         self.verification_record = self.state / 'verification.json'
         self.maintenance = config.get('maintenance_lock', '/run/lock/merv-maintenance.lock')
+        self.maintenance_held = False
+        self.stage = 'recovery'
         self.timeout = config.get('timeout_seconds', 1800)
         self.keep = config.get('keep', 3)
         require(isinstance(self.keep, int) and self.keep >= 2, 'keep must be at least two')
@@ -99,6 +112,74 @@ class Recovery:
             endpoint = self.store.get('endpoint', '')
             require(not endpoint or re.fullmatch(r'https://[A-Za-z0-9.-]+(?::\d+)?', endpoint), 'invalid storage endpoint')
 
+    @contextlib.contextmanager
+    def resources(self):
+        # create -> prune -> verify share one lease. A new descriptor would flock
+        # against our own process; releasing between phases admits competing builds.
+        if self.maintenance_held:
+            yield
+            return
+        with locked(self.maintenance):
+            self.maintenance_held = True
+            try:
+                yield
+            finally:
+                self.maintenance_held = False
+
+    @contextlib.contextmanager
+    def phase(self, name):
+        previous, self.stage = self.stage, name
+        try:
+            yield
+        except Failure as error:
+            error.details.setdefault('stage', name)
+            raise
+        except OSError as error:
+            raise Failure('filesystem operation failed', stage=name, errno=error.errno) from None
+        finally:
+            self.stage = previous
+
+    def space(self, requirements):
+        """Count simultaneous allocations together when their paths share a filesystem."""
+        totals = {}
+        for path, size in requirements:
+            path = Path(path)
+            while not path.exists():
+                path = path.parent
+            device = path.stat().st_dev
+            previous = totals.get(device, (path, 0))
+            totals[device] = (path, previous[1] + size)
+        reserve = self.c.get('reserve_bytes', 1024 ** 3)
+        require(type(reserve) is int and reserve >= 0, 'invalid recovery space reserve')
+        for path, size in totals.values():
+            available = shutil.disk_usage(path).free
+            if available <= size + reserve:
+                raise Failure('insufficient recovery space', stage=self.stage,
+                              required_bytes=size + reserve, available_bytes=available)
+
+    def database_storage(self, configuration=None):
+        if configuration is None:
+            verification = self.c['verification']
+            configuration = verification.get('database', verification)
+        if configuration.get('storage_path'):
+            path = Path(configuration['storage_path'])
+        elif 'image' in configuration:
+            # Docker may store its scratch database on a different filesystem.
+            path = Path(self.run(['docker', 'info', '--format', '{{.DockerRootDir}}']).decode().strip())
+        else:
+            return self.staging
+        require(path.is_absolute() and path.is_dir(), 'database storage path is unavailable')
+        return path
+
+    def database_budget(self, manifest):
+        measured = manifest.get('source_database_bytes')
+        if measured is None:
+            # Older format-2 points did not record database size. Compression has
+            # no fixed expansion ratio; operators can raise this fallback explicitly.
+            measured = self.c.get('legacy_database_bytes', max(1024 ** 3, 8 * manifest['payloads']['database.dump']['bytes']))
+        require(type(measured) is int and measured > 0, 'invalid snapshot database size')
+        return max(1024 ** 3, 2 * measured)  # database plus restore indexes/WAL
+
     def run(self, args, data=None, output=None, env=None, source=None):
         # Never return child stderr: PostgreSQL/AWS errors can contain private connection data.
         clean = {k: v for k, v in os.environ.items() if not (args[0] == 'git' and k.startswith('GIT_'))}
@@ -106,10 +187,23 @@ class Recovery:
         try:
             p = subprocess.run(args, input=data, stdin=source, stdout=output or subprocess.PIPE,
                                stderr=subprocess.PIPE, timeout=self.timeout, env=clean, check=False)
-        except (OSError, subprocess.TimeoutExpired):
-            raise Failure('operational command unavailable or timed out') from None
-        require(p.returncode == 0, 'operational command failed (details suppressed)')
+        except subprocess.TimeoutExpired:
+            raise Failure('operational command timed out', stage=self.stage, tool=self.command_name(args)) from None
+        except OSError as error:
+            raise Failure('operational command unavailable', stage=self.stage,
+                          tool=self.command_name(args), errno=error.errno) from None
+        if p.returncode:
+            raise Failure('operational command failed (details suppressed)', stage=self.stage,
+                          tool=self.command_name(args), exit_code=p.returncode)
         return p.stdout if output is None else b''
+
+    @staticmethod
+    def command_name(args):
+        # Never emit executable paths, arguments, SQL, endpoints or child stderr.
+        for name in ('pg_dump', 'pg_restore', 'createdb', 'dropdb', 'psql'):
+            if name in args:
+                return name
+        return args[0] if args[0] in ('git', 'docker', 'aws') else 'other'
 
     def pg(self, tool, args):
         db = self.c['database']
@@ -347,8 +441,9 @@ class Recovery:
         self.verification_record.unlink()
         sync_dir(self.state)
 
+    @exclusive
     def stopped_capture(self, work):
-        with locked(self.maintenance):
+        with self.phase('capture'):
             self.recover()
             hosted = Path(self.c.get('hosted_marker', '/var/lib/merv-fleet-pilot/hosted-release/active'))
             require(not hosted.exists() or not hosted.read_text().strip(), 'hosted release owns Main; retry after it closes')
@@ -419,8 +514,12 @@ class Recovery:
 
     def download(self, snapshot, directory):
         m = self.manifest(snapshot, directory)
+        with self.phase('download_space'):
+            self.space([(self.staging, sum(p['bytes'] for p in m['payloads'].values()) + m['payloads']['code.tar']['bytes']),
+                        (self.database_storage(), self.database_budget(m))])
         for name in PAYLOADS:
-            self.transfer('get', snapshot, name, directory / name)
+            with self.phase('download_payload'):
+                self.transfer('get', snapshot, name, directory / name)
             require(digest(directory / name) == m['payloads'][name], 'snapshot payload checksum mismatch')
         return m
 
@@ -504,30 +603,50 @@ class Recovery:
 
     def verify_local(self, directory, m):
         root = directory / 'checked-code'
-        self.extract(directory / 'code.tar', root)
-        try:
-            with self.verification_database():
-                with self.restored_database(directory / 'database.dump') as db:
-                    require(self.inventory(root, db) == m['inventory'], 'restored database/repository inventory mismatch')
-        finally:
-            shutil.rmtree(root)
+        with self.phase('verify_restore'):
+            self.space([(self.staging, m['payloads']['code.tar']['bytes']),
+                        (self.database_storage(), self.database_budget(m))])
+            try:
+                self.extract(directory / 'code.tar', root)
+                with self.verification_database():
+                    with self.restored_database(directory / 'database.dump') as db:
+                        with self.phase('verify_inventory'):
+                            require(self.inventory(root, db) == m['inventory'], 'restored database/repository inventory mismatch')
+            finally:
+                if root.exists():
+                    shutil.rmtree(root)
 
+    @exclusive
     def create(self):
         snapshot = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + uuid.uuid4().hex
+        self.recover()  # A prior interrupted capture may have left the source stopped.
+        def capture_space():
+            with self.phase('capture_space'):
+                files = list(self.root.rglob('*'))
+                used = sum(p.stat().st_size for p in files if p.is_file())
+                # Include tar headers/padding even for many empty files and directories.
+                code_bytes = used + 4096 * len(files) + 10240
+                db_bytes = int(self.sql('SELECT pg_database_size(current_database());'))
+                payload_bytes = max(db_bytes, 1024 ** 2) + code_bytes
+                self.space([(self.staging, 2 * payload_bytes + code_bytes),
+                            (self.database_storage(), max(1024 ** 3, 2 * db_bytes))])
+                return db_bytes
+        capture_space()  # Fail before stopping Main; remeasure after the clean stop.
         with tempfile.TemporaryDirectory(prefix='capture-', dir=self.staging) as name:
             directory = Path(name)
             def capture(record):
                 started = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                used = sum(p.stat().st_size for p in self.root.rglob('*') if p.is_file())
-                db_bytes = int(self.sql('SELECT pg_database_size(current_database());'))
-                require(shutil.disk_usage(self.staging).free > 2 * used + db_bytes + self.c.get('reserve_bytes', 1024 ** 3), 'insufficient recovery staging space')
-                inventory = self.inventory(self.root)
-                with open(directory / 'database.dump', 'wb') as out:
+                db_bytes = capture_space()
+                with self.phase('capture_inventory'):
+                    inventory = self.inventory(self.root)
+                with self.phase('capture_database'), open(directory / 'database.dump', 'wb') as out:
                     self.run(self.pg('pg_dump', ['--format=custom', '--no-owner', '--no-privileges', '--schema', self.c['schema'], '-d', self.c['database']['name']]), output=out)
                     out.flush()
                     os.fsync(out.fileno())
-                self.archive(directory / 'code.tar')
+                with self.phase('capture_code'):
+                    self.archive(directory / 'code.tar')
                 return {'format': 2, 'snapshot': snapshot, 'deployment': self.c['deployment'], 'schema': self.c['schema'],
+                        'source_database_bytes': db_bytes,
                         'capture_started_at': started, 'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'image': record['image'],
                         'database_name': self.c['database']['name'], 'database_version': self.sql('SHOW server_version;'),
                         'git_version': self.run(['git', '--version']).decode().strip(),
@@ -536,11 +655,14 @@ class Recovery:
             self.verify_local(directory, m)
             for item in PAYLOADS:
                 require(m['payloads'][item]['bytes'] <= self.c.get('max_object_bytes', 5 * 1024 ** 4), 'snapshot exceeds configured provider object limit')
-                self.transfer('put', snapshot, item, directory / item)
-                with tempfile.TemporaryDirectory(dir=self.staging) as check:
-                    downloaded = Path(check) / item
-                    self.transfer('get', snapshot, item, downloaded)
-                    require(digest(downloaded) == m['payloads'][item], 'uploaded payload checksum mismatch')
+                with self.phase('upload_payload'):
+                    size = m['payloads'][item]['bytes']
+                    self.space([(self.staging, size)] + ([(self.bucket, size)] if isinstance(self.bucket, Path) else []))
+                    self.transfer('put', snapshot, item, directory / item)
+                    with tempfile.TemporaryDirectory(dir=self.staging) as check:
+                        downloaded = Path(check) / item
+                        self.transfer('get', snapshot, item, downloaded)
+                        require(digest(downloaded) == m['payloads'][item], 'uploaded payload checksum mismatch')
             durable_json(directory / 'COMPLETE.json', m)
             self.transfer('put', snapshot, 'COMPLETE.json', directory / 'COMPLETE.json')
             with tempfile.TemporaryDirectory(dir=self.staging) as check:
@@ -549,6 +671,7 @@ class Recovery:
             self.prune()
         return {'snapshot': snapshot, 'state': 'complete'}
 
+    @exclusive
     def verify(self, snapshot):
         with tempfile.TemporaryDirectory(dir=self.staging) as name:
             directory = Path(name)
@@ -556,6 +679,7 @@ class Recovery:
             self.verify_local(directory, m)
         return {'snapshot': snapshot, 'state': 'verified'}
 
+    @exclusive
     def restore(self, snapshot, database, root):
         target = Path(root).resolve()
         require(not target.exists() and target != self.root and self.root not in target.parents, 'restore needs a new isolated Code path')
@@ -567,6 +691,9 @@ class Recovery:
             directory = Path(name)
             m = self.download(snapshot, directory)
             self.verify_local(directory, m)
+            with self.phase('restore_space'):
+                self.space([(target, m['payloads']['code.tar']['bytes']),
+                            (self.database_storage(self.c['restore_database']), self.database_budget(m))])
             self.extract(directory / 'code.tar', target)
             try:
                 self.c['database'] = self.c['restore_database']
@@ -585,6 +712,7 @@ class Recovery:
         require(-300 <= age <= self.c.get('max_age_seconds', 30 * 3600), 'recovery snapshot is stale or clock is inconsistent')
         return {**receipt, 'state': 'fresh', 'age_seconds': max(0, int(age))}
 
+    @exclusive
     def prune(self):
         complete = []
         with tempfile.TemporaryDirectory(dir=self.staging) as name:
@@ -650,5 +778,6 @@ if __name__ == '__main__':
         main()
     except Exception as error:
         # Exception text from tools, JSON, filesystem and providers is deliberately not printed.
-        print(json.dumps({'state': 'failed', 'reason': str(error) if isinstance(error, Failure) else 'invalid or unavailable recovery input'}), file=sys.stderr)
+        print(json.dumps({'state': 'failed', 'reason': str(error) if isinstance(error, Failure) else 'invalid or unavailable recovery input',
+                          **(error.details if isinstance(error, Failure) else {})}), file=sys.stderr)
         sys.exit(1)

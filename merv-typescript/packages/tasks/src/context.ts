@@ -22,7 +22,10 @@ import type { Task, TaskContext } from './types.js';
 import type { TaskRow, TasksContext } from './index.js';
 import {
   GIT_CLAIM,
+  GIT_SUBMISSION_CLAIM,
   GIT_DELIVERY,
+  GIT_SUBMISSION,
+  GIT_SUBMISSION_REVIEW,
   GIT_REVIEW,
   RESOLUTION_PAPER,
   serviceOwned,
@@ -36,6 +39,7 @@ import {
   visibleCheckpoints,
 } from './lease.js';
 import { reviewCommit } from './policy.js';
+import { artifactReview, requireArtifactReview } from './legacy-artifact-review.js';
 
 // A task's work and review contexts, and the assignment each of its states offers. Each runs
 // on TaskService (index.ts) as its TasksContext.
@@ -134,7 +138,12 @@ export function contextType(
   purpose: 'work' | 'review',
 ) {
   const work = `${task.type}@${task.typeVersion}`;
-  const type = ctx.types.get(purpose === 'work' ? work : 'task.review@5');
+  // The artifact-review recovery retains task.work@2's immutable identity. Its next visit
+  // uses the item renderer without adding the report requirement introduced by work@5.
+  // Do not register an alias: newly created tasks cannot select the retired recipe.
+  const type =
+    ctx.types.get(purpose === 'work' ? work : 'task.review@5') ??
+    (purpose === 'work' && work === 'task.work@2' ? ctx.types.get('task.work@4') : undefined);
   check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
   return type;
 }
@@ -151,7 +160,8 @@ export async function contextInputs(
   const type = contextType(ctx, task, purpose);
   const rendered =
     purpose === 'work' &&
-    (await ctx.artifacts.get(caller, task.briefId, tx)).hash === sha256Hex(renderBrief(task, true));
+    (await ctx.artifacts.get(caller, task.briefId, tx)).hash ===
+      sha256Hex(renderBrief(task, task.workflow.version >= 46 ? 'ordinary' : true));
   const assignmentTask = {
     id: task.id,
     title: task.title,
@@ -334,7 +344,9 @@ export async function workflowAssignmentFacts(ctx: TasksContext, context: Workfl
   );
   // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
   // the action rules a bare task.get evaluates: a stored Git task stays readable while Code is unavailable.
-  if (facts.review)
+  if (artifactReview(facts.workflow.version))
+    await requireArtifactReview(context.tx, context.caller.projectId, facts.workflow.id);
+  else if (facts.review)
     await reviewCommit(ctx, context.caller, facts.workflow, facts.review, context.tx);
   else {
     await ctx.code.requireLeasable(
@@ -374,10 +386,14 @@ export async function workflowAssignment(
     ? 'Support the assigned producer using this task context and save useful checkpoints. Only the assigned producer may submit the delivery; return your evidence to that producer.'
     : needsClaim
       ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.' +
-        ` ${GIT_CLAIM}`
+        (artifactReview(task.workflow.version)
+          ? ''
+          : ` ${task.workflow.version >= 46 ? GIT_SUBMISSION_CLAIM : GIT_CLAIM}`)
       : 'Follow context.prompt → Expected output.' +
         // A brief the caller supplied never carries these words, so the assignment always does.
-        ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`;
+        (artifactReview(task.workflow.version)
+          ? ' Review the original pinned artifacts; this delivery makes no Git claim.'
+          : ` ${task.workflow.version >= 46 ? (purpose === 'work' ? GIT_SUBMISSION : GIT_SUBMISSION_REVIEW) : purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`);
   return {
     role: purpose === 'review' ? 'reviewer' : 'producer',
     label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
@@ -428,8 +444,11 @@ export async function workflowExecutionReferences(
   return {
     // This assignment permits project compute.
     computeKind: 'task',
+    ...(snapshot.version >= 46 ? { gitPolicy: 'approval-v1' } : {}),
     // Conflict resolution is service work: it gets no compute.
-    ...(serviceOwned(snapshot.version) ? { computeProfile: 'none' } : {}),
+    ...(serviceOwned(snapshot.version) || artifactReview(snapshot.version)
+      ? { computeProfile: 'none' }
+      : {}),
     artifacts: lease
       ? await leaseArtifactIds(ctx, caller, lease, tx)
       : [
@@ -445,11 +464,22 @@ export async function workflowExecutionReferences(
     // What the runner bases the checkout on: the reviewer's on exactly the delivered commit, a
     // based producer's on the commit its accepted prerequisite delivered, once a lease pinned it
     // (an interactive producer has no checkout).
-    ...(snapshot.state === 'in_review' && review
-      ? { code: await reviewCommit(ctx, caller, snapshot, review, tx) }
-      : await ctx.code
-          .basePin(caller, snapshot.id, tx)
-          .then((pin): { base?: string } => (pin ? { base: pin.reference } : {}))),
+    ...(artifactReview(snapshot.version)
+      ? {}
+      : snapshot.state === 'in_review' && review
+        ? {
+            code: await reviewCommit(ctx, caller, snapshot, review, tx),
+            ...(snapshot.version >= 46
+              ? {
+                  submission: (
+                    snapshot.data.deliveryCode as unknown as import('./models.js').TaskDeliveryCode
+                  ).sessionId,
+                }
+              : {}),
+          }
+        : await ctx.code
+            .basePin(caller, snapshot.id, tx)
+            .then((pin): { base?: string } => (pin ? { base: pin.reference } : {}))),
     ...((await isProducer(ctx, caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
     ...(review ? { reviewId: review.id } : {}),
     ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId

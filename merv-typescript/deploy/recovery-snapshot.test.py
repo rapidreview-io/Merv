@@ -12,6 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 from urllib.parse import urlparse, unquote
 
@@ -378,8 +379,9 @@ class RecoveryTests(unittest.TestCase):
     def test_failure_in_capture_and_stopped_service_state(self):
         original = self.r.archive
         self.r.archive = lambda _: (_ for _ in ()).throw(OSError('simulated ENOSPC'))
-        with self.assertRaises(OSError):
+        with self.assertRaises(m.Failure) as failed:
             self.r.create()
+        self.assertEqual(failed.exception.details['stage'], 'capture_code')
         self.assertTrue(self.r.control['State']['Running'])
         self.r.archive = original
         self.r.control['State']['Running'] = False
@@ -436,6 +438,126 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(m.Failure):
                 self.r.create()
         self.assertTrue(self.r.control['State']['Running'])
+
+    def test_lock_spans_post_restart_verification_upload_and_retention(self):
+        phases = []
+        def observe(phase):
+            self.assertTrue(self.r.control['State']['Running'])
+            self.assertFalse(self.r.resume.exists())
+            with self.assertRaisesRegex(m.Failure, 'already running'):
+                with m.locked(self.config['maintenance_lock']):
+                    self.fail('a competing release acquired the maintenance lock')
+            phases.append(phase)
+        verify, transfer, prune = self.r.verify_local, self.r.transfer, self.r.prune
+        def verify_locked(*args):
+            observe('verify')
+            return verify(*args)
+        def transfer_locked(direction, *args):
+            observe(direction)
+            return transfer(direction, *args)
+        def prune_locked():
+            observe('prune')
+            return prune()
+        self.r.verify_local, self.r.transfer, self.r.prune = verify_locked, transfer_locked, prune_locked
+        for _ in range(3):
+            self.r.create()  # The third creation nests prune -> verify under the same lock.
+        self.assertTrue({'verify', 'put', 'get', 'prune', 'delete'} <= set(phases))
+        with m.locked(self.config['maintenance_lock']):
+            pass
+
+    def test_verify_prune_and_restore_obey_external_lock(self):
+        point = self.r.create()['snapshot']
+        with m.locked(self.config['maintenance_lock']):
+            for operation in (lambda: self.r.verify(point), self.r.prune,
+                              lambda: self.r.restore(point, 'not_created', self.base / 'not-created')):
+                with self.assertRaisesRegex(m.Failure, 'already running'):
+                    operation()
+        self.assertFalse((self.base / 'not-created').exists())
+
+    def test_failed_upload_releases_lock_without_restarting_main_again(self):
+        self.r.fail_upload = True
+        with self.assertRaises(m.Failure) as failed:
+            self.r.create()
+        self.assertEqual(failed.exception.details['stage'], 'upload_payload')
+        self.assertEqual(self.r.starts, 1)
+        self.assertFalse(self.r.resume.exists())
+        self.assertFalse(self.r.maintenance_held)
+        with m.locked(self.config['maintenance_lock']):
+            pass
+
+    def test_space_refusal_happens_before_stop_and_before_download(self):
+        usage = shutil.disk_usage(self.base)
+        with patch.object(m.shutil, 'disk_usage', return_value=usage._replace(free=1)):
+            with self.assertRaisesRegex(m.Failure, 'insufficient recovery space') as failed:
+                self.r.create()
+        self.assertEqual(failed.exception.details['stage'], 'capture_space')
+        self.assertEqual(self.r.starts, 0)
+        self.assertTrue(self.r.control['State']['Running'])
+        point = self.r.create()['snapshot']
+        transfers, original = [], self.r.transfer
+        def transfer(*args):
+            transfers.append(args[:3])
+            return original(*args)
+        self.r.transfer = transfer
+        with patch.object(m.shutil, 'disk_usage', return_value=usage._replace(free=1)):
+            with self.assertRaisesRegex(m.Failure, 'insufficient recovery space') as failed:
+                self.r.verify(point)
+        self.assertEqual(failed.exception.details['stage'], 'download_space')
+        self.assertEqual(transfers, [('get', point, 'COMPLETE.json')])
+        self.assertEqual(list(self.r.staging.iterdir()), [])
+
+    def test_space_sums_shared_filesystem_and_measures_database_size(self):
+        usage = shutil.disk_usage(self.base)
+        with patch.object(m.shutil, 'disk_usage', return_value=usage._replace(free=100)):
+            with self.assertRaises(m.Failure) as failed:
+                self.r.space([(self.r.staging, 60), (self.r.root, 60)])
+        self.assertEqual(failed.exception.details['required_bytes'], 120)
+        point = self.r.create()['snapshot']
+        marker = self.r.bucket / point / 'COMPLETE.json'
+        manifest = json.loads(marker.read_text())
+        self.assertGreater(manifest['source_database_bytes'], manifest['payloads']['database.dump']['bytes'])
+        del manifest['source_database_bytes']  # Existing format-2 snapshots remain readable.
+        marker.write_text(json.dumps(manifest))
+        self.assertEqual(self.r.verify(point)['state'], 'verified')
+
+    def test_explicit_verification_database_checks_its_storage_filesystem(self):
+        storage = self.base / 'verification-storage'
+        storage.mkdir()
+        self.config['verification']['database']['storage_path'] = str(storage)
+        self.assertEqual(self.r.database_storage(), storage)
+        original_stat = Path.stat
+        usage = shutil.disk_usage(self.base)
+        checked = []
+        def stat(path, *args, **kwargs):
+            result = original_stat(path, *args, **kwargs)
+            if path == storage:
+                fields = list(result)
+                fields[2] += 1  # A separate filesystem from staging.
+                return os.stat_result(fields)
+            return result
+        def disk_usage(path):
+            checked.append(Path(path))
+            return usage._replace(free=1 if Path(path) == storage else 1024 ** 4)
+        with patch.object(Path, 'stat', stat), patch.object(m.shutil, 'disk_usage', disk_usage):
+            with self.assertRaisesRegex(m.Failure, 'insufficient recovery space') as failed:
+                self.r.create()
+        self.assertEqual(failed.exception.details['stage'], 'capture_space')
+        self.assertEqual(failed.exception.details['available_bytes'], 1)
+        self.assertIn(self.r.staging, checked)
+        self.assertIn(storage, checked)
+        self.assertTrue(self.r.control['State']['Running'])
+        self.assertEqual(self.r.starts, 0)
+        self.assertFalse(self.r.resume.exists())
+
+    def test_failure_diagnostics_never_include_arguments_or_child_stderr(self):
+        private = 'private://user:password@host/path'
+        with self.assertRaises(m.Failure) as failed:
+            with self.r.phase('verify_restore'):
+                self.r.run(['psql', '--not-a-real-option', private])
+        self.assertEqual(failed.exception.details['stage'], 'verify_restore')
+        self.assertEqual(failed.exception.details['tool'], 'psql')
+        self.assertNotEqual(failed.exception.details['exit_code'], 0)
+        self.assertNotIn(private, str(failed.exception) + json.dumps(failed.exception.details))
 
 
 if __name__ == '__main__':

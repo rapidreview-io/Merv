@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 import { managedNoncePostgresMigration } from './managed-nonce.postgres.js';
+import { managedShutdownMigration } from './managed-shutdown.js';
 import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
@@ -397,6 +398,7 @@ export class LeasedSessions implements Sessions {
   async initialize(): Promise<void> {
     const { state, scope, workflows, config } = this;
     await state.migrate('sessions', { ...postgresMigrations, 8: managedNoncePostgresMigration });
+    await state.migrate('session_managed_shutdowns', { 1: managedShutdownMigration });
     // What each part Sessions hands a call to checks first: that Sessions is still open.
     const available = () => this.ensureOpen();
     this.credentials = new CredentialStore(state, this.clock);
@@ -1735,6 +1737,7 @@ export class LeasedSessions implements Sessions {
         headOid: _headOid,
         treeOid: _treeOid,
         stats: _stats,
+        submission: _submission,
         pendingMerge,
         ...identity
       }: SessionWorkspace) => ({
@@ -1755,9 +1758,17 @@ export class LeasedSessions implements Sessions {
       );
       check(
         !session.execution.policy.readOnly ||
-          workspace.headOid === session.workspace.attachment.headOid,
+          canonical(workspace) === canonical(session.workspace.attachment),
         'workspace_readonly_conflict',
         'Read-only workspace capture cannot change the attached head',
+        409,
+      );
+      check(
+        !workspace.submission ||
+          session.execution.policy.readOnly ||
+          workspace.submission.sessionId === session.id,
+        'workspace_identity_conflict',
+        'A writer can report only its own submitted code',
         409,
       );
       if (session.workspace.result) {

@@ -25,10 +25,13 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
  * store cannot sign uploads; the twins without them (task@6, @39) are retired.
  */
 export const taskVersions: Record<number, { workspace: TaskWorkspace }> = {
+  2: { workspace: 'artifacts' },
   11: { workspace: 'resolution' },
   43: { workspace: 'code' },
   44: { workspace: 'code' },
   45: { workspace: 'resolution' },
+  46: { workspace: 'code' },
+  47: { workspace: 'resolution' },
 };
 export function taskContract(version: number) {
   const contract = taskVersions[version];
@@ -37,12 +40,15 @@ export function taskContract(version: number) {
 }
 export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
 /** Service tasks are the resolution contracts; every other task runs on a Code one. */
-export const taskVersion = (service = false): number => (service ? 45 : 44);
+export const taskVersion = (service = false): number => (service ? 47 : 46);
 export const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
+export const approvalCommits = (version: number) => version >= 46;
 /** The workflow node a Git task's commit is made in. */
 export const producing = {
   name: 'task',
-  versions: Object.keys(taskVersions).map(Number),
+  versions: Object.keys(taskVersions)
+    .map(Number)
+    .filter((version) => taskVersions[version]!.workspace !== 'artifacts'),
   state: 'in_progress',
 };
 
@@ -97,3 +103,11 @@ export const TASK_LIMITS = { reviewRounds: 3 };
  */
 export const purposeOf = (step: { state: string }): 'work' | 'review' =>
   step.state === 'in_review' ? 'review' : 'work';
+
+export const GIT_SUBMISSION =
+  'Work on the assigned branch with ordinary Git. You may inspect other branches, merge, cherry-pick, bring selected files, commit and push whenever useful. task.submit_delivery submits your working tree without requiring a commit; after it succeeds, stop. The runner freezes the exact tree and its parent history for independent review. Merv creates milestone commits after acceptance. Ordinary session endings keep working files without committing; before planned VM shutdown, Merv captures remaining changes as progress without approving them.';
+export const GIT_SUBMISSION_REVIEW =
+  'The checkout contains the exact immutable submitted tree and its parent history. HEAD names the parent, and the working tree may differ because Merv creates the milestone commit only after approval. Code and Git metadata are read-only. Use separate scratch for test outputs; do not replace the candidate with another branch or HEAD.';
+
+export const GIT_SUBMISSION_CLAIM =
+  'Only a leased independent reviewer in the isolated checkout of the exact frozen submission can approve a task. An unleased claim after review_rounds exhaustion can only fail it; use review.release to return a claim to eligible leased reviewers.';

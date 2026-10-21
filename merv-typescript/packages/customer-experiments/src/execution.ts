@@ -12,7 +12,13 @@ import { heldLease, insertLease, reviewedLeaseHooks } from '@merv/workflows/leas
 import { directsIndependently, excludedFromReview, reviewActions } from '@merv/reviews/rules';
 import { REPORT_TOOLS } from '@merv/reports/prefill';
 import type { CustomerExperiments } from './domain.js';
-import { SERVICE_EXPERIMENT, plansDocument, postsProgress, writesReport } from './program.js';
+import {
+  SERVICE_EXPERIMENT,
+  approvalCommits,
+  plansDocument,
+  postsProgress,
+  writesReport,
+} from './program.js';
 import { SERVICE_MODEL, contractDatasets, contractLimits } from './types.js';
 
 /**
@@ -38,10 +44,30 @@ const progressInstruction = documentInstruction.replace(
   'Check every downloaded request file against its manifest size and ETag before use. The customer watches a status page: post progress with customer_experiment.progress at each milestone (machine ready, files checked, each model or condition started and finished with its score, results being written), a short plain sentence each time.',
 );
 
+/** Version 5: a stopped executor freezes the worktree, and approval creates its commit. */
+const native = (instruction: string) =>
+  instruction
+    .replace(
+      'Save code with code.commit and results as artifacts.',
+      'Use ordinary Git commands to inspect and edit the assigned branch; commit and push explicitly when useful. Save results as artifacts. Submitting results includes the complete current code tree, including uncommitted changes, so a commit is not required for handoff. Ordinary session endings preserve working files; planned VM shutdown captures remaining changes as progress without approving them.',
+    )
+    .replace(
+      'final capture and independent review follow automatically.',
+      'the stopped worktree is frozen for independent read-only review, and a passing review retains the exact approved tree as a commit.',
+    );
+
+const nativeInstruction = native(progressInstruction);
+// Migrated structured requests keep their dataset contract and SHA-256 validation.
+const nativeStructuredInstruction = native(reportInstruction);
+
 export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
   return {
     readOnly: review,
-    workspace: codeWorkspace(review ? 'review' : 'work', 'customer-experiments'),
+    workspace: codeWorkspace(
+      review ? 'review' : 'work',
+      'customer-experiments',
+      approvalCommits(version),
+    ),
     platform: { ...SERVICE_MODEL },
     maxDurationSeconds: 86_400,
     maxModelTokens: 500_000_000,
@@ -63,8 +89,9 @@ export function serviceExecution(review: boolean, version = 1): WorkflowExecutio
         ? reviewGrants()
         : [
             ...artifactGrants(),
-            grant('code.commit', {}),
-            grant('code.operation', {}),
+            ...(!approvalCommits(version)
+              ? [grant('code.commit', {}), grant('code.operation', {})]
+              : []),
             ...(writesReport(version)
               ? REPORT_TOOLS.map((name) =>
                   grant(name, {
@@ -120,9 +147,15 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
       'The accepted execution limit is exhausted',
       409,
     );
-    if (c.snapshot.state === 'running')
+    if (c.snapshot.state === 'running') {
+      check(
+        approvalCommits(c.snapshot.version),
+        'code_legacy_drain_required',
+        'Drain this legacy customer experiment on the previous runtime before Git remote cutover',
+        409,
+      );
       await ctx.code.requireLeasable(c.caller, { unitId: exp.id, writer: true }, c.tx);
-    else {
+    } else {
       check(
         exp.submission?.codeHead,
         'capture_pending',
@@ -261,6 +294,7 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
           state === 'running' ? (await ctx.computeEvidence(exp, c.tx)).artifactIds : [];
         const base = state === 'running' ? await ctx.code.basePin(c.caller, exp.id, c.tx) : null;
         return {
+          ...(approvalCommits(version) ? { gitPolicy: 'approval-v1' } : {}),
           computeKind: 'experiment',
           computeProfile: state === 'running' ? 'execute' : 'check',
           ...(!executorsAwaitCompute && { computeWait: 'inside' }),
@@ -277,6 +311,7 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
           ...(state === 'results_review'
             ? {
                 code: exp.submission!.codeHead!,
+                ...(approvalCommits(version) ? { submission: exp.submission!.sessionId } : {}),
                 reviewId: review!.id,
                 ...(review?.claimId ? { claimId: review.claimId } : {}),
               }
@@ -288,14 +323,20 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
         const review = state === 'results_review';
         const compute = ctx.compute ? computeGuidance(review ? 'check' : 'execute') : '';
         const instruction = review
-          ? 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
-          : postsProgress(c.snapshot.version)
-            ? progressInstruction
-            : plansDocument(c.snapshot.version)
-              ? documentInstruction
-              : writesReport(c.snapshot.version)
-                ? reportInstruction
-                : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
+          ? approvalCommits(version)
+            ? 'Independently verify the retained results against the frozen customer contract and exact submitted code tree. The checkout and Git metadata are read-only; put temporary test outputs in the supplied scratch directory. Submit review.submit with pass, or a precise return route. Never change the plan.'
+            : 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
+          : approvalCommits(c.snapshot.version)
+            ? plansDocument(c.snapshot.version)
+              ? nativeInstruction
+              : nativeStructuredInstruction
+            : postsProgress(c.snapshot.version)
+              ? progressInstruction
+              : plansDocument(c.snapshot.version)
+                ? documentInstruction
+                : writesReport(c.snapshot.version)
+                  ? reportInstruction
+                  : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
         return {
           role: review ? 'Independent results reviewer' : 'Experiment executor',
           label: `${review ? 'Review' : 'Run'}: ${exp.title}`,
@@ -329,7 +370,9 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
               planning: 'The intake agent is collecting an executable agreement.',
               ready: 'The customer must approve the displayed fixed contract.',
               awaiting_payment: 'Execution waits for verified payment.',
-              finalizing: 'Wait for the execution session to retain its final code capture.',
+              finalizing: approvalCommits(version)
+                ? 'Wait for the stopped execution to retain its immutable code submission.'
+                : 'Wait for the execution session to retain its final code capture.',
             } as Record<string, string>
           )[exp.workflow.state] ?? 'Work runs under the exact accepted contract.',
       };

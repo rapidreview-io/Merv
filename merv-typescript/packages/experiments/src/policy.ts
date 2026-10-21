@@ -18,6 +18,7 @@ import type { Experiment, ExperimentReview } from './types.js';
 import type { ExperimentsContext } from './index.js';
 import {
   activeStates,
+  approvalCommits,
   type ActiveState,
   reviewing,
   producing,
@@ -255,11 +256,16 @@ export async function reviewCapture(
   experiment: Experiment,
   tx: Transaction,
 ): Promise<CodeCapture | null> {
-  if (experiment.workflow.state !== 'experiment_review') return null;
+  const modern = approvalCommits(experiment.workflow.version);
+  if (
+    experiment.workflow.state !== 'experiment_review' &&
+    !(modern && experiment.workflow.state === 'design_review')
+  )
+    return null;
   const submission = experiment.submissions.find((entry) => entry.reviewId === experiment.reviewId);
   check(
-    submission?.stage === 'results' &&
-      submission.codeCaptureRef?.kind === 'session-final' &&
+    submission &&
+      submission.codeCaptureRef?.kind === (modern ? 'submission' : 'session-final') &&
       submission.codeCaptureRef.sessionId === submission.sessionId,
     'experiment_capture_required',
     'The result submission must pin its producing session capture',
@@ -271,7 +277,9 @@ export async function reviewCapture(
     {
       unitId: experiment.id,
       revision: submission.subjectRevision - 1,
-      workflow: runningNode,
+      workflow: modern
+        ? { ...runningNode, state: submission.stage === 'design' ? 'planned' : 'running' }
+        : runningNode,
       sessionId: submission.sessionId,
       actorId: submission.producerId,
     },
@@ -286,7 +294,7 @@ export async function reviewCapture(
   check(
     checked.status === 'ready',
     'experiment_capture_pending',
-    'The producing worker must stop and report its final Git capture before review, or an operator fences its writer with code.unit.fence',
+    'The producing worker must stop and durably freeze the exact submitted tree before review',
     409,
   );
   return checked.capture;
@@ -376,10 +384,19 @@ export async function stepFacts(
   const { caller, snapshot, tx } = context;
   const experiment = await facts(ctx, context);
   if (producing(snapshot.state)) {
+    check(
+      approvalCommits(snapshot.version),
+      'code_legacy_drain_required',
+      'Drain this legacy experiment on the previous runtime before Git remote cutover',
+      409,
+    );
     await assertProducer(ctx, caller, experiment, tx);
     await ctx.code.requireLeasable(
       caller,
-      { unitId: snapshot.id, writer: snapshot.state === 'running' },
+      {
+        unitId: snapshot.id,
+        writer: snapshot.state === 'running' || approvalCommits(snapshot.version),
+      },
       tx,
     );
     return { experiment, review: null };

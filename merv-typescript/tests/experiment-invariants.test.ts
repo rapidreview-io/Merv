@@ -73,7 +73,7 @@ async function fixture(t: TestContext) {
   const work = currentWork({ code: managed.code, sessions, events }, { directory, source });
   const issued = await scope.credentials.issueActor(source, {
     name: 'Independent reviewer',
-    role: 'reviewer',
+    role: 'operator',
   });
   const reviewer: Caller = {
     actorId: issued.actor.id,
@@ -124,18 +124,34 @@ async function fixture(t: TestContext) {
     });
   const running = async () => {
     const experiment = await create();
-    await attach(experiment, 'plan', plan);
-    const pending = await transition(experiment, 'submit_design');
-    const review = await reviews.start(reviewer, pending.reviewId!);
-    return await experiments.submitReview(reviewer, {
-      ...reviewedFindings(review),
-      reviewId: review.id,
-      claimId: review.claimId!,
-      expectedRevision: pending.workflow.revision,
-      verdict: 'pass',
-      notes: 'Checked the exact design and evaluation.',
-      requestId: request(),
-    } as ReviewApplication);
+    const producer = await work.lease(experiment);
+    await attach(experiment, 'plan', plan, producer.worker);
+    const pending = await work.run(
+      producer,
+      'experiment.transition',
+      { transition: 'submit_design', requestId: request() },
+      (caller, input) => experiments.transition(caller, input as unknown as ExperimentTransition),
+    );
+    await work.release(producer);
+    const held = await work.lease(pending, reviewer);
+    const review = await reviews.get(held.worker, pending.reviewId!);
+    const accepted = await work.run(
+      held,
+      'review.submit',
+      {
+        ...reviewedFindings(review),
+        reviewId: review.id,
+        claimId: review.claimId!,
+        expectedRevision: pending.workflow.revision,
+        verdict: 'pass',
+        notes: 'Checked the exact design and evaluation.',
+        requestId: request(),
+      },
+      (caller, input) => experiments.submitReview(caller, input as unknown as ReviewApplication),
+    );
+    await work.release(held);
+    await managed.code.submissions.reconcile();
+    return accepted;
   };
   const offer = async (experiment: Experiment) => {
     const held = await work.lease(experiment);

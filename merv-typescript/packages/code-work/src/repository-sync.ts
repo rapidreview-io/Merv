@@ -8,11 +8,9 @@ import {
   type Transaction,
   recorded,
 } from '@merv/contracts';
-import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPrepareInput, CodeRepositoryPreparation } from './models.js';
 import { pinMerge, verifyResolution } from '@merv/code/pending-merge';
 import type { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeGitHubService } from '@merv/code/github';
 import type { CodeUnitService } from './units.js';
 
 export async function migrateRepositorySync(state: State) {
@@ -42,33 +40,31 @@ CREATE TRIGGER code_repository_sync_frozen BEFORE UPDATE OR DELETE ON code_repos
 export async function reconcileRepository(
   state: State,
   repositories: CodeRepositories,
-  github: CodeGitHubService,
   units: CodeUnitService,
   caller: Caller,
   input: CodeRepositoryPrepareInput,
-  operation: CodeStoreOperation,
 ): Promise<CodeRepositoryPreparation> {
   const local = input.expectedMainOid;
   check(
     local,
     'code_main_required',
-    'Reload settings and select the current Merv main before connecting GitHub',
+    'Reload settings and select the current Merv main before integrating a source branch',
     409,
   );
-  const connection = await github.status(caller);
-  check(
-    connection.repository &&
-      connection.revision === input.expectedRevision &&
-      connection.baseBranch === input.baseBranch,
-    'github_conflict',
-    'The selected GitHub connection changed',
-    409,
-  );
-  const binding = {
-    revision: connection.revision,
-    repository: connection.repository,
-    baseBranch: input.baseBranch,
+  const binding = { source: 'git', baseBranch: input.baseBranch };
+  const sourceRef = `refs/heads/${input.baseBranch}`;
+  const assertSource = async () => {
+    const current = await repositories.git.run(['rev-parse', '--verify', `${sourceRef}^{commit}`], {
+      env: repositories.environment(caller.projectId),
+    });
+    check(
+      current.code === 0 && current.stdout.toString().trim() === input.headOid,
+      'code_branch_changed',
+      'The selected source branch changed; fetch and choose its current head',
+      409,
+    );
   };
+  await assertSource();
   const key = digest({ project: caller.projectId, local, remote: input.headOid, binding });
   const result = (mainOid: string, taskId?: string): CodeRepositoryPreparation => ({
     state: taskId ? 'review_required' : 'ready',
@@ -76,7 +72,6 @@ export async function reconcileRepository(
     headOid: input.headOid,
     mainOid,
     ...(taskId ? { taskId } : {}),
-    operation,
   });
   const env = repositories.environment(caller.projectId);
   const ancestor = await repositories.git.run(
@@ -90,7 +85,6 @@ export async function reconcileRepository(
     409,
   );
   const assertMain = async (tx: Transaction, expected: string) => {
-    await github.assertBinding(caller, binding, tx, 'read');
     check(
       (await units.code.project(tx, caller.projectId))?.main.oid === expected,
       'code_main_changed',
@@ -103,7 +97,6 @@ export async function reconcileRepository(
     return result(local);
   }
   const row = await state.transaction(async (tx) => {
-    await github.assertBinding(caller, binding, tx, 'read');
     const existing = await tx.get<{ task_id: string; promoted_oid: string | null }>(
       'SELECT task_id,promoted_oid FROM code_repository_sync WHERE project_id=? AND sync_key=?',
       caller.projectId,
@@ -168,17 +161,8 @@ export async function reconcileRepository(
     verified.error ?? 'Both selected histories must be merged',
     409,
   );
-  // Refresh the remote immediately before admission. A subsequent remote advance will still be
-  // caught by the ordinary publication gate; importing never grants permission to force-push.
-  const branch = (await github.branches(caller)).find((branch) => branch.name === input.baseBranch);
-  check(
-    branch?.sha === input.headOid,
-    'code_branch_changed',
-    'GitHub main moved during review; prepare its new head',
-    409,
-  );
+  await assertSource();
   await state.transaction(async (tx) => {
-    await github.assertBinding(caller, binding, tx, 'read');
     const already = await tx.get<{ promoted_oid: string | null }>(
       'SELECT promoted_oid FROM code_repository_sync WHERE project_id=? AND sync_key=?',
       caller.projectId,

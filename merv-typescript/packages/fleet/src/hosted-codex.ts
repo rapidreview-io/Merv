@@ -21,4 +21,4 @@ export const hostedAstraPlatform = Object.freeze({
   effort: 'medium',
 });
 export type HostedCodexPlatform = typeof hostedCodexPlatform | typeof hostedAstraPlatform;
-export const hostedCodexCapabilities = Object.freeze(['code.v2']);
+export const hostedCodexCapabilities = Object.freeze(['code.git.1']);

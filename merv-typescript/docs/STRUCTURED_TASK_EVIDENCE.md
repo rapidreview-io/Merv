@@ -60,80 +60,33 @@ replay receipt commit together. Failed commands leave no committed partial state
 Content-addressed blob bytes written before a later SQL failure can remain
 unreferenced, as with existing artifact writes; they are not accessible as artifacts.
 
-## Delivering a commit
+## Submitting code
 
-Every new task delivers a commit. `task.create` (Code is required; `workspace` may be
-omitted or `"git"`, and `baseTaskId` is retired) gives the producing worker a
-runner-prepared private Git checkout and the `code.commit` and `code.operation` tools;
-Code derives the base from accepted `dependsOn` prerequisites and project main. Older
-scratch tasks stay readable. See [workspaces](WORKSPACES.md) for the checkouts and for
-building later work on the delivered commit.
+Every new task has a runner-prepared Git checkout. Code derives its pinned base from the durable accepted references of `dependsOn` prerequisites and project main. The worker may commit and push with ordinary Git, but submission does not require a commit. Older records keep their original evidence shapes. See [workspaces](WORKSPACES.md).
 
 ```json
 {
   "taskId": "…",
   "artifactIds": [],
-  "commandId": "the worker's own succeeded code.commit operation",
   "confirmations": [{ "checkNumber": 1, "status": "met", "evidenceIds": [], "notes": "…" }],
   "expectedRevision": 0,
   "requestId": "…"
 }
 ```
 
-- A task always delivers a commit; files are optional alongside it, so
-  `artifactIds` may be empty.
-- The commit must be the leased worker's own, made in this assignment at this task
-  revision, and already receipted by the runner. A successor never delivers its
-  predecessor's commit: it commits again, which succeeds on an unchanged tree. An
-  interactive producer holds no checkout and cannot deliver a Git task.
-- `evidenceIds` remain artifact IDs only; a `commandId` is never an evidence ID. A
-  `met` confirmation that cites nothing is recorded against the commit record below.
-- Merv renders an immutable **Delivered commit** artifact (commit, tree, parent and
-  base OIDs, repository, workspace, operation, session and statistics).
-  `deliveryIds` holds the submitted files, then that record, then the assessment, so
-  the review snapshot pins the commit like any other evidence and findings cite the
-  record's ID. `deliveryCode` (`ref`, `sessionId`, `revision`, `headOid`, `treeOid`)
-  and `deliveryCodeArtifactId` are exposed on the task. Neither rendered record may
-  be resubmitted as evidence in a later round.
-- A leased reviewer's read-only checkout is frozen to `deliveryCode.headOid`
-  (`references.code`). On every reviewer assignment and every proposed verdict, Tasks
-  re-reads the receipt from Code and requires it to match the sealed delivery and the
-  review to pin the rendered record. The comparison uses the stored producing
-  revision, so a review reissued before `task.reissue_review` was retired does not strand
-  the task.
-- **Only that leased review, attached at the delivered commit, can pass a Git task.**
-  A verdict of `pass` must come from the session holding the current review lease, and
-  Sessions must already hold that session's workspace attachment with a base equal to
-  `deliveryCode.headOid`. Sessions refuses any other base, and a runner without the
-  commit's objects fails at launch and never attaches, so the attachment is the
-  server-side record that the reviewer's runner held the commit. Anything else —
-  an interactive reviewer, or a leased one whose runner has not attached — is refused
-  with `task_commit_unfetched`. Merv does not itself fetch or verify Git objects: the
-  attachment is a source-authenticated runner report, and the review must run on the
-  machine that holds the objects.
-- **Only a leased review worker claims a Git task's review.** Tasks refuses
-  `review.start` of its current review from anyone else (`leased_review_required`),
-  because such a claim could never pass the task and would shut every review worker
-  out (`review_unavailable`). Once `review_rounds` is used up no worker is offered the
-  review, so a person may then claim it and fail the task. If that claim is still
-  held after an admin allows another round, its claimer or an admin hands it back with
-  `review.release`; the same review, pinned to the same delivered commit, can then be
-  leased.
+- The actual leased producer submits its own checkout at the current task revision. An interactive actor has no checkout and cannot substitute another session's work.
+- `artifactIds` may be empty. `evidenceIds` remain artifact IDs; a `met` confirmation with none is backed by Merv's rendered **Submitted code** record.
+- That record identifies the immutable submission, producing actor and revision. `deliveryCode` contains its submission `ref`, `sessionId` and `revision`, while `deliveryCodeArtifactId` identifies the pinned record. OIDs are resolved from the frozen submission receipt, not copied from the producer's initial attachment. Historical `code-commit` deliveries keep their recorded OIDs.
+- `deliveryIds` holds the submitted files, the code record and the confirmation assessment. Reviews pins all these artifacts. Neither rendered record may be resubmitted as evidence in a later round.
+- After handoff the runner confirms the producer has stopped, retains its exact Git tree and parent, and seals the submission receipt. This creates no preapproval commit. Review dispatch waits for that receipt.
+- The leased reviewer receives exactly the submitted tree with its parent as HEAD, in an isolated read-only checkout. Tasks resolves the immutable receipt on assignment and verdict, using the stored producing revision. Code Work verifies the reviewer's attachment and independent review authority.
+- A passing verdict journals the approved milestone. Code creates a commit only when that reviewed tree needs one; acceptance and dependent code remain unavailable until the result is durable. Failed or retried materialization cannot substitute later producer edits.
 
-| Code                     | Meaning                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| `invalid_workspace`      | A workspace other than `git`, or the retired `baseTaskId`.                                 |
-| `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.           |
-| `code_base_pending`      | Code does not hold main, or a prerequisite's accepted code is unverified or not imported.  |
-| `task_commit_required`   | A delivery without its leased worker's `commandId`.                                        |
-| `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
-| `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
-| `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
-| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; release the claim.   |
-| `leased_review_required` | A claim of the current review not from a review worker, before `review_rounds` is used up. |
+Only the leased reviewer of the current review can pass. A reviewer without the exact attachment is refused with `task_commit_unfetched`. A claim before the available review rounds are exhausted requires a review lease (`leased_review_required`). After those rounds are exhausted, an interactive reviewer may claim and fail the task; the claim must be released before a newly permitted worker can take it.
 
-With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)
-and artifact-only tasks are unaffected.
+Provenance failures use `task_commit_provenance`; the name also covers modern submissions. Missing durable code and unresolved bases block review or lease admission. Historical command-receipt errors remain meaningful for old records, but new deliveries neither require `commandId` nor poll `code.operation`.
+
+With Code unloaded, stored task and delivery records remain readable. New Git work cannot be created, leased, submitted or approved through an unavailable Code service.
 
 ## Guidance, context and UI
 

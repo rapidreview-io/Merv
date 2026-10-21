@@ -1,6 +1,9 @@
+import { gitTransport } from './git-http.js';
 import type { TaskCreate, Tasks } from '@merv/tasks/types';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -11,6 +14,7 @@ import {
   type WorkspaceHandle,
 } from '@merv/contracts';
 import type { Session, Sessions, WorkSession } from '@merv/sessions/types';
+import { live, ownEnd } from '@merv/sessions/rules';
 import type { Code } from '@merv/code-work/types';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { waitForManagedCode } from './managed-code.js';
@@ -37,8 +41,8 @@ export async function currentTask(
 export const createCurrentTask = currentTask;
 
 /**
- * Play a runner through the real Code driver: leases, checkouts, Git bundles, commit
- * admission and final captures are all production operations. No receipts are fabricated.
+ * Play a runner through the real Code driver and authenticated native Git remote.
+ * Test agents make ordinary Git commits; submission capture never fabricates receipts.
  * Dispose before closing the host services; the caller owns the temporary directory.
  */
 export function currentWork(host: Host, options: { directory: string; source: Caller }) {
@@ -47,6 +51,7 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
   const code = current();
   const events = (host.domainEvents ?? host.events) as { drain?(): Promise<void> } | undefined;
   assert.ok(code?.v2, 'Current work requires managed Code');
+  const transports: ReturnType<typeof gitTransport>[] = [];
   const held = new Set<Awaited<ReturnType<typeof attach>>>();
   const prefix = randomBytes(8).toString('hex');
   let sequence = 0;
@@ -66,7 +71,7 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
       },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
       capacity: 1,
-      capabilities: ['code.v2'],
+      capabilities: ['code.git.1'],
     });
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
     const session = await host.sessions.offer(source, {
@@ -115,15 +120,11 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
       held.add(result);
       return result;
     }
+    const http = gitTransport(current, source);
+    transports.push(http);
     const driver = new CodeWorkspaceDriver(
       { directory, path: join(directory, 'ledger.sqlite'), terminal: () => stopped },
-      {
-        call: (route, body) => current().v2!.call(source, route, body),
-        putPart: (id, offset, bytes) =>
-          current().v2!.putPart(source, id, offset, Buffer.from(bytes)),
-        readPart: (id, input) => current().v2!.readPart!(source, id, input),
-      },
-      { pollMs: 10 },
+      http.transport,
     );
     const workspace = await driver.prepare(launch, session);
     await host.sessions.attach(source, { ...control, workspace: workspace.snapshot! });
@@ -167,32 +168,38 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
       mkdirSync(dirname(join(lease.workspace.path, path)), { recursive: true });
       writeFileSync(join(lease.workspace.path, path), content);
     }
-    const queued = await run(
-      lease,
-      'code.commit',
-      {
-        expectedHead: lease.driver.get(lease.launch.id)!.snapshot!.headOid,
-        message: 'Retain current workflow test evidence',
-        requestId: request(),
-      },
-      (caller, bound) => code.commit(caller, bound as unknown as Parameters<Code['commit']>[1]),
-    );
-    const command = await code.nextCommand(lease.source, lease.control);
-    assert.equal(command?.id, queued.command.id);
-    const receipt = await lease.driver.checkpointCommit(lease.launch, command!);
-    await code.completeCommand(lease.source, {
-      ...lease.control,
-      commandId: command!.id,
-      receipt,
-    });
-    lease.driver.acknowledgeCommit(command!.id);
-    return command!.id;
+    const access = lease.driver.agentGit(lease.launch.id);
+    const git = async (...args: string[]) =>
+      (
+        await promisify(execFile)('git', args, {
+          cwd: lease.workspace.path,
+          env: {
+            ...process.env,
+            GIT_CONFIG_NOSYSTEM: '1',
+            GIT_CONFIG_GLOBAL: '/dev/null',
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_CONFIG_COUNT: '2',
+            GIT_CONFIG_KEY_0: `http.${access.url}.extraHeader`,
+            GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${access.token}`).toString('base64')}`,
+            GIT_CONFIG_KEY_1: 'http.followRedirects',
+            GIT_CONFIG_VALUE_1: 'false',
+          },
+        })
+      ).stdout.trim();
+    await git('add', '-A');
+    await git('commit', '-qm', 'Agent commits workflow test evidence');
+    await git('push', 'merv', 'HEAD');
+    return await git('rev-parse', 'HEAD');
   }
 
   async function release(lease: Held) {
     if (!held.has(lease)) return;
     lease.stop();
     try {
+      // Some authority tests close the server session directly. They are not a runner
+      // handoff, so teardown must not try to acquire new capture authority afterward.
+      const session = await host.sessions.get(lease.source, lease.session.id);
+      if (!live(session) && !ownEnd(session.closeReason)) return;
       // As the runner does: what the session left is captured before its release, while its
       // writer generation is live, and the release is always sent (a landed handoff is recorded
       // as that, whoever releases it).
@@ -210,6 +217,7 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
         await events?.drain?.();
       }
     } catch (error) {
+      if (process.env.MERV_GIT_TEST_DEBUG) console.error(error);
       // Revocation tests intentionally remove the runner's authority. Cleanup can dispose
       // its local ledger, but cannot acquire replacement authority to write final captures.
       if (
@@ -232,7 +240,9 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     release,
     request,
     async close() {
-      for (const lease of held) await release(lease);
+      const results = await Promise.allSettled([...held].map(release));
+      await Promise.all(transports.map((t) => t.close()));
+      for (const result of results) if (result.status === 'rejected') throw result.reason;
     },
   };
 }

@@ -1,8 +1,7 @@
 import { check, type VerifiedIdentity } from '@merv/contracts';
+import { plansDocument } from './program.js';
 import type { IdentityBinding, RequestRecord, RequestStore } from './store.js';
 
-/** The first workflow version whose customer is the capability plus a bound browser. */
-export const IDENTITY_VERSION = 3;
 /** What customer access reads of the identity plugin (IdentityProvider satisfies it). */
 export interface CustomerIdentityProvider {
   verify(token: string, options?: { allowAnonymous?: boolean }): Promise<VerifiedIdentity>;
@@ -11,12 +10,12 @@ export interface CustomerIdentityProvider {
 type Headers = { headers: Record<string, string | string[] | undefined> };
 export type CustomerGrant =
   | { record: RequestRecord; role: 'agent' }
-  /** `identity` is null on requests before IDENTITY_VERSION, where the capability alone acts. */
+  /** `identity` is null on structured-intake requests, where the capability alone acts. */
   | { record: RequestRecord; role: 'customer'; identity: IdentityBinding | null };
 
 /**
- * Who a call to a request acts as. The agent capability acts alone, as it always has. From
- * service_experiment@3 the customer capability (the link's fragment) only acts as the customer
+ * Who a call to a request acts as. The agent capability acts alone, as it always has. For
+ * document-plan requests the customer capability (the link's fragment) only acts as the customer
  * together with the browser bound to the request: its Supabase session, usually an anonymous
  * user the page signs in silently, sent as `X-Merv-Identity`. No email is collected.
  */
@@ -55,8 +54,7 @@ export class CustomerAccess {
   ): Promise<CustomerGrant> {
     const { record, role } = await this.owner.store.authorizeRole(id, bearer, roles);
     if (role === 'agent') return { record, role };
-    if ((await this.owner.version(record)) < IDENTITY_VERSION)
-      return { record, role, identity: null };
+    if (!plansDocument(await this.owner.version(record))) return { record, role, identity: null };
     const identity = await this.verified(req);
     const bound = await this.owner.store.binding(record.id);
     check(bound, 'identity_unbound', 'Open the experiment page first', 403);
@@ -69,7 +67,7 @@ export class CustomerAccess {
     await this.activity?.(record.id);
     return { record, role, identity: bound };
   }
-  /** The customer role alone: the capability plus, from service_experiment@3, its bound browser. */
+  /** The customer role alone: the capability plus its bound browser for document-plan requests. */
   async requireCustomer(id: string, bearer: string, req: Headers) {
     return (await this.authorize(id, bearer, req, ['customer'])) as Extract<
       CustomerGrant,
@@ -90,12 +88,7 @@ export class CustomerAccess {
    *  `bound_elsewhere` until it asks to take over, which moves the customer role to it. */
   async bind(id: string, bearer: string, req: Headers, takeOver = false) {
     const record = await this.owner.store.authorize(id, bearer, ['customer']);
-    check(
-      (await this.owner.version(record)) >= IDENTITY_VERSION,
-      'not_found',
-      'Route not found',
-      404,
-    );
+    check(plansDocument(await this.owner.version(record)), 'not_found', 'Route not found', 404);
     const identity = await this.verified(req);
     const bound = await this.owner.store.bind(record.id, identity, takeOver);
     check(

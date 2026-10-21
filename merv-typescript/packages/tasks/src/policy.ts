@@ -17,6 +17,7 @@ import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';
 import {
   GIT_CLAIM,
+  GIT_SUBMISSION_CLAIM,
   producing,
   purposeOf,
   roundsFrom,
@@ -30,6 +31,7 @@ import {
   workflowExecutionReferences,
 } from './context.js';
 import { currentLease, leaseHooks, leasedClaim, prepareTasks, unleased } from './lease.js';
+import { artifactReview, requireArtifactReview } from './legacy-artifact-review.js';
 
 // The task workflow's policy and the checks its review actions run. Each runs on TaskService
 // (index.ts) as its TasksContext.
@@ -76,10 +78,18 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
       check: async (context: WorkflowCheckContext) => {
         await workflowAssignmentFacts(ctx, context);
         const { caller, snapshot, tx } = context;
-        if (purpose === 'work') await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
+        if (purpose === 'work') {
+          check(
+            version >= 46,
+            'code_legacy_drain_required',
+            'Drain this legacy task on the previous runtime before Git remote cutover',
+            409,
+          );
+          await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
+        }
       },
       build: async (context: WorkflowCheckContext) => await workflowAssignment(ctx, context),
-      execution: taskExecutionPolicy(purpose, taskWorkspace(version), version >= 44),
+      execution: taskExecutionPolicy(purpose, taskWorkspace(version), version >= 44, version >= 46),
       references: async (context: WorkflowCheckContext) =>
         await workflowExecutionReferences(ctx, context),
       lease: leaseHooks(ctx),
@@ -134,7 +144,9 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
             id,
             label:
               id === snapshot.data.deliveryCodeArtifactId
-                ? 'Delivered commit'
+                ? snapshot.version >= 46
+                  ? 'Submitted code'
+                  : 'Delivered commit'
                 : 'Submitted delivery',
           })),
           ...(row.review_id
@@ -183,7 +195,10 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           'Read the task context and inspect any completed prerequisites through their referenced records. Complete the pinned brief and retain evidence for every check. When returning for changes, read the previous review with review.get and address its findings. Submit confirmations with each checkNumber, met/not_met status, evidenceIds from the submitted artifacts, and notes explaining your verification or what remains unmet. Submit for independent review, then stop producer work while the review is pending.',
         // A Git task also needs the commandId of this worker's own successful code.commit,
         // and only a leased worker can obtain one; guidance says so before the refusal does.
-        requiredInput: ['artifactIds', 'commandId', 'confirmations'],
+        requiredInput:
+          version >= 46
+            ? ['artifactIds', 'confirmations']
+            : ['artifactIds', 'commandId', 'confirmations'],
         arguments: taskArguments,
         check: async (context) => {
           if (!ctx.checked.found(context)) await checkDelivery(ctx, context);
@@ -206,7 +221,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
             'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. Include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
           start:
             'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
-            ` ${GIT_CLAIM}`,
+            (artifactReview(version) ? '' : ` ${version >= 46 ? GIT_SUBMISSION_CLAIM : GIT_CLAIM}`),
         },
         reviews: ctx.reviews,
         // Refuses a named reviewId that is not the current submission's.
@@ -292,7 +307,9 @@ export async function checkTaskReview(
   }
   // Only a proposed verdict asks Code: the committing transition always carries its input, so
   // this is re-checked there, while guidance read with Code unloaded still answers.
-  if (context.input) {
+  if (artifactReview(context.snapshot.version)) {
+    await requireArtifactReview(context.tx, context.caller.projectId, context.snapshot.id);
+  } else if (context.input) {
     const headOid = await reviewCommit(ctx, context.caller, context.snapshot, review, context.tx);
     // The owner deciding as owner answers for having read the commit; its receipt still holds.
     if (context.input.verdict === 'pass' && !review.override)
@@ -328,11 +345,11 @@ export async function reviewCommit(
   const delivered = snapshot.data.deliveryCode as unknown as TaskDeliveryCode | undefined;
   const recordId = snapshot.data.deliveryCodeArtifactId;
   check(
-    delivered?.ref?.kind === 'code-commit' &&
+    (delivered?.ref?.kind === 'code-commit' || delivered?.ref?.kind === 'submission') &&
       typeof recordId === 'string' &&
       review.artifactIds.includes(recordId),
     'task_commit_required',
-    'This Git task’s review does not pin a delivered commit',
+    'This Git task’s review does not pin submitted code',
     409,
   );
   const checked = await ctx.code.checkCapture(
@@ -347,12 +364,14 @@ export async function reviewCommit(
     tx,
   );
   check(
-    checked.status === 'ready' && checked.capture.workspace.headOid === delivered.headOid,
+    checked.status === 'ready' &&
+      (delivered.ref.kind === 'submission' ||
+        ('headOid' in delivered && checked.capture.workspace.headOid === delivered.headOid)),
     'task_commit_provenance',
-    'The delivered commit no longer matches the receipt its delivery sealed',
+    'The submitted code no longer matches its immutable delivery',
     409,
   );
-  return delivered.headOid;
+  return checked.capture.workspace.headOid;
 }
 
 /**
@@ -371,7 +390,7 @@ export async function checkoutReviewer(
   check(
     caller.session,
     'task_commit_unfetched',
-    'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Fail it, or hand the claim back with review.release so a leased worker can claim it',
+    'Only a leased reviewer, working in the checkout pinned to the submitted code, can pass a Git task. Fail it, or hand the claim back with review.release so a leased worker can claim it',
     409,
   );
   const lease = await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
@@ -387,9 +406,12 @@ export async function checkoutReviewer(
     tx,
   );
   check(
-    own.attachedBaseOid === headOid,
+    own.attachedBaseOid === headOid &&
+      (snapshot.version < 46 ||
+        own.attachedWorkspace?.submission?.sessionId ===
+          (snapshot.data.deliveryCode as unknown as TaskDeliveryCode).sessionId),
     'task_commit_unfetched',
-    'This review’s runner has not attached a checkout of the delivered commit',
+    'This review’s runner has not attached a checkout of the submitted code',
     409,
   );
 }

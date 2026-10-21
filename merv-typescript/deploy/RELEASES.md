@@ -318,20 +318,21 @@ The conversion step has since been removed from the code. Rolling back to an ima
 release recreates empty claims tables; only the backup brings the claims back as rows. See
 [CLAIMS_RETIREMENT.md](../docs/CLAIMS_RETIREMENT.md).
 
-**Before the release that carries the shared Code repository and automatic bases (Git model S1–S3 together).** The server
-must be deployed before any machine built from it: a runner that advertises `capabilities` is
-refused by an older server's closed heartbeat schema, so deploy here first and update the
-machines afterwards. The runtime image now installs Git, and the server refuses to start with
-`code_git_unsupported` without one of at least 2.38 — check the build log for its version.
-Code's repositories live on the data volume at `/var/lib/merv-ts/code`, are authoritative for
-any project that has been imported, and must be backed up together with the database; one
-server writes to that volume at a time. Nothing changes for a project until an administrator
-binds it with `code.local.bind` and imports it with `merv code-import`; from then on new Git
-work without `baseTaskId` is created on `task@5` and `experiment@8` and only machines carrying the `code.v2` driver take it, so drain in-flight
-legacy Git work on the machines that hold it. Explicit `baseTaskId` keeps `task@4` /
-`experiment@7`. Deploy the pending-merge driver before resolution work (`task@6`); automatic
-merging defaults on and respects project dispatch, capacity and budgets. Publication to GitHub stays off until the
-repository is linked and write automation is turned on.
+**Native Git cutover.** Follow the [audited migration and drain plan](NATIVE_GIT_CUTOVER_PLAN.md).
+Idle eligible work migrates in place; the pending artifact-only review retains its exact contract.
+Drain outstanding ownership before the offline transaction and take a fresh verified DB/Code backup.
+The release preflight runs before and after stopping Main. Restart/rollback requires proof that
+the exact previous image is compatible; use `--no-rollback` for this coordinated cutover.
+Workflow migration itself crosses the old-runtime boundary. Published definitions and history
+remain unchanged. Current producers require `code.git.1`; verify Main and the hosted image together
+under maintenance before reopening admission.
+
+Code repositories live at `/var/lib/merv-ts/code` and remain authoritative. Back them up with
+the database; only one server writes the volume. Users add `/git/<project-id>.git` as an ordinary
+Git remote and push their source branch using a user key. Select that retained branch for an
+explicit integration into `merv-main`; a push never changes a running experiment's baseline.
+There is no local import CLI or GitHub connection to configure. See
+[Code operations](../docs/CODE_OPERATIONS.md) for authentication and branch permissions.
 
 | When (UTC)        | Release                                  | Image id       | Plugins active/total          | Result | Checks                                                                                                                                                                                                                                                                                                                                                                                                     | Rollback                                                                                 |
 | ----------------- | ---------------------------------------- | -------------- | ----------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |

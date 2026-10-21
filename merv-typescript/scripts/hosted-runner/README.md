@@ -128,3 +128,13 @@ acknowledges a verified running exchange through the protected runtime service,
 which purges its encrypted bootstrap without waiting for runtime stop. Deploy
 the server, Sandboxes service and hosted image as a coordinated release, with
 all admission drained and a migration-compatible rollback plan.
+
+Code review additionally requires a private Linux mount namespace. The trusted
+launcher binds the independent code checkout and its `.git` directory read-only
+before dropping UID, capabilities, and mount authority. Scratch under `/tmp`
+remains writable. A runtime without mount namespace support refuses review
+launches. `linux-review-gate.py` verifies actual file, Git metadata, ref, remount,
+credential-read and capability denials against the same launcher boundary; the
+release gate runs with the mount capability needed by the trusted supervisor.
+The provider must supply that capability to the supervisor, never the reviewer.
+Local Docker gate evidence does not replace a live hosted-runtime acceptance run.

@@ -27,7 +27,6 @@ import type {
 import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
-import { publicationControls, publicationGate } from './publication-host.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
 import type {
   CodeCapture,
@@ -67,14 +66,15 @@ type Derived =
   | { status: 'ready'; body: BaseBody; merge?: string[] };
 const PROVIDER = 'code';
 const EXPLICIT_BASE =
-  'Import the project repository into managed Code, then create new work with accepted code prerequisites in dependsOn';
-const IMPORT = 'An administrator imports it with `merv code-import`';
+  'Push the project history to a user branch of the native Git remote, prepare its reviewed integration, then create new work with accepted code prerequisites in dependsOn';
+const IMPORT =
+  'An administrator pushes the missing history to a user branch of the project’s native Git remote';
 /**
  * The units a project pass derives again: those still waiting for a base, and those whose
  * publication has not settled. A settled one's blocker never changes again, so it is skipped.
  */
 const RECONCILED =
-  '(base_json IS NULL AND acceptance_json IS NULL) OR publication_id IN (SELECT proposal_id FROM code_publications WHERE settled=0)';
+  '(base_json IS NULL AND acceptance_json IS NULL) OR publication_id IN (SELECT p.proposal_id FROM code_publications p LEFT JOIN code_publications s ON s.proposal_id=p.successor AND s.project_id=p.project_id WHERE COALESCE(s.settled,p.settled)=0)';
 
 /** Work-unit policy for durable Code records; absent deployments do not install this integration. */
 export class CodeUnitService {
@@ -366,10 +366,122 @@ export class CodeUnitService {
     return acceptance(stored)!;
   }
 
+  /** Validate owner state and contributor independence before any commit can be authorized. */
+  async validateFrozenApproval(
+    caller: Caller,
+    input: import('./submissions.js').SubmissionApproval,
+    tx: Transaction,
+  ): Promise<void> {
+    this.state.assertTransaction(tx);
+    const relations = await this.workflows.relations(caller.projectId, input.unitId, tx);
+    check(
+      relations?.instance.revision === input.terminalRevision &&
+        (input.kind === 'plan' || relations.instance.settled),
+      'code_acceptance_unverifiable',
+      'Approval must name the owner’s current approved revision',
+      409,
+    );
+    const disposition = await this.resolutionBlocker(tx, caller.projectId, input.unitId);
+    if (disposition) throw new MervError(disposition.code, disposition.message, 409);
+    const row = await this.records.row(tx, caller.projectId, input.unitId);
+    const writer = await this.writers.row(tx, caller.projectId, input.unitId);
+    check(
+      row && !row.quarantine_base_key && writer?.quarantine_operation_id === null,
+      'code_quarantined',
+      'Quarantined code cannot authorize an approval commit',
+      409,
+    );
+    if (await pendingMerge(tx, caller.projectId, input.unitId))
+      check(
+        await this.resolutionReview(caller, tx, input),
+        'code_provenance_unverifiable',
+        'Resolution approval requires the exact retained independent contributor certificate',
+        409,
+      );
+  }
+
+  /** Only the approved journal calls this, after Git confirmed durable exact-tree retention. */
+  async acceptFrozen(
+    tx: Transaction,
+    projectId: string,
+    value: import('./submissions.js').ApprovedSubmission,
+  ): Promise<void> {
+    const { approval: input, capture, commit } = value;
+    const caller = { projectId, actorId: value.acceptedBy };
+    const submitted = capture.workspace?.submission;
+    check(
+      submitted &&
+        commit.tree === submitted.treeOid &&
+        capture.provenance.instanceId === input.unitId,
+      'code_acceptance_unverifiable',
+      'Approved commit differs from the reviewed submission',
+      409,
+    );
+    const writer = await this.writers.row(tx, projectId, input.unitId);
+    check(
+      writer &&
+        writer.writer_state === 'closed' &&
+        writer.writer_session_id === submitted.sessionId &&
+        [submitted.parentOid, commit.head].includes(writer.head_oid ?? this.writers.base(writer)),
+      'code_generation_stale',
+      'A newer writer cannot be overwritten by approval',
+      409,
+    );
+    await tx.run(
+      'UPDATE code_workspaces SET head_oid=?,head_operation_id=NULL WHERE project_id=? AND unit_id=?',
+      commit.head,
+      projectId,
+      input.unitId,
+    );
+    if (input.kind === 'plan') {
+      await this.writers.changed(tx, projectId, input.unitId);
+      return;
+    }
+    const relations = await this.workflows.relations(projectId, input.unitId, tx);
+    check(
+      relations?.instance.settled && relations.instance.revision === input.terminalRevision,
+      'code_acceptance_unverifiable',
+      'The approved unit must remain at its terminal revision',
+      409,
+    );
+    const body: AcceptanceBody = {
+      formatVersion: 1,
+      unitId: input.unitId,
+      workflow: relations.instance.workflow,
+      version: relations.instance.version,
+      terminalRevision: input.terminalRevision,
+      submissionRef: input.submissionRef,
+      reviewRef: input.reviewRef,
+      acceptedBy: value.acceptedBy,
+      code: {
+        ref: capture.ref,
+        commit: commit.head,
+        tree: commit.tree,
+        repositoryId: capture.workspace!.repositoryId,
+        reviewAttached: true,
+      },
+      storage: 'code',
+    };
+    const existing = await this.records.row(tx, projectId, input.unitId);
+    const stored = await this.records.retainUnitAcceptance(caller, body, tx);
+    if (!existing?.acceptance_hash && stored.publishes_at)
+      await this.sealPublication(
+        caller,
+        relations.instance.name,
+        stored,
+        body,
+        digest(body),
+        tx,
+        value.review,
+      );
+    await this.writers.changed(tx, projectId, input.unitId);
+    this.bases.soon(projectId);
+    this.landing?.soon(projectId);
+  }
+
   /**
    * Seals an immutable snapshot and the exact independent review. Local integration retains
-   * that head on Merv main; GitHub publication adds a pull request and an operator's merge
-   * (or their agent's). The accepted unit remains done while its integration is reconciled.
+   * that head on Merv main. The accepted unit remains done while its integration is reconciled.
    *
    * A unit whose facts cannot open a publication is still accepted. Acceptance is the record
    * of work that was done and reviewed, and `publishes_at` is write-once, so refusing here
@@ -383,13 +495,14 @@ export class CodeUnitService {
     body: AcceptanceBody,
     acceptanceHash: string,
     tx: Transaction,
+    retainedReview?: import('@merv/contracts').ReviewRequest,
   ): Promise<void> {
     const base = row.base_json ? (JSON.parse(row.base_json) as BaseBody) : null;
     if (!(body.storage === 'code' && body.code?.tree) || !base?.main) {
       await this.reconcileUnit(tx, caller.projectId, row.unit_id);
       return;
     }
-    const review = await this.reviews.get(caller, body.reviewRef, tx);
+    const review = retainedReview ?? (await this.reviews.get(caller, body.reviewRef, tx));
     const publicationId = newId('codeprop');
     await tx.run(
       'UPDATE code_units SET publication_id=? WHERE project_id=? AND unit_id=? AND publication_id IS NULL',
@@ -421,8 +534,7 @@ export class CodeUnitService {
 
   /**
    * Records, once, that this unit's accepted code goes to main. It is a declaration and not a
-   * power: integration requires independent review, and GitHub merges also require an operator
-   * or their agent. The declaration is the operator's or directing agent's, never the worker's own.
+   * power: integration requires independent review, and the declaration is the operator's or directing agent's, never the worker's own.
    * It has to come before the
    * first lease, because main joins the base at derivation and a pin is immutable.
    */
@@ -598,8 +710,8 @@ export class CodeUnitService {
           ? 'Merv is initializing the project’s Git repository'
           : 'Code’s repository does not hold the commit that is main',
         initializing
-          ? 'Initialization retries automatically. Check Code operations for a storage error if it remains pending; no GitHub connection or manual import is required.'
-          : `${IMPORT}, or prepares the linked GitHub repository with code.write:repository_prepare.`,
+          ? 'Initialization retries automatically. Check Code operations for a storage error if it remains pending; no manual import is required.'
+          : `${IMPORT}, or integrates a retained source branch with code.write:repository_prepare.`,
       );
     };
     const publishing = !!row?.publishes_at;
@@ -1246,13 +1358,6 @@ export class CodeUnitService {
     projectId: string,
     publication: PublicationStanding | null,
   ): Promise<PublicationStanding | null> {
-    if (publication?.state !== 'pending' || publication.destination === 'local') return publication;
-    const gate = publicationGate(await publicationControls(sql, projectId));
-    // A failed canary explicitly disables publication. Missing setup also blocks merging,
-    // but must not say an operator needs to clear a disablement that never happened. Rules
-    // the App cannot see wait on an administrator's acknowledgement; a merge still reads them.
-    if (gate.includes('code_publication_disabled')) return { ...publication, state: 'disabled' };
-    if (gate.length) return { ...publication, state: 'setup_required' };
     return publication;
   }
 
