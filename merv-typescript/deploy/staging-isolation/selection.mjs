@@ -60,7 +60,11 @@ export async function selection(main, source) {
     );
     const artifacts = (
       await main.query(
-        "SELECT id,project_id,file_refs_json::jsonb AS refs,files_json::jsonb AS files FROM merv_ts_staging.artifacts WHERE file_refs_json LIKE '%sandboxes%' ORDER BY id",
+        `SELECT id,project_id,file_refs_json AS refs,files_json AS files
+         FROM merv_ts_staging.artifacts
+         WHERE file_refs_json @> '[{"provider":"sandboxes"}]'::jsonb
+            OR file_refs_json @> '[{"provider":"sandboxes-native"}]'::jsonb
+         ORDER BY id`,
       )
     ).rows;
     const refs = [],

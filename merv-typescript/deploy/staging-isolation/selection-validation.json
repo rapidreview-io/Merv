@@ -1,0 +1,28 @@
+{
+  "base": "df78dac2216a062fa8d53f13ed2131942d9ec22b",
+  "fix": "Use JSONB containment for exact sandboxes and sandboxes-native providers instead of LIKE on JSONB.",
+  "schemaAudit": {
+    "artifacts": "Published migrations 1\u20137; files_json and file_refs_json are JSONB. Null/empty arrays and unrelated provider/string mentions covered.",
+    "fleet_allocations": "Published migrations 1\u20136; data_json is TEXT, so the existing ::jsonb cast is valid.",
+    "sandbox_native_work_captures_connections": "Exact archived published migrations 1\u20138, pinned in selection-native-schema.fixture.json; all selected/order/filter columns exercised.",
+    "sourceSandboxes": "Actual pinned Sandboxes migrations; provider ANY, exact stopped-ID set, object namespace/hash/float8 size/state and all four work-namespace expansion queries exercised."
+  },
+  "tests": {
+    "isolationPostgresPassed": 11,
+    "isolationPostgresSkipped": 0,
+    "pythonRecoveryPassed": 12,
+    "originalFailureReproduced": "Original LIKE predicate fails with PostgreSQL42883 on the real JSONB artifact table.",
+    "selection": "75 allocations,14 work rows,6 captures,1 connection,15 distinct native references plus1 legacy bare reference. All queries run against real PostgreSQL clients, no ledger adapters.",
+    "refusals": [
+      "same-count wrong runtime IDs",
+      "source object size mismatch",
+      "cross-project native connection"
+    ],
+    "immutableArtifactsUnchanged": true
+  },
+  "scope": "Local disposable PostgreSQL only. No live queries or mutations; parent owns live read-only rerun.",
+  "log": {
+    "path": "/tmp/merv-selection-suite.log",
+    "sha256": "2ec4fbd0559b2e7eb7b0e2c8e601942029a22af24592956eb33b2b8667ec20c2"
+  }
+}
