@@ -2,6 +2,7 @@ import { mapAsync, type Caller, type Transaction } from '@merv/contracts';
 import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import type {
+  BudgetStatus,
   DispatchState,
   RunnerPresence,
   Session,
@@ -19,6 +20,7 @@ import { leaseLiveness } from './liveness.js';
 import type { DispatchContext, SessionDispatch } from './dispatch.js';
 import { projectHolds, type HoldRow } from './dispatch-holds.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
+import { withholds } from './budgets.js';
 
 // Why admitted work does not move: one reading of dispatch, worded as session.stuck, the
 // project status and the Running board. SessionDispatch (dispatch.ts) runs these with itself
@@ -119,7 +121,7 @@ export interface DispatchReading {
    * operator, while the scan still offers them.
    */
   deferred: { instanceId: string; attempts: number }[];
-  /** Ready work waiting beyond quietReadySeconds; operator only. */
+  /** Ready work waiting beyond quietReadySeconds, or withheld by a budget; operator only. */
   quiet: {
     instanceId: string;
     since: string;
@@ -143,8 +145,12 @@ interface Reading {
   waiting: Map<string, WorkflowDispatchCandidate>;
   /** Targets the last machines to take them could not prepare, three closes running. */
   deferred: Map<string, Close[]>;
-  /** Ready work waiting beyond quietReadySeconds. */
-  quiet: { item: WorkflowDispatchCandidate; code: DispatchReading['quiet'][number]['code'] }[];
+  /** Ready work waiting beyond quietReadySeconds, or immediately withheld by a budget. */
+  quiet: {
+    item: WorkflowDispatchCandidate;
+    code: DispatchReading['quiet'][number]['code'];
+    budgets: BudgetStatus[];
+  }[];
   /** Why queued work does not start, in this order; nothing while nothing is queued. */
   stalls: (
     | { code: 'dispatch_disabled' }
@@ -223,7 +229,7 @@ async function readingOf(
   const read = { dispatch, fleet, runners, holds };
   if (!admissible)
     return { ...read, queued: 0, waiting: new Map(), deferred: new Map(), quiet: [], stalls: [] };
-  const { all, live: leased, queue, spent, unaccounted, asking, awaiting } = admissible;
+  const { all, live: leased, queue, budgets, asking, awaiting } = admissible;
   // A target with a live session is being tried right now, so it is not waiting on anyone.
   const waiting = new Map(
     all
@@ -262,6 +268,15 @@ async function readingOf(
     };
     const key = targetKey(item),
       step = item.role === 'operator';
+    // Project budgets are checked before candidate admission, so they are absent from
+    // candidates.spent. Read the same measured budgets and their dependency coverage here.
+    const withheld = step
+      ? []
+      : budgets.filter(
+          (budget) =>
+            withholds(budget) &&
+            (budget.instanceIds === null || budget.instanceIds.includes(item.instanceId)),
+        );
     // With dispatch off, one dispatch_disabled item says why all of them wait. Work whose agent
     // asked its owner, or waits for its compute, says so through its blocker.
     if (
@@ -270,18 +285,19 @@ async function readingOf(
       awaiting.has(key) ||
       failing.has(key) ||
       deferred.has(key) ||
-      Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now ||
+      (!withheld.length &&
+        Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now) ||
       (!step && !dispatch.enabled)
     )
       return [];
-    const code = step
-      ? 'awaiting_operator'
-      : unaccounted.has(item.instanceId)
+    const code = withheld.some((budget) => budget.exceeded.length)
+      ? 'budget_exceeded'
+      : withheld.length
         ? 'usage_unavailable'
-        : spent.has(item.instanceId)
-          ? 'budget_exceeded'
+        : step
+          ? 'awaiting_operator'
           : 'queued';
-    return [{ item, code } as const];
+    return [{ item, code, budgets: withheld.map(publicBudget) } as const];
   });
   // Why the queue does not start; where Fleet rents for this project, its machines are the
   // runners that take the work.
@@ -404,7 +420,7 @@ async function attention(
           }),
     });
   }
-  for (const { item, code } of quiet) {
+  for (const { item, code, budgets } of quiet) {
     const { instanceId, expectedRevision, label, updatedAt: since } = item;
     add({
       kind: 'ready_quiet',
@@ -413,14 +429,17 @@ async function attention(
       label,
       since,
       code,
-      why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
+      ...(budgets.length ? { budgets } : {}),
+      why: budgets.length
+        ? `${code === 'budget_exceeded' ? 'A covering project or dependency budget has reached a bound.' : 'A covering project or dependency budget cannot be judged from available usage.'} Automatic dispatch withholds this step. The clock is the record’s last revision change, not when the budget began withholding it.`
+        : 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
       next:
         code === 'awaiting_operator'
           ? 'It is an operator’s step: no runner is ever offered it. workflow.read status on the instance names the action.'
           : code === 'usage_unavailable'
-            ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. project.read usage names the budget and the unreported count; the usage arriving, or session.write budget clearing that bound, resumes it.'
+            ? 'Inspect the listed scopes with project.read usage (set instanceId for an instance budget). Restore missing session usage or resolve the dependency-closure limit. Raising a bound does not fix unavailable accounting; an admin can explicitly clear the affected bound with session.write budget if it should no longer gate work.'
             : code === 'budget_exceeded'
-              ? 'A reached budget withholds it; project.read usage shows which, and session.write budget raises or clears it.'
+              ? 'An admin can inspect the listed scopes with project.read usage (set instanceId for an instance budget) and adjust the intended bound with session.write budget for that scope. Any unavailable accounting must also be resolved. These cumulative budgets do not reset with Fleet’s daily model budget.'
               : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
     });
   }

@@ -25,11 +25,11 @@ export const sessionsToolsPlugin = {
         readOnly: true,
         summary: 'Read operations (status first) and usage/budgets.',
         description:
-          'status (dispatch, machines, sessions, waiting work and blockers; first for an operational question) and usage (what closed sessions cost, and budgets).',
+          'status (dispatch, machines, sessions, waiting work, budgets and blockers; first for an operational question) and usage (what closed sessions cost, and budgets).',
         actions: {
           status: {
             description:
-              "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
+              "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. budgets reports cumulative project/dependency limits and usage, separate from Fleet's daily modelBudget; withheld steps immediately name their covering budgets and recovery action. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
             input: z.object({}).strict(),
             was: ['system.status'],
             handler: async (caller) => await systemStatus(caller, sessions),
@@ -92,7 +92,7 @@ export const sessionsToolsPlugin = {
           },
           stuck: {
             description:
-              'Project stalls (no leased workers), with since/forSeconds/code/why/next; advice never bypasses commit guards. Kinds include idle sessions (no Merv calls for idleNoticeSeconds; heartbeat is not progress), held/failing dispatch, blocked/deferred work (checkout preparation failed on three machines), compute waits (auto-resume), quiet ready work (quietReadySeconds since revision), disabled dispatch, no runner and repeated runner refusals (refusalSeconds). At most 200 items; counts cover all; dispatch_failing/work_waiting are listed but excluded from total. next gives recovery.',
+              'Project stalls (no leased workers), with since/forSeconds/code/why/next; advice never bypasses commit guards. Kinds include idle sessions (no Merv calls for idleNoticeSeconds; heartbeat is not progress), held/failing dispatch, blocked/deferred work (checkout preparation failed on three machines), compute waits (auto-resume), ready work (immediate covering budget blocks with scope/usage/bounds; otherwise quietReadySeconds since revision), disabled dispatch, no runner and repeated runner refusals (refusalSeconds). At most 200 items; counts cover all; dispatch_failing/work_waiting are listed but excluded from total. next gives recovery.',
             input: z.object({}).strict(),
             was: ['session.stuck'],
             handler: async (caller) => await sessions.dispatch.stuck(caller),
