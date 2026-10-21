@@ -511,6 +511,11 @@ async function editClientConfig(client, dir, name, change, save = false) {
 
 /** Let Codex remove its table in a private copy, append a complete replacement, and have Codex
  *  parse and verify it before committing. Never search TOML text for a header. */
+/** The Codex table this connector writes, exactly, so it can be found and cut out again. */
+const merv = (eol) =>
+  `${eol}[mcp_servers.${JSON.stringify(SERVER_NAME)}]${eol}command = ${JSON.stringify(SHIM)}${eol}` +
+  `args = []${eol}default_tools_approval_mode = "approve"${eol}`;
+
 async function codexApproval(installing, had) {
   const committed = await editClientConfig(
     'codex',
@@ -523,23 +528,21 @@ async function codexApproval(installing, had) {
         // Codex serializes LF; normalize first so restoring CRLF cannot double a string's CR.
         fs.writeFileSync(file, before.replace(/\r\n/g, '\n'), { mode: 0o600 });
         const env = { ...process.env, CODEX_HOME: stage };
-        // Codex rewrites every server's table when it removes one, so a first install, with no
-        // Merv table to remove, leaves the file as it was and only appends Merv's.
-        if (
+        // Codex rewrites every server's table when it removes one (an empty enabled_tools list is
+        // lost, re-enabling that server's tools), so the table this connector wrote is cut out
+        // exactly; only an older registration falls back to codex mcp remove.
+        const eol = lineEnding(before);
+        const ours = merv(eol);
+        if (before.includes(ours))
+          fs.writeFileSync(file, before.replace(ours, '').replace(/\r?\n$/, '') + eol);
+        else if (
           (!installing || had !== undefined) &&
           run('codex', ['mcp', 'remove', SERVER_NAME], env).status !== 0
         )
           throw new Refusal('Codex: could not remove the old registration; config left untouched.');
-        const eol = lineEnding(before);
         let after = readPrivate(file).replace(/\r?\n/g, eol);
         if (installing) {
-          after =
-            after.trimEnd() +
-            eol +
-            eol +
-            `[mcp_servers.${JSON.stringify(SERVER_NAME)}]${eol}` +
-            `command = ${JSON.stringify(SHIM)}${eol}args = []${eol}` +
-            `default_tools_approval_mode = "approve"${eol}`;
+          after = after.trimEnd() + eol + merv(eol);
           fs.writeFileSync(file, after, { mode: 0o600 });
           const got = run('codex', ['mcp', 'get', SERVER_NAME, '--json'], env);
           const transport = parse(got.stdout)?.transport;

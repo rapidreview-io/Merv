@@ -1074,6 +1074,26 @@ test('install grants only this server approval, is idempotent, and uninstall rem
   }
 });
 
+test('reinstall and uninstall cut out the Codex table they wrote, never running codex mcp remove', async (t) => {
+  const f = await server(t);
+  const c = await connector(t, f);
+  // codex mcp remove would rewrite every table (dropping an empty enabled_tools list); here it
+  // fails outright, so any call to it fails the run.
+  const clients = fakeClients(t, c, { FAKE_CODEX_FAILURE: 'failed-remove' });
+  const dir = join(c.home, '.codex');
+  mkdirSync(dir, { mode: 0o700 });
+  const config = join(dir, 'config.toml');
+  const other = '[mcp_servers.other]\ncommand = "/bin/echo"\nenabled_tools = []\n';
+  writeFileSync(config, other, { mode: 0o600 });
+  for (const step of ['install', 'install', 'uninstall']) {
+    const result = await clients.run(step);
+    assert.equal(result.code, 0, `${step}: ${result.out}`);
+    assert.ok(readFileSync(config, 'utf8').startsWith(other), step);
+  }
+  assert.equal(readFileSync(config, 'utf8'), other);
+  assert.ok(!clients.log().includes('codex mcp remove'), clients.log());
+});
+
 test('install creates missing Claude settings and preserves an existing server allow entry', async (t) => {
   for (const existing of [undefined, {}, { permissions: { allow: ['mcp__merv'] } }]) {
     const f = await server(t);
