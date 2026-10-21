@@ -48,4 +48,20 @@ $merv$;
 CREATE TRIGGER user_keys_lineage BEFORE INSERT ON user_keys
 FOR EACH ROW EXECUTE FUNCTION user_keys_lineage_guard();
 `,
+  14: `ALTER TABLE user_keys ALTER COLUMN project_id DROP NOT NULL;
+    ALTER TABLE user_keys ADD CONSTRAINT user_keys_project_grant CHECK (
+      grant_scope = 'account' OR project_id IS NOT NULL
+    );
+    CREATE OR REPLACE FUNCTION user_keys_lineage_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.previous_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM user_keys p WHERE p.id=NEW.previous_id AND
+          p.issuer=NEW.issuer AND p.subject=NEW.subject AND p.project_id IS NOT DISTINCT FROM NEW.project_id AND
+          p.grant_scope=NEW.grant_scope AND p.label IS NOT DISTINCT FROM NEW.label AND p.revoked_at IS NOT NULL
+      ) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Rotation preserves user key ownership and grant', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;`,
 };

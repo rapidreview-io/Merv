@@ -119,7 +119,7 @@ async function run(bin: string, args: string[], env: NodeJS.ProcessEnv, login = 
               );
             }
             const id = new URL(response.headers.get('location')!).pathname.split('/').at(-1)!;
-            const callback = await oauth.consent(id, person, project.id, true);
+            const callback = await oauth.consent(id, person, true);
             if (interactive) child.stdin.write(callback + '\n');
             else await fetch(callback); // Real client's callback listener and PKCE token exchange.
           })().catch((e) => {
