@@ -57,6 +57,8 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
       })),
     },
     ...sections,
+    // Cumulative project/dependency limits are separate from Fleet's daily modelBudget.
+    budgets: project.budgets,
     sessions: {
       live: project.liveSessionCount,
       total: project.sessionTotal,
@@ -102,6 +104,7 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
         forSeconds: item.forSeconds,
         code: safe(item.code),
         attempts: item.attempts,
+        ...(item.budgets ? { budgets: item.budgets } : {}),
         why:
           item.kind === 'dispatch_held' || item.kind === 'dispatch_failing'
             ? 'An automatic launch failed. Read session.stuck for the detailed failure.'

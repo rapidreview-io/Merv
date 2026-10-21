@@ -34,7 +34,7 @@ test('published client bundle matches source and has one remote connection per c
     undefined,
     'portable root must not shadow the supported Codex bundle',
   );
-  for (const name of ['research', 'operations', 'owners-agent'])
+  for (const name of ['research', 'operations', 'owners-agent', 'git-access'])
     assert.equal(
       clientBundle[`codex/skills/${name}/SKILL.md`],
       clientBundle[`claude-code/skills/${name}/SKILL.md`],
@@ -59,7 +59,11 @@ test('downloadable tar contains only package files; staging uses distinct names 
     `${origin}/mcp`,
   );
   assert.ok(!JSON.stringify(files).includes('experiments.rapidreview.io'));
-  assert.match(setupGuide(origin), /Git repository\nis required|No Git repository/);
+  assert.match(
+    setupGuide(origin),
+    /No project membership, project\nselection or Git repository is required/,
+  );
+  assert.match(setupGuide(origin), /ui\/account\/keys, even with no projects/);
   assert.match(setupGuide(origin), /bundle.tar.gz/);
   assert.ok(setupGuide(origin).includes('codex mcp login ' + packageName(origin)));
   assert.match(setupGuide(origin), /authenticates the plugin-bundled server/);

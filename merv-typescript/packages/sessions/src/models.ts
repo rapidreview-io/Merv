@@ -183,6 +183,8 @@ export interface StuckItem {
   forSeconds: number;
   code: string;
   attempts?: number;
+  /** Covering project/dependency budgets withholding this automatic step; not Fleet's daily limit. */
+  budgets?: BudgetStatus[];
   why: string;
   next: string;
 }

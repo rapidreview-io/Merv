@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { accountRequest } from './api';
-import { useSession } from './session';
+import { useAccount } from './session';
 
 export function ConnectConsent({ requestId }: { requestId: string }) {
-  const { project, account, chooseProject, signOut } = useSession();
+  const { account, signOut } = useAccount()!;
   const [details, setDetails] = useState<{
     clientName: string;
     redirectUri: string;
@@ -30,7 +30,7 @@ export function ConnectConsent({ requestId }: { requestId: string }) {
     try {
       const result = await accountRequest<{ redirect: string }>(
         `/oauth/requests/${encodeURIComponent(requestId)}`,
-        { method: 'POST', body: { projectId: project.id, allow } },
+        { method: 'POST', body: { allow } },
       );
       window.location.assign(result.redirect);
     } catch (e) {
@@ -52,17 +52,15 @@ export function ConnectConsent({ requestId }: { requestId: string }) {
             Return address: <code>{details.redirectUri}</code>
           </p>
           <p>
-            Selected project: <strong>{project.name}</strong>{' '}
-            <button onClick={chooseProject}>Change project</button>
-          </p>
-          <p>
             Your agent can read and act with your current permissions across your projects. It
             cannot create accounts, manage memberships or grant itself permissions. No repository is
-            required.
+            required. You can authorize before joining any projects; accessible projects update as
+            your memberships change.
           </p>
           <p>
             The client stores and refreshes its credentials. Revoke this connection in Settings →
-            Keys under “OAuth: {details.clientName}”. Sign in again after 30 days.
+            Keys (or <a href="/ui/account/keys">account keys</a>) under “OAuth: {details.clientName}
+            ”. Sign in again after 30 days.
           </p>
           {account.kind !== 'user' && (
             <p>

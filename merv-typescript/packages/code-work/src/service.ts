@@ -539,6 +539,7 @@ export class CodeService implements Code {
       ...publication,
       bases: await this.state.read((sql) => this.baseStore.records(sql, caller.projectId)),
       landing: await this.landing!.status(caller.projectId),
+      git: await this.gitRemote.syncStatus(caller),
       ...technical,
       store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
     });

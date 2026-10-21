@@ -221,21 +221,27 @@
     "areas": [
       "code"
     ],
-    "prompt": "After successful native plugin OAuth setup, follow only the published optional ordinary Git setup path. OAuth tokens are MCP-resource-bound: never reuse them for Git or silently inject a test API key. The human obtains a project-scoped user/machine key through Settings \u2192 Keys, selects a short expiry and stores it through an ordinary Git credential manager (never chat, URL, argv, transcript or a custom Merv helper). Record actual user steps, required current project role, scope/expiry metadata and native credential-manager choice without reading secrets. Use the exact remote URL from the Code page; clone/fetch, restart and fetch using persisted credentials. An authorized project administrator may push a tiny fixture README to an ordinary user branch; user keys must be denied pushes to merv-main and merv/* reserved branches. Separately verify a genuinely leased hosted worker can push its assigned branch and is denied another assigned branch. Verify immutable submission and independent review/approval commit lifecycle through normal workflow. Finally have the human revoke ONLY the dedicated Git test key and verify a fresh Git request fails while MCP OAuth still works. Never force-push, modify the default branch or provision workers. Missing published setup instructions or unaffordable permissions are blockers.",
+    "prompt": "After native plugin OAuth setup, follow the integrated git-access skill (source ed7cd6877) using the saved MCP connection and explicit projectId. Discover current project permissions: reader/reviewer can clone/fetch; producer/operator can push ordinary user branches. Mint short-lived read/write credentials with code.git_credential using an ephemeral RSA public key, decrypt only into the private Git credential-cache as the skill specifies, and clean up the cache/key directory. No Settings key, second login, private OAuth-store reads, custom helper, plaintext token file, token in URL/argv/environment/transcript or MCP bearer reuse. Inspect repository mapping, intended branch, HEAD, dirty/untracked state and existing remotes; preserve origin and upstream. Sync only authorized focused commits on the selected ordinary branch initially, at meaningful checkpoints and before cloud work; never stage unrelated or secret files. Fetch exact refs and compare local/fetched remote heads after push, retaining observation time, ahead/behind/diverged state and unsynced local files. A missing branch is a normal first push; divergence must not trigger force/reset. Verify fresh-chat rediscovery and automatic ephemeral credential renewal. Report user-branch freshness separately from the reviewed research baseline; an authorized operator prepares exact observed head/current expected main for independent integration review. Preserve running/completed work pins. Verify reserved-ref denial and separately a genuinely leased worker assigned-branch push/wrong-branch denial without impersonation. With operator-coordinated changes to only synthetic access, verify derived credential denial after source-grant/membership revocation and role-change invalidation, then use native sign-in only when the account grant requires it. Never provision workers or force-push. Missing deployed code.git_credential or required policy grants are explicit blockers; the historical candidate-4530 matrix does not inventory this newer tool.",
     "checks": [
-      "published_optional_setup",
-      "human_key_creation",
-      "credential_scope_role_expiry",
-      "ordinary_credential_manager_no_merv_helper",
-      "persisted_clone_fetch",
-      "owner_user_branch_push",
-      "owner_reserved_branch_denied",
+      "published_git_skill",
+      "saved_oauth_derived_credential",
+      "current_project_permissions",
+      "ephemeral_cache_secret_boundary",
+      "clone_fetch_and_renewal",
+      "producer_operator_user_branch_push",
+      "selected_branch_freshness",
+      "origin_upstream_preserved",
+      "dirty_state_reported",
+      "reserved_branch_denied",
       "worker_assigned_branch",
       "worker_wrong_branch_denied",
+      "reviewed_baseline_separate",
       "immutable_submission",
       "approval_commit",
-      "git_revocation_denial",
-      "oauth_still_works"
+      "source_grant_membership_revocation_denial",
+      "role_change_invalidates",
+      "fresh_chat_rediscovery",
+      "credential_cleanup"
     ],
     "initialStatus": "not_run"
   },

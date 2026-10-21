@@ -28,12 +28,16 @@ reuse it. Client versions without plugin support need updating or
 the documented direct remote MCP fallback; that fallback alone has no skills.
 
 Sign in or create an account through the browser's normal identity flow (Google
-sign-in can create an account when enabled). Create/join a project on the website,
-select it, and approve the connection. Neither account creation nor repository
-setup is a job for the agent. Research tools work without Git.
+sign-in can create an account when enabled), then approve account access. No project
+membership or selection is required. The connection follows current project permissions;
+new memberships appear without reconnecting and removed memberships lose access.
+If the project list is empty, create/join a project on the website and list again.
+Research tools work without Git. Revoke access at `/ui/account/keys`, even with zero projects.
 
 In a fresh chat, “use Merv” loads the skills; the agent lists projects and reads
-the selected project's brief and workflow status. If needed, reconnect through
+the intended project's brief and workflow status, passing its explicit `projectId`.
+Ask the person which project when ambiguous; never silently reuse another chat's selection.
+Switch between permitted projects without reconnecting. If needed, reconnect through
 the client's sign-in action. Never put a token in chat or plugin files.
 
 See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and
@@ -42,3 +46,24 @@ See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and
 Edit skills in `claude-code/skills/` and copy to `codex/skills/`. After editing any
 bundle file, run `npm run build:clients` in `merv-typescript/`. The generated
 server-side bundle is checked against the originals in the bundle tests.
+
+
+Terminal Git uses the same saved account connection: the git-access skill calls
+`code.git_credential` with an ephemeral RSA public key and explicit projectId, then
+decrypts the reply directly into Git's built-in memory credential cache. No Settings
+key, manual token copy, second login, Merv daemon or helper installation is needed.
+The agent renews ten-minute credentials through MCP for later Git batches. Native
+Git outside an active agent cannot renew through the client's private MCP session.
+Read access follows current membership; producer/operator users can push user branches, while readers/reviewers retain read-only
+access. All protected-ref and repository admission checks remain. Revoking the account grant revokes derived access.
+
+
+For code-linked work, the installed agents sync the selected branch by default:
+add/reuse a separate Merv remote, preserve origin, push existing and newly committed
+work, then fetch/compare exact heads before reporting success or starting cloud work.
+Other branches, ignored files and unrelated uncommitted changes are not swept in.
+Divergence and dirty/local-only inputs are reported explicitly. `code.read` status
+exposes live user-branch heads, observation time and the research baseline commit.
+User-branch sync does not advance the baseline: reviewed integration governs new
+baseline code, and running/completed experiments retain their pinned commits.
+Synchronization runs while the agent is active, with no offline-daemon promise.

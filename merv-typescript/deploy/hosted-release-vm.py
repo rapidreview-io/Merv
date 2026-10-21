@@ -67,11 +67,14 @@ GATES = {  # name: (docker run flags, mount targets, command, expected gate, rep
     'linux-isolation-probe-gate.mjs': (['--entrypoint', '/usr/local/bin/node'],
                                        ['/opt/merv/runner/supervisor.mjs', '/opt/merv/runner/smoke-supervisor.mjs'],
                                        '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry', 1),
-    'linux-review-gate.py': ([*REVIEW_MOUNTS, '--entrypoint', '/usr/bin/python3.11'],
+    'linux-review-gate.py': ([*REVIEW_MOUNTS, '--tmpfs', '/run/merv-runtime:mode=0700', '--entrypoint', '/usr/bin/python3.11'],
                               ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-review-readonly', 1),
 }
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
+REVIEW_CHECKS = ('passed', 'actualCodexShell', 'readOnlyProfileWithScratch', 'snapshotUnchanged',
+                'planResultsTaskReviewers', 'sameHostReset', 'credentialReadsDenied',
+                'gitWritesAndPrivilegeEscapesDenied', 'protectedTargetsPreserved')
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STAGING_PROVIDERS = ('cloudflare-fleet-staging', 'cloudflare-fleet-staging-large')
 STEPS = {'replace_predeploy', 'propagation_ready', 'staging_apps', 'staging_preflight', 'staging_switch', 'staging_prepare', 'staging_accept', 'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
@@ -642,6 +645,8 @@ def gate_passed(output, expected, lines):
                 reports.append(report)
     return len(reports) == lines and all(
         r['gate'] == expected and r.get('report', {'ok': True}).get('ok') is True and
+        (expected != 'linux-review-readonly' or
+         all(r.get(key) is True for key in REVIEW_CHECKS) and all(r.get(key) is False for key in GATE_FALSE)) and
         all(v is (k not in GATE_FALSE) for k, v in r.items() if isinstance(v, bool) and k not in GATE_FACTS)
         for r in reports)
 
@@ -1061,10 +1066,12 @@ class Step:
                 environment = ['--name', profile] if profile else []
                 if profile and 'SYS_ADMIN' in flags:
                     environment += ['--security-opt', 'apparmor=' + profile]
-                if name == 'linux-workflow-gate.py':
+                if name in ('linux-workflow-gate.py', 'linux-review-gate.py'):
                     environment += ['--security-opt', 'seccomp=' + gate_seccomp(self.run / 'gate-seccomp.json')]
                 gate = self.run / 'source/scripts/hosted-runner' / name
                 mounts = [part for target in targets for part in ('-v', f'{gate}:{target}:ro')]
+                if name == 'linux-review-gate.py':
+                    mounts += ['-v', f'{self.run}/bundle/review-launch-fixture.mjs:/opt/merv/runtime/review-launch-fixture.mjs:ro']
                 out = run(['docker', 'run', '--rm', '--network', 'none', *environment, *flags, *mounts,
                            build['candidate'], command], timeout=300, log=self.run / f'gate-{name}.log').decode()
                 need(gate_passed(out, expected, lines), 'gate_failed: ' + name)
@@ -1426,10 +1433,26 @@ class Step:
 
     def finish(self, arg):
         """Closes the run: the new pins (on success), the drain's hold, the guard, the backups, the marker."""
+        if self.plan.get('deferStaging') and arg.get('result') == 'pass':
+            current=(arg.get('state') or {}).get('current') or {}
+            canary=read(self.run / 'canary.json') or {}
+            need(not self.plan.get('cutover') and not self.plan.get('stagingCutover')
+                 and not (read(self.run / 'progress.json') or {}).get('stagingPropagation'),
+                 'deferral cannot erase staging propagation ownership')
+            need(current.get('image') and current.get('releaseId') and canary.get('accepted') is True
+                 and canary.get('image') == current['image'] and canary.get('releaseId') == current['releaseId'],
+                 'staging deferral requires the actual accepted production canary')
+            deferred={'status':'deferred','reason':self.plan['deferStaging'],'sourceRun':self.run.name,
+                      'image':current['image'],'releaseId':current['releaseId']}
+            need(arg['state'].get('staging') == deferred, 'staging deferral receipt mismatch')
+            atomic(self.run / 'staging-deferred.json',json.dumps(deferred).encode())
         if not self.plan.get('cutover') and owner() in ('', self.run.name):
             with authorized(self.run.name):
                 unhold()
         if arg.get('state'):
+            previous=read(HOME / 'state.json') or {}
+            if 'staging' not in arg['state'] and (previous.get('staging') or {}).get('status') == 'deferred':
+                arg['state']={**arg['state'],'staging':previous['staging']}
             current=arg['state'].get('current') or {}
             canary=read(self.run / 'canary.json') or {}
             if (arg.get('result') in ('pass','rechecked','abandoned') and current.get('verified') is not False

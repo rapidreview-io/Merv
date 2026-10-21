@@ -182,8 +182,8 @@
   },
   "code.read": {
     "group": "18-git-observe",
-    "fixture": "Normal authenticated Git setup proven separately, accepted fixture unit and historical operation receipt if available.",
-    "verify": "Ordinary git show/log/ref hashes plus independent workflow/review acceptance. No OAuth token for Git and no privileged injected key.",
+    "fixture": "Saved native MCP OAuth and current project permissions; follow the integrated git-access skill for ephemeral code.git_credential access. No manual key setup. Accepted fixture unit and historical operation receipt if available.",
+    "verify": "Ordinary git show/log/ref hashes plus independent workflow/review acceptance. Use only OAuth-derived Git credentials via the published ephemeral memory-cache flow; never reuse an MCP bearer token or inject a privileged key. Record selected branch, local/fetched remote heads, observation time, dirty state and baseline separately.",
     "steps": {
       "files": "Read root and tiny fixture README at exact accepted commit; compare ordinary Git bytes.",
       "log": "Read bounded log for fixture path/commit and compare parents/OIDs with native Git.",
@@ -805,11 +805,11 @@
   },
   "sandboxes.access": {
     "group": "36-worker-ssh",
-    "fixture": "Genuinely assigned authorized worker and existing run-owned sandbox; one ephemeral SSH key pair generated privately. External agent discovery must exclude credential issuance.",
-    "verify": "Assigned worker connects through ordinary SSH and verifies fixture checksum; separate observer retains certificate expiry/sandbox scope metadata only, never private key/certificate/token bytes.",
+    "fixture": "Existing run-owned sandbox and UI-authorized identity, or a genuine worker whose actual assignment lease policy explicitly grants sandboxes.access; one private ephemeral SSH key. External discovery must exclude credential issuance. Assignment alone and permissive metadata fixtures do not prove authorization.",
+    "verify": "Authorized UI identity or explicitly granted leased worker connects through ordinary SSH and verifies fixture checksum. Retain actual discovery/lease-policy evidence and expiry/sandbox scope metadata only; never private key/certificate/token bytes. Without the grant, record blocked rather than a positive worker pass.",
     "steps": {
-      "gateway": "Worker reads gateway/host-key metadata and compares pinned host identity; no disabled host-key verification.",
-      "certificate": "Authorized worker requests at most 300-second certificate for exact allocated test sandbox and its ephemeral public key; verify only scoped host access and expiry. External/Pi conversation must be denied; no owner-injected credential."
+      "gateway": "On the authorized surface, read gateway/host-key metadata and compare pinned host identity; no disabled host-key verification.",
+      "certificate": "Only with actual UI authorization or explicit worker lease-policy grant, request at most 300-second certificate for the allocated test sandbox and ephemeral public key; verify scope and expiry. External agent and ungranted worker issuance must be denied; no owner-injected credential."
     }
   }
 }

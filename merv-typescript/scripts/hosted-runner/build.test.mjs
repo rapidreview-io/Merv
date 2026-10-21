@@ -53,7 +53,7 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     ])
       assert.equal(compiled[relative], hash(join(merv, relative)));
 
-    // Every emitted file reaches the image; hosted-release.mjs builds exactly this Dockerfile.
+    // Only the launcher fixture and hashes stay outside the runtime image.
     const dockerfile = readFileSync(join(here, 'Dockerfile'), 'utf8');
     const copied = [...dockerfile.matchAll(/^COPY (?!--from)(.+) \S+$/gm)].flatMap((m) =>
       m[1].split(' ').filter((word) => !word.startsWith('--chmod=')),
@@ -68,9 +68,11 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
       .filter(Boolean)
       .map((p) => p.slice(2));
     assert.deepEqual(
-      emitted.filter((p) => p !== 'input-hashes.json').sort(),
+      emitted.filter((p) => !['input-hashes.json', 'review-launch-fixture.mjs'].includes(p)).sort(),
       [...new Set(copied)].sort(),
     );
+    assert.ok(existsSync(join(bundle, 'review-launch-fixture.mjs')));
+    assert.ok(!copied.includes('review-launch-fixture.mjs'));
     assert.match(dockerfile, /^FROM node:22\.19\.0-bookworm-slim@sha256:[0-9a-f]{64} AS pi-deps$/m);
     assert.match(dockerfile, /npm ci --omit=dev --ignore-scripts --engine-strict/);
     assert.match(dockerfile, /COPY --from=pi-deps \/opt\/merv\/pi\/node_modules/);

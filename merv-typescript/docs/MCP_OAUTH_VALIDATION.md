@@ -14,7 +14,8 @@ combined deployment and real production-agent acceptance.
   HTTP loopback callbacks, authorization-code flow with mandatory S256 PKCE,
   response `state` and `iss`, and explicit `resource` binding. CIMD is not advertised.
 - Existing browser identity sign-in leads to `/ui/connect/<request-id>`. The
-  existing website handles project creation/invitation acceptance and selection.
+  consent page is account-wide and needs no project membership or selection.
+  `/ui/account/keys` permits revocation even with zero projects.
   Consent displays the self-reported client name and callback address, requires
   a human identity bearer plus same-origin POST, and cannot be framed.
 - Opaque access and refresh tokens are hashed at rest. Access lasts one hour;
@@ -157,7 +158,7 @@ The test-only app-server authentication fixture has been removed. This verifies
 the terminal command, not the complete URL-only human onboarding experience:
 consent is still supplied by the synthetic test person. In production, keep the
 native command running, open its authorization URL, sign in/create an account,
-create/join and select a project, review and approve consent, and wait for the
+review and approve account consent, and wait for the
 client's success message. Then perform the production reads and fresh-chat check.
 
 Official documentation supports [native MCP OAuth login](https://developers.openai.com/codex/mcp).
@@ -250,7 +251,8 @@ its private configuration and database schema. Never point it at production.
 3. In isolated **real** Codex and Claude configurations, follow only the published
    URL, install the plugin, and finish browser sign-in. A human must choose/sign
    into their account and explicitly authorize the displayed client. New users
-   must create/join a project on the website; do not give the agent passwords,
+   may authorize with zero projects; create/join later and list again without reconnecting.
+   Do not give the agent passwords,
    email codes, tokens or account-administration credentials.
 4. Verify permitted reads and reversible domain writes (tasks, experiments,
    papers/artifacts as appropriate) with and without a Git repository. Verify
@@ -275,3 +277,106 @@ its private configuration and database schema. Never point it at production.
 Installed-client help was also checked. In this Codex build `mcp add --url` can
 start authentication immediately. Claude's `mcp login --no-browser` still requires
 a terminal for pasting the callback; it is not a noninteractive bypass of consent.
+
+
+## Account consent without a project (local regression checks)
+
+Scope migration 14 permits a null issuance project only for account grants; existing
+key rows and migration texts are retained. OAuth uses verified human identity to issue
+an account delegation. Public machine-key issuance still requires a project membership.
+Account grants always require an explicit `projectId` for project operations. Issuance
+and revocation of unanchored account delegations remain recorded in retained key rows
+and the credential ledger; they do not invent a project event or an actor.
+
+The PostgreSQL OAuth tests cover zero-project browser consent, an empty project list,
+new memberships appearing in the same grant, producer/reader A→B→A switching, missing
+and arbitrary project rejection, immediate membership loss, refresh with zero projects,
+and owner revocation after the last membership disappears. A forward-upgrade test boots
+scope v13 with a machine key and project-anchored OAuth grant, applies v14, verifies
+unchanged key rows and preserved access constraints, then revokes the existing grant.
+Existing PKCE, replay, expiry, resource binding, machine-key and credential tests remain.
+
+The rendered browser tests open consent and `/ui/account/keys` with zero projects,
+authorize without a project field, and revoke a connection without project-shell reads.
+The account key page is also linked from the project chooser. Plugin version 0.5.2
+updates both clients' skills and fresh-chat guidance. These checks use local fixtures;
+production rollout and real-client consent validation of this change remain release checks.
+
+## Git through the saved native account connection
+
+`code.git_credential` is a non-read-only core MCP tool, unavailable to leased workers.
+It accepts explicit projectId, a 2048/3072/4096-bit RSA SPKI public key, and read/write
+mode. It requires a live user-key membership; write mode follows project write permission for user branches. It stores only a token hash and the source caller, project,
+mode and ten-minute expiry in the existing Git credential table. No schema change
+is needed. The response carries an RSA-OAEP-SHA256 ciphertext, never a bearer.
+
+The 0.5.4 git-access skill generates an ephemeral local key pair, sends only the
+public key through MCP, and decrypts directly to Git's native credential-cache over
+stdin. The private key is removed. Git commands use a private cache socket,
+credential.useHttpPath and disabled redirects; credentials are absent from remotes,
+command arguments, environment variables, plaintext files and model/tool output.
+Both bundled clients follow the same workflow with Python 3, OpenSSL and native Git.
+No Merv helper installation or native-client OAuth store access is involved.
+
+Git requests and each push authorization recheck source-key liveness and current
+membership, mode and expiry. Role replacement invalidates the old membership-bound
+credential. Source OAuth refresh preserves access; source-grant revocation rejects
+all derived credentials. Project switches mint a separate path-bound credential
+with the same account connection. Worker/reviewer assignment grants and all push
+admission, reserved refs, generation fencing and machine/CI keys are unchanged.
+
+The agent renews before later Git batches or after authentication expiry, through
+its saved native MCP connection. Standalone Git outside an active authenticated
+agent cannot renew through that client's private connection; doing so would require
+a separate helper or OAuth-store integration. Expiry/revocation of the account grant
+itself still requires the native client's normal sign-in flow.
+
+Local regression coverage includes actual MCP OAuth minting; encrypted-only tool
+responses/call logs; native credential-cache clone and push; protected-ref rejection;
+refresh/renewal; source revocation; A→B→A project minting and credential isolation;
+read-only credentials; role downgrade/removal; expiry; invalid/weak recipient keys;
+and refusal of worker, managed and actor-only callers. The exact published Python
+snippets are executed against an encrypted fixture and native Git cache, checking
+path separation and private-key removal. Real installed-client execution against
+the deployed release remains a release validation step.
+
+Implementation validation on integration base `c6418544e`: the focused Git/bundle
+run passed 5/5 checks, including all three new account-Git tests. The broader
+Git/writer/noun/compatibility run passed 75/77. Both failures are application startup
+failures for `knowledge-tools` in `tool-compat.test.ts`; rerunning that file with the
+unchanged integration-base Git implementation reproduces both. Server build and
+typecheck pass. This inherited startup failure is a separate release check, not a
+claim that the full application suite is green.
+
+
+## Default active Git synchronization
+
+The follow-up expands user-owned credential push admission from admin to project
+write permission: operators already worked; producer members now work too. Reader
+and reviewer memberships remain read-only. Independent actor credentials keep the
+previous admin rule, and assigned worker grants keep the separate fenced path.
+Ordinary user refs still reject protected refs, deletion and non-fast-forward writes.
+
+`code.read status.git` reads current refs directly and reports the Git remote path,
+observed user-branch heads, observation time, baseline OID, reviewed-integration policy,
+and truncation. It explicitly marks local working-tree state unknown; agents combine
+that with local status and fetched ahead/behind counts to report freshness. No parallel
+sync state, GitHub integration or background process is added.
+
+The native regression now runs as a producer and pushes two successive user-branch
+commits, verifies the remote head and status, preserves a second agent branch and
+origin, rejects forced rollback/deletion/protected refs, and leaves local uncommitted
+files untouched. The baseline and an active work unit's non-null base pin are unchanged.
+Both reader and reviewer memberships are tested against credential minting and reads.
+The existing baseline integration/review mechanism remains responsible for advancing
+new research work; existing work is never retargeted by branch synchronization.
+
+Follow-up validation: 36 sync/baseline/status/bundle tests and 48 native-Git/writer
+fence tests passed. Actual MCP initialize responses now advertise active sync and
+route direct clients to the Git skill in `/connect/bundle.json`. Publication checks
+pass their three isolated schema/compatibility cases; the full application listing
+measurement still stops at the inherited `knowledge-tools` startup failure above.
+The metadata fixture changes only the new credential tool and `code.read`'s changed
+status declaration. All worker hashes and unrelated schemas/hashes are preserved;
+the historical total and 25% reduction threshold are unchanged. Full application
+inventory measurement must be rerun with the separate startup fix before release.

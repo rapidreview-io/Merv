@@ -23,7 +23,7 @@ interface KeyRow {
   id: string;
   issuer: string;
   subject: string;
-  project_id: string;
+  project_id: string | null;
   grant_scope: UserKey['grantScope'];
   label: string | null;
   token_hash: string;
@@ -227,6 +227,29 @@ export class UserKeys {
     return { key, token };
   }
 
+  /** Internal OAuth issuance: verified account identity, with no project authority implied.
+   * The retained key and credential ledger record issuance/revocation without a project event. */
+  async createAccountDelegation(
+    principal: Principal,
+    input: { label: string; expiresAt: string },
+    transaction: Transaction,
+  ): Promise<IssuedUserKey> {
+    const human = await this.members.human(principal, transaction);
+    const time = this.time();
+    return this.issue(
+      transaction,
+      {
+        owner: { issuer: human.user.issuer, subject: human.user.subject },
+        projectId: null,
+        grantScope: 'account',
+        label: input.label,
+        expiresAt: expiry(input.expiresAt, time),
+        previousId: null,
+      },
+      time,
+    );
+  }
+
   async create(
     principal: Principal,
     input: {
@@ -351,13 +374,14 @@ export class UserKeys {
         { ...hydrate(previous), expiresAt, previousId: previous.id },
         time,
       );
-      await this.state.appendEvent(tx, {
-        projectId: previous.project_id,
-        actorId: await this.ownerActor(tx, previous),
-        type: 'actor.key_rotated',
-        subjectId: issued.key.id,
-        data: { previousId: previous.id, grantScope: issued.key.grantScope, expiresAt },
-      });
+      if (previous.project_id !== null)
+        await this.state.appendEvent(tx, {
+          projectId: previous.project_id,
+          actorId: await this.ownerActor(tx, previous),
+          type: 'actor.key_rotated',
+          subjectId: issued.key.id,
+          data: { previousId: previous.id, grantScope: issued.key.grantScope, expiresAt },
+        });
       return issued;
     });
   }
@@ -392,19 +416,20 @@ export class UserKeys {
       // only one revoked in both is left as it is.
       const before = await this.ledger.retire('user-key', key, tx);
       if (key.revoked_at !== null && before?.revokedAt !== null) continue;
-      ownerActorId ??= await this.ownerActor(tx, selected);
+      if (key.project_id !== null) ownerActorId ??= await this.ownerActor(tx, selected);
       await tx.run(
         'UPDATE user_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
         time,
         key.id,
       );
-      await this.state.appendEvent(tx, {
-        projectId: key.project_id,
-        actorId: ownerActorId,
-        type: 'actor.key_revoked',
-        subjectId: key.id,
-        data: { rootKeyId: selected.id, revokedAt: time },
-      });
+      if (key.project_id !== null)
+        await this.state.appendEvent(tx, {
+          projectId: key.project_id,
+          actorId: ownerActorId!,
+          type: 'actor.key_revoked',
+          subjectId: key.id,
+          data: { rootKeyId: selected.id, revokedAt: time },
+        });
     }
   }
 }

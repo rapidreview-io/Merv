@@ -166,6 +166,24 @@ test('a gate passes only when every report line passes', () => {
   );
   assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
   assert.equal(passed(workflow({ workHostStepRan: false }), dispatch), false);
+  const reviewChecks = py('print(json.dumps(vm.REVIEW_CHECKS))');
+  const review = {
+    gate: 'linux-review-readonly',
+    ...Object.fromEntries(reviewChecks.map((key) => [key, true])),
+    actualProtectedWorkflow: false,
+    cloudflareEvidence: false,
+  };
+  assert.equal(passed(JSON.stringify(review), 'linux-review-gate.py'), true);
+  for (const key of [...reviewChecks, 'actualProtectedWorkflow', 'cloudflareEvidence']) {
+    const missing = { ...review };
+    delete missing[key];
+    assert.equal(passed(JSON.stringify(missing), 'linux-review-gate.py'), false, key);
+    assert.equal(
+      passed(JSON.stringify({ ...review, [key]: !review[key] }), 'linux-review-gate.py'),
+      false,
+      key,
+    );
+  }
 });
 
 test('inquiry and review gates allow root mount setup while retaining Docker seccomp', () => {
@@ -208,13 +226,18 @@ print(json.dumps(calls))`);
   assert.equal(gates.length, 4);
   assert.deepEqual(
     gates.map((command) => command.includes('seccomp=/run/gate/gate-seccomp.json')),
-    [false, true, false, false],
+    [false, true, false, true],
   );
   for (const command of gates) {
     assert.equal(command[command.indexOf('--name') + 1], profile);
     assert.equal(command.includes(`apparmor=${profile}`), command.includes('SYS_ADMIN'));
     assert.ok(!command.includes('--privileged') && !command.includes('seccomp=unconfined'));
   }
+  assert.ok(
+    gates[3].includes(
+      '/run/gate/bundle/review-launch-fixture.mjs:/opt/merv/runtime/review-launch-fixture.mjs:ro',
+    ),
+  );
   assert.deepEqual(rest.slice(4), [
     [['docker', 'rm', '-f', profile], null],
     [['apparmor_parser', '--skip-cache', '--remove'], add[1]],
@@ -1847,4 +1870,59 @@ except RuntimeError:refused.append('disabled')
 print(json.dumps({'passed':passed,'refused':refused}))`);
   assert.equal(result.passed.requiredPlugins.length, 7);
   assert.equal(result.refused.length, 8);
+});
+
+test('host deferral receipt requires accepted exact-image canary before closing ownership', () => {
+  const result = py(`${scratch}
+vm.HOME=t/'home';vm.HOME.mkdir(exist_ok=True)
+vm.owner=lambda:r.name
+vm.unhold=lambda:None
+vm.subprocess.run=lambda *a,**k:None
+(vm.HOME/'active').write_text(r.name)
+plan={'deferStaging':'Staging fenced'}
+step=vm.Step(r,plan)
+current={'image':'image-new','releaseId':'release-new'}
+staging={'status':'deferred','reason':plan['deferStaging'],'sourceRun':r.name,**current}
+arg={'result':'pass','state':{'current':current,'staging':staging}}
+refused=[]
+for canary in ({},{'accepted':False,**current},{'accepted':True,'image':'wrong','releaseId':'release-new'}):
+ vm.atomic(r/'canary.json',json.dumps(canary).encode())
+ try:step.finish(arg)
+ except RuntimeError:refused.append(True)
+ assert (vm.HOME/'active').exists() and not (r/'staging-deferred.json').exists()
+vm.atomic(r/'canary.json',json.dumps({'accepted':True,**current}).encode())
+vm.atomic(r/'progress.json',b'{"stagingPropagation":true}')
+try:step.finish(arg)
+except RuntimeError:refused.append(True)
+assert (vm.HOME/'active').exists()
+vm.atomic(r/'progress.json',b'{}')
+original_atomic=vm.atomic
+def fail_receipt(path,*args):
+ if path.name=='staging-deferred.json':raise OSError('durability failure')
+ return original_atomic(path,*args)
+vm.atomic=fail_receipt
+try:step.finish(arg)
+except OSError:refused.append(True)
+assert (vm.HOME/'active').exists() and not (vm.HOME/'state.json').exists()
+vm.atomic=original_atomic
+step.finish(arg)
+print(json.dumps({'refused':len(refused),'receipt':vm.read(r/'staging-deferred.json'),'state':vm.read(vm.HOME/'state.json'),'closed':not (vm.HOME/'active').exists()}))`);
+  assert.equal(result.refused, 5);
+  assert.equal(result.closed, true);
+  assert.deepEqual(result.receipt, result.state.staging);
+});
+
+test('host state refresh cannot drop an outstanding staging deferral', () => {
+  const result = py(`${scratch}
+vm.owner=lambda:'';vm.unhold=lambda:None;vm.subprocess.run=lambda *a,**k:None
+old={'status':'deferred','reason':'Storage pending','sourceRun':'earlier','image':'old-image','releaseId':'old-release'}
+vm.atomic(vm.HOME/'state.json',json.dumps({'current':{'image':'old-image'},'staging':old}).encode())
+step=vm.Step(r,{})
+for status in ['current','rechecked','rechecked, canary failed','pass']:
+ step.finish({'result':status,'state':{'current':{'image':'new-image'},'inputs':[]}})
+ assert vm.read(vm.HOME/'state.json')['staging']==old
+print(json.dumps(vm.read(vm.HOME/'state.json')))`);
+  assert.equal(result.current.image, 'new-image');
+  assert.equal(result.staging.status, 'deferred');
+  assert.equal(result.staging.sourceRun, 'earlier');
 });

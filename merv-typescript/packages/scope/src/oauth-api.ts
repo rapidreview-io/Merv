@@ -66,12 +66,9 @@ export function oauthRoutes(
             throw new OAuthError('access_denied', 'Consent must come from the Merv website', 403);
           const verified = await identity.verify(r.bearer());
           const principal = await oauth.scope.members.acceptVerifiedIdentity(verified);
-          const input = await r.json(
-            z.object({ projectId: z.string().min(1).max(200), allow: z.boolean() }).strict(),
-            4096,
-          );
+          const input = await r.json(z.object({ allow: z.boolean() }).strict(), 4096);
           return {
-            redirect: await oauth.consent(consent[1]!, principal, input.projectId, input.allow),
+            redirect: await oauth.consent(consent[1]!, principal, input.allow),
           };
         }
       }

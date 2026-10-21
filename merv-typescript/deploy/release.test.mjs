@@ -525,3 +525,52 @@ ${guard}`], { cwd: dir, encoding: 'utf8' });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 });
+
+test('expected image gates the built immutable ID before candidate execution and live mutations', () => {
+  const expectedImage = 'sha256:' + 'a'.repeat(64);
+  for (const expectation of [expectedImage, undefined]) {
+    const job = render('node:test', 'https://example.test', true)({
+      release: 'test', archiveSha256: 'b'.repeat(64), expectedImage: expectation,
+    });
+    const start = job.indexOf('docker build --platform');
+    const end = job.indexOf('# The served UI');
+    assert.ok(start > 0 && end > start);
+    // All live mutations and candidate startup remain downstream of the executed gate.
+    for (const mutation of ['cp -rn ui/assets/', 'docker stop -t 60', 'touch candidate-started']) {
+      assert.ok(job.indexOf(mutation) > end, mutation);
+    }
+    for (const actual of [expectedImage, 'sha256:' + 'c'.repeat(64)]) {
+      const dir = mkdtempSync(join(tmpdir(), 'merv-expected-image-'));
+      try {
+        const result = spawnSync('bash', ['-c', `set -euo pipefail
+IMG=mutable-tag; SANDBOXES_TS_IMAGE=unused
+docker() {
+  case "$1" in
+    build) return 0 ;;
+    image) echo '${actual}' ;;
+    run) echo "$*" >> executed ;;
+    *) return 91 ;;
+  esac
+}
+${job.slice(start, end)}
+echo reached > live-mutations
+`], { cwd: dir, encoding: 'utf8' });
+        const matches = !expectation || expectation === actual;
+        assert.equal(result.status, matches ? 0 : 1, result.stderr);
+        assert.equal(existsSync(join(dir, 'live-mutations')), matches);
+        assert.equal(existsSync(join(dir, 'executed')), matches);
+        if (matches) assert.match(readFileSync(join(dir, 'executed'), 'utf8'), new RegExp(actual));
+        else assert.match(result.stderr, /expected-image mismatch.*Main and served UI untouched/);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    }
+  }
+});
+
+test('new uploads freeze expected image in the saved job; resume only observes that job', () => {
+  const upload = source.slice(source.indexOf('function upload'), source.indexOf('function waitForVm'));
+  assert.match(upload, /remoteJob\(\{ release, archiveSha256, expectedImage \}\)/);
+  assert.match(upload, /cat > \$\{rel\}\/release-job.sh/);
+  assert.match(source, /const local = resume \|\| retry \? null : packageSource\(\)/);
+  assert.match(source, /if \(local\) upload\(local\)/);
+  assert.match(source, /const vm = waitForVm\(release, retryDirectory\)/);
+});

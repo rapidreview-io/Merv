@@ -32,13 +32,16 @@ connector, proxy or daemon. Public plugin-directory publication is separate.
 Tell users to read `/connect/agent.md` or open `/connect`. Download the provided
 plugin archive, extract into a persistent user-owned directory, add that directory
 as a marketplace, install Merv, and connect with browser sign-in. The website
-handles account and project creation/joining before consent. Git is optional.
+handles account sign-in before consent. Project membership and selection are not required;
+a verified person with zero projects can authorize. Git is optional.
 
-The OAuth grant delegates current account memberships; selection identifies the
-initial project and agents pass `projectId` explicitly. It does not grant account
+The OAuth grant delegates current account memberships, including those added after
+consent. Agents list projects and pass `projectId` explicitly for project operations;
+there is no sticky default. Ask which project when ambiguous, including in fresh chats. It does not grant account
 administration. Access tokens expire after an hour. Refresh tokens rotate on use;
 reuse revokes the whole grant. The grant has a 30-day absolute lifetime. Revocation
-is available through RFC 7009 and Settings → Keys (`OAuth: <client name>`).
+is available through RFC 7009, Settings → Keys, and `/ui/account/keys`
+(`OAuth: <client name>`), including after the last membership is removed.
 Clients own credential persistence; Merv never copies credentials into skills or
 asks for tokens in a conversation. OAuth bearers are accepted only on `/mcp`.
 
@@ -99,3 +102,31 @@ the flattened build layout, bundle regeneration, actual setup handlers and both
 production/nonproduction plugin archives. It also verifies source hashes, omission
 of dirty/untracked inputs and credential-shaped files, and that a committed skill
 change changes the release content hash.
+
+For normal agent Git access, use plugin 0.5.4's git-access skill and the
+`code.git_credential` MCP tool. Do not require a Settings key or token copy-paste.
+The already authenticated agent mints ten-minute access, encrypted to an ephemeral
+local public key, and supplies it to Git's built-in memory credential cache over
+stdin. It renews through MCP for later batches. User-branch pushes follow project write authority (producer/operator);
+reader/reviewer roles can fetch. Independent machine actors retain their previous
+admin boundary; assigned workers retain their own branch/lease fences. The documented local path requires Python 3, OpenSSL and Git
+credential-cache. No Merv daemon/helper is installed. An unattended terminal Git
+process cannot renew through a native client's private MCP session without an
+active agent; this release does not claim a universal Git OAuth helper.
+
+Before release acceptance, use both real installed native clients to follow the
+published skill with their saved OAuth grants: clone/fetch, an authorized reversible
+user-branch push, fresh-chat renewal, and a project switch. Confirm no plaintext
+credential in tool output, command arguments, remote URLs or config. The machine/CI
+key path remains supported, but is not the default user onboarding path.
+
+
+Code-linked work now follows the active sync workflow in research, owners-agent and
+git-access: preserve origin, sync the selected user branch and verify the fetched
+head after each meaningful commit and before cloud work. `code.read status.git`
+reports live user branches and the baseline without storing a second sync ledger.
+Server status cannot know local dirty files. Baseline advancement remains a reviewed
+integration; no automatic branch-follow switch or rewriting of experiment pins is
+introduced. Validate a producer pushing two successive commits, separate agent
+branches, read-only refusal, divergence/deletion refusal, baseline drift reporting,
+and unchanged active work pins before live release.

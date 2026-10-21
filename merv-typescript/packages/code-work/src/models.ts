@@ -377,6 +377,17 @@ export interface CodeBaseControlInput {
 }
 
 export interface CodeProjectStatus {
+  /** Live remote refs observed for sync; this does not describe any user's local working tree. */
+  git?: {
+    remotePath: string;
+    available: boolean;
+    observedAt: string;
+    baselineOid: string | null;
+    baselinePolicy: 'reviewed_integration';
+    userBranches: { name: string; ref: string; headOid: string }[];
+    truncated: boolean;
+    localWorkingTree: 'unknown';
+  };
   /** Publication tracks approved work waiting for its verified receipt. */
   publication?: {
     records: CodePublication[];

@@ -73,21 +73,43 @@ own, but is not a guarantee that every future write will run without a prompt. M
 ask/deny rules and existing explicit restrictions can still require approval or block calls.
 Never use global permission-bypass flags or an all-servers wildcard to set up Merv.
 
-## Browser sign-in and project selection
-The browser opens Merv's existing account sign-in. Sign in or sign up there. New users must
-create a project or accept an invitation in the website before authorizing. No Git repository
-is required. Select the intended project. Check the client name and callback destination on
-the consent page, then authorize. The client saves credentials and refreshes them itself.
-Authorization allows your current roles in your projects, never additional permissions.
+## Browser sign-in and account authorization
+The browser opens Merv's existing account sign-in. Sign in or sign up there. Check the client
+name and callback destination, then authorize your account. No project membership, project
+selection or Git repository is required. The client saves credentials and refreshes them itself.
+Authorization follows your current roles in your projects, including memberships added later;
+removed memberships stop granting access. It never adds permissions or creates a project.
 
 ## Verify and use
 Call project.list (or project.read with action list), choose the intended project, and pass
 its projectId to project.read brief and workflow.read status. Ask which project only when
-ambiguous. On an authorized test project, make a small reversible task or document edit,
+ambiguous, including in a fresh chat. If the list is empty, explain that the account has no
+accessible projects yet; the person can create/join one on the website, then list again without
+reconnecting. Switching projects only changes the explicit projectId on each call.
+On an authorized test project, make a small reversible task or document edit,
 read it back and undo it. Do not start experiments or machines as a connection test.
 Open a fresh chat and say “use Merv”; the saved plugin and connection should work. An expired
 or revoked grant may require the client's sign-in action again, never reinstallation or
-pasting credentials. Revoke OAuth connections in Merv Settings → Keys (label “OAuth: …”).
+pasting credentials. Revoke OAuth connections in Merv Settings → Keys (label “OAuth: …”)
+or at ${origin}/ui/account/keys, even with no projects.
+
+## Terminal Git without another sign-in
+For code-linked project work, use the bundled git-access skill by default. Direct MCP
+clients without loaded skills can fetch ${origin}/connect/bundle.json and read
+codex/skills/git-access/SKILL.md (identical for Claude); an already connected client
+does not need another installation or sign-in. Preserve origin;
+configure a separate Merv remote, sync the selected user branch initially and after meaningful
+commits, and verify fetched remote heads before reporting success or starting cloud work.
+Report dirty/local-only files and divergence; do not auto-commit unrelated work or push all
+branches. Branch sync is separate from reviewed baseline integration; experiments keep pins. Through the saved MCP
+connection, code.git_credential accepts an ephemeral RSA public key and explicit projectId,
+and returns encrypted ten-minute Git access. Decrypt directly into Git's built-in memory
+credential cache; never expose the token in URLs, commands, logs, files or chat. No Settings
+key, manual token copy, second browser login, Merv daemon or helper installation is needed.
+The agent renews access through MCP before later Git batches. Standalone Git outside an active
+agent cannot renew through the native client's private MCP session. Reader roles can fetch;
+producer/operator users can push user branches; all existing repository admission checks
+and protected refs remain. Sync continues while the agent is active, not while it is offline.
 
 ## Migrate an older installation
 Back up client configuration privately before changes. Disable/uninstall the old skills-only
@@ -145,9 +167,10 @@ codex plugin add ${name}@${name}
 codex mcp login ${name}</pre><p>The login command authenticates the installed plugin's server. Open the URL it displays, complete browser sign-in and consent, and wait for login confirmation. No desktop app is needed. If your version has no plugin install command, use desktop Plugins or the direct-connection alternative in the full guide.</p>
 <h3>Claude Code</h3><pre>claude plugin marketplace add MARKETPLACE
 claude plugin install ${name}@${name} --scope user</pre><p>Open <code>/mcp</code>, select Merv and authenticate. Reload plugins or restart only if your client requires it.</p>
-<h2>3. Sign in and select a project</h2><p>Complete Merv's browser sign-in. A new account must create a project or accept an invitation on the website before authorizing the connection. Review the client and callback address, select your project, and authorize. Your agent keeps your current permissions.</p>
+<h2>3. Sign in and authorize your account</h2><p>Complete Merv's browser sign-in. Review the client and callback address and authorize. No project or repository is required. Your agent follows your current project permissions, including memberships added later. If no projects are accessible yet, create or join one on the website and ask your agent to list again; no reconnect is needed.</p>
 <h2>4. Save your tool permission preference</h2><p>Sign-in and tool approval are separate. For Merv to act on your behalf without repeated tool prompts, choose a persistent permission scoped to this plugin. The <a href="/connect/agent.md">full guide</a> shows Codex’s per-tool Always allow and server-specific policy, and Claude Code’s user-level /permissions rule. Existing organization restrictions still apply.</p>
-<h2>5. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys under its “OAuth:” label. Reconnect through your client's sign-in action when authorization expires.</p>
+<h2>Git access</h2><p>For code-linked work, your agent keeps the selected user branch synchronized with a separate Merv remote, preserving origin. It verifies commits after pushing and reports uncommitted files or conflicts. The installed plugin obtains and renews short-lived project credentials through the same saved connection. No Settings key or second login is needed. Git access follows your current permissions.</p>
+<h2>5. Start a fresh chat</h2><p>Say “use Merv” and ask for your project's status. Your client saves the connection and refreshes credentials. You never need to paste a token into chat.</p><p>To disconnect, revoke the connection in Merv Settings → Keys or <a href="/ui/account/keys">Account keys and connections</a> under its “OAuth:” label, even with no projects. Reconnect through your client's sign-in action when authorization expires.</p>
 <p><a href="/connect/agent.md">Full setup, direct-connection alternatives and migration guide</a></p></body></html>`);
       return;
     }

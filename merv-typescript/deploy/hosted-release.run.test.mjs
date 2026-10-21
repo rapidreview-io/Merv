@@ -286,6 +286,7 @@ if (step === 'abandon') {
   out({ releaseId: target[CF], releases: target, image: sim.native.image });
 }
 if (step === 'finish') {
+  if (fail) err(fail);
   if (arg.state) sim.state = arg.state;
   if (sim.active === run) sim.active = null;
   out({ finished: true, result: arg.result }, true);
@@ -874,4 +875,173 @@ test('isolated CLI resume repairs only an existing catalog before health-depende
     'no fresh pre-drain catalog or duplicate apply',
   );
   assert.equal(resumed.sim.missingMain, false);
+});
+
+test('explicit production-only release never contacts or changes unavailable staging', () => {
+  const reason = 'Staging remains fenced pending isolated storage credentials';
+  const r = simulate(
+    'deferred',
+    { ...STAGING, stagingOwner: 'isolated-cutover', fail: { stagingDrain: 'unavailable' } },
+    { args: ['--defer-staging', reason] },
+  );
+  assert.equal(r.status, 0, r.out);
+  order(r.steps, 'drain', 'switch', 'canary', 'finish');
+  assert.ok(
+    !r.steps.some((s) => s.startsWith('staging') || s.startsWith('flow-') || s === 'stage'),
+  );
+  assert.ok(!r.events.some((e) => e.startsWith('wrangler') && e.includes('staging')));
+  assert.deepEqual(r.sim.staging, STAGING.staging);
+  assert.equal(r.sim.stagingOwner, 'isolated-cutover');
+  assert.equal(r.sim.active, null);
+  assert.equal(r.sim.state.current.image, NEXT);
+  assert.deepEqual(r.sim.state.staging, {
+    status: 'deferred',
+    reason,
+    sourceRun: Object.keys(r.sim.runs)[0],
+    image: NEXT,
+    releaseId: NEXT_ID,
+  });
+  assert.match(r.ledger, /STAGING DEFERRED/);
+});
+
+test('production deferral cannot accept a failed canary and retains normal rollback', () => {
+  const r = simulate(
+    'deferred-failure',
+    { ...STAGING, fail: { canary: 'new' } },
+    { args: ['--defer-staging', 'Staging fenced'] },
+  );
+  assert.equal(r.status, 1, r.out);
+  assert.equal(r.sim.native.image, LIVE.image);
+  assert.equal(r.sim.state.staging, undefined);
+  assert.match(r.ledger, /rolled back and verified by a canary/);
+  assert.deepEqual(r.sim.staging, STAGING.staging);
+});
+
+test('deferred production completion resumes its immutable intent after an interrupted finish', () => {
+  const reason = 'Staging fenced';
+  const first = simulate(
+    'deferred-resume',
+    { ...STAGING, fail: { finish: 'interrupted finish' } },
+    { args: ['--defer-staging', reason] },
+  );
+  assert.notEqual(first.status, 0);
+  assert.ok(first.sim.active);
+  editRun(first, (sim) => {
+    sim.fail = {};
+  });
+  const changed = simulate(
+    'deferred-resume',
+    {},
+    { dir: first.dir, args: ['--resume', '--defer-staging', 'different'] },
+  );
+  assert.notEqual(changed.status, 0);
+  assert.match(changed.out, /cannot add or change/);
+  const resumed = simulate('deferred-resume', {}, { dir: first.dir, args: ['--resume'] });
+  assert.equal(resumed.status, 0, resumed.out);
+  assert.equal(resumed.sim.state.staging.reason, reason);
+  assert.deepEqual(resumed.sim.staging, STAGING.staging);
+});
+
+test('deferral cannot be added to a run already propagating staging', () => {
+  const first = simulate('cannot-defer-owned', {
+    ...STAGING,
+    fail: { stagingSwitch: 'interrupted' },
+  });
+  assert.ok(first.sim.active && first.sim.stagingOwner);
+  editRun(first, (sim) => {
+    sim.fail = {};
+  });
+  const refused = simulate(
+    'cannot-defer-owned',
+    {},
+    { dir: first.dir, args: ['--resume', '--defer-staging', 'skip owned work'] },
+  );
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.out, /cannot add or change/);
+  assert.equal(refused.sim.stagingOwner, first.sim.stagingOwner);
+  assert.equal(refused.sim.active, first.sim.active);
+});
+
+test('identical rebuild and successful or failed canary recheck retain outstanding staging deferral', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Storage key pending',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  for (const [name, verified, fail, status] of [
+    ['current', true, {}, 0],
+    ['rechecked', false, {}, 0],
+    ['failed-recheck', false, { canary: 'all' }, 4],
+  ]) {
+    const r = simulate(`retain-${name}`, {
+      ...STAGING,
+      lane: 'none',
+      fail,
+      state: {
+        current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1, verified },
+        inputs: [],
+        staging,
+      },
+    });
+    assert.equal(r.status, status, r.out);
+    assert.deepEqual(r.sim.state.staging, staging);
+    assert.deepEqual(JSON.parse(r.record).staging, staging);
+    assert.deepEqual(r.sim.staging, STAGING.staging);
+    assert.equal(r.sim.state.current.verified === false, status === 4);
+  }
+});
+
+test('later changed production release retains deferral when staging remains owned', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Storage key pending',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  const r = simulate('retain-changed', {
+    ...STAGING,
+    stagingOwner: 'isolated-cutover',
+    state: {
+      current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 },
+      inputs: [],
+      staging,
+    },
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.sim.state.current.image, NEXT);
+  assert.deepEqual(r.sim.state.staging, staging);
+  assert.deepEqual(JSON.parse(r.record).staging, staging);
+  assert.deepEqual(r.sim.staging, STAGING.staging);
+  assert.equal(r.sim.stagingOwner, 'isolated-cutover');
+});
+
+test('explicit later deferral supersedes old receipt only after accepting the new image', () => {
+  const staging = {
+    status: 'deferred',
+    reason: 'Old reason',
+    sourceRun: 'accepted-earlier',
+    image: LIVE.image,
+    releaseId: LIVE.releaseId,
+  };
+  const r = simulate(
+    'supersede-deferred',
+    {
+      ...STAGING,
+      state: {
+        current: { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: c1 },
+        inputs: [],
+        staging,
+      },
+    },
+    { args: ['--defer-staging', 'Still waiting for staging storage'] },
+  );
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.sim.state.staging.image, NEXT);
+  assert.equal(r.sim.state.staging.reason, 'Still waiting for staging storage');
+  assert.notEqual(r.sim.state.staging.sourceRun, staging.sourceRun);
+  assert.deepEqual(JSON.parse(r.record).staging, r.sim.state.staging);
+  assert.deepEqual(r.sim.staging, STAGING.staging);
 });

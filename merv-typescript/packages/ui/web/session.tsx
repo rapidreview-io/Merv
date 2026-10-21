@@ -451,6 +451,7 @@ function Projects({
         <Failure message={error} />
         <footer className="signin-foot">
           <SigninHost />
+          {account.kind === 'user' && <a href="/ui/account/keys">Account keys and connections</a>}
           {/* What a project administrator needs to add this person to a project. */}
           {account.kind === 'user' && (
             <button

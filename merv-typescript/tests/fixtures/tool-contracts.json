@@ -286,6 +286,7 @@
         "ok": [
           "bases",
           "blockers",
+          "git",
           "landing",
           "operations",
           "project",
@@ -299,6 +300,7 @@
         "ok": [
           "bases",
           "blockers",
+          "git",
           "landing",
           "operations",
           "project",
@@ -1832,6 +1834,7 @@
       "owner": {
         "ok": [
           "blockers",
+          "budgets",
           "dispatch",
           "observedAt",
           "projectId",
@@ -1844,6 +1847,7 @@
       "reader": {
         "ok": [
           "blockers",
+          "budgets",
           "dispatch",
           "observedAt",
           "projectId",

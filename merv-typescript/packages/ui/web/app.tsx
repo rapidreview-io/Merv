@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { ConnectConsent } from './connect';
+import { KeysPanel } from './views/keys';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { readOnly } from './api';
-import { SessionProvider, useSession } from './session';
+import { SessionProvider, useSession, useAccount } from './session';
 import { Sidebar, ShellFrame, PageLede, useRailOpen, useShell } from './shell';
 import type { ShellData } from './shell-types';
 import { EmptyState, ErrorBoundary, LoadState, PageLoad, StatusPill } from './components';
 import { Icon } from './icons';
-import { MOVED, dormantOwner, humanizeGroup } from './navigation';
+import { MOVED, dormantOwner, humanizeGroup, Records } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
 import { HomeView } from './views/home';
 import { AdminApp } from './admin/app';
@@ -125,14 +126,45 @@ function Workspace() {
   );
 }
 
+function AccountKeys() {
+  const { account, signOut } = useAccount()!;
+  return (
+    <main className="page-stage" style={{ maxWidth: 900, margin: '3rem auto' }}>
+      <h1>Account keys and connections</h1>
+      <a href="/ui/">Projects</a> <button onClick={signOut}>Sign out</button>
+      {account.kind === 'user' ? (
+        <KeysPanel account={account} />
+      ) : (
+        <p>Sign in with a human account to manage connections.</p>
+      )}
+    </main>
+  );
+}
+
 export function App() {
   const { pathname } = useLocation();
   // The platform admin is an account-wide app of its own; its drill-in is this Workspace.
   const connect = /^\/connect\/([A-Za-z0-9_-]{43})$/.exec(pathname);
   const admin = !readOnly() && /^\/admin(\/|$)/.test(pathname);
+  const keys = pathname === '/account/keys';
+  const accountOnly = admin || !!connect || keys;
   return (
-    <SessionProvider key={admin ? 'admin' : 'member'} accountOnly={admin} preservePath={!!connect}>
-      {admin ? <AdminApp /> : connect ? <ConnectConsent requestId={connect[1]!} /> : <Workspace />}
+    <SessionProvider
+      key={accountOnly ? 'account' : 'member'}
+      accountOnly={accountOnly}
+      preservePath={!!connect || keys}
+    >
+      <Records.Provider value={!accountOnly}>
+        {admin ? (
+          <AdminApp />
+        ) : connect ? (
+          <ConnectConsent requestId={connect[1]!} />
+        ) : keys ? (
+          <AccountKeys />
+        ) : (
+          <Workspace />
+        )}
+      </Records.Provider>
     </SessionProvider>
   );
 }

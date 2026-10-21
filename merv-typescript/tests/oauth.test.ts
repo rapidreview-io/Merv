@@ -45,9 +45,9 @@ async function fixture(t: TestContext) {
       code_challenge_method: 'S256',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
     });
-  async function code() {
+  async function code(owner = person) {
     const id = await oauth.start(params());
-    const url = new URL(await oauth.consent(id, person, project.id, true));
+    const url = new URL(await oauth.consent(id, owner, true));
     assert.equal(url.searchParams.get('state'), 'opaque-client-state');
     assert.equal(url.searchParams.get('iss'), oauth.origin);
     return new URLSearchParams({
@@ -189,17 +189,12 @@ test('OAuth delegates live memberships and revokes independently from Git/CI key
 test('cancel and expiration cannot issue grants; account keys cannot grant OAuth', async (t) => {
   const f = await fixture(t);
   const id = await f.oauth.start(f.params());
-  const denied = new URL(await f.oauth.consent(id, f.person, f.project.id, false));
+  const denied = new URL(await f.oauth.consent(id, f.person, false));
   assert.equal(denied.searchParams.get('error'), 'access_denied');
-  await assert.rejects(f.oauth.consent(id, f.person, f.project.id, true), refused('invalid_grant'));
+  await assert.rejects(f.oauth.consent(id, f.person, true), refused('invalid_grant'));
   const key = await f.scope.userKeys.create(f.person, { projectId: f.project.id });
   await assert.rejects(
-    f.oauth.consent(
-      await f.oauth.start(f.params()),
-      { kind: 'key', key: key.key },
-      f.project.id,
-      true,
-    ),
+    f.oauth.consent(await f.oauth.start(f.params()), { kind: 'key', key: key.key }, true),
     refused('access_denied'),
   );
   const pending = await f.oauth.start(f.params());
@@ -299,7 +294,7 @@ test('role changes and membership removal immediately restrict an existing grant
   });
   await f.scope.members.addMember(f.person, f.project.id, { subject: 'reader', role: 'reader' });
   const id = await f.oauth.start(f.params());
-  const redirect = new URL(await f.oauth.consent(id, reader, f.project.id, true));
+  const redirect = new URL(await f.oauth.consent(id, reader, true));
   const p = await f.code();
   p.set('code', redirect.searchParams.get('code')!);
   const tokens = await f.oauth.exchange(p);
@@ -324,7 +319,7 @@ test('HTTP consent requires a human bearer and same-origin POST; token errors ar
       assert.equal(token, 'synthetic.browser.token');
       return {
         issuer: 'https://identity.test',
-        subject: 'ada',
+        subject: 'zero-project-browser',
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
       };
     },
@@ -339,7 +334,7 @@ test('HTTP consent requires a human bearer and same-origin POST; token errors ar
     fetch(`${base}/oauth/requests/${id}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify({ projectId: f.project.id, allow: true }),
+      body: JSON.stringify({ allow: true }),
     });
   assert.equal((await consent({ authorization: 'Bearer synthetic.browser.token' })).status, 403);
   assert.equal((await consent({ origin: f.oauth.origin })).status, 401);
@@ -349,7 +344,12 @@ test('HTTP consent requires a human bearer and same-origin POST; token errors ar
   });
   assert.equal(yes.status, 200);
   assert.equal(yes.headers.get('cache-control'), 'no-store');
-  assert.ok(new URL((await yes.json()).redirect).searchParams.has('code'));
+  const code = new URL((await yes.json()).redirect).searchParams.get('code');
+  assert.ok(code);
+  const params = await f.code();
+  params.set('code', code);
+  const tokens = await f.oauth.exchange(params);
+  assert.deepEqual(await f.scope.projects(await f.oauth.authenticate(tokens.access_token)), []);
   const invalid = await fetch(`${base}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -466,4 +466,130 @@ test('public registration and authorization are rate-limited before durable allo
     (await fetch(`${base}/oauth/authorize?${f.params()}`, { redirect: 'manual' })).status,
     429,
   );
+});
+
+test('zero-project account consent follows live memberships, explicit switching, refresh and owner revocation', async (t) => {
+  const f = await fixture(t);
+  const newcomer = await f.scope.members.acceptVerifiedIdentity({
+    issuer: 'https://identity.test',
+    subject: 'newcomer',
+    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+  });
+  const tokens = await f.oauth.exchange(await f.code(newcomer));
+  const principal = await f.oauth.authenticate(tokens.access_token);
+  assert.deepEqual(await f.scope.projects(principal), []);
+  const [key] = await f.scope.userKeys.keys(newcomer);
+  assert.equal(key!.projectId, null);
+  assert.equal(key!.grantScope, 'account');
+  await assert.rejects(f.scope.caller(principal), { code: 'project_required' });
+  await assert.rejects(f.scope.caller(principal, f.project.id), { status: 403 });
+  await assert.rejects(f.scope.caller(principal, 'invented-project'), { status: 403 });
+  // No default or hidden project is created by consent.
+  assert.equal((await f.state.read((sql) => sql.all('SELECT id FROM projects'))).length, 2);
+  await f.scope.members.addMember(f.person, f.project.id, {
+    subject: 'newcomer',
+    role: 'producer',
+  });
+  await f.scope.members.addMember(f.person, f.other.id, { subject: 'newcomer', role: 'reader' });
+  assert.deepEqual(
+    (await f.scope.projects(principal)).map((p) => p.id).sort(),
+    [f.project.id, f.other.id].sort(),
+  );
+  const a = await f.scope.caller(principal, f.project.id);
+  const b = await f.scope.caller(principal, f.other.id);
+  await f.scope.require(a, 'write');
+  await f.scope.require(b, 'read');
+  await assert.rejects(f.scope.require(b, 'write'), { status: 403 });
+  assert.notEqual(a.actorId, b.actorId);
+  assert.deepEqual(await f.scope.caller(principal, f.project.id), a);
+  await assert.rejects(f.scope.caller(principal), { code: 'project_required' });
+  const scoped = await f.scope.userKeys.create(newcomer, { projectId: f.project.id });
+  const legacy = { kind: 'key' as const, key: await f.scope.userKeys.authenticate(scoped.token) };
+  assert.deepEqual(
+    (await f.scope.projects(legacy)).map((p) => p.id),
+    [f.project.id],
+  );
+  await assert.rejects(f.scope.caller(legacy, f.other.id), { status: 403 });
+  await f.scope.members.removeMember(f.person, f.project.id, 'newcomer');
+  await assert.rejects(f.scope.require(a, 'write'), { status: 403 });
+  await assert.rejects(f.scope.caller(principal, f.project.id), { status: 403 });
+  await f.scope.members.removeMember(f.person, f.other.id, 'newcomer');
+  assert.deepEqual(await f.scope.projects(principal), []);
+  const fresh = await f.oauth.exchange(f.refresh(tokens.refresh_token));
+  assert.deepEqual(await f.scope.projects(await f.oauth.authenticate(fresh.access_token)), []);
+  await f.scope.userKeys.revoke(newcomer, key!.id);
+  await assert.rejects(f.oauth.authenticate(fresh.access_token), { status: 401 });
+  await assert.rejects(f.oauth.exchange(f.refresh(fresh.refresh_token)), refused('invalid_grant'));
+  assert.ok((await f.scope.userKeys.keys(newcomer)).find((k) => k.id === key!.id)!.revokedAt);
+  // The independently owned machine credential survives OAuth revocation.
+  await f.scope.userKeys.authenticate(scoped.token);
+});
+
+test('scope upgrade preserves project-anchored keys and existing OAuth grants', async (t) => {
+  const state = await openState();
+  t.after(() => state.close());
+  const migrate = state.migrate.bind(state);
+  // Boot the published schema through v13, then exercise the forward migration with live data.
+  state.migrate = (name, versions) =>
+    migrate(
+      name,
+      name === 'scope'
+        ? Object.fromEntries(Object.entries(versions).filter(([version]) => Number(version) < 14))
+        : versions,
+    );
+  const scope = await createService(new ProjectScope(state));
+  const person = await scope.members.acceptVerifiedIdentity({
+    issuer: 'https://identity.test',
+    subject: 'legacy',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  });
+  const a = await scope.members.createProject(person, { name: 'A', requestId: 'a' });
+  const b = await scope.members.createProject(person, { name: 'B', requestId: 'b' });
+  const machine = await scope.userKeys.create(person, { projectId: a.id });
+  const oauth = new OAuth(state, scope, 'https://merv.example');
+  await oauth.initialize();
+  const client = await oauth.register({ redirect_uris: ['http://localhost:7777/callback'] });
+  const verifier = randomBytes(32).toString('base64url');
+  const request = await oauth.start(
+    new URLSearchParams({
+      client_id: client.client_id,
+      redirect_uri: client.redirect_uris[0]!,
+      resource: oauth.resource,
+      response_type: 'code',
+      state: 'legacy',
+      code_challenge_method: 'S256',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+    }),
+  );
+  const create = scope.userKeys.createAccountDelegation.bind(scope.userKeys);
+  // The previous consent implementation issued a project-anchored account key.
+  scope.userKeys.createAccountDelegation = (principal, input, tx) =>
+    scope.userKeys.create(principal, { ...input, grantScope: 'account', projectId: a.id }, tx);
+  const callback = new URL(await oauth.consent(request, person, true));
+  const tokens = await oauth.exchange(
+    new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: callback.searchParams.get('code')!,
+      code_verifier: verifier,
+      client_id: client.client_id,
+      redirect_uri: client.redirect_uris[0]!,
+      resource: oauth.resource,
+    }),
+  );
+  state.migrate = migrate;
+  scope.userKeys.createAccountDelegation = create;
+  const before = await scope.userKeys.keys(person);
+  await scope.initialize();
+  assert.deepEqual(await scope.userKeys.keys(person), before);
+  const principal = await oauth.authenticate(tokens.access_token);
+  assert.deepEqual((await scope.projects(principal)).map((p) => p.id).sort(), [a.id, b.id].sort());
+  await assert.rejects(scope.caller(principal), { code: 'project_required' });
+  const scoped = { kind: 'key' as const, key: await scope.userKeys.authenticate(machine.token) };
+  assert.equal((await scope.caller(scoped)).projectId, a.id);
+  await assert.rejects(scope.caller(scoped, b.id), { status: 403 });
+  await oauth.revoke(
+    new URLSearchParams({ client_id: client.client_id, token: tokens.refresh_token }),
+  );
+  await assert.rejects(oauth.authenticate(tokens.access_token), { status: 401 });
+  await scope.userKeys.authenticate(machine.token);
 });

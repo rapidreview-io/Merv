@@ -249,7 +249,7 @@ export class OAuth {
       return { clientName: c.name, redirectUri: p.redirect_uri, resource: p.resource };
     });
   }
-  async consent(id: string, principal: Principal, projectId: string, allow: boolean) {
+  async consent(id: string, principal: Principal, allow: boolean) {
     requireOAuth(principal.kind === 'user', 'access_denied', 'Sign in with a human account');
     return this.state.transaction(async (tx) => {
       const p = await this.pending(tx, id);
@@ -262,13 +262,9 @@ export class OAuth {
         callback.searchParams.set('error', 'access_denied');
         return callback.href;
       }
-      // Project selection proves an existing membership; new accounts use the website's normal
-      // create/join flow. The client may subsequently select any currently permitted project.
-      const issued = await this.scope.userKeys.create(
+      const issued = await this.scope.userKeys.createAccountDelegation(
         principal,
         {
-          projectId,
-          grantScope: 'account',
           label: 'OAuth: ' + (await this.client(tx, p.client_id)).name,
           expiresAt: iso(this.clock() + 30 * DAY),
         },
@@ -319,6 +315,15 @@ export class OAuth {
       scope: 'merv',
     };
   }
+  private async requireDelegation(id: string) {
+    try {
+      await this.scope.userKeys.authenticateDelegation(id);
+    } catch (error) {
+      if (error instanceof MervError && (error.status === 401 || error.status === 403))
+        throw new OAuthError('invalid_grant', 'Authorization expired or revoked');
+      throw error;
+    }
+  }
   async exchange(p: URLSearchParams) {
     requireOAuth([...p.keys()].every((k) => p.getAll(k).length === 1));
     requireOAuth(p.get('resource') === this.resource, 'invalid_target', 'MCP resource is required');
@@ -350,7 +355,7 @@ export class OAuth {
           return null; // Commit genuine code-replay revocation before returning the error.
         }
         requireOAuth(row.expires_at > iso(this.clock()), 'invalid_grant');
-        await this.scope.userKeys.authenticateDelegation(row.key_id);
+        await this.requireDelegation(row.key_id);
         await tx.run('UPDATE oauth_requests SET used=1 WHERE id=?', row.id);
         const grant = secret();
         await tx.run(
@@ -378,7 +383,7 @@ export class OAuth {
         await this.scope.userKeys.revokeDelegation(t.key_id, tx);
         return null; // Commit replay revocation before reporting invalid_grant.
       }
-      await this.scope.userKeys.authenticateDelegation(t.key_id);
+      await this.requireDelegation(t.key_id);
       await tx.run('UPDATE oauth_tokens SET used=1 WHERE hash=?', t.hash);
       return this.issue(tx, t.grant_id);
     });

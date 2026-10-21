@@ -175,7 +175,15 @@ export class CustomerExperiments {
         { value: 'planning', label: 'Changed scope needs new customer acceptance' },
         { value: 'failed', label: 'Cannot deliver within the accepted limits' },
       ],
-      gates: async (ids) => Object.fromEntries(ids.map((id) => [id, 'Results'])),
+      gates: async (ids, sql) => {
+        if (!ids.length) return {};
+        // Match owns() by subject and project, including earlier review rounds.
+        const rows = await sql.all<{ id: string }>(
+          `SELECT r.id FROM reviews r JOIN customer_experiments c ON c.id=r.subject_id AND c.project_id=r.project_id WHERE r.id IN (${ids.map(() => '?').join(',')})`,
+          ...ids,
+        );
+        return Object.fromEntries(rows.map(({ id }) => [id, 'Results']));
+      },
     });
   }
   close(): void {

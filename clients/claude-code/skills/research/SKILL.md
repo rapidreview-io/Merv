@@ -19,7 +19,16 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
    `/connect/agent.md` guide once. If authentication is required, use the client's browser
    sign-in action. Never ask for credentials or email codes. Call `project.list` or
    `project.read` (list), select the intended project and pass `projectId` on every call.
-   Ask which project only when ambiguous. Git is optional; do not require a repository.
+   Ask which project when ambiguous, including in fresh chats; never silently inherit a
+   previous chat's selection. If none are accessible, explain how to create/join one on the
+   website, then list again without reconnecting. Change the explicit projectId to switch
+   projects and read its brief to check your role. For code-linked work, use the bundled
+   git-access skill by default: preserve origin,
+   configure a separate Merv remote, sync the intended user branch initially and after
+   meaningful commits, and verify remote freshness before cloud work. The same saved
+   connection supplies Git access; no Settings key or second sign-in. Report dirty/local-only
+   data as unsynced and distinguish branch sync from reviewed baseline integration.
+   Research work without local code needs no repository.
 1. `project.read` (brief): your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on
@@ -48,6 +57,10 @@ write the paper, start no other work: interview the person a few pointed questio
 then write the sections with `paper.write` (patch, kind problem). Never invent this content. When the
 person changes the objective, scope or constraints, update the Problem the same way before
 creating work that relies on the change.
+
+Use an experiment to test a research hypothesis through design and results review.
+Use a task for enabling work with a verifiable deliverable, such as a literature sweep,
+dataset preparation or a harness; a completed task is not empirical confirmation of a hypothesis.
 
 ## An experiment's life
 
@@ -98,7 +111,7 @@ yourself. `task.read` (get) returns a compact reminder; pass `full:true` for Mer
   the file to the signed URL it returns, then `artifact.write` (upload_complete). Do not base64 a
   large file into create.
 - `artifact.read` reads files: list, get (metadata), content and download.
-- `screen.read` with `{"action":"look","look":{"at":{"record":"<artifact id>"}}}`
+- `artifact.read` with `{"action":"look","look":{"artifactId":"<artifact id>"}}`
   shows a JPEG, PNG or WebP artifact as an image. `board.read` with action
   `get` says what a board's shapes say, and with `look` shows the board as an image.
 

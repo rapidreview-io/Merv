@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--public https://origin] [--host HOST]
-//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
+//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -29,6 +29,7 @@ const { values: args, tokens } = parseArgs({
     public: { type: 'string', default: 'https://experiments.rapidreview.io' },
     sandboxes: { type: 'string' },
     resume: { type: 'string' },
+    'expected-image': { type: 'string' },
     'retry-prestart': { type: 'string' },
     'dry-run': { type: 'boolean' },
     'skip-hosted': { type: 'boolean' },
@@ -37,7 +38,7 @@ const { values: args, tokens } = parseArgs({
 });
 if (args.help) {
   console.log(
-    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE | --retry-prestart RELEASE] [--skip-hosted] [--no-rollback]',
+    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE | --retry-prestart RELEASE] [--skip-hosted] [--no-rollback] [--expected-image sha256:<64hex>]',
   );
   process.exit(0);
 }
@@ -60,12 +61,24 @@ const dryRun = args['dry-run'];
 const noRollback = args['no-rollback'];
 const resume = args.resume;
 const retry = args['retry-prestart'];
+const expectedImage = args['expected-image'];
+if (
+  expectedImage !== undefined &&
+  (expectedImage.length !== 71 ||
+    !/^sha256:[a-f0-9]{64}$/.test(expectedImage) ||
+    tokens.filter((token) => token.kind === 'option' && token.name === 'expected-image').length !== 1 ||
+    resume !== undefined ||
+    retry !== undefined)
+)
+  throw new Error(
+    '--expected-image requires one immutable sha256:<64 lowercase hex> ID on a new release; cannot combine with --resume or --retry-prestart',
+  );
 if (retry !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(retry) || resume || !noRollback || !args['skip-hosted']))
   throw new Error('--retry-prestart requires a safe release ID, --no-rollback --skip-hosted, and no --resume');
 const { PUBLIC, host, RELEASES, ssh } = releaseTarget(args);
 
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
-const remoteJob = ({ release, archiveSha256, retryImage }) => `
+const remoteJob = ({ release, archiveSha256, retryImage, expectedImage }) => `
 set -euo pipefail
 # Serialize Main's entire release with recovery capture and hosted-image changes.
 mkdir -p /run/lock
@@ -107,8 +120,11 @@ SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.e
 # This never prunes images or volumes; rollback images remain available.
 docker builder prune -af --keep-storage 10GB >> build.log 2>&1 || echo 'build-cache cleanup failed; continuing release' >> build.log
 docker build --platform linux/amd64 --build-arg SANDBOXES_TS_IMAGE="$SANDBOXES_TS_IMAGE" --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
-docker run --rm --entrypoint node "$IMG" --import tsx dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
+${expectedImage ? `# Freeze the caller's journaled image before any candidate execution or live UI/Main changes.
+EXPECTED_IMAGE=${expectedImage}
+[ "$IMAGE_ID" = "$EXPECTED_IMAGE" ] || { echo "expected-image mismatch: expected $EXPECTED_IMAGE, built $IMAGE_ID; Main and served UI untouched" >&2; exit 1; }
+` : ""}docker run --rm --entrypoint node "$IMAGE_ID" --import tsx dist/src/cli.js help >> build.log 2>&1
 `}
 # The served UI is ${UI_DIR}, which deploy/ui-release.mjs also writes: this image's bundle goes
 # there beside the hashed assets already served, and its index.html only once it is healthy.
@@ -231,7 +247,7 @@ function upload({ dir, release, archiveSha256 }) {
     join(dir, 'source-manifest.json'),
     `${host}:merv-release-${release}/`,
   ]);
-  const job = remoteJob({ release, archiveSha256 });
+  const job = remoteJob({ release, archiveSha256, expectedImage });
   const start = ssh(`
 set -euo pipefail
 mkdir -p ${rel} && chmod 700 ${rel}

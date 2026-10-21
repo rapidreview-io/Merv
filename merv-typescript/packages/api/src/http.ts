@@ -753,6 +753,7 @@ export class ApiServer {
                 this.tools.instructions(),
                 'A tool whose description says so takes its action\'s arguments under the key of the same name, as {"action":"x","x":{…}}. These tools are written for ordinary function calling; strict-mode adapters (every property required) are not supported.',
                 'Merv is this person\'s research record: projects, papers, tasks, experiments, reviews and machines. When they say "check with Merv", "ask Merv" or ask how their research is going, use these tools. Account keys: call project.list, then pass projectId on every call; start with project.read brief and workflow.read status. Never ask for, print or read Merv keys or ~/.merv.',
+                'For code-linked project work, keep the selected user branch synced with a separate Merv Git remote: preserve origin, push authorized commits after meaningful changes and before cloud work, then fetch/compare heads. Report dirty files and divergence; never force, mirror or push protected refs. Use saved MCP auth via code.git_credential and the git-access skill. Direct MCP clients can read that skill from this server’s /connect/bundle.json (codex/skills/git-access/SKILL.md). code.read status reports remote heads and baseline; branch sync does not advance the reviewed baseline or change experiment pins. No offline sync is promised.',
               ]
                 .filter(Boolean)
                 .join('\n\n'),
