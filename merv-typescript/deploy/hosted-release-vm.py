@@ -259,6 +259,50 @@ def reader_recovery(directory, capture=False):
         _READER_ORIGINALS=previous
 
 
+def recover_reader_name(name, raw, directory):
+    """Finish Compose's recorded remove/rename gap, only for one fully validated replacement."""
+    try:
+        inspect(name)
+    except RuntimeError:
+        pass
+    else:
+        reader_info(name)
+        return
+    original=_READER_ORIGINALS.get(name)
+    need(original, 'missing reader recovery original')
+    labels=original['Config'].get('Labels',{})
+    named=run(['docker','ps','-aq','--no-trunc','--filter','name='+name]).decode().split()
+    owned=run(['docker','ps','-aq','--no-trunc','--filter','label=com.docker.compose.project='+labels.get('com.docker.compose.project',''),
+               '--filter','label=com.docker.compose.service='+labels.get('com.docker.compose.service','')]).decode().split()
+    ids=sorted(set(named+owned))
+    if not ids:
+        return  # Compose can create from its original config; no untrusted object is adopted.
+    need(len(ids)==1, 'ambiguous reader replacements')
+    replacement=inspect(ids[0])
+    labels=original['Config'].get('Labels',{})
+    actual_labels=replacement['Config'].get('Labels',{})
+    identity=(*_READER_LABELS,'com.docker.compose.container-number','com.docker.compose.oneoff')
+    need(replacement['Image']==original['Image'] and all(actual_labels.get(k)==labels.get(k) for k in identity),
+         'replacement image or Compose identity changed')
+    expected_replace={name, labels.get('com.docker.compose.service','')+'-'+labels.get('com.docker.compose.container-number','')}
+    if original.get('Id'): expected_replace.add(original['Id'])  # Compose 2.32 uses the replaced ID.
+    need(actual_labels.get('com.docker.compose.replace') in expected_replace, 'replacement lacks Compose replacement identity')
+    expected_env=dict(item.split('=',1) for item in original['Config']['Env'])
+    expected_env.update(file_env(raw))
+    need(dict(item.split('=',1) for item in replacement['Config']['Env'])==expected_env, 'replacement target environment changed')
+    for key in ('Entrypoint','Cmd','User','WorkingDir','Healthcheck','ExposedPorts'):
+        need(replacement['Config'].get(key)==original['Config'].get(key), 'replacement configuration changed: '+key)
+    for key in ('Binds','Mounts','Privileged','CapAdd','CapDrop','SecurityOpt','ReadonlyRootfs','NetworkMode','PortBindings'):
+        need(replacement.get('HostConfig',{}).get(key)==original.get('HostConfig',{}).get(key), 'replacement host configuration changed: '+key)
+    need(set(replacement.get('NetworkSettings',{}).get('Networks',{}))==set(original.get('NetworkSettings',{}).get('Networks',{})), 'replacement networks changed')
+    intent={'id':ids[0],'name':name,'image':original['Image'],'target':sha(raw)}
+    path=directory/('reader-rename-'+('main' if name==MAIN else 'control')+'.json')
+    need(not path.exists() or read(path)==intent, 'replacement rename intent changed')
+    if not path.exists(): atomic(path,json.dumps(intent).encode())
+    run(['docker','rename',ids[0],name])
+    reader_info(name)  # A canonical name alone is not proof of identity; health follows Compose up.
+
+
 def env_of(container):
     return dict(item.split('=', 1) for item in reader_info(container)['Config']['Env'])
 
@@ -782,7 +826,7 @@ class Step:
                 (HOME / 'active').unlink()
             raise
 
-    def staging_census(self):
+    def staging_census(self, database_reader=None):
         # Local ownership only. Provider ownership is separately read on production, filtered to
         # the two staging apps; never drain unrelated production work to prepare staging.
         conditions = {
@@ -799,7 +843,7 @@ class Step:
             'code_base_cleanup': 'true', 'code_publications': 'lock_id IS NOT NULL',
             'session_managed_runners': "runner_released_at IS NULL AND control_expires_at > to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
         }
-        counts = main_read('SELECT ' + ', '.join(
+        counts = (database_reader or main_read)('SELECT ' + ', '.join(
             f'(SELECT count(*)::int FROM {{s}}.{table} WHERE {where}) AS {table}'
             for table, where in conditions.items()))
         need(counts and all(n == 0 for n in counts.values()), 'staging ownership is not empty')
@@ -1112,6 +1156,7 @@ class Step:
                                    'migrate', '--status'], env=env, cwd=cwd)
             for name, command, env, cwd in commands:
                 before_recreate()
+                if network_none: recover_reader_name(name, raw, self.run)
                 run(command + ['up', '-d', '--no-deps', 'control'],
                     env=env, cwd=cwd, timeout=240)
                 healthy(name, 90, 2)
@@ -1799,7 +1844,7 @@ def isolation_identity(binding_override=None):
 
 def isolated_staging_gateway(arg):
     """Everything except accepted-image discovery stays on the staging host. Never fallback."""
-    need(arg['action'] in ('identity', 'catalog', 'native', 'census'), 'invalid local gateway action')
+    need(arg['action'] in ('identity', 'catalog', 'recover-catalog', 'native', 'census'), 'invalid local gateway action')
     HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
     with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
         need(locked(maintenance, 1200) and locked(lock, 1200), 'staging owner is busy')
@@ -1817,13 +1862,27 @@ def isolated_staging_gateway(arg):
             need(plan.get('isolatedStaging') and plan.get('isolation') == binding and
                  plan.get('stagingSource') == arg.get('source'), 'local source or isolation binding changed')
             source = arg['source']
+            directory = RUNS / name / 'local-catalog'
+            journal = read(directory / 'intent.json')
+            recovering = arg['action'] == 'recover-catalog'
+            if recovering:
+                # No intent or external-effect marker means there is nothing to repair.
+                # Never create a fresh catalog from this pre-drain entry point.
+                if not journal or not (directory / 'reader-target.json').exists():
+                    return {'recovered': False}
+                need((directory / 'reader-originals.json').is_file(), 'catalog reader recovery metadata missing')
+                need(env_of(MAIN).get('MERV_BOOT_MAINTENANCE') == '1' and
+                     file_env(ENV.read_bytes()).get('MERV_BOOT_MAINTENANCE') == '1',
+                     'catalog recovery requires preserved boot maintenance')
+                # The ordinary drain/HTTP health checks run AFTER repair. In the missing-name
+                # gap use the exact saved image for read-only Main and native ownership census.
+                Step(RUNS / name, plan).staging_census(database_reader=reader_read)
             if arg['action'] == 'native':
                 need(arg.get('provider') in STAGING_PROVIDERS, 'not a staging app')
                 return isolated_probe(arg['provider'])
             isolated_census()
             if arg['action'] == 'census':
                 return {'drained': True, 'readOnly': True, 'isolation': binding}
-            directory = RUNS / name / 'local-catalog'
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             journal = read(directory / 'intent.json')
             if journal:
@@ -1846,7 +1905,7 @@ def isolated_staging_gateway(arg):
             Step(directory, {}).sandboxes_file(network_none=True)[1](target)
             need(isolation_identity() == binding, 'isolation changed during catalog apply')
             atomic(directory / 'complete.json', json.dumps({'target': journal['target']}).encode())
-            return {'entries': source['entries'], 'releases': source['releases'], 'isolation': binding}
+            return {'entries': source['entries'], 'releases': source['releases'], 'isolation': binding, **({'recovered': True} if recovering else {})}
 
 def staging_gateway(arg):
     need(os.geteuid() == 0, 'run as root')

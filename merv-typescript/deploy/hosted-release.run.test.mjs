@@ -122,9 +122,12 @@ if (argv[at + 1] === '-' && argv[at + 2] === 'staging-gateway') {
   const out = value => { save(); console.log(JSON.stringify(value)); process.exit(0); };
   if (sim.fail['gateway-' + arg.action]) out({error:sim.fail['gateway-' + arg.action]});
   if (arg.action === 'source') out(sim.acceptedSource);
+  if (arg.action === 'identity') out({isolated:true});
+  if (arg.action === 'recover-catalog') {const repaired=!!sim.catalogIntent; if(repaired){sim.missingMain=false;for(const e of arg.source.entries)sim.releases[arg.source.releases[e.provider]]=arg.source.current.image;}out({recovered:repaired});}
   if (JSON.stringify(arg.source) !== JSON.stringify(sim.acceptedSource)) out({error:'production source changed'});
   if (arg.action === 'native') out(sim.staging.apps[arg.provider]);
   if (arg.action === 'catalog') {
+    if(sim.crashCatalog){sim.catalogIntent=true;sim.missingMain=true;sim.crashCatalog=false;out({error:'remove/rename interruption'});}
     for (const e of arg.source.entries) sim.releases[arg.source.releases[e.provider]] = arg.source.current.image;
     out({releases:arg.source.releases});
   }
@@ -237,7 +240,7 @@ if (step === 'stage') {
   for (const e of served) sim.catalog.push({ provider: e.provider, digest: e.image_digest, id: arg.releases[e.provider] });
   out({ releases: Object.fromEntries(served.map((e) => [e.provider, arg.releases[e.provider]])), changed: true });
 }
-if (step === 'drain') { if (fail) err(fail); out({ drained: true }); }
+if (step === 'drain') { if(sim.missingMain)err('No such object: Main'); if (fail) err(fail); out({ drained: true }); }
 if (step === 'note') { R.progress = { ...R.progress, ...arg }; out(R.progress); }
 // unread: {provider: reads left before Sandboxes can no longer read that app}.
 if (step === 'native') {
@@ -843,3 +846,32 @@ for (const [patch, reason] of [
     assert.equal(denied.record, '');
   });
 }
+
+test('isolated CLI resume repairs only an existing catalog before health-dependent drain', () => {
+  const first = simulate(
+    'isolated-gap',
+    { ...stagingFixture(), crashCatalog: true },
+    { args: [...stagingFlags, '--isolated-staging'] },
+  );
+  assert.equal(first.status, 3, first.out);
+  assert.equal(first.sim.missingMain, true);
+  assert.ok(first.steps.indexOf('drain') < first.steps.indexOf('gateway-catalog'));
+  editRun(first, (sim) => {
+    sim.runs[sim.active].lease.seen -= 400000;
+  });
+  const resumed = simulate(
+    'isolated-gap',
+    {},
+    { dir: first.dir, args: ['--staging-cutover', '--isolated-staging', '--resume'] },
+  );
+  assert.equal(resumed.status, 5, resumed.out);
+  const repair = resumed.steps.lastIndexOf('gateway-recover-catalog');
+  assert.ok(repair >= 0);
+  assert.ok(resumed.steps.indexOf('drain', repair) > repair);
+  assert.equal(
+    resumed.steps.filter((s) => s === 'gateway-catalog').length,
+    1,
+    'no fresh pre-drain catalog or duplicate apply',
+  );
+  assert.equal(resumed.sim.missingMain, false);
+});

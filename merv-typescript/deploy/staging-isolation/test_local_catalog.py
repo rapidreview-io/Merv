@@ -24,6 +24,8 @@ class Catalog(unittest.TestCase):
      if len(applied)==1:raise RuntimeError('reader recreation interrupted')
     with patch.multiple(v,HOME=home,RUNS=runs,MAINTENANCE=root/'maintenance',RECOVERY_PENDING=root/'absent',SHARED=shared),patch.object(v,'main_release_running',return_value=False),patch.object(v,'owner',return_value=run),patch.object(v,'isolation_identity',return_value=binding),patch.object(v,'isolated_census',return_value={'drained':True}),patch.object(v.Step,'sandboxes_file',return_value=(shared,apply)):
      args={'action':'catalog','run':run,'source':source}
+     self.assertEqual(v.isolated_staging_gateway({**args,'action':'recover-catalog'}),{'recovered':False})
+     self.assertFalse((runs/run/'local-catalog').exists())
      with self.assertRaisesRegex(RuntimeError,'interrupted'):v.isolated_staging_gateway(args)
      journal=v.read(runs/run/'local-catalog/intent.json');self.assertEqual(journal['source'],source)
      self.assertEqual((runs/run/'local-catalog/original.env').read_bytes(),original)

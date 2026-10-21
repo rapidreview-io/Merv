@@ -1,0 +1,66 @@
+{
+  "reviewedBase": "e2cec2b00a964440ddee6e0f49f027493de2e237",
+  "reviewReport": "/tmp/merv-launch-staging-review/final-isolation-corrective/REVIEW.md",
+  "scope": "pre-drain existing-intent recovery and validated Compose temporary-name recovery; independent review pending",
+  "passed": {
+    "deployment": 141,
+    "isolationPostgres": 10,
+    "pythonRecovery": 12,
+    "realLocalComposeFixtures": 4,
+    "finalTargetedRealCLI": 1
+  },
+  "docker": {
+    "composeVersion": "2.32.4-desktop.1",
+    "image": "sha256:7efd45553a98be3d940b73600550669831c0be34f30c521159e7030a91fcdee6",
+    "cases": [
+      {
+        "role": "source",
+        "missingReader": "main",
+        "recovered": true
+      },
+      {
+        "role": "source",
+        "missingReader": "control",
+        "recovered": true
+      },
+      {
+        "role": "destination",
+        "missingReader": "main",
+        "recovered": true
+      },
+      {
+        "role": "destination",
+        "missingReader": "control",
+        "recovered": true
+      }
+    ],
+    "fixtureContainersAndNetworksRemoved": true
+  },
+  "limitations": [
+    "Real CLI uses an SSH fixture; actual gateway and drain are additionally tested with local DB/HTTP/Docker adapters",
+    "Real Docker fixtures use a local Python image and adapt application render/migration checks; they test actual Compose/rename/start/health",
+    "No live host/provider operation or forward Main image acceptance is claimed"
+  ],
+  "logs": [
+    {
+      "path": "/tmp/merv-resume-deploy.log",
+      "sha256": "b0ede96bcc6ed563b26164507c1822c2e7dab226a2c8dc1baf05ecab551bef8c"
+    },
+    {
+      "path": "/tmp/merv-resume-postgres.log",
+      "sha256": "2db631dcec4cd1687dbd06d9512db75eb0f018a4486460bc664f261e06506159"
+    },
+    {
+      "path": "/tmp/merv-resume-python.log",
+      "sha256": "a3cd900ad94dcb7d18fb2ab3cac8c7fce754695efa39d72d72d6170e390f85b0"
+    },
+    {
+      "path": "/tmp/merv-resume-cli-final.log",
+      "sha256": "632f8b36cd637113fb4eceb1a3a03b6781795e621a4b58c76f6f7136a22c986b"
+    },
+    {
+      "path": "/tmp/merv-real-reader-gap-final.log",
+      "sha256": "73277a50e78174366d8298bfb9c8723d54997ed3059d87a695b5b76ae375f8d8"
+    }
+  ]
+}

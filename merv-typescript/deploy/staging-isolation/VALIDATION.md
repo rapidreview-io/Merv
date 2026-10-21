@@ -46,3 +46,18 @@ isolation tests (zero skips), and 11 Python recovery tests. Reader lifecycle tes
 a Docker-state adapter at stop/remove/rename/start; log interruption uses an actual killed local
 writer process. This corrective candidate awaits the independent reviewer's exact-commit retest.
 The older validation/image receipt above applies only to the earlier candidate.
+
+## Driver and real Compose recovery follow-up
+
+The independent `e2cec2b00` retest accepted the job-log fixes but found two remaining recovery
+paths: the CLI drained before reaching repair, and Compose left a replacement under its temporary
+name. The follow-up introduces an existing-intent-only pre-drain repair and validates/renames the
+unique exact replacement before ordinary Compose start and canonical health checks.
+
+Validation comprises the real JS CLI with an SSH fixture (initial drain before new catalog;
+recorded repair before resumed drain), the actual Python gateway followed by actual `Step.drain`
+with local database/HTTP adapters, and real local Docker Compose missing-name fixtures for both
+reader roles. The real Docker test adapts application render/migrate preflights only; it is not
+a deployed Main/controller or full live handoff test. Wrong identity/configuration, ambiguity,
+maintenance removal and active ownership refuse. Exact evidence is in `resume-validation.json`.
+Independent exact-commit review and parent image/live acceptance remain pending.

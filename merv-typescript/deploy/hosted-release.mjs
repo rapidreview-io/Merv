@@ -951,9 +951,12 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
           onHost(run, 'staging_accept');
           await settle(target.image);
         } else {
+          // Resume only an already-journaled target before health-dependent drain: Compose
+          // may have removed Main's canonical name. A fresh catalog still follows drain.
+          const recovered = isolatedStaging ? production('recover-catalog', { run }) : null;
           onHost(run, 'drain');
           production('census');
-          production('catalog', { run });
+          if (!recovered?.recovered) production('catalog', { run });
           const stale = providers.filter(
             (p) => onHost(run, 'native', { provider: p }).image !== target.image,
           );

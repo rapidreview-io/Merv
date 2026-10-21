@@ -279,3 +279,28 @@ Retain the metadata, target and originals until independent handoff acceptance.
 
 These corrections address the three findings in the final review of `8798982dd`. They still
 require independent retest; neither local tests nor this runbook constitutes deployment approval.
+
+### Driver entry and Compose temporary-name recovery
+
+Before its health-dependent drain, isolated `--resume` now calls `recover-catalog`. This action
+can only replay an existing intent with an existing `reader-target.json`; without those markers
+it returns without creating or applying a catalog. It requires the same owner/source/binding,
+preserved boot maintenance and empty Main/native ownership through read-only one-shot queries.
+After repair the ordinary live HTTP maintenance/health and drain checks still run. Initial catalog
+creation remains strictly after the ordinary drain.
+
+Compose can leave its replacement under a temporary name; another `compose up` need not rename
+it. Recovery therefore inspects the unique matching candidate and verifies the saved image,
+Compose project/service/ordinal, replacement label, exact target environment, command/user/health
+configuration, mounts/security/ports and network set. It records a private rename intent, then
+renames that exact container ID. A mismatched or ambiguous candidate refuses. Canonical health
+is checked after normal Compose start. This follows the separate remove/rename operations in
+[Compose convergence](https://github.com/docker/compose/blob/v2.39.4/pkg/compose/convergence.go#L572-L628).
+Both replaced-container-ID labels (tested Compose 2.32) and service-name labels (Compose 2.39)
+are bound to the original identity.
+
+`python3 deploy/staging-isolation/real-reader-gap.py` is an optional **local Docker-only** regression.
+It requires an already-local `python:3.12-slim` image and creates/removes uniquely named test
+containers/networks. It restores the real missing-name/temporary-replacement state for Main and
+controller in four fixtures and runs the actual helper, Compose, rename and health checks.
+Only application rendering/migration preflights are adapted. It is not live handoff acceptance.
