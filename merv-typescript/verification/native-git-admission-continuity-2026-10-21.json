@@ -1,0 +1,79 @@
+{
+  "verified_at": "2026-10-21T11:55:39.719376+00:00",
+  "code_commit": "f5443268cdc5228b4cdb157ee0db48ab5bcbce42",
+  "base_commit": "ba023e74e63ae821fdd7b2de30bed536248c7287",
+  "branch": "codex/native-git-preserve-dispatch",
+  "status": "local verification passed; parent integration and production acceptance outstanding",
+  "regression": "A protocol migration incremented the workflow revision, making retained source-revision admission controls ineffective.",
+  "continuity": "Only the immutable source and target revisions at the exact current migration boundary share scheduling continuity. Ordinary user revisions end it. Lease, action and credential authorization remains exact.",
+  "preserved": [
+    "Launch holds, aggregate failure counters, original timestamps, current-revision release and replay safety",
+    "Actual dispatched-session runner/platform backoff and ordinary-revision behavior",
+    "Unanswered questions, bound responder authority, compute waits and wake receipts",
+    "Provider blocker age, original first-start provenance and quiet-work age",
+    "Fleet rental history, exhaustion, cooldowns and explicit retry windows",
+    "Sandbox fallback attempt identity and scoped request idempotency"
+  ],
+  "offline_plan": {
+    "format": 2,
+    "admission_snapshot": "Workflows, Sessions and Fleet own retained-input snapshots. The plan and immutable batch receipt bind blockers, start/history/round grants, questions/waits, failures, project accounting including nonmigrating work, rental/grant history and shared gates.",
+    "stale_plan": "Admission changes before apply reject the entire batch. Applied-plan replay returns the original receipt without restoring released controls.",
+    "prior_previews": "Regenerate format-1 previews. No fresh production inventory or offline plan was run during this fix."
+  },
+  "validation": [
+    {
+      "command": "MERV_TEST_POSTGRES_URL=<local port 64306> node --import tsx --test --test-concurrency=6 tests/*.test.ts",
+      "tests": 1003,
+      "passed": 1002,
+      "failed": 0,
+      "skipped": 1,
+      "skip": "Linux subreaper test on macOS",
+      "log": "/tmp/merv-native-p1-suite-final.log"
+    },
+    {
+      "command": "npm run test:deploy",
+      "tests": 96,
+      "passed": 96,
+      "failed": 0,
+      "log": "/tmp/merv-native-p1-deploy.log"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 0,
+      "includes": ["client bundle", "TypeScript compilation", "board renderer", "runtime assets"],
+      "log": "/tmp/merv-native-p1-build-final.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "command": "Prettier check of every changed file and git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "test_fixture_repair": "A preexisting queued Code maintenance wake could cross the simulated Git-success/SQL-rollback boundary. Forced queued-wake reproduction failed before and passed after test-only synchronization; the real crash, rollback and concurrent recovery remain exercised.",
+  "independent_review": [
+    "Separate agent reviewed Workflows continuity, Dispatch counters/release/backoff and CLI hashing. It found project accounting and round-limit snapshot gaps; both were fixed and tested.",
+    "Separate agent reviewed question responder, compute wait and stuck reporting boundaries; no blocking findings remained."
+  ],
+  "application_package_lines": {
+    "native_git_commit": "9081a32ec1fe5c31dd2b4f3bdeebfd2a90ceead2",
+    "native_git_net": -3351,
+    "this_fix_net": 474,
+    "combined_net": -2877,
+    "method": "git show/diff --numstat scoped to merv-typescript/packages; excludes tests and deployment documentation"
+  },
+  "production": {
+    "calls": false,
+    "writes": false,
+    "maintenance_changed": false,
+    "migration_applied": false,
+    "canary_created": false
+  },
+  "remaining_release_gates": [
+    "Parent independently reviews and integrates this commit into the combined candidate.",
+    "Follow deploy/NATIVE_GIT_CUTOVER_PLAN.md: refresh the census, preserve holds while draining all ownership, verify a fresh matched DB/Code backup, then review the final offline format-2 plan.",
+    "Exact-image Linux isolation and hosted/native-Git end-to-end acceptance remain parent-owned production gates."
+  ]
+}
