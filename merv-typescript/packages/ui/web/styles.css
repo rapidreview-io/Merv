@@ -2918,6 +2918,114 @@ pre.math--source {
 .signin-switch:hover {
   color: var(--text);
 }
+/* The consent an agent client opens: the one page that is a card, because here the card is the
+   object — a request held up to be approved. The facts are fields, the grants a list, the rest a
+   footnote; one filled control, one quiet one. */
+.consent {
+  align-items: flex-start;
+  padding-top: clamp(24px, 14vh, 140px);
+}
+.consent-card {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 28px 28px 24px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+.consent-card > .signin-title {
+  margin-top: calc(-1 * var(--space-2));
+}
+.consent-warn {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.consent-warn[role='alert'] {
+  color: var(--refutes);
+}
+.consent-fields {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--line);
+}
+.consent-fields > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+.consent-fields dt {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.consent-fields dd {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.consent-grants {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.consent-grants li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+}
+.consent-grants svg {
+  margin-top: 3px;
+  color: var(--supports);
+}
+.consent-grant--not svg {
+  color: var(--ghost);
+}
+.consent-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.consent-actions .btn {
+  min-height: 36px;
+  font-size: var(--text-base);
+}
+.consent-actions .btn--primary {
+  flex: 1;
+}
+.consent-foot {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--faint);
+}
+.consent-foot a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (max-width: 480px) {
+  .consent {
+    padding: var(--space-4);
+  }
+  .consent-card {
+    padding: 22px 18px 18px;
+  }
+  .consent-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
 .signin-host {
   margin-top: var(--space-4);
   font-family: var(--font-mono);

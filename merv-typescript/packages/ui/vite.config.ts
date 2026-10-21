@@ -19,6 +19,7 @@ const proxy = Object.fromEntries(
     '/tools',
     '/health',
     '/auth',
+    '/oauth',
     '/account',
     '/secrets',
     '/projects',
