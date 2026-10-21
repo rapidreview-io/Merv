@@ -19,6 +19,8 @@ export interface SessionWorkspace {
   headOid: string;
   /** Observed Git tree; absent on older reports, never inferred by the server. */
   treeOid?: string;
+  /** Immutable submitted tree; HEAD is its parent until an approved milestone is committed. */
+  submission?: { sessionId: string; parentOid: string; treeOid: string };
   pendingMerge?: CodePendingMerge;
   stats: { commitCount: number; filesChanged: number; insertions: number; deletions: number };
 }

@@ -69,7 +69,6 @@ export function canvas(model: GitModel, width: number) {
     // A lane always runs to its own node, so that a lane with nothing committed on it yet
     // still reaches the point every edge that names it is drawn to.
     const end = dots[dots.length - 1]?.x ?? here.x;
-    const held = lane.mirrored < dots.length ? (dots[lane.mirrored - 1]?.x ?? start) : null;
     return {
       id: lane.id,
       y: here.y,
@@ -79,7 +78,7 @@ export function canvas(model: GitModel, width: number) {
         from.y <= here.y - ELBOW
           ? `M ${from.x},${from.y} V ${here.y - ELBOW} q 0,${ELBOW} ${ELBOW},${ELBOW} H ${end}`
           : `M ${from.x},${here.y} H ${end}`,
-      hollow: held === null ? null : `M ${held},${here.y} H ${end}`,
+      hollow: null,
       dots,
       tip: { x: end, kind: lane.tip },
     };

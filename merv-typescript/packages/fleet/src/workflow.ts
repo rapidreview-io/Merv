@@ -674,6 +674,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
       ...(platform.model === hostedAstraPlatform.model && { platform }),
     });
   }
+  async prepareStop(a: FleetAllocation): Promise<boolean> {
+    return await this.sessions.managed.requestShutdown(a.id, a.epoch);
+  }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
     check(
       this.accepted(a),

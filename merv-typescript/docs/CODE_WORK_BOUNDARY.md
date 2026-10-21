@@ -4,10 +4,10 @@ Code manages Git repositories and workspaces across machines. Code Work decides 
 those capabilities participate in research. A fresh standalone Code installation creates
 no task, experiment, acceptance, review, research-base or publication records.
 
-| Owner     | Responsibilities                                                                                                                                                                                                                          |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Code      | Project repository bindings; workspace starting commits and writer generations; Git objects and refs; transfer receipts and recovery; opaque commit-retention obligations; repository holds; admission limits; optional GitHub transport. |
-| Code Work | Workflow-to-workspace mapping; dependency and base selection; submission and review provenance; acceptance; research merge checks and their machine settings; publication approval and integration.                                       |
+| Owner     | Responsibilities                                                                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code      | Project repository bindings; workspace starting commits and writer generations; Git objects and refs; transfer receipts and recovery; opaque commit-retention obligations; repository holds; admission limits; native Git smart HTTP. |
+| Code Work | Workflow-to-workspace mapping; dependency and base selection; submission and review provenance; acceptance; research merge checks and their machine settings; publication approval and integration.                                   |
 
 Code Work composes the Code storage API. It does not inherit its storage implementation.
 Research types live in explicit research contract modules. The research-local records class
@@ -19,24 +19,14 @@ Code's `code_workspaces` records contain technical writer state. Research's `cod
 records contain workflow identity, the reason a starting commit was selected, and acceptance
 facts. An opaque identifier connects the two; Code does not interpret it as a workflow.
 
-Research records an acceptance and requests commit retention in the same State transaction.
-Code journals the requested Git ref separately from the SQL record because Git and PostgreSQL
-cannot commit together. The executor verifies that the requested object is a commit before
-creating the retained ref. A retention record is an obligation, not by itself proof that the
-Git operation has completed. Existing admission receipts and research publication gates still
-determine when a result is usable.
+Research records an immutable submission request at handoff. After the producer stops, Code verifies and retains its exact tree and parent without creating a commit. Research verifies review provenance and journals an approved milestone in the same transaction as the verdict. Git and PostgreSQL cannot commit together: a retryable executor materializes that approved tree, then records its durable result. Acceptance and dependent code remain gated until this succeeds. Plan approval similarly gates the next writer without creating terminal acceptance.
 
-Retention uses an opaque key, so separate review rounds of one work item cannot overwrite
-each other's commits. Its default refs use `refs/merv/retained/`. A consumer can supply a
-validated technical ref name; Code Work supplies the existing `refs/merv/accepted/`
-destination for final acceptance, preserving local and mirrored branch names. Historical
-`accept-ref` journals are all complete, and so are the `mirror-accepted` rows they queued.
+Opaque retained refs preserve submission objects and approved results across retries. Separate sessions and review rounds cannot overwrite each other's evidence. Historical command and retention journals remain readable; they do not provide another live transport. The native remote and the milestone journal are described in [Code operations](CODE_OPERATIONS.md).
 
 Unfinished research merges and publications project persistent repository holds through
 Code's transactional hold API. Research-owned SQL triggers maintain those projections in
 the same transaction as the research state change. Each obligation has its own key. Disabling
-the research plugin does not remove the holds. Likewise, research projects mirror eligibility;
-Code consumes an explicit technical permission and never queries research base health.
+the research plugin does not remove the holds. Code consumes explicit technical permissions and never queries research base health.
 
 Repository admission configuration belongs to Code. The check command, timeout and machine
 selection belong to Code Work. The existing public configuration request still commits

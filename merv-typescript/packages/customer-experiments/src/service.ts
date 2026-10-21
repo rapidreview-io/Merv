@@ -27,6 +27,7 @@ import {
 import { plansDocument } from './program.js';
 import {
   contractTitle,
+  deliveryReady,
   isDocumentContract,
   withoutBuyer,
   type CustomerExperiment,
@@ -338,7 +339,8 @@ export class CustomerService {
     } | null,
   ) {
     const { paidAt, lines } = await this.domain.progress(caller, exp.id, this.store.state.ambient);
-    const stage = CUSTOMER_STAGE[exp.workflow.state] ?? 'planning';
+    const awaitingCode = exp.workflow.state === 'complete' && !deliveryReady(exp);
+    const stage = awaitingCode ? 'reviewing' : (CUSTOMER_STAGE[exp.workflow.state] ?? 'planning');
     // When the experiment first reached each of the customer's stages, from its own crossings.
     const graph = await this.domain.workflows.process(
       caller,
@@ -353,6 +355,8 @@ export class CustomerService {
     };
     for (const node of graph.nodes) if (node.initial) reached(node.firstEnteredAt, node.state);
     for (const edge of graph.edges) for (const step of edge.traversals) reached(step.at, edge.to);
+    if (awaitingCode) delete entered.complete;
+    else if (exp.codeReadyAt) entered.complete = exp.codeReadyAt;
     const current = lines.filter((line) => line.attempt === exp.attempts);
     const results = new Map<string, { name: string; score: number; total: number }>();
     for (const line of current) if (line.result) results.set(line.result.name, line.result);
@@ -437,10 +441,13 @@ export class CustomerService {
     let conversation: { role: string; text: string }[] = [];
     let intakeStatus: string | undefined;
     let state = exp.workflow.state;
+    if (state === 'complete' && !deliveryReady(exp)) state = 'finalizing';
     let statusMessage =
       typeof exp.workflow.data.failureReason === 'string'
         ? exp.workflow.data.failureReason
         : undefined;
+    if (exp.workflow.state === 'complete' && !deliveryReady(exp))
+      statusMessage = 'The review passed. We are preparing your results for delivery.';
     let usage: Awaited<ReturnType<typeof this.domain.sessions.usage>> | null = null;
     if (['running', 'results_review'].includes(state)) {
       usage = await this.domain.sessions.usage(caller, {
@@ -473,25 +480,23 @@ export class CustomerService {
       ? {
           summary: exp.submission.summary,
           /** The report's pages, as images, once the experiment is complete. */
-          pages:
-            exp.workflow.state === 'complete' ? (exp.submission.report?.pageArtifactIds ?? []) : [],
-          artifacts:
-            exp.workflow.state === 'complete'
-              ? await Promise.all(
-                  shownResults(exp.submission).map(async (id) => {
-                    const artifact = await this.artifacts.get(caller, id);
-                    return {
-                      id,
-                      title:
-                        id === exp.submission!.report?.pdfArtifactId
-                          ? 'Report (PDF)'
-                          : artifact.title,
-                      files: artifact.files,
-                      url: `${this.options.publicOrigin}/customer-experiments/requests/${record.id}/artifacts/${id}`,
-                    };
-                  }),
-                )
-              : [],
+          pages: deliveryReady(exp) ? (exp.submission.report?.pageArtifactIds ?? []) : [],
+          artifacts: deliveryReady(exp)
+            ? await Promise.all(
+                shownResults(exp.submission).map(async (id) => {
+                  const artifact = await this.artifacts.get(caller, id);
+                  return {
+                    id,
+                    title:
+                      id === exp.submission!.report?.pdfArtifactId
+                        ? 'Report (PDF)'
+                        : artifact.title,
+                    files: artifact.files,
+                    url: `${this.options.publicOrigin}/customer-experiments/requests/${record.id}/artifacts/${id}`,
+                  };
+                }),
+              )
+            : [],
         }
       : undefined;
     const progress =
@@ -1388,7 +1393,7 @@ export class CustomerService {
       exp = await this.domain.get(caller, record.experimentId!);
     // What the customer is shown: the report's PDF and its page images, and the other results.
     check(
-      exp.workflow.state === 'complete' &&
+      deliveryReady(exp) &&
         !!exp.submission &&
         [
           ...shownResults(exp.submission),
@@ -1476,7 +1481,7 @@ export class CustomerService {
           ),
         );
         if (
-          ['complete', 'failed'].includes(exp.workflow.state) &&
+          (deliveryReady(exp) || exp.workflow.state === 'failed') &&
           exp.email &&
           exp.acceptedContractId &&
           record.notifiedContract !== exp.acceptedContractId &&

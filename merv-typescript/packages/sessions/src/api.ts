@@ -127,20 +127,18 @@ const inquiryPrompt = (messageId: string) =>
 /** Managed supervisor bearers have no general project, tool or administration transport. */
 const managedRoute = (method: string, path: string): boolean =>
   (method === 'POST' &&
-    [
-      '/sessions/runners/heartbeat',
-      '/sessions/lease',
-      '/code/commands/next',
-      '/code/commands/complete',
-    ].includes(path)) ||
+    ['/sessions/runners/heartbeat', '/sessions/runners/shutdown', '/sessions/lease'].includes(
+      path,
+    )) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+(\/control)?$/.test(path)) ||
   (method === 'POST' &&
     /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections)$/.test(
       path,
     )) ||
-  (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
-  (method === 'PUT' &&
-    /^\/code\/v2\/uploads\/[A-Za-z0-9_]{1,80}\/parts\/(0|[1-9][0-9]{0,14})$/.test(path));
+  (method === 'POST' &&
+    /^\/code\/v2\/(workspace|git-credential|pushed|submission-status|submissions|end|capture-credential|shutdown-credential)$/.test(
+      path,
+    ));
 
 /** The path's identifier is bound over the body's. The result is typed as the input of the method
  *  it is handed to (`never` fits any), unchecked: Sessions parses and checks each body. */
@@ -154,7 +152,48 @@ function bound<T = never>(body: unknown, key: string, value: string): T {
  *  Sessions parses each body and authorizes each effect. */
 async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRoutes) {
   const path = r.url.pathname;
-  const caller = await r.caller();
+  const cleanup =
+    r.principal && 'caller' in r.principal && r.principal.caller.managed?.cleanup
+      ? r.principal.caller
+      : undefined;
+  // Authentication already proved this pending teardown capability. Its own narrow methods
+  // recheck it; ordinary Scope authority intentionally refuses a stopped allocation.
+  if (cleanup)
+    check(
+      req.headers['x-merv-project-id'] === undefined ||
+        req.headers['x-merv-project-id'] === cleanup.projectId,
+      'invalid_input',
+      'Conflicting Merv project selections',
+    );
+  const caller = cleanup ?? (await r.caller());
+  if (path === '/sessions/runners/shutdown' && req.method === 'POST') {
+    const body = await r.json(undefined, 65536);
+    check(
+      body &&
+        typeof body === 'object' &&
+        !Array.isArray(body) &&
+        Object.keys(body).every((key) => key === 'receipt' || key === 'request') &&
+        (!('request' in body) || (body as { request?: unknown }).request === true),
+      'invalid_input',
+      'Shutdown accepts only a receipt',
+    );
+    return await sessions.managed.shutdown(
+      caller,
+      (body as { receipt?: unknown }).receipt,
+      (body as { request?: boolean }).request,
+    );
+  }
+  if (caller.managed?.cleanup)
+    check(
+      (req.method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+(\/control)?$/.test(path)) ||
+        (req.method === 'POST' &&
+          /^\/sessions\/session_[A-Za-z0-9_]+\/(release|workspace-result|transcript|stream|conversation)$/.test(
+            path,
+          )),
+      'managed_shutdown_only',
+      'This runner may only retain and release its existing sessions',
+      403,
+    );
   const callsRoute = /^\/sessions\/threads\/([^/]+)\/calls$/.exec(path);
   if (callsRoute && req.method === 'GET')
     return await sessions.observations.calls(caller, pathSegment(callsRoute[1]!));

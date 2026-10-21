@@ -37,7 +37,7 @@ export interface Task {
   workspace?: 'git';
   /** The accepted Git task whose delivered commit is the base of this task's checkout. */
   baseTaskId?: string;
-  /** The commit the current delivery names; the review pins its rendered record. */
+  /** The immutable code evidence the current delivery names; the review pins its rendered record. */
   deliveryCode?: TaskDeliveryCode;
   deliveryCodeArtifactId?: string;
   /**
@@ -48,17 +48,23 @@ export interface Task {
   composed?: boolean;
 }
 /**
- * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
- * keeps only what a later check compares: who produced it, at which revision, and what it is.
+ * Submission content is resolved from its immutable receipt after the producer stops. Never
+ * label attachment-time OIDs as submitted content. Historical commit deliveries retain theirs.
  */
-export interface TaskDeliveryCode {
-  ref: { kind: 'code-commit'; commandId: string };
+export type TaskDeliveryCode = {
   sessionId: string;
-  /** The task revision the commit was produced at; later revisions never move it. */
+  /** The producing task revision; later revisions never move it. */
   revision: number;
-  headOid: string;
-  treeOid: string | null;
-}
+} & (
+  | {
+      ref: { kind: 'code-commit'; commandId: string };
+      headOid: string;
+      treeOid: string | null;
+    }
+  | {
+      ref: { kind: 'submission'; sessionId: string };
+    }
+);
 export interface TaskFailure {
   reason: string;
   actorId: string;

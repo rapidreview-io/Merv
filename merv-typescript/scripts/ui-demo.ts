@@ -11,7 +11,7 @@ import { createApp } from '../src/app.js';
 import { defaultConfigFile } from '../src/config.js';
 import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
-import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
+import { buildMachine, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
 import { seedTrajectory } from './ui-demo-trajectory.js';
 
@@ -25,9 +25,8 @@ import { seedTrajectory } from './ui-demo-trajectory.js';
  * two machines, mac-studio and lab-gpu-01 (and build-01 with `--git`), whose runners and
  * leases the demo keeps alive and whose agents keep calling Merv, one read every 20 s in turn.
  *
- * `--git` seeds the Git model as well: a bound and imported repository, units with their
- * commits, the bases the server merged from them and one publication. It runs in this process
- * because a commit needs a leased session and a base needs a repository holding real commits.
+ * `--git` adds ordinary Git commits pushed through the real project remote, plus one active
+ * writer whose working tree is still uncommitted. The same runner fixture owns its cleanup.
  *
  * Three of those agents talk on their live streams, a few words a second, as the Agents page's
  * cards show. `--agents` leaves only those three working beside the one that asks its owner, as
@@ -42,7 +41,6 @@ import { seedTrajectory } from './ui-demo-trajectory.js';
  */
 async function main() {
   const seedsGit = process.argv.includes('--git');
-  if (seedsGit) fakeGitHub();
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
   const schema = useRunSchema(directory);
   const app = await createApp({
@@ -145,14 +143,13 @@ async function main() {
     },
     (caller, input) => app.ctx.artifacts.create(caller, input as never),
   );
-  const commandId = await work.commit(taskWorker, {
+  await work.commit(taskWorker, {
     'grokking-demo.md': (await app.ctx.artifacts.read(taskWorker.worker, delivery.id)).content,
   });
   const submitted = await work.run(
     taskWorker,
     'task.submit_delivery',
     {
-      commandId,
       taskId: task.id,
       artifactIds: [delivery.id],
       confirmations: [
@@ -293,7 +290,7 @@ async function main() {
   // It goes before the Running seed, whose open reflection wave pauses new experiments.
   if (process.argv.includes('--trajectory'))
     await seedTrajectory(app, { url, token: boot.token, work, producerCaller, reviewerCaller });
-  const git = seedsGit ? await seedGit(app, owner) : undefined;
+  const git = seedsGit ? await seedGit(app, owner, work) : undefined;
   const {
     machines,
     leases,

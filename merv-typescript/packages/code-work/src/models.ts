@@ -5,10 +5,8 @@ import type { GitHubPullRequest } from '@merv/contracts/github-models';
 import type { z } from 'zod';
 import type {
   CodeAdmissionLimits,
-  codeMirrorRetryInputSchema,
   CodeStoreOperation,
   CodeStoreStatus,
-  CodeMirrorStatus,
   CodeStoreWarning,
   codeUnitFenceInputSchema,
   CodeWriterState,
@@ -16,27 +14,26 @@ import type {
 
 /** The branch and exact commit selected by a repository administrator before preparation. */
 export interface CodeRepositoryPrepareInput {
-  expectedRevision: number;
   baseBranch: string;
   headOid: string;
   expectedMainOid?: string;
   requestId: string;
 }
 export interface CodeRepositoryPreparation {
-  state: 'ready' | 'importing' | 'review_required' | 'failed';
+  state: 'ready' | 'review_required';
   mainOid?: string;
   taskId?: string;
   baseBranch: string;
   headOid: string;
-  operation: CodeStoreOperation;
 }
-/** The inputs of code.write `unit_fence` and `mirror_retry`, which Code parses again itself. */
+/** The inputs of code.write `unit_fence`, which Code parses again itself. */
 export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
-export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
 
 /** Portable immutable code observation identities, without server runtime dependencies. */
 export type CodeCaptureRef =
-  { kind: 'session-final'; sessionId: string } | { kind: 'code-commit'; commandId: string };
+  | { kind: 'session-final'; sessionId: string }
+  | { kind: 'code-commit'; commandId: string }
+  | { kind: 'submission'; sessionId: string };
 
 /**
  * Merv's one word for where a publication stands, which also says where its verdict stands:
@@ -180,7 +177,7 @@ export type CodeMainLandingOutcome = 'ff' | 'merged' | 'resolved' | 'superseded'
 export interface CodeMainLanding {
   enabled: boolean;
   /** Why landing is off. */
-  reason?: 'disabled' | 'github_linked' | 'main_not_stored';
+  reason?: 'disabled' | 'main_not_stored';
   current: {
     unitId: string;
     mainOid: string;
@@ -383,7 +380,6 @@ export interface CodeProjectStatus {
   /** Publication tracks approved work waiting for its verified receipt. */
   publication?: {
     records: CodePublication[];
-    controls: CodePublicationControls & { blockers: string[] };
   };
   /** Shared base records and their retained admission and recovery state, when hosted. */
   bases?: CodeBaseRecord[];
@@ -395,7 +391,6 @@ export interface CodeProjectStatus {
   /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
   operations: CodeStoreOperation[];
   /** How the project's work reaches the repository it is published to; null with no store. */
-  mirror: CodeMirrorStatus | null;
   /** What is worth saying about the repository and stops nothing, newest first. */
   warnings: CodeStoreWarning[];
   /** The newest 200 units. */

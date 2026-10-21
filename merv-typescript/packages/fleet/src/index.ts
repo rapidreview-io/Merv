@@ -615,6 +615,7 @@ export class FleetService implements Fleet {
         intent: 'run',
         runtime: null,
         createAttempted: false,
+        ...(owner.prepareStop && { shutdownRequired: true as const }),
         createdAt: this.time(),
         updatedAt: this.time(),
         deadlineAt: this.deadline(input.seconds),
@@ -968,7 +969,11 @@ export class FleetService implements Fleet {
                 current.failures === 0 &&
                 error instanceof MervError &&
                 error.code === 'sandbox_provider_unavailable';
-              if (current.intent === 'stop') this.waitOutLease(current);
+              if (
+                current.intent === 'stop' &&
+                (!current.shutdownRequired || current.shutdownAcknowledged)
+              )
+                this.waitOutLease(current);
               // A launched machine keeps its phase, and its worker admission, within its lease.
               else if (
                 !booting &&
@@ -996,7 +1001,12 @@ export class FleetService implements Fleet {
     // whose reply was lost is left to the successor, which recovers it by its key.
     if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
     // Past releaseBy the lease has ended any machine it held: its slot is free.
-    if (a.intent === 'stop' && a.releaseBy && a.releaseBy <= this.time()) {
+    if (
+      a.intent === 'stop' &&
+      a.releaseBy &&
+      a.releaseBy <= this.time() &&
+      (!a.shutdownRequired || a.shutdownAcknowledged)
+    ) {
       await this.update(a.id, (current) => {
         current.phase = 'released';
       });
@@ -1009,6 +1019,40 @@ export class FleetService implements Fleet {
     // then only watched, until it is gone or releaseBy. A provider that still reports it up is
     // asked again, at most once a pass.
     const stop = async (a: FleetAllocation, handle: FleetRuntimeHandle) => {
+      // A failed/deleting machine is already an unexpected loss. An intact launched host
+      // receives a durable shutdown request; provider deletion waits for its verified receipt.
+      if (
+        handle.launch &&
+        !['failed', 'deleting', 'stopped'].includes(handle.state) &&
+        (a.shutdownRequired || owner?.prepareStop) &&
+        !a.shutdownAcknowledged
+      ) {
+        if (!a.shutdownRequired)
+          a = await this.update(a.id, (current) => {
+            current.shutdownRequired = true;
+          });
+        if (!owner?.prepareStop || !(await owner.prepareStop(structuredClone(a)))) {
+          // Keep the machine while capture is retrying, even after its work deadline. It admits
+          // no new work. Losing the provider is distinct from deliberately deleting dirty work.
+          if (handle.leaseExpiresAt && Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000) {
+            const seconds =
+              profile?.leaseSeconds ?? Math.max(...this.profiles.map((p) => p.leaseSeconds));
+            await this.observed(
+              a,
+              runtimeHandle(
+                await runtime.renew(handle.sandboxId, seconds),
+                handle.launch,
+                this.clock(),
+              ),
+              'releasing',
+            );
+          }
+          return;
+        }
+        a = await this.update(a.id, (current) => {
+          current.shutdownAcknowledged = true;
+        });
+      }
       if (handle.state !== 'deleting')
         a = await this.observed(
           a,

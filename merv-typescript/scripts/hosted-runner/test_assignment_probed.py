@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parents[2] / 'output/fleet-sandboxes/control/src'))
+sys.path.insert(0, str(HERE.parents[1] / 'vendor/merv-sandboxes/typescript/packages/runtimes/assets/python'))
 spec = importlib.util.spec_from_file_location('assignment_probed', HERE / 'assignment-probed.py')
 wrapper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wrapper)

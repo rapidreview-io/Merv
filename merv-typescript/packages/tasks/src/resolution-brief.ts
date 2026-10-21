@@ -14,10 +14,10 @@ export function resolutionBrief(work: ResolutionWork): {
 } {
   if (work.kind === 'sync')
     return {
-      title: `Integrate GitHub ${work.branch} into Merv main`,
-      goal: `Integrate the retained GitHub head ${work.head} with Merv main ${work.main}. Use code.merge, resolve conflicts and retain both histories. Do not replace either history, force-push, or publish to GitHub. This task must pass independent review before Merv main advances.`,
+      title: `Integrate source ${work.branch} into Merv main`,
+      goal: `Integrate the retained source head ${work.head} with Merv main ${work.main}. Use ordinary git merge, resolve conflicts and retain both histories. Do not replace either history, force-push, or rewrite the source branch. This task must pass independent review before Merv main advances.`,
       checks: [
-        `The delivered commit contains both ${work.main} and ${work.head}, with a merge whose ordered parents are the Merv checkpoint and the selected GitHub head.`,
+        `The delivered commit contains both ${work.main} and ${work.head}, with a merge whose ordered parents are the Merv checkpoint and the selected source head.`,
         'Resolve conflicts without discarding either side unintentionally; document reconciliation choices.',
         'Run the relevant build and tests, retain results, and disclose checks that could not run.',
       ],
@@ -62,7 +62,7 @@ export function resolutionBrief(work: ResolutionWork): {
       checked
         ? `The merge of ${from} and ${to} is clean; its project check failed.`
         : `Resolve conflicts between ${from} and ${to}.`
-    }\n\nLeft input ${left.commit} (the workspace starts here):\n${bounded(side(left.inputs), 8000)}\n\nRight input ${right.commit} (frozen):\n${bounded(side(right.inputs), 8000)}\n\n${sections[0]}\n\nUse code.merge operation start on the clean initial checkout; wait for code.operation. The right input is frozen and never follows a branch. ${checked ? 'Make the command pass on the merged tree, retain its commands and results as evidence' : 'Resolve the files, retain conflict decisions and test evidence'}, then use code.merge operation complete. code.commit and final captures save single-parent WIP before completion. After interruption on any machine, continue from the downloaded checkpoint and its pendingMerge metadata; do not restart over saved WIP. After the first completed merge, later rounds use code.commit for corrections on this same branch. Retain the operation receipt, parent evidence, and commands and results for independent review.\n\n${sections[1]}`,
+    }\n\nLeft input ${left.commit} (the workspace starts here):\n${bounded(side(left.inputs), 8000)}\n\nRight input ${right.commit} (frozen):\n${bounded(side(right.inputs), 8000)}\n\n${sections[0]}\n\nUse ordinary git merge --no-ff with the frozen right input on the assigned work branch. The right input never follows a branch. ${checked ? 'Make the command pass on the merged tree, retain its commands and results as evidence' : 'Resolve the files, retain conflict decisions and test evidence'}, then complete the merge with ordinary git commit and push it to origin. Submit delivery and stop to freeze any later uncommitted corrections. Independent approval commits that exact reviewed tree. Continue on the same branch after review feedback; do not create another merge or rewrite either input. Retain parent evidence, commands and results for independent review.\n\n${sections[1]}`,
     checks: [
       `The first completed merge on the task branch must have exactly two parents: the current checkpoint descending from ${left.commit}, and frozen right input ${right.commit}, in that order. Later rounds add ordinary corrective commits.`,
       // A check failure has no conflicting path to resolve; asking for one would contradict

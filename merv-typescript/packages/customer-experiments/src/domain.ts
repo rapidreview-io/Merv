@@ -30,6 +30,7 @@ import {
   SERVICE_EXPERIMENT,
   SERVICE_VERSION,
   SERVICE_VERSIONS,
+  approvalCommits,
   plansDocument,
   writesReport,
 } from './program.js';
@@ -220,12 +221,23 @@ export class CustomerExperiments {
             row.submission_id,
           )
         : null;
+      const workflow = await this.workflows.get(caller, id, tx);
+      const native = approvalCommits(workflow.version);
+      const accepted =
+        native && workflow.state === 'complete'
+          ? (await this.code.unit(caller, id, tx)).acceptance
+          : null;
+      const codeHead =
+        native && workflow.state === 'complete' ? accepted?.reference : row.code_head;
       return {
         id: row.id,
         projectId: row.project_id,
         title: row.title,
         ownerId: row.owner_id,
-        workflow: await this.workflows.get(caller, id, tx),
+        workflow,
+        ...(native
+          ? { codeReady: !!accepted, ...(accepted ? { codeReadyAt: accepted.acceptedAt } : {}) }
+          : {}),
         contract: contract ? JSON.parse(contract.record) : null,
         acceptedContractId: row.accepted_contract_id,
         acceptedAt: row.accepted_at,
@@ -236,7 +248,7 @@ export class CustomerExperiments {
           ? {
               ...JSON.parse(submission.record),
               ...(retained ? { artifactIds: JSON.parse(retained.artifact_ids) } : {}),
-              ...(row.code_head ? { codeHead: row.code_head } : {}),
+              ...(codeHead ? { codeHead } : {}),
             }
           : null,
         review: row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null,
@@ -1045,6 +1057,9 @@ export class CustomerExperiments {
           producerId: caller.actorId,
           sessionId: caller.session!.id,
           executionRevision: exp.workflow.revision,
+          ...(approvalCommits(exp.workflow.version)
+            ? { codeCaptureRef: (await this.code.expectSubmission(caller, tx)).ref }
+            : {}),
           createdAt: now(),
         };
         await tx.run(
@@ -1063,7 +1078,7 @@ export class CustomerExperiments {
       }),
     );
   }
-  /** Poll/startup recovery: a finalizing node cannot dispatch or review before final capture. */
+  /** Poll/startup recovery: finalizing waits for immutable code and settled compute. */
   async reconcile(caller: Caller, id: string): Promise<CustomerExperiment> {
     caller = structuredClone(caller);
     return this.state.transaction(async (tx) => {
@@ -1127,7 +1142,7 @@ export class CustomerExperiments {
       }
       const capture = await this.code.capture(
         caller,
-        { kind: 'session-final', sessionId: sub.sessionId },
+        sub.codeCaptureRef ?? { kind: 'session-final', sessionId: sub.sessionId },
         tx,
       );
       if (capture.status === 'pending' || capture.status === 'none') return exp;
@@ -1279,6 +1294,20 @@ export class CustomerExperiments {
             : {},
         input as unknown as Data,
       );
+      if (action === 'accept_results' && approvalCommits(exp.workflow.version))
+        await this.code.approveSubmission(
+          caller,
+          {
+            unitId: exp.id,
+            terminalRevision: exp.workflow.revision + 1,
+            submissionRef: exp.submission!.id,
+            reviewRef: review.id,
+            codeRef: exp.submission!.codeCaptureRef!,
+            reviewSessionId: caller.session!.id,
+            kind: 'results',
+          },
+          tx,
+        );
       return this.get(caller, exp.id, tx);
     });
   }

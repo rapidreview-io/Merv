@@ -11,7 +11,6 @@ import type { CodeBaseService } from '../../packages/code-work/src/bases.js';
 import { boundProject, codeConfig } from './code-binding.js';
 import { git, gitSource } from './code-store.js';
 import { resolutionFixture } from './resolution.js';
-import { githubFixture } from '../github-fixture.js';
 import { assessment } from './review-verdict.js';
 
 /**
@@ -26,15 +25,13 @@ export async function codePublishFixture(
   options: { mainLanding?: boolean } = {},
 ) {
   const f = await resolutionFixture(t, { human });
-  const remote = connected ? await githubFixture(t, f.state, f.admin) : undefined;
-  if (remote) await remote.enable();
   await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
   const root = join(f.directory, 'code');
   mkdirSync(join(root, 'tmp'), { recursive: true });
   mkdirSync(join(root, 'empty-template'));
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
-  const branches = remote?.branches ?? new Map<string, string>();
+  const branches = new Map<string, string>();
   const legacyCore = await createService(
     new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'legacy-code'))),
   );
@@ -62,39 +59,7 @@ export async function codePublishFixture(
     }),
   );
   const code = await createService(
-    new CodeService(
-      f.state,
-      f.scope,
-      f.sessions,
-      f.workflows,
-      f.reviews,
-      Object.assign(Object.create(core), { github: remote?.github ?? core.github }),
-      {
-        config: { settleMs: 60_000 },
-        // GitHub's history is the source repository; the first `importFailures` fetches fail.
-        remote: {
-          read: async (_caller, use) =>
-            use({
-              url: importFailures-- > 0 ? join(source.directory, 'gone') : source.repository,
-              protocol: 'file',
-              repository: { id: 1, fullName: 'fixture/private' },
-              env: {},
-            }),
-        },
-        // The objects are in the real repository already; only the remote refs are played.
-        mirror: {
-          target: async () => ({ repository: 'fixture/private' }),
-          lsRemote: async (_project: string, ref: string) =>
-            branches.get(ref.replace('refs/heads/', '')) ?? null,
-          push: async (_project: string, update: { ref: string; oid: string }) => {
-            branches.set(update.ref.replace('refs/heads/', ''), update.oid);
-            return 'ok' as const;
-          },
-        },
-        mirrorConfig: { mirrorSeconds: 0 },
-      },
-      options,
-    ),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core, {}, options),
   );
   const bases = (code as unknown as { baseStore: CodeBaseService }).baseStore;
   const setMain = async (oid: string) =>
@@ -266,13 +231,6 @@ export async function codePublishFixture(
     await f.state.transaction((tx) => tx.run("UPDATE code_publications SET synced_at=''"));
     return await code.syncPublications(f.admin);
   };
-  const canary = () =>
-    code.controlPublication(f.admin, {
-      action: 'record_canary',
-      staleMerged: false,
-      reason: 'The release matrix passed with this App and its rules.',
-      requestId: 'canary',
-    });
   const unbind = f.bindCode(code);
   f.beforeClose.push(async () => {
     unbind();
@@ -284,7 +242,6 @@ export async function codePublishFixture(
     ...f,
     code,
     bases,
-    remote,
     branches,
     repositories,
     bare,
@@ -302,7 +259,6 @@ export async function codePublishFixture(
     accept,
     blockers,
     sync,
-    canary,
     id,
   };
 }

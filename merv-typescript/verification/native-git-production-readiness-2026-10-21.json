@@ -1,0 +1,190 @@
+{
+  "checkedAt": "2026-10-21T10:00:10.035241+00:00",
+  "origin": "https://experiments.rapidreview.io",
+  "publicIPv4": ["20.98.245.95"],
+  "runningMain": {
+    "release": "20261021T064230Z-7871b0af-85410a2ad390",
+    "image": "sha256:7f7b6177a78023f4e3b954b8f28466fb1b622c26509fcf9370502b17b9c730a4",
+    "sourceCommit": "7871b0af7243c52c24161eb23058552bb1173164"
+  },
+  "runningHosted": {
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:efaf5b8641dc21cf399f7b65f583102803b8cbf8f902eea15ef2850a3823ad66",
+    "releaseId": "rt1_9ab40187981c5bff0a2d329f3c70b70ede225a5960d6dd2971a0e51960f5f526",
+    "releases": {
+      "cloudflare-fleet": "rt1_9ab40187981c5bff0a2d329f3c70b70ede225a5960d6dd2971a0e51960f5f526",
+      "cloudflare-fleet-large": "rt1_dc902997f7d8b2433b0bc3472912be262f43d57de5a59b7f115449221bec9592"
+    },
+    "localId": "sha256:766198f60c4d82ef59061b91706a8f643d03323a236fce2b9c4035a85a84ac54",
+    "sourceCommit": "c7bac5d3d41e7274b2a14175ad69436ff86a519d",
+    "sandboxesCommit": "718b2f78b5d7758da843460dfae591d859693048"
+  },
+  "hostedPinsCheck": {
+    "exitCode": 0,
+    "activeRelease": null
+  },
+  "candidateDeployed": false,
+  "cutoverPreflight": {
+    "ready": false,
+    "legacyWorkCount": 39,
+    "affectedProjects": 30,
+    "legacyGroups": [
+      {
+        "workflow": "experiment",
+        "version": "40",
+        "state": "planned",
+        "count": 1
+      },
+      {
+        "workflow": "experiment",
+        "version": "41",
+        "state": "planned",
+        "count": 6
+      },
+      {
+        "workflow": "service_experiment",
+        "version": "1",
+        "state": "planning",
+        "count": 2
+      },
+      {
+        "workflow": "service_experiment",
+        "version": "3",
+        "state": "awaiting_payment",
+        "count": 2
+      },
+      {
+        "workflow": "service_experiment",
+        "version": "3",
+        "state": "planning",
+        "count": 20
+      },
+      {
+        "workflow": "service_experiment",
+        "version": "3",
+        "state": "ready",
+        "count": 2
+      },
+      {
+        "workflow": "task",
+        "version": "2",
+        "state": "in_review",
+        "count": 1
+      },
+      {
+        "workflow": "task",
+        "version": "43",
+        "state": "in_progress",
+        "count": 5
+      }
+    ],
+    "queuedCommands": 1,
+    "writers": 0,
+    "allocations": 0,
+    "managedRunners": 0
+  },
+  "publicChecks": [
+    {
+      "path": "/health",
+      "status": 200,
+      "server": "Caddy",
+      "cfRay": null,
+      "bytes": 15,
+      "bodySha256": "a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288"
+    },
+    {
+      "path": "/ui/",
+      "status": 200,
+      "server": "Caddy",
+      "cfRay": null,
+      "bytes": 1276,
+      "bodySha256": "8809111272dccde81af39a713c6469f6569bbb8c28f500b36535c2d138c008c8"
+    },
+    {
+      "path": "/git/native_git_readiness_probe.git/info/refs?service=git-upload-pack",
+      "status": 404,
+      "server": "Caddy",
+      "cfRay": null,
+      "bytes": 59,
+      "bodySha256": "1b7586b321e2bec8789794a54203a15a6ec35da674efe626654cdaf6f8a1c3fa"
+    }
+  ],
+  "productionMutations": {
+    "applicationDeployment": false,
+    "workflowChanges": false,
+    "projectCreated": false,
+    "credentialCreated": false,
+    "providerAllocationCreated": false
+  },
+  "acceptanceNotEstablished": [
+    "Candidate native Git public ingress",
+    "Exact candidate hosted supervisor and immutable review with real Main",
+    "Provider deletion after acknowledgement and real lost-response replay"
+  ],
+  "requiredDecision": "Owner chose to plan migration/drain first. Execution awaits per-record disposition, reviewed targeted repairs where needed, and an agreed maintenance window.",
+  "limitations": [
+    "These production checks inspect the running pre-candidate release. They are not candidate acceptance.",
+    "Public DNS resolves to the Azure host and responses advertise Caddy with no CF-Ray; no Cloudflare HTTP-edge path was established.",
+    "No production data or provider allocation needed cleanup. Read-only hosted-pin checking retained its standard release-inspection artifacts."
+  ],
+  "candidateSource": {
+    "baseCommit": "7871b0af7243c52c24161eb23058552bb1173164",
+    "status": "uncommitted implementation; not packaged or deployed",
+    "workingFilesSha256": "7ad9fb220830823f899a8feed399e52b408aa3f5f57032384067bf0996825f31",
+    "fileCount": 1020,
+    "vendorGitlink": "718b2f78b5d7758da843460dfae591d859693048",
+    "manifestScope": "Working files under source-archive ROOTS/EXCLUDE; pinned vendor commit recorded separately. Includes source modules named credentials; excludes credential JSON and environment files."
+  },
+  "localValidation": {
+    "smartHttpTests": {
+      "passed": 36,
+      "failed": 0
+    },
+    "fullSuiteBeforeProbeExpectationCorrection": {
+      "passed": 986,
+      "failed": 1,
+      "skipped": 1
+    },
+    "probeRetestAfterNativeMalformedResponseExpectationCorrection": {
+      "passed": 1,
+      "failed": 0,
+      "checks": 9,
+      "largeBodyMiB": 2
+    },
+    "backendBuild": "passed",
+    "typecheck": "passed",
+    "productionCandidateAcceptance": "blocked pending legacy disposition and native deployment"
+  },
+  "drainPlanning": {
+    "checkedAt": "2026-10-21T10:06:48.639Z",
+    "selectedByOwner": "Plan migration/drain of existing work first",
+    "executed": false,
+    "plan": "deploy/NATIVE_GIT_CUTOVER_PLAN.md",
+    "ledger": "verification/native-git-drain-inventory-2026-10-21.csv",
+    "ledgerSha256": "2b84035d9dce14746981646800caf13b20514626a40e2db80b3a281003b04445",
+    "legacyWorkflowCount": 39,
+    "workflowProjects": 30,
+    "projectsIncludingCommand": 31,
+    "registeredResearchUnits": 12,
+    "retiredReviewUnits": 1,
+    "customerUnits": 26,
+    "customerPaymentReceipts": 0,
+    "customerAcceptedContracts": 2,
+    "customerContracts": 4,
+    "provisionedRequestBuckets": 12,
+    "recordedRequestBucketDeletions": 0,
+    "legacyRequestUploads": 2,
+    "touchingDependencyEdges": 19,
+    "activeOrOfferedSessions": 0,
+    "missingWorkflowDefinitions": 0,
+    "dispatchedCommand": {
+      "originatingSessionStatus": "expired",
+      "underlyingWorkflowState": "complete",
+      "matchingUploadOperations": 0,
+      "outcomeReconciled": false
+    },
+    "externalPaymentStateVerified": false,
+    "researchBytesExported": false,
+    "consistentBackupCreated": false,
+    "independentReviews": "Lifecycle and deployment reviewers approved the planning document after clarifying planning-only file expiry; no execution approval implied."
+  }
+}

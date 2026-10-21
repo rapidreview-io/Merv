@@ -129,7 +129,12 @@ const PIPELINE = [
 // For the plan text; the host runs its own LANE_GATES, which a test keeps equal to these.
 export const GATES = {
   worker: ['linux-pi-gate.py'],
-  boundary: ['linux-pi-gate.py', 'linux-workflow-gate.py', 'linux-isolation-probe-gate.mjs'],
+  boundary: [
+    'linux-pi-gate.py',
+    'linux-workflow-gate.py',
+    'linux-isolation-probe-gate.mjs',
+    'linux-review-gate.py',
+  ],
 };
 export const LEASE = 300; // seconds; as in hosted-release-vm.py
 const LANE_TEXT = {

@@ -144,48 +144,15 @@ test('a noun call takes its action and that action’s object, and names what it
     method: 'status',
     input: null,
   });
-  // Inner issues keep their nested paths; an inner field named action is the action's own.
-  const inner = await refusal(
-    tools.call('code.write', owner, {
-      action: 'publication_control',
-      publication_control: { action: 'reopen', reason: 'x', requestId: 'r' },
-    }),
-  );
-  assert.deepEqual(
-    (inner.details as { path: string[] }[]).map(({ path }) => path.join('.')),
-    ['publication_control.action'],
-  );
-  assert.deepEqual(
-    await tools.call('code.write', owner, {
-      action: 'publication_control',
-      publication_control: { action: 'clear', reason: 'Canary passed', requestId: 'r' },
-    }),
-    {
-      method: 'controlPublication',
-      input: { action: 'clear', reason: 'Canary passed', requestId: 'r' },
-    },
-  );
-  // A refined input is unwrapped only to describe it: its refinement still refuses.
-  const refined = await refusal(
+  // Retired external actions are not advertised or accepted.
+  for (const action of ['publication_control', 'publication_merge', 'mirror_retry'])
+    await refusal(tools.call('code.write', owner, { action, [action]: {} }));
+  await assert.rejects(
     tools.call('code.write', owner, {
       action: 'repository_import',
       repository_import: { source: 'github', requestId: 'import' },
     }),
-  );
-  assert.match(refined.message, /failed validation/);
-  assert.deepEqual(
-    (refined.details as { path: string[]; message: string }[]).map(({ path, message }) => [
-      path.join('.'),
-      message,
-    ]),
-    [['repository_import', 'A bundle import names tip and bundle; a GitHub import names ref']],
-  );
-  const missingImport = await refusal(
-    tools.call('code.write', owner, { action: 'repository_import' }),
-  );
-  assert.match(
-    JSON.stringify(missingImport.details),
-    /takes its arguments under \\"repository_import\\": \{source, tip, bundle, ref, …\}/,
+    { code: 'invalid_input' },
   );
   // A base control keeps its retired name's flat body, so request digests match in both forms.
   const key = 'a'.repeat(64);
@@ -221,7 +188,7 @@ test('a noun tool describes every action through lossless schemas, core loaded u
   const write = expanded(described.get('code.write')!.inputSchema);
   // Its own required list, nested enums and the refined input's fields.
   assert.deepEqual(write.properties.base_retry.required, ['key', 'reason', 'requestId']);
-  assert.deepEqual(write.properties.repository_import.properties.source.enum, ['bundle', 'github']);
+  assert.equal(write.properties.repository_import, undefined);
   assert.deepEqual(write.properties.publication_sync.properties, {});
   // alwaysLoad is Claude Code's: a core tool's whole schema loads into every context.
   assert.deepEqual(described.get('code.read')!._meta, { 'anthropic/alwaysLoad': true });
@@ -270,7 +237,6 @@ test('a retired name runs its noun action for every caller for one release, then
   assert.deepEqual(
     listed.filter((name) => name.startsWith('code.')),
     [
-      'code.commit',
       'code.files',
       'code.log',
       'code.operation',
@@ -864,7 +830,7 @@ test('recovery guidance names each action by its address and says it as its call
   const tools = new ToolRegistry(scope as never);
   const said = {
     next: 'An administrator uses code.write:base_resume and a reason.',
-    publication: { next: 'Clear it with code.write:publication_control; read code.read:status.' },
+    publication: { next: 'Reconcile it with code.write:publication_sync; read code.read:status.' },
   };
   // Code's reads say their guidance through the registry it is bound to (CodeService.said).
   const codeWork = new Proxy(
@@ -875,12 +841,12 @@ test('recovery guidance names each action by its address and says it as its call
   tools.registerSessionPolicy(sessionPolicy(['code.status']).policy);
   assert.deepEqual(await tools.call('code.read', owner, { action: 'status' }), {
     next: 'An administrator uses code.write base_resume and a reason.',
-    publication: { next: 'Clear it with code.write publication_control; read code.read status.' },
+    publication: { next: 'Reconcile it with code.write publication_sync; read code.read status.' },
   });
   // A leased worker is told the retired name its frozen policy grants.
   assert.deepEqual(await tools.call('code.status', worker, {}), {
     next: 'An administrator uses code.base.resume and a reason.',
-    publication: { next: 'Clear it with code.publication.control; read code.status.' },
+    publication: { next: 'Reconcile it with code.publication.sync; read code.status.' },
   });
   // Concurrent reads of the same service retain their own endpoint vocabulary.
   const [legacy, modern] = (await Promise.all([
@@ -898,7 +864,7 @@ test('recovery guidance names each action by its address and says it as its call
         {
           next: 'An administrator uses code.base.resume and a reason.',
           publication: {
-            next: 'Clear it with code.publication.control; read code.status.',
+            next: 'Reconcile it with code.publication.sync; read code.status.',
           },
         },
       ],

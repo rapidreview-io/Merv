@@ -55,6 +55,11 @@ import {
 } from './workflow.js';
 import { checkpoint, leasedClaim, visibleCheckpoints } from './lease.js';
 import { workflowPolicy } from './policy.js';
+import {
+  ARTIFACT_TASK_WORKFLOW,
+  artifactReview,
+  requireArtifactReview,
+} from './legacy-artifact-review.js';
 import { assignmentFacts, context } from './context.js';
 import { page, running, runningPanel } from './running.js';
 import {
@@ -156,7 +161,9 @@ export class TaskService implements Tasks {
         this.registrations.set(
           version,
           await this.workflows.register(
-            { ...(serviceOwned(version) ? serviceWorkflow : TASK_WORKFLOW), version },
+            artifactReview(version)
+              ? ARTIFACT_TASK_WORKFLOW
+              : { ...(serviceOwned(version) ? serviceWorkflow : TASK_WORKFLOW), version },
             workflowPolicy(this, version),
           ),
         );
@@ -179,14 +186,20 @@ export class TaskService implements Tasks {
           const row = await this.row(tx, caller, review.subjectId);
           const snapshot = await this.workflows.get(caller, row.id, tx);
           this.registration(snapshot.version);
+          if (artifactReview(snapshot.version))
+            await requireArtifactReview(tx, caller.projectId, snapshot.id);
           if (row.review_id === review.id && !review.override)
             await leasedClaim(this, caller, snapshot, tx);
         },
         overrides: ['leased_review_required'],
         // A Git task passes only from a leased reviewer in a checkout of the delivered commit
         // (checkoutReviewer), unless its owner decides as owner.
-        verdicts: async (caller, review) =>
-          caller.session || review.override ? REVIEW_VERDICTS : ['needs_changes', 'fail'],
+        verdicts: async (caller, review) => {
+          const snapshot = await this.workflows.get(caller, review.subjectId);
+          return artifactReview(snapshot.version) || caller.session || review.override
+            ? REVIEW_VERDICTS
+            : ['needs_changes', 'fail'];
+        },
         // Only needs_changes returns a task: fail ends it, or suspends a service task.
         returning: ['needs_changes'],
         // A task carries the claims of its newest delivery only, so they stand beside the

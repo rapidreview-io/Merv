@@ -9,18 +9,16 @@
     "./base-merge": "./src/base-merge.ts",
     "./models": "./src/models.ts",
     "./git": "./src/git.ts",
-    "./github": "./src/github.ts",
-    "./github-client": "./src/github-client.ts",
     "./input": "./src/input.ts",
     "./pending-merge": "./src/pending-merge.ts",
     "./units": "./src/units.ts",
     "./writers": "./src/writers.ts",
-    "./store/mirror": "./src/store/mirror.ts",
     "./store/operations": "./src/store/operations.ts",
     "./store/protocol": "./src/store/protocol.ts",
     "./store/refs": "./src/store/refs.ts",
     "./store/repository": "./src/store/repository.ts",
-    "./driver/index": "./src/driver/index.ts"
+    "./driver/index": "./src/driver/index.ts",
+    "./store/http": "./src/store/http.ts"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10",

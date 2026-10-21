@@ -99,14 +99,19 @@ find ui -mindepth 1 -maxdepth 1 ! -name assets ! -name index.html -exec cp -r {}
 [ -e ${UI_DIR}/index.html ] || cp ui/index.html ${UI_DIR}/index.html
 # A first deploy on a VM has no previous container, and so nothing to roll back to.
 PREV=$(docker inspect --format '{{.Config.Image}}' merv-typescript-control-1 2>/dev/null || true)
-PREV_ID=; PREV_DIR=
+PREV_ID=; PREV_DIR=; PREV_NATIVE=false
 if [ -n "$PREV" ]; then
-  PREV_ID=$(docker image inspect --format '{{.Id}}' "$PREV")
+  # Inspect and restore the exact container image, never a mutable tag's new target.
+  PREV_ID=$(docker inspect --format '{{.Image}}' merv-typescript-control-1)
   PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
+  PREV_PROTOCOL=$(docker image inspect --format '{{index .Config.Labels "org.merv.native-git-protocol"}}' "$PREV_ID")
+  [ "$PREV_PROTOCOL" != 1 ] || PREV_NATIVE=true
 fi
 ALLOW_ROLLBACK=false
-if [ "${noRollback ? '1' : '0'}" = 0 ] && [ -n "$PREV" ]; then
-  PREV_SBX=$(docker image inspect --format '{{index .Config.Labels "org.merv.sandboxes-image"}}' "$PREV")
+# This candidate can migrate Code after either preflight. Only a previous image
+# declaring the same native protocol can be restored after candidate startup.
+if [ "${noRollback ? '1' : '0'}" = 0 ] && [ -n "$PREV" ] && [ "$PREV_NATIVE" = true ]; then
+  PREV_SBX=$(docker image inspect --format '{{index .Config.Labels "org.merv.sandboxes-image"}}' "$PREV_ID")
   [ "$PREV_SBX" != "$SANDBOXES_TS_IMAGE" ] || ALLOW_ROLLBACK=true
 fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
@@ -124,7 +129,7 @@ rollback() {
       "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$LOG" > deploy-status.json
     exit 1
   fi
-  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
+  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV_ID" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
   for i in $(seq 1 24); do
     P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || P=starting
@@ -135,6 +140,36 @@ rollback() {
   exit 1
 }
 H=not-started; R=0
+# The first native-Git release must drain old protocols on the old runtime. Check
+# before stopping it, then again after stop so an admission cannot race cutover.
+# A failed recheck can restart a native-capable exact previous image. Otherwise,
+# both reports must prove that neither protocol nor Code migration has happened.
+cutover() {
+  docker run --rm --network deploy_default --env-file /etc/merv/typescript.env \\
+    --entrypoint node "$IMG" --import tsx deploy/git-cutover-preflight.mjs
+}
+cutover > git-cutover-before.json
+cp git-cutover-before.json git-cutover.json
+if [ -n "$PREV" ]; then
+  docker stop -t 60 merv-typescript-control-1 > /dev/null
+  if ! cutover > git-cutover.json; then
+    if [ "${noRollback}" != true ] && { [ "$PREV_NATIVE" = true ] || python3 - <<'PY'
+import json
+try:
+    records=[json.load(open(path)) for path in ['git-cutover-before.json','git-cutover.json']]
+    assert all(record.get('protocolMigrated') is False and (record.get('alreadyNative') is None or record.get('alreadyNative') is False) for record in records)
+except Exception:
+    raise SystemExit(1)
+PY
+    }; then
+      docker start merv-typescript-control-1 > /dev/null
+      echo 'Git cutover refused; compatible previous runtime restarted for draining' >&2
+    else
+      echo 'Git cutover refused; preserve maintenance. Previous runtime compatibility is unproven or automatic rollback is disabled.' >&2
+    fi
+    exit 1
+  fi
+fi
 trap rollback EXIT
 (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
 for i in $(seq 1 60); do

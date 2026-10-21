@@ -14,7 +14,7 @@ export const unitRef = (unitId: string): string =>
 export const workRef = (unitId: string) => `refs/merv/work/${unitRef(unitId)}`;
 /** Where a unit's result is kept. The `accepted` segment is persisted in repositories and stays. */
 export const resultRef = (unitId: string) => `refs/merv/accepted/${unitRef(unitId)}`;
-/** The local branch a writer's checkout stands on; the mirror publishes it under the same name. */
+/** The branch a writer checks out and pushes to the project remote. */
 export const workBranch = (unitId: string) => `merv/work/${unitRef(unitId)}`;
 
 /** An opaque retained commit identity supplied by a repository consumer. */

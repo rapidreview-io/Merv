@@ -1,297 +1,69 @@
-# Live code checkpoints
+# Code operations
 
-Personal agents use noun tools with `{"action":"x","x":{...}}` and a top-level
-`projectId` when selecting a project. Leased workers keep the alias names and flat
-inputs granted by their pinned workflows. See the [tool overview](../README.md#agent-tools).
+Code serves one native Git remote per project. Tasks and experiments use ordinary Git inside their assigned workspaces. Review and integration remain Merv workflow operations: pushing a branch does not approve it or move the managed main branch.
 
-The Code plugin lets a running worker request a Git checkpoint without giving the worker write access to private Git metadata. Code stores the request and its immutable result. The existing machine Runner performs the fixed Git operation in that worker's assigned checkout.
+## Remote and authentication
 
-Accepted Git units marked for publication use an independently reviewed pull request and a human-requested merge, subject to the checks below. A successful checkpoint is evidence of a commit; it is not an approval or a published project head.
-
-## Plugin boundaries
-
-Experiments, Tasks, Knowledge and Research require Code through the `code-work` service,
-so every composition that loads them loads Code and Code work. The dedicated
-Consolidation plugin has been retired; current Research uses an ordinary Git task
-for code integration after reflection approval. Historical consolidation records
-remain readable but have no execution or publication owner. Artifact-only tasks
-never ask for Code.
-Knowledge reports Code references it cannot read now as `unavailable`, distinct from
-`missing`. No workflow is silently converted from Git to non-Git.
-
-| Plugin        | Direct Cordis dependencies                                      | Responsibility                                                                                |
-| ------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Code          | State, Scope, Domain Events                                     | Repository files, retained Git facts, writer generations, transfers and the GitHub connection |
-| Code work     | Code, State, Scope, Sessions, Workflows, Reviews, Domain Events | Durable command identity, worker admission, source ownership and immutable receipts           |
-| code-tools    | Code work, Tools                                                | `code.read`, `code.write`; worker-only `code.commit` and `code.merge`                         |
-| code-work-api | Code work, API                                                  | Source-authenticated command retrieval and completion over `/code`                            |
-| code-ui       | Code work, UI                                                   | Recent operations and publications in the Git page                                            |
-| Runner        | None; separate machine context                                  | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts    |
-
-Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
-
-```mermaid
-sequenceDiagram
-  participant Worker
-  participant Code
-  participant Runner
-  participant Git
-  Worker->>Code: code.commit(expectedHead, message, requestId)
-  Code-->>Worker: durable operation ID
-  Runner->>Code: next command (source authentication)
-  Code-->>Runner: frozen session and workspace identity
-  Runner->>Git: owned checkout checkpoint + receipt marker
-  Git-->>Runner: exact commit and tree
-  Runner->>Code: complete with immutable receipt
-  Worker->>Code: code.operation(commandId), pinned worker alias
-  Code-->>Worker: succeeded receipt or terminal failure
-```
-
-## Agent contract
-
-The step must grant both tools, declare a writable Git workspace, and belong to an active attached session. Ordinary actor or account tokens cannot request a commit. The worker reads its current full Git HEAD, finishes editing, then calls:
-
-```json
-{
-  "expectedHead": "<full lowercase Git commit OID>",
-  "message": "Explain the completed change",
-  "requestId": "checkpoint-1"
-}
-```
-
-A worker inspects its granted `code.operation` alias with the returned `command.id` until the result is terminal. Personal agents use `code.read` with `{"action":"operation","operation":{"commandId":"<command id>"}}`. Keep files stable while the checkpoint is pending: the Runner captures their contents when it processes the request. Repeating the same request ID and input returns the same operation; changing that input conflicts. A session can have only one queued or dispatched operation at a time; a request made beside one is refused with `code_command_pending`, naming it. A later checkpoint uses a new request ID and the new current HEAD. The runner's own periodic checkpoints (`Checkpoint: <work name>`) move HEAD without the worker knowing, so an `expectedHead` that only this session's admitted checkpoints have moved past is queued on the newest of them: its tree is the checkout's either way.
-
-Workers can read only their own current session's operations. Authorized project readers can inspect project operations, including after a worker closes. The Git page lists the latest 100; it does not imply a complete history count.
-
-A receipt contains command, repository and workspace IDs, the retained workspace base, expected parent, resulting head, exact tree and change statistics. Statistics are from the retained base to the resulting head, and can include earlier persistent-workspace history. A checkpoint with no content change succeeds at the existing HEAD; it does not create an empty commit. Git author/committer metadata uses the Runner identity, while Code records the original worker actor and workflow revision.
-
-## Execution and recovery
-
-The server command is durable before dispatch. It freezes the project, session, actor, instance, revision, runner, host and original workspace attachment. Requests carry no executable, arguments, environment, credential, repository path or checkout path. The Runner validates the full descriptor against its session before accepting it.
-
-The Runner journals the command before Git work. It uses a private operation index, freezes the resulting tree, and produces a deterministic commit. A single Git ref transaction checks the checkout owner and expected HEAD while updating the owned branch/HEAD and creating a unique receipt marker. Hooks, filters and unsafe Git configuration stay disabled. Changed files above 50 MiB are refused. The worker's sandbox permissions remain unchanged.
-
-| Failure                                              | Outcome                                                                                                         |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Duplicate request or dispatch reply                  | Same immutable command, no second checkpoint                                                                    |
-| Command received after worker stops                  | Resolve after final capture fences the old owner; no new Git mutation                                           |
-| Dispatch reply lost before local journaling          | Recover an already-dispatched descriptor after session closure and resolve its stopped-safe outcome             |
-| Controller dies while preparing objects              | Retry using the durable command and frozen tree; private operation indexes cannot overwrite a successor's index |
-| Git ref update succeeds but acknowledgement is lost  | Recover its exact receipt marker and retry the same server result                                               |
-| An old Git child survives its controller             | Capture changes the durable owner ref; the old ref transaction cannot update a successor's checkout             |
-| Server unavailable during completion                 | Keep the local outcome and checkout reservation; retry before releasing capacity                                |
-| Session closes before a queued request is dispatched | Cancel the request when its source next reconciles it                                                           |
-
-Capture changes the owner ref to a permanent closed marker instead of deleting it. This also prevents an old, delayed initial ownership claim from reappearing after capture. Unknown Git outcomes remain unresolved until a receipt or the closed ownership fence proves the result. A late acknowledgement never reactivates a closed session or changes its workflow state.
-
-Final WIP capture still runs after confirmed process-group stop. It can preserve edits made after a named checkpoint, so its final HEAD may differ from the checkpoint receipt. A program reviewing a named checkpoint must pin the receipt's head, not a later checkout or final-capture head.
-
-## Units, acceptance and automatic bases
-
-Under [the Git model](GIT_MODEL.md), Code keeps one row per unit of work (a task or an experiment, named by its workflow instance id) with two write-once sections: the base the unit was pinned to, and its acceptance.
-
-**Acceptance.** When a task passes review or an experiment's results are accepted, the owner plugin calls `acceptUnit` inside that review transaction, for every workflow version. A Git unit's acceptance names the exact reviewed commit, resolved by Code from the capture reference the owner already stored (a task's delivered `code-commit`, an experiment's submitted `session-final`), together with the submission and review it belongs to and whether the reviewer's checkout was attached at exactly that commit. A unit without a workspace records an explicit code-less acceptance, which is what lets a later base look past it. An acceptance is hashed and immutable: the same acceptance replays, a different one is refused with `code_acceptance_conflict`. Code refuses only what the owner's own guard already required (a ready capture of that unit's own writable session); whether accepted code can serve as a base is judged where a base is derived, so a repository the project is not bound to never fails a review. Accepted code must be a commit Code admitted from the unit's own writer: `storage` is `code` with that admitted receipt, and `none` for a code-less acceptance; reviewed code Code never admitted is refused with `code_acceptance_unverifiable`. Importing a project never changes an existing unit's capture contract.
-
-**Repository preparation.** New projects have a managed repository automatically.
-Use `code.write` (`repository_prepare`) to import and reconcile a linked GitHub
-repository at its selected branch and exact head. Existing work keeps its pinned
-base; outside history advances main only through preparation and its independent
-integration review. `code.local.bind` and `code.repository.rebind` were removed,
-not retained as executable aliases. Historical bindings remain readable in
-`code.read` (`status`).
-
-**Automatic base.** In a project Code hosts, a Git task or Git experiment created without `baseTaskId` (`task@5`, `experiment@8`) is declared to Code at creation, and its base is derived from its `dependsOn` prerequisites: a prerequisite accepted with code contributes exactly that commit and ends the walk on its path; one that succeeded without code is looked through to its own prerequisites; no commit at all means the project's main. The derivation happens again inside the transaction that acquires the unit's first producing lease, and the result is written once: the pin holds the commit, every acceptance that contributed (two prerequisites accepted with the same commit are one base with two sources, also recorded as `based_on` rows in `code_edges`) and the declared dependency ids. Later leases, a returned task, a revised plan and a moved main all read the same pin; an experiment pins at its planner's lease and its `running` checkout inherits it. `baseTaskId` remains the explicit form and selects `task@4` / `experiment@7`, which work as before; a task accepted on those versions has an acceptance too, so hosted work can use its commit once it is imported. Before binding and import, new Git work without `baseTaskId` stays on `task@3` / `experiment@6` and uses the runner's central base.
-
-| Blocker                     | Key                 | Meaning                                                                                                                                                                                                                        | Recovery                                                                                                                |
-| --------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `code_base_pending`         | `main`              | Code does not hold the commit named as main.                                                                                                                                                                                   | Import missing history with `merv code-import`; prepare linked GitHub history with `code.write` (`repository_prepare`). |
-| `code_base_pending`         | `acceptance:<unit>` | A prerequisite succeeded on a version that declares a workspace, but its acceptance is missing (it succeeded before acceptance recording or while Code was unloaded), no longer matches its hash, or names another repository. | Recreate the work with `baseTaskId` naming one accepted Git task, or redo the prerequisite.                             |
-| `code_base_pending`         | `dependency:<unit>` | A code-less prerequisite succeeded although one of its own prerequisites has not, so what it was built on is unknown.                                                                                                          | Finish that work; if it failed, use `baseTaskId`.                                                                       |
-| `code_dependencies_changed` | —                   | A lease found declared dependencies other than those the pin was derived from. Not published; Tasks and Experiments never change them.                                                                                         | Recreate the work.                                                                                                      |
-
-Blocked work is refused at lease admission, so it is never a dispatch candidate and never launched. A unit waiting for unfinished prerequisites is not blocked by Code: Workflows already reports `dependencies_pending`. Code derives a unit again when it is declared, when the project is bound or main moves, when Code loads, and when work it waits on ends (the durable consumer `code.reconcile.v1`); between a prerequisite ending and that consumer running, the refusal is already in force and the published row follows within one delivery.
-
-Hosted work is offered only to runners carrying `code.v2`; a missing legacy commit never becomes a preparation failure.
-
-**Reads.** `code.read {action: "unit", unit: {unitId}}` returns one unit's base pin, where its base stands (`baseStatus`: `pinned`, `ready`, `waiting` or `blocked` with the blockers) and its acceptance; the task and experiment pages read the same record. `code.read` (`status`) returns the binding, the newest 200 units and every blocker Code has published. These are project-scoped reads; workers use the aliases their policies allow.
-
-**Shared bases.** Hosted work (`task@5`, `experiment@8`) merges several accepted commits automatically. `bases` from `code.read` (`status`) gives the frozen plan, sponsors, result, execution epoch/deadline, retry count and operator reason. A conflict has one reviewed `task@6`, shared by all waiters. Work that publishes merges main as well; Code records that member as main (a `merges` row in `code_edges`), so a conflict with main is reviewed like any other, and main, being admitted code, adds no excluded authors. Sessions admits server work only with dispatch enabled, capacity free (one server execution per project), and project/root budgets available. `code_base_admission` names a capacity, dispatch, usage, budget or missing-provider wait; `code_base_blocked` names suspended, cancelled or exhausted infrastructure work. Both appear in `session.read` (`stuck`) without consuming launch or review limits. Wall time is charged once to the project and fully to each root frozen when the record was created. After a crash an abandoned execution is charged its reserved deadline duration.
-
-Only an administrator using a human identity or operator key may call `code.write` (`base_retry`), `code.write` (`base_suspend`), `code.write` (`base_resume`), `code.write` (`base_cancel`), `code.write` (`base_quarantine`), `code.write` (`base_release`) or `code.write` (`base_repair`). Each takes the base key, a reason and a stable requestId. Retry restores five infrastructure attempts; resume preserves the existing work. A suspended resolution task still requires a human's `workflow.write` (`extend_limit`). Cancellation retains the record and asks for replanning. Quarantine also blocks existing pins, downstream acceptances, writers and their future mirror pushes; it never changes a sealed result. Resolved bases publish asynchronously through the existing mirror as create-only `refs/heads/merv/bases/<key>`; an outage cannot hold up acceptance or work. Release is the route back from a quarantine verified to be a false alarm: it clears the base an administrator named and everything that only inherited the quarantine from it, while a base quarantined in its own right keeps its whole reach; a writer generation the quarantine put into `recovery_required` ends at its last admitted commit on the next sweep. Repair is the route back from `A base ref names another commit`, which says an execution wrote `refs/merv/bases/<key>` and then lost its epoch, so every later attempt computes a different commit and collides with it: repair drops that ref under exactly the commit it holds and puts the base back in the queue, and the receipt retains the dropped commit. It is refused while the base is running or quarantined, or once its result is sealed, because a sealed result is what everything pinned to it names. A base planned under another merge engine than the server now runs is never merged again: it stops as `blocked_infra` naming both engines, and the way back is the engine it was planned with, or replanning.
-
-**Project checks.** `code.write` (`repository_configure`) takes `check` on every call — null turns verification off, and a specification gives `command`, `timeoutSeconds` and `image` (`provider`, `offerId`, optional `snapshotId`). It must be stated every time: the call replaces what was set, so a check that could be omitted would let an operator editing a glob switch verification off for every later base. A project with a command configured seals a cleanly merged base only after that command has run once against the merged tree.
-
-The command never runs on the server. Merv archives the merge commit (the tree only, no `.git`, at most 128 MiB), uploads it to the sandboxes service's object store, rents one machine from the named offer, runs the command inside a wrapper it generates, and deletes the machine and the source when the verdict is in. The check takes its own `session_service_work` line under provider `code.check`, sharing the merge's operation and epoch, so its wall time is charged against the project's capacity (one server execution at a time) and the sponsoring roots' budgets, so one check at a time is all a project runs. It advances one bounded step per drain pass, so the project's other bases keep merging while a machine is being rented.
-
-`bases` from `code.read` (`status`) carries `checkState` (`none`, `queued`, `running`, `unavailable`, `passed`, `failed`, `skipped`) and, for the three verdicts, a write-once `check` receipt: the command, the sandbox, job and object ids, the exit code or a timeout, what the command printed (8 KB of head and 8 KB of tail, with the gap named), the machine it ran in and what it cost. A base whose merge produced no new tree records `skipped` with reason `contained`; a project with no command records `skipped` with reason `no-command`.
-
-A failing check is recorded as a conflict with no paths and resolved by the same one reviewed `task@6` a Git conflict is resolved by; the brief is titled for the command that has to pass and names its output instead of Conflicting paths and Git messages. The auto-merge ref is dropped before the failure is sealed, so the resolution seals as `result.method = task` exactly as it would after a Git conflict. The command has a clock of its own inside the wrapper, and the job is given that timeout plus a separate setup allowance for the download and unpack: an overrun by the command is a written result and therefore a verdict, sealed as a failure and never re-rented (a command that ignores the stop is killed ten seconds later, and only a command stopped at its timeout reads as timed out, never one that exited 124 itself), while a job that ended without writing a result judged nothing — its setup did not finish — and walks the ordinary retry ladder instead. Turning the check off mid-flight seals every base then checking as `skipped`/`no-command`, the same as a base that merged with no command configured.
-
-Without a sandbox connection — the Sandboxes host services are not loaded, or the project is not linked — a configured command leaves the base at `blocked_infra` with a blocker beginning `code_check_unavailable:` and `checkState` `unavailable`. A merged tree over the 128 MiB limit, and a stored check specification this build cannot read, stop the base the same way under their own codes (`code_check_source_too_large:`, `code_check_unavailable:`); none of the three is mended by retrying on its own. The base is not sealed and no resolution task is created; `code.write` (`base_retry`) is the route back, and is also the recheck for a base whose check could not run. A base whose check is recorded as failed is correctly refused by that guard, because a recorded failure requires resolution. A machine the service repeatedly refuses to take back is given up on after five passes, and the base's blocker then names the sandbox id and the service's reason instead of the release being retried in silence. The machine is still Code's to give back, whatever its base becomes: every five minutes Code asks for it again by that id, and once the service takes it back, or answers that it is already stopped or not there, the blocker is cleared, so a machine an operator released from the sandboxes console stops being named.
-
-What this adapter cannot guarantee is on every receipt and on the base card, never inferred: the check had outbound network access, its source was a writable copy rather than a read-only mount, it ran as the machine's login user, scratch was the offer's whole disk, and the environment was pinned by `(provider, offerId, snapshotId)` rather than an image digest. What it does guarantee: an enforced timeout with process-tree termination, bounded recorded output, measured cost, and no Merv credential or environment on the machine. Before configuring a real command on a production project, configure `true` once against the intended offer and read the receipt: nothing read-only proves a given image has `curl`, `tar`, `sha256sum`, `base64` and `timeout`, or that the login user can write under its own `$HOME`, which is where the wrapper works.
-
-**Blockers.** A plugin that cannot let work proceed publishes an opaque blocker through Workflows (`wf_blockers`). A blocker may also carry `cause`, the publisher's machine word for which kind of its code it is, which readers word it by instead of its message: `code_base_admission` names the admission refusal (`budget_exceeded`, `capacity_full`, `dispatch_disabled`, `sessions_unavailable` or `usage_unavailable`), and the `code_merge_conflict` of a suspended resolution names `suspended`. It gates `workflow.read` (`status`) for that instance (the overview lists it under `blocked`), appears in `session.read` (`stuck`) as `work_blocked`, and stays readable while the publishing plugin is unloaded. Ending the work is still answered on its own terms, and the rows go when the work ends. The refusal itself is the owner's lease hook, never this projection. With Code unloaded, a Git unit that was never blocked has no row: `workflow.read` (`status`) shows `code_unavailable` as the refusal to begin it, and `session.read` (`stuck`) does not list it. `code_base_pending`, `code_base_wait`, `code_base_admission`, `code_base_blocked`, `code_merge_conflict`, `code_quarantined` and `code_dependencies_changed` raised while an offer is being built are not counted as launch failures.
-
-## The Code repository
-
-[The Git model](GIT_MODEL.md) makes Code the shared remote for imported projects. Its repository, admission, writer generations, runner transfers and mirrors ship together. Binding alone leaves new work on the production versions; import selects the hosted versions.
-
-**Where it lives.** The `code` plugin requires `repositories.root` (`${directory}/code` in the default configuration, on the data volume in a deployment). Beneath the root:
-
-```text
-writer.sock                       the writer lock, held for the life of the process
-tmp/                              home and temporary directory of every Git child
-<key>/merv-project.json           {format, projectId, repositoryId}, after a rebind {format: 2, projectId,
-                                  repositoryIds} (every identity served); key = first 32 hex of sha256(projectId)
-<key>/repository.git              the project's bare repository
-<key>/quarantine/<operation>/     one transfer: bundle.part, bundle, objects/, scratch.git
-<key>/held/<operation>.bundle     a bundle admission found something in, mode 0600, served by no route
-<key>/exports/                    bundles cut for machines (swept after 15 minutes)
-```
-
-A repository is created from an empty template with a configuration Code wrote (`core.bare`, `core.fsync=all`, `core.fsyncMethod=fsync`, `core.logAllRefUpdates=false`, `gc.auto=0`, `transfer.fsckObjects`) and is checked whenever a process first opens it: another project's marker, an `objects/info/alternates` file, a hook, or any configuration key Code did not write (`remote.*`, `include.*`, `core.sshCommand`, …) refuses it with `code_repository_foreign` or `code_repository_unsafe`. Only objects that passed admission ever enter it; no configuration, hook, alternate or ref of another repository does. The server runs Git only through `packages/code/src/git.ts`: fixed `PATH`, empty home, no system or user configuration, no prompt, no hooks, and no transport unless the caller names the one it needs. Start-up requires Git 2.38 or newer and fails with `code_git_unsupported` otherwise.
-
-**One writer per volume.** Code binds `<root>/writer.sock`; the operating system releases it however the process dies. A second server on the same root fails to load Code with `code_repository_locked`; a socket left by a dead process refuses connections and is taken over. Two servers started on one volume in the same instant are not protected from each other, and one server per volume is the supported deployment. Work on one project runs in turn, and at most two transfers index or write packs at once.
-
-**Import.** `code.write` (`repository_import`) (project administrator, never a leased worker; new projects already have a managed repository) promises one Git bundle: the commit it delivers (`tip`), its `sha256` and size (at most 512 MiB). The call returns an operation; the bundle is then sent with `PUT /code/v2/uploads/{id}/parts/{offset}` (`application/octet-stream`, at most 4 MiB a part, the operation says which size it wants) and admitted with `POST /code/v2/uploads/{id}/complete`; `POST /code/v2/uploads/{id}` reads the operation. The file's size is what was received: a part at that offset is appended, one wholly inside it is a replay, any other is `code_upload_offset`. Completion checks the size and the sha256 (`code_upload_incomplete`, or `code_bundle_hash_mismatch`, which drops the bytes) and then admits in the project's turn. It answers with the operation as it stands after a few seconds; ask again until `status` is no longer `prepared` — asking again never starts a second admission. The operator command does all of it and only reads the local repository:
+The Git page shows the project’s actual URL and a copyable clone command:
 
 ```sh
-npm run cli -- code-import --url https://merv.example --repository /path/to/repo --ref main --token-env MERV_TOKEN [--project ID]
+git clone https://merv.example/git/PROJECT_ID.git
 ```
 
-It leaves out whatever the server already holds (`store.tips` in `code.read` (`status`)), so a history larger than one transfer is imported oldest first, a branch or tag at a time. `source: "github"` instead reads one ref of the linked GitHub repository on the server, as the administrator who asked and with a read-only installation token that exists only in the environment of that one Git child and is revoked afterwards. The fetch lands in the operation's quarantine (`scratch.git`), writes no ref, tag or `FETCH_HEAD` into the project's repository, is ended when it outgrows one transfer, and what arrived is turned into a bundle that takes exactly the path an uploaded one takes.
+Use a nonempty username such as `merv`, and an existing Merv user key as the password. Keep the key in a credential manager rather than in the URL or shell history. Project administrators can push ordinary user branches. `merv`, `merv/*`, `merv-main`, `merv-main/*` and internal refs are reserved for Merv. Deletion and non-fast-forward pushes are refused.
 
-The first completed import records the repository once (`code_projects.store_json`: object format, root, source, GitHub's numeric repository id) and its source. Code keeps every project's history: a project is declared managed when it is created or first bound, and no project is kept only on a runner. `main.stored` says whether Code's repository holds the commit named as main; an import that brings it, or preparation of linked GitHub history, sets it.
+An existing namespace collision returns `409 code_ref_collision` with the blocking ref and object ID before aliases change. Requests and restarts never rename or delete that history. A repository administrator must choose an explicit mapping. With the repository owner stopped and a consistent backup available, the example below moves a colliding user branch `merv` to the unused name `user-merv-history` in the server's bare repository. Verify that the first command reports the error's object ID and the last reports the same ID, then restart the owner and retry clone/fetch. Use the actual repository path and deliberately chosen branch names; `branch -m` refuses to overwrite an existing destination.
 
-**Limits.** Per transfer: 512 MiB of bundle, 2 GiB and 100,000 new objects, 50 MiB per object. Per project: a disk quota (`quotaBytes`, default 10 GiB) over everything the project keeps — objects, quarantine, held bundles and exports — checked when a transfer begins; per volume a reserved free-space floor (`reservedFreeBytes`, default 2 GiB) checked when a transfer begins and on every part. Both answer 507 `code_store_full`, leave the operation open, and pass when there is room. A download is weighed the same way before its bundle is written, against what the commits it sends take on the disk; the one that session held is given back first, so a machine asking for a download never costs the project more than one of them. A project has at most four transfers receiving at once (503 `code_store_unavailable`), a transfer nobody sends a byte to for a day is given up (`code_upload_abandoned`), and a project holds at most eight held bundles or 1 GiB of them, the oldest making room. `code.write` (`repository_configure`) sets the project's `denyGlobs`, `secretExemptGlobs` and project check.
+```sh
+git --git-dir=/absolute/path/repository.git show-ref --verify refs/heads/merv
+git --git-dir=/absolute/path/repository.git branch -m merv user-merv-history
+git --git-dir=/absolute/path/repository.git show-ref --verify refs/heads/user-merv-history
+```
 
-**The journal.** Every transfer is one `code_operations` row, idempotent by `requestId` and input like every Code command, and only the principal that began it continues it. A database transaction and a Git ref transaction cannot commit together, so the row walks `receiving → admitting → objects_durable → refs_applied → completed | failed`, and the database is the authority: the exact target and receipt ref are written down before any ref moves, packs are hard-linked into the repository and synced before the row says `objects_durable`, and one `git update-ref` transaction creates the receipt ref (`refs/merv/imports/<operation>`). A start after a crash either finds that receipt or retries that same update; a ref that holds anything else leaves the operation open with `code_recovery_required`, because recovery never invents a target. Recovery runs when Code loads and every `sweepSeconds` (300), which also removes quarantine directories of finished operations, expired exports and interrupted temporary packs. It never deletes held bundles, receipt, import, work or accepted refs, or any object, and nothing prunes; once a project holds 16 packs, one sweep folds them in that project's turn with `git repack --geometric=2 -d`, which keeps every object, reachable or not (one project a pass, one thread, a 64 MiB delta window, five minutes at most, and only when the volume has room for another copy of its objects; a project without that room, or whose fold fails, waits an hour while the next fullest is folded, and a failed fold removes only its own temporary files). `code.read` (`status`) lists every unfinished operation with its phase, bytes received and, under `waiting`, why it is not moving and what would move it.
+A hosted worker receives a short-lived Git grant restricted to its project, work unit, session, writer generation and branch. The remote checks the grant on every request and checks the current writer fence before accepting a push. Review workspaces receive read access only. Source revocation, a closed session or a newer generation removes ordinary write authority.
 
-**Unloading.** Code stops taking transfers and waits up to `drainSeconds` (45) for running ones. After that it ends their Git children, marks the operations `code_drain_pending` and releases the lock; the next start replays them.
+The transport uses native `git http-backend`, including Git's protocol negotiation and gzip handling. Successful ordinary pushes are immediately visible in the remote. Native Git owns the ref transaction; Merv validates admission and reconciles its outcome into workspace metadata before replying. After a server restart, a retained FIFO proves the previous receiver has exited. An unresolved outcome fences the writer until reconciliation; a refused push is never replayed as another ref update.
 
-**Backup and restore.** Deployment operations own [complete recovery snapshots](RECOVERY_SNAPSHOTS.md):
-a matching PostgreSQL dump and the entire stopped Code directory, including quarantine and held
-work. Code's ordinary journal recovery remains responsible for interrupted admissions. The backup
-job does not reinterpret those phases, discard their files, or write application backup receipts.
+Upload/download bundle routes, `merv code-import`, the `code.commit` and `code.merge` wrappers, and command polling routes are removed. GitHub credentials, connections, imports, mirrors and PR automation are removed; historical review and publication evidence remains readable. See [the retirement migration](GITHUB_REPOSITORIES.md).
 
-Every completed snapshot is independent. Restoration targets a new database and empty Code root,
-is verified in isolation, and requires reconciliation of external jobs and credentials before live
-activation. The old backup tool and restore CLI have been retired; legacy recovery uses the preserved
-old reader. See the operational runbook for capture, verification, retention and migration.
+## Work, review and planned shutdown
 
-## Admission and quarantine
+A writer starts on its pinned work branch. Its Git commands can create commits and push them normally. Session closure retains the agent’s commits and leaves its uncommitted working tree available for the next phase on the same work host. Closure does not make a periodic or final WIP commit.
 
-Admission examines the whole history a transfer introduces, never the difference of its last commit: a credential committed and removed again inside one transfer is still in what would be kept.
+Submitting a task delivery or experiment result requests an immutable submission. Once the producer has stopped, the runner freezes the parent commit and exact working tree, including tracked changes and nonignored new files, and pushes their retained refs. The reviewer receives that parent plus that exact tree. Later producer changes cannot change what was submitted. Approval materializes at most one commit when the reviewed tree differs from the parent and records the exact accepted reference. Dependencies remain blocked until that reference is durable.
 
-1. **The bundle is what was promised.** Node reads the header: version 2, or version 3 with only `@object-format`; a `@filter` (a partial bundle) or any other capability, two refs, a head other than the promised commit, or a prerequisite the repository does not hold is refused. The bundle's ref name authorises nothing.
-2. **Indexing.** The pack is indexed with `git index-pack --fix-thin --strict --fsck-objects` into the operation's quarantine, which borrows the kept objects through an alternate this server names; nothing in an upload can name one. Strict fsck refuses malformed objects, `.`/`..`/empty names, names containing `/` and `.git` with its HFS+ and NTFS spellings.
-3. **Connectivity and surplus.** `git rev-list --objects <head> --not --all` must succeed, so nothing the history needs is missing. Every object in the pack must be part of that history or a copy `--fix-thin` made of a kept object; anything else is `code_bundle_surplus`, because it would be kept without ever being examined. What is _new_ is the intersection: the objects of the pack that the history reaches and nothing kept reaches. Limits run over exactly those; what a path decides is judged again wherever the new commits put kept objects (step 4).
-4. **Findings.** Object count, expanded size and object size; tree modes other than `100644`, `100755`, `40000`, `120000` (`mode`), submodules (`gitlink`); names with a backslash, a control character, a trailing dot or space, `.git` spellings, more than 255 bytes or 64 levels; names that collide when case is folded (`path_collision`); symbolic links that are absolute, longer than 4096 bytes, have a `..` after a name or leave the checkout (`symlink_escape`); the project's deny globs; and `credentials@1`: private-key blocks, GitHub tokens (`gh[pousr]_…`, `github_pat_…`), Slack tokens, Anthropic keys and Merv session secrets, in new commit messages and in every blob the new commits hold outside `secretExemptGlobs`, kept ones included. Depth, links, deny globs and exemptions are about where a path stands rather than about an object, so a kept directory that a new commit puts somewhere else is judged again there, under the globs configured now: a link inside it that now climbs out of the checkout, a path inside it that is now too deep, a path inside it that is now under a denied one, and a credential in a file that is no longer under an exemption are all findings, and a rename is no way past a glob. A finding names the rule, the path and the object, never the matched text. A glob is matched against the whole path from the repository root: a literal matches itself, `?` one character and `*` any run within a segment, `**` any run across segments.
+Before planned VM teardown, Fleet records a shutdown request. The supervisor stops every producer, settles sessions and requested submissions, then captures any remaining writer files. It creates a commit only when the retained tree needs one, pushes it through native Git, verifies the result and returns a receipt naming each session, unit, head, tree and durable operation. Sessions verifies those exact facts before acknowledging the receipt; only then may Fleet delete the host. A lost response or unavailable remote keeps the capture pending and retries the same journaled result. Unexpected provider loss can still lose files that were never pushed.
 
-A transfer that is not what was promised fails with its own code (`code_bundle_header`, `code_bundle_head`, `code_bundle_prerequisite`, `code_bundle_corrupt`, `code_bundle_disconnected`, `code_bundle_surplus`, `code_bundle_lineage`, `code_bundle_format`) and nothing of it is kept. A transfer with findings fails with `code_import_rejected` (an upload with `code_capture_quarantined`), the findings are on the operation, nothing is admitted and no ref moves, and its bundle is moved to `held/` for an operator to read from the disk; no route serves it. The scanner is not proof that a history holds no secret: it keeps the unmistakable ones out of Code and, later, out of GitHub. A false positive on a fixture is answered with `secretExemptGlobs`; note that an exempted blob is kept, but the same bytes are examined again wherever a later commit holds them outside an exemption, and narrowing the exemptions makes the next transfer that still holds such a file refuse it.
+Shutdown cleanup authority is narrow: the existing managed control credential must match the allocation and epoch, and only owned historical session cleanup and final Git capture are allowed. It cannot obtain new leases, run model requests or use ordinary write grants. Acknowledgement revokes the derived shutdown grant.
 
-## Writer generations and fencing
+## Integrating outside history
 
-A unit whose workflow version names the `code.v2` driver (`task@5`, `experiment@8`) has one branch in Code's repository, `refs/merv/work/<unit>`, and at most one writer at a time. The writer is a leased session, known by a **generation**:
+Push an ordinary user branch to the project remote first. Then use `code.write` with `repository_prepare`, naming the branch, exact head, expected managed-main head and a stable request ID. Preparation checks that retained branch and creates independently reviewed integration work. It does not rewrite existing work’s pinned bases or directly advance main.
 
-| `writerState`       | Meaning                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `idle`              | No session has written yet (generation 0).                                                                                                                                                                                                                                                                                                                                             |
-| `reserved`          | The owner's lease acquisition reserved generation g+1 in the lease's own transaction, right after the base was pinned; a refused offer takes it back.                                                                                                                                                                                                                                  |
-| `active`            | The session attached its checkout, or began its first upload.                                                                                                                                                                                                                                                                                                                          |
-| `closing`           | The session closed while an upload was in flight that may still finish (admitted, or with every byte on Main), or its worker ended it by its own hand (a handoff, a question to its owner or a wait for its compute) and its machine still owes the final capture. It has `finalizeGraceSeconds` (default 900). The unit is no dispatch candidate (`code_writer_busy`, never counted). |
-| `closed`            | The session closed, whatever the reason (handoff, lapse, host loss, expiry, `model_interrupted`): the generation ended at the last admitted commit. The next lease gets g+1.                                                                                                                                                                                                           |
-| `recovery_required` | The final capture was quarantined (blocker `code_capture_quarantined`, key `capture`); only `code.write` (`unit_fence`) ends it. (A row an earlier Code left here without a quarantine ends on the next sweep.)                                                                                                                                                                        |
+Accepted work and reviewed integration use the local publication journal. Main moves by compare-and-swap to a verified reviewed result; main movement can require a successor integration task. `code.read` with `status` shows repository state, units, bases and publication records. The Git page shows local integration and historical external publication evidence.
 
-Every upload names the whole fence — unit, generation, session, lease, the head it expects and the head it proposes — under a request id (the commit command's id, or the server-fixed `final:<session>`), and the server compares all of it when the upload begins, on every part while it is receiving, and once more in the transaction that fixes the ref update, after which a database trigger keeps the generation from changing until the operation has ended. Refusals: `code_generation_stale`, `code_writer_closed`, `code_head_conflict`, `request_conflict`. A `code.commit` succeeds only once Code admitted exactly that commit, with the tree Git names for it, under the command's id (`code_upload_required` otherwise), and an acceptance of such a unit records `storage: code` with the `receipt`, the operation that made the commit durable; the journal then writes `refs/merv/accepted/<unit>`.
+## Units and automatic bases
 
-A writer generation lives exactly as long as its session. Its close (`session.closed`, whatever the reason) ends the generation at the last admitted commit; an upload then still receiving and not whole is ended as `code_generation_stale` and kept under `held/`. Nothing begins after the close (`code_writer_closed`), with one exception: a session its worker ended by its own hand (`session.closed` carries `ownEnd`: a handoff, `asked_owner` or `awaited_compute`) is closed by Sessions before its machine has stopped the process, so that machine's final capture may still begin within the grace, and it closes the generation with the trailing work an experiment's results review and a resumed conversation rely on. Otherwise the runner sends its final capture before it releases the session, and checkpoints a live checkout every five minutes as an ordinary `merv: checkpoint` commit, so losing a machine costs minutes of work. The sweep (at start, every `sweepSeconds` and on each wake) ends a `closing` generation once the grace has passed and no admitted upload is unfinished, and anything not admitted by the end of the grace is never admitted. The final capture is authenticated by the source that leased the session together with the runner and launch the session records, reaches no tool route, and is accepted once per generation; sending it again answers with the same operation.
+A task or experiment has one immutable base pin and one immutable acceptance. The first producing lease derives its base from declared dependencies’ accepted references and pins that result. Later leases use that same pin. Several accepted dependencies share a deduplicated merge plan; a conflict creates one reviewed resolution task for the waiting units. A system prerequisite resolves the conflict without becoming an additional code source.
 
-`code.write` (`unit_fence`) (a project administrator or their agent, with a `requestId`) ends a generation a quarantined capture holds, the only one that does not end with its session (`code_fence_unneeded` otherwise). It first lets every admitted upload of the unit finish, refuses with `code_operation_unresolved` while one cannot, ends what was only receiving as `code_generation_stale` — those bytes are kept under `held/`, never admitted and never served — closes the writer at the last admitted head and clears the blockers. The next lease continues from that head as generation g+1, on any machine.
+A read never pins or advances a unit. Missing acceptances, unavailable retained objects, unresolved submissions and dependency changes block work at lease admission. `code.read` with `unit` reports a unit’s pin, acceptance and blockers; `status` reports project blockers and shared bases. Historical workflow definitions remain unchanged. Eligible idle work can cross an explicit, audited revision boundary using the [offline migration](../deploy/NATIVE_GIT_CUTOVER_PLAN.md); other legacy work must drain first.
 
-## Mirroring
+Administrators can use `code.write` actions `base_retry`, `base_suspend`, `base_resume`, `base_cancel`, `base_quarantine`, `base_release`, `base_repair` and `unit_fence` with their required reason and request ID. These controls retain their audit records. Quarantine blocks affected results and descendants; it does not rewrite a sealed result. Repair is refused for running, quarantined or sealed base results.
 
-Code's own repository is where work lives; the linked GitHub repository is where it is
-published. Mirroring is the server's own asynchronous work and never gates a lease or acceptance: a
-handoff is complete the moment Code holds the commit, and a repository that is away, refusing
-or moved by another hand leaves the publication queued, retrying or blocked while every
-session, review and acceptance goes on exactly as before.
+Project checks remain available through `repository_configure`. Every call states `check`: either `null`, or a command, timeout and sandbox image specification. Checks run on the configured sandbox adapter, never in a server shell. Budget, capacity and provider waits remain visible through Sessions and Code blockers.
 
-- **What is published.** `refs/merv/work/<unit>` becomes `refs/heads/merv/work/<unit>` and only
-  ever fast-forwards; `refs/merv/accepted/<unit>` becomes `refs/heads/merv/accepted/<unit>` and
-  a resolved base's `refs/merv/bases/<key>` becomes `refs/heads/merv/bases/<key>`, both only
-  ever created. Nothing else is touched, and nothing is ever deleted or forced.
-- **What authorises it.** The owner's linked repository together with the write automation they
-  turned on (`POST /code/github/automation` with `mode: write`), while that owner still
-  administers the project. The server reads that link with no caller: turning the automation
-  off, unlinking the repository or the owner leaving is the off switch. Without either,
-  `code.read` (`status`)'s `mirror.state` is `off` and `blockedBy` says which (`github_owner` for the
-  owner) — that is quiet, not an error. A repository GitHub answers as moved (renamed or
-  transferred) is never followed: the API refuses with `github_repository_moved` until it is
-  linked again, and Git does not follow the redirect.
-- **What it uses.** One installation token per project in a pass (ten minutes at most), scoped to
-  that one repository and to `contents`, passed only in the environment of the pass's Git
-  children for that project and given up again however the pass ends. No GitHub credential ever
-  reaches a machine.
-- **How it decides.** The published ref is read first. Equal to what Code holds: done. Absent:
-  created. For a work branch, the published commit must be an ancestor of what Code holds, asked
-  of Code's own repository; `--force-with-lease` is then the compare-and-set on top of that. Anything
-  else is `code_mirror_diverged`. A push whose answer was lost is read again, never repeated blindly.
-- **When it is behind.** Requests for one ref coalesce, and the newest head is what a run
-  publishes, so a delayed run can never put an older commit back. A failure is retried with a
-  doubling backoff and, after five attempts, waits for an operator. `code.read` (`status`) says how many
-  refs are waiting, since when, the last error and every blocked ref; `mirroredHead` and
-  `mirroredAt` on a unit say how far publication has come, beside `canonicalHead`.
-- **Putting one right.** `code.write` (`mirror_retry`) (a project administrator, with a `requestId`) queues a
-  blocked ref again. For `code_mirror_diverged` it also wants `acknowledgeRemote` set to exactly
-  the commit the published ref holds, which records that the operator has seen it; the push still
-  only ever fast-forwards, so the ref moves only once that commit is behind Code's or gone.
-- **Where it is shown.** The `mirror` block and `warnings` of `code.read` (`status`), and the
-  `code.mirror_blocked` event. A blocked mirror is never a blocker of the unit and never
-  withholds work from a machine.
+## Storage and admission
 
-## The machine protocol on the wire
+Code owns the project’s bare repository under the configured Code root and serializes repository mutations. One server process owns a volume at a time. Back up PostgreSQL and the Code repositories consistently: database references require their matching retained Git objects.
 
-Machines reach all of this under `/code/v2/`, which Code's API adapter
-(`@merv/code-work/api`) mounts beside `/code/commands/*`: a leased worker's credential is
-confined to `POST /mcp` and can never reach it. The adapter forwards opaque JSON bodies (at most
-64 KiB) and the bytes of one part (`application/octet-stream`, at most 4 MiB) and reads neither;
-only Code interprets them. `workspace` gives a machine the manifest of what to prepare,
-`uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>` carry it,
-`uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a bundle
-back. It is the only workspace transport: the GitHub checkpoint transport and its
-`/code/transport/*` routes were removed on 2026-10-03.
+The native receive path validates object connectivity, supported format, lineage, object and file limits, tree modes, names, symlinks, submodules, deny globs and recognizable credential patterns before publishing refs. Findings report rule, path and object identity without echoing matched secrets. `secretExemptGlobs` addresses deliberate fixtures; every new placement of retained content is checked against its current path and policy.
 
-## Trust boundary
+The old internal admission journal remains for historical records and drain recovery. Its import, upload, multipart and completion constructors are removed; recovery can only finish operations already persisted by the previous runtime. GitHub retirement settles queued external work with explicit reasons, preserves admitted recovery obligations, and creates separate local successors for eligible reviewed publications instead of rewriting their original external evidence.
 
-The server authenticates the original source, checks ownership and validates replay consistency. A checkpoint's runner receipt alone does not independently prove the Git tree. Hosted work uses Code's repository and driver for durable handoff, automatic bases and reviewed merge resolution. A domain owner admits accepted code only after its own evidence and review checks; publication verifies the approved head and tree against the imported merge. Source revocation or loss of authority leaves cleanup awaiting authorized reconciliation.
+## API and validation
 
-See [Git workspaces](WORKSPACES.md) for workspace ownership and source isolation. Automated checks live in `tests/code-*.test.ts` and `tests/runner-code-*.test.ts` (the local-driver `scripts/live-code.ts` was removed with that driver). Latest execution results belong in [VERIFICATION.md](../VERIFICATION.md), rather than being inferred from the existence of these scripts.
+`/git/<project-id>.git` carries Git smart HTTP. The runner’s bounded JSON metadata calls under `/code/v2/` describe workspaces, issue Git grants, acknowledge pushed objects, freeze submissions and close sessions. `/sessions/runners/shutdown` is the authenticated planned-teardown request/status/receipt channel. The retired bundle and command routes return 404.
 
-## Reviewed unit publication
+Code Work owns research policy, immutable submission and acceptance records; Code owns storage, admission and Git HTTP; Sessions owns runner and cleanup authorization; Fleet owns host lifetime; Runner owns local processes and capture journals. Each owner validates the part of the receipt it can prove.
 
-An accepted Git unit marked for publication seals its acceptance and passing independent review into the publication journal. Code syncs it every 30 seconds as the project owner (an open pull request every ten minutes), and `code.write` (`publication_sync`) does so at once: a sync integrates a local destination into Merv main, or opens or reconciles its draft pull request and sets the exact-head App approval status. `code.write` (`publication_merge`) (which the Git page calls) requires a project administrator or their agent, the reviewed head, inspected base and stable `requestId`. It requests a synchronous merge of that exact head; Code imports the result and verifies its two parents and reviewed tree before marking the unit published. A lost reply reconciles the already-merged pull request without requesting another merge.
-
-The publication GitHub App token is limited to the selected repository and needed contents, pull request, status and check permissions. Main must require pull requests and strict up-to-date checks including the App-sourced `merv/consolidation-approved` status. That context string is retained for branch-rule compatibility; it now approves current unit publications as well. Keep the App out of bypass lists. Import and mirroring use narrower per-operation tokens.
-
-A missing GitHub link, disabled automation or changed connection leaves the publication blocked and visible in `publication.records` from `code.read` (`status`). Incomplete rule visibility is shown in `publication.controls` from `code.read` (`status`); `code.write` (`publication_control`) can record the release canary, acknowledge incomplete visibility or clear a repaired disablement. It cannot waive known missing protection rules or a failed canary. When main has moved outside the approved head's ancestry, Code closes the stale unit pull request and records its state. Research can inject a successor consolidation task that integrates the newer main and receives its own review and publication.
-
-Sealed proposal publications, which carried no approval envelope, were deleted with their merge requests (`code_publications@3`): every remaining publication publishes an accepted unit. The former `code.publication.release` route is removed.
-
-A successful GitHub response is insufficient for completion. Code verifies two merge parents, the reviewed head as second parent, first parent contained in the reviewed head, and tree equality. A verified merge moves Merv main only forward: a main that already holds it, or holds commits it lacks (verified late, after main moved on), stays where it is. A mismatch is `code_publication_incident`, retaining the observed commit, tree and parents with no automatic repair. A merge outside reviewed ancestry also records a failed canary and disables publication until the operator repairs enforcement. Local work and mirroring remain available.
-
-### Mandatory real-GitHub release matrix
-
-Run this checklist in a disposable repository/project with the actual App identity, permissions and proposed production rules. Keep request/response evidence, rule exports, App ID, PR URLs and fetched commit IDs. No automated repository test contacts GitHub. The tests fake the App; they do not establish GitHub's race enforcement.
-
-- [ ] An up-to-date independently approved head merges successfully through the exact synchronous endpoint and App installation identity.
-- [ ] Pause after Code's inspection; advance main outside approved ancestry, then release the merge request. GitHub must reject it. Record both the inspected and actual main SHA and the HTTP response.
-- [ ] Race two approved PR merges. The first succeeds; the other, now stale, must fail. Verify both results independently from fetched history.
-- [ ] Remove all required checks while retaining strict mode. Demonstrate that strict alone does not protect the stale case in this disposable repository; restore the required App-sourced approval status afterward.
-- [ ] Deliberately add an App bypass to the strict/PR rule and repeat the stale canary. It must expose the unsafe merge. Record `code.write` (`publication_control`) with `action: record_canary`, `staleMerged: true`, a reason naming the PR/rules/evidence, and a requestId. Confirm `code_publication_disabled` in `code.read` (`status`) and refusal to publish another approved proposal. Remove the bypass before continuing.
-- [ ] Fetch every successful merge through Code admission. Verify exactly two parents, the actual main parent, reviewed second parent and reviewed tree. Exercise a lost API reply; retry must reconcile without another merge request.
-- [ ] With the intended rules restored, rerun the full matrix and stale canary. Record `action: record_canary`, `staleMerged: false`, reason containing the evidence and a new requestId. If previously disabled, use `action: clear` with a reason and another requestId. A passing result alone never clears an earlier disablement.
-- [ ] Check App-visible repository and inherited rules, record inaccessible bypass lists, and have the owner acknowledge incomplete visibility. Repeat the matrix whenever App identity, binding or enforcement changes. A new connection revision invalidates the previous canary attestation.
-
-The canary is deliberately a release-time manual experiment: create two sibling heads from main in the disposable repository, approve/status one, advance main to the other after inspection, and attempt the exact App-authenticated synchronous merge. The operator records its observed result using the control above. Runtime verification independently detects a successful merge outside approved ancestry and disables publication, but that observation happens after GitHub changed main; it cannot prevent a misconfigured GitHub merge. Do not enable this mode on production until the manual matrix passes.
+Tests exercise real local Git HTTP, rejected pushes and stale grants, immutable submission replay, independent review, migration, lost acknowledgements and shutdown release gating. Test presence alone does not establish a production rollout: the read-only cutover preflight must pass, and Linux isolation gates must run against the proposed hosted image. See [hosted runner operations](../scripts/hosted-runner/README.md).

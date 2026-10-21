@@ -1,4 +1,5 @@
 import { directsIndependently, excludedFromReview, NOT_INDEPENDENT } from '@merv/reviews/rules';
+import { nativeRecoveryRevision } from '@merv/workflows/native-migration';
 import {
   heldLease,
   insertLease,
@@ -116,7 +117,8 @@ export async function leaseRole(
 /**
  * What earlier visits to this step made: the artifacts each released lease on the experiment at
  * the same revision created in its own session, as its own actor. A visit cut before it attached
- * them hands them to the visit that resumes the step; a move to another revision ends that.
+ * them hands them to the visit that resumes the step. An explicit native migration keeps this
+ * recovery across its recorded revision boundary; an ordinary transition ends it.
  */
 export async function resumedOutputs(
   ctx: Pick<ExperimentsContext, 'artifacts'>,
@@ -125,13 +127,24 @@ export async function resumedOutputs(
   tx: Transaction,
 ): Promise<string[]> {
   if (!caller.session) return [];
+  const migrated = await nativeRecoveryRevision(tx, caller.projectId, step.id, step.revision);
   const earlier = (
     await leaseRows(tx, {
       projectId: caller.projectId,
       instanceIds: [step.id],
       revision: step.revision,
     })
-  ).filter((lease) => lease.released_at && lease.id !== caller.session!.id);
+  )
+    .concat(
+      migrated === null
+        ? []
+        : await leaseRows(tx, {
+            projectId: caller.projectId,
+            instanceIds: [step.id],
+            revision: migrated,
+          }),
+    )
+    .filter((lease) => lease.released_at && lease.id !== caller.session!.id);
   const found: string[] = [];
   for (const lease of earlier)
     for (const artifact of await ctx.artifacts.list(caller, { sessions: [lease.id] }, tx))
@@ -171,13 +184,13 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
       // one reads the same pin back, so execution inherits what the plan was written against.
       // A refused offer takes the pin back with its transaction.
       if (producing(context.snapshot.state)) {
-        // Only execution has a checkout, so only its lease is a writer generation.
+        // Native planning and execution are writers; legacy planning only pins its base.
         await ctx.code.pinBase(
           context.source,
           {
             unitId: experiment.id,
             leaseId: context.leaseId,
-            writer: context.snapshot.state === 'running',
+            writer: context.snapshot.state === 'running' || context.snapshot.version >= 45,
           },
           context.tx,
         );

@@ -1,4 +1,5 @@
 import { isAgentCaller, type Caller, type ReviewRequest } from '@merv/contracts';
+import type { CodeCaptureRef } from '@merv/code-work/models';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { z } from 'zod';
 import type { dataRequirementSchema, planSchema } from './schema.js';
@@ -103,6 +104,8 @@ export interface ResultSubmission {
   executionRevision: number;
   createdAt: string;
   codeHead?: string;
+  /** Exact non-commit submission retained before review in version 5. */
+  codeCaptureRef?: CodeCaptureRef;
 }
 export interface CustomerExperiment {
   id: string;
@@ -117,6 +120,9 @@ export interface CustomerExperiment {
   paymentId: string | null;
   attempts: number;
   submission: ResultSubmission | null;
+  /** Version 5 delivery waits for the approved commit and its retained acceptance. */
+  codeReady?: boolean;
+  codeReadyAt?: string;
   review: ReviewRequest | null;
   createdAt: string;
 }
@@ -141,3 +147,6 @@ export interface ProgressLine {
   result?: { name: string; score: number; total: number };
   step?: { done: number; total: number };
 }
+
+export const deliveryReady = (exp: CustomerExperiment) =>
+  exp.workflow.state === 'complete' && (exp.workflow.version < 5 || exp.codeReady === true);

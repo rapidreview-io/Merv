@@ -69,8 +69,6 @@ interface GitLane {
    * canonical head is, which is the whole class the earlier drawing dropped.
    */
   stops: { oid: string; stat: { add: number; del: number } | null; title: string }[];
-  /** How many stops the mirror has published; the rest of the lane is drawn hollow. */
-  mirrored: number;
   /** A filled square at an acceptance, an open dot at a head, nothing at a declaration. */
   tip: 'accepted' | 'head' | 'none';
 }
@@ -261,7 +259,7 @@ export function gitModel(
       // The row a unit's record opens on says what kind it is, and so what colour it wears.
       colour: named?.kind ?? 'code',
       // A lane a list cannot name is still a fact about the repository, so it is drawn
-      // as the branch the mirror publishes it under rather than left out.
+      // under its assigned branch name.
       name: named?.name ?? unit.branch,
       ...(named?.to ? { to: named.to } : {}),
       // Nothing a quarantined unit holds may be reused, so it is drawn hollow.
@@ -282,18 +280,10 @@ export function gitModel(
     const head = unit.canonicalHead;
     if (head && !stops.some((stop) => stop.oid === head))
       stops.push({ oid: head, stat: null, title: head });
-    // A head the mirror has not reached leaves the rest of the lane hollow; a head the
-    // mirror names but no receipt does leaves the whole lane hollow, which is the truth.
-    const level = !head || head === unit.mirroredHead;
     lanes.push({
       id: unit.unitId,
       from,
       stops,
-      mirrored: level
-        ? stops.length
-        : unit.mirroredHead
-          ? stops.findIndex((stop) => stop.oid === unit.mirroredHead) + 1
-          : 0,
       tip: unit.acceptance?.reference ? 'accepted' : head ? 'head' : 'none',
     });
     inputs.set(unit.unitId, [from, ...(behind ? [behind.key] : [])]);

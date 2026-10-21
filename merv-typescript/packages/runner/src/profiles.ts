@@ -122,6 +122,7 @@ export interface LaunchRequest {
   mcpUrl: string;
   /** An owned workspace prepared by the runner, not a path supplied by an agent. */
   cwd: string;
+  git?: { url: string; token: string; branch: string | null; startingCommit: string };
   /** Canonical SKILL.md paths collected before launch; preparation itself stays pure. */
   disabledSkillPaths?: string[];
   /** Claude only, required: a private runner-owned path for the launch's `shellEnv`. */
@@ -329,20 +330,22 @@ const searching = (web: boolean): string =>
  * the work to another machine (only what Code holds). A checkout made afresh each visit (`kept`
  * false: a design's or a review's) is committed by nobody and found by no later visit.
  */
-const workHost = (kept: boolean) =>
+const workHost = (kept: boolean, readOnly: boolean) =>
   [
     'Your shell has git, curl, ssh, unzip, python3 (Debian’s 3.11, with pip and venv; python is the same), python3.12 and uv.',
     ...(kept
       ? [
-          'A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit.',
+          'Review submissions and planned VM shutdown captures include every file Git does not ignore. Inspect git status and keep generated files out of the submitted tree with .gitignore. Ordinary session endings preserve your uncommitted work.',
         ]
       : []),
-    `Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>)${kept ? ', which marks them ignored; list any other environment in .gitignore' : ''}.`,
+    readOnly
+      ? 'Code and Git metadata are read-only. Make Python environments and test outputs under /tmp (uv venv --python 3.12 /tmp/venv, then uv pip install --python /tmp/venv/bin/python <packages>).'
+      : `Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>)${kept ? ', which marks them ignored; list any other environment in .gitignore' : ''}.`,
     '/tmp is yours for temporary files and sockets (TMPDIR; put SSH ControlPath sockets there, since the workspace path is too long for one), and caches such as pip’s and Hugging Face’s go to /tmp/cache; /tmp is emptied when this visit ends.',
-    `Keep /tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset${kept ? ' and loses what no commit holds yet' : ''}, so put environments, clones and unpacked data in ${kept ? 'an ignored workspace directory' : 'the workspace'} instead.`,
+    'Keep /tmp well under 100,000 files and remove temporary files after use.',
     kept
       ? 'Every visit to this work on this machine runs in this same directory, so it may hold files an earlier agent left, in no commit until one takes them in. If the work moves to another machine, only what was committed moves with it: environments, downloads, keys and other ignored files stay behind.'
-      : 'This checkout is made afresh for each visit and no commit takes it in: nothing you write in it, environments included, is there for a later visit.',
+      : 'This checkout is temporary; only results saved through the assignment’s tools are retained.',
   ].join(' ');
 /**
  * What a lease that records nothing of its workspace is told of it. A reviewer is to run what it
@@ -488,6 +491,13 @@ export function buildLaunch(
     'unsupported_read_only',
     'Command profiles have no filesystem sandbox and cannot execute read-only leases',
   );
+  check(
+    !session.execution.policy.readOnly ||
+      effectiveWorkspace(session.execution.policy).mode === 'none' ||
+      launcher.isolated(profile),
+    'unsupported_read_only',
+    'Reviewing code requires the isolated runner with read-only code and Git mounts',
+  );
   const parsedConnections = nativeMcpConnectionsSchema.safeParse(
     sealed(session) ? [] : (request.connections ?? []),
   );
@@ -535,6 +545,14 @@ export function buildLaunch(
         ]
       : []),
     request.prompt,
+    ...(request.git
+      ? [
+          `Checked-out folder: ${request.cwd}\nAssigned branch: ${request.git.branch ?? '(detached review)'}\nStarting commit: ${request.git.startingCommit}\nGit remote: merv (${request.git.url})`,
+          session.execution.policy.readOnly
+            ? 'Code and Git metadata are mounted read-only. Use separate scratch space for test outputs. Your Git credential can only read.'
+            : 'Use ordinary Git in your assigned branch. You may inspect other branches, merge, cherry-pick, import selected files, commit and push. Keep working on your assigned branch. Merv commits automatically only at approved research milestones or before planned VM shutdown; ordinary session endings keep your working files.',
+        ]
+      : []),
     ...(session.kind === 'work' &&
     request.connections?.some((connection) => connection.name === 'sandboxes')
       ? [
@@ -544,7 +562,9 @@ export function buildLaunch(
         ]
       : []),
     ...(launcher.agent ? [searching(internet(profile, session))] : []),
-    ...(launcher.isolated(profile) && !sealed(session) ? [workHost(!fresh)] : []),
+    ...(launcher.isolated(profile) && !sealed(session)
+      ? [workHost(!fresh, !!request.git && session.execution.policy.readOnly)]
+      : []),
     ...(launcher.huggingface(profile) && !sealed(session) && request.hfToken && request.hfEndpoint
       ? [
           'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment: huggingface_hub, datasets, transformers and hf download use them as they are, once installed in your Python environment (none is preinstalled); do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
@@ -555,7 +575,9 @@ export function buildLaunch(
       : sealed(session)
         ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
         : session.execution.policy.readOnly
-          ? readOnlyWorkspace(session.role === 'reviewer', fresh)
+          ? request.git
+            ? 'Run the code under review and report what you checked. Keep test outputs in separate scratch space; the checkout and Git metadata must remain unchanged.'
+            : readOnlyWorkspace(session.role === 'reviewer', fresh)
           : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(parts.note && !inquiry ? [parts.note] : []),
     ...(session.execution.workflow === 'experiment' &&
@@ -574,7 +596,12 @@ export function buildLaunch(
     args: parts.args,
     cwd: request.cwd,
     stdin,
-    secrets: Object.values(bearers),
+    secrets: [
+      ...Object.values(bearers),
+      ...(request.git
+        ? [request.git.token, Buffer.from(`merv:${request.git.token}`).toString('base64')]
+        : []),
+    ],
     ...(parts.shellEnvFile && {
       shellEnv: `unset ${[sessionTokenVariable, ...Object.keys(bearers)].join(' ')}\n`,
     }),
@@ -583,6 +610,20 @@ export function buildLaunch(
       ...bearers,
       [mcpUrlVariable]: url,
       [sessionTokenVariable]: request.secret,
+      ...(request.git
+        ? {
+            MERV_GIT_URL: request.git.url,
+            MERV_GIT_TOKEN: request.git.token,
+            GIT_CONFIG_COUNT: '2',
+            GIT_CONFIG_KEY_0: `http.${request.git.url}.extraHeader`,
+            GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${request.git.token}`).toString('base64')}`,
+            GIT_CONFIG_KEY_1: 'http.followRedirects',
+            GIT_CONFIG_VALUE_1: 'false',
+          }
+        : {}),
+      ...(launcher.isolated(profile) && session.execution.policy.readOnly
+        ? { MERV_REVIEW_CODE: '1' }
+        : {}),
     },
   });
 }

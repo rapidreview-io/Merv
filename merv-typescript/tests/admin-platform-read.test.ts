@@ -242,7 +242,7 @@ test('no other principal or agent path carries platform read, and it fails close
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
     capacity: 1,
-    capabilities: ['code.v2'],
+    capabilities: ['code.git.1'],
   });
   const task = await f.app.ctx.tasks.create(source, {
     title: 'Session work',

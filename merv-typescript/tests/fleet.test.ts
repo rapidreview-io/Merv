@@ -744,3 +744,58 @@ test('an allocation whose machines never become ready fails after three, with ru
   const released = await f.fleet.inspect(f.caller, id);
   assert.deepEqual([released.phase, released.error], ['released', 'runtime_not_ready']);
 });
+
+test('planned deletion waits for durable shutdown acknowledgement and renews the dirty host', async (t) => {
+  const f = await fixture(t);
+  let acknowledged = false;
+  let calls = 0;
+  f.owner.prepareStop = async () => {
+    calls++;
+    return acknowledged;
+  };
+  const allocation = await f.fleet.request(f.caller, input('durable-stop'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const running = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(running.phase, 'running');
+  assert.equal(running.shutdownRequired, true);
+  await f.fleet.cancel(f.caller, allocation.id);
+  f.runtimes.leaseSoon(running.runtime!.sandboxId);
+  await f.fleet.tick();
+  assert.equal(calls, 1);
+  assert.deepEqual(f.runtimes.stopped, []);
+  assert.deepEqual(f.runtimes.renewed, [running.runtime!.sandboxId]);
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).releaseBy, undefined);
+  // Repeated capture failures retain the machine; no timeout manufactures a receipt.
+  f.owner.prepareStop = async () => {
+    throw new Error('capture transport unavailable');
+  };
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, []);
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).releaseBy, undefined);
+  f.advance(120_000);
+  f.owner.prepareStop = async () => acknowledged;
+  acknowledged = true;
+  await f.fleet.tick();
+  const stopping = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(stopping.shutdownAcknowledged, true);
+  assert.deepEqual(f.runtimes.stopped, [running.runtime!.sandboxId]);
+});
+
+test('normal completion also waits for the host shutdown receipt', async (t) => {
+  const f = await fixture(t);
+  let acknowledged = false;
+  f.owner.prepareStop = async () => acknowledged;
+  const allocation = await f.fleet.request(f.caller, input('finished-stop'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  await f.fleet.tick();
+  f.setObservation('finished');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).intent, 'stop');
+  assert.deepEqual(f.runtimes.stopped, []);
+  acknowledged = true;
+  await f.fleet.tick();
+  assert.equal(f.runtimes.stopped.length, 1);
+});

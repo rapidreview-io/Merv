@@ -284,9 +284,17 @@ export async function references(
     // A design measures its compute rather than guessing it: bounded probes, not the run.
     ...(snapshot.state === 'planned' ? { computeProfile: 'plan' } : {}),
     ...(base ? { base } : {}),
-    ...(snapshot.state === 'experiment_review'
+    ...(snapshot.version >= 45 ? { gitPolicy: 'approval-v1' } : {}),
+    ...(snapshot.state === 'experiment_review' ||
+    (snapshot.version >= 45 && snapshot.state === 'design_review')
       ? {
           code: (await reviewCapture(ctx, caller, experiment, tx))!.workspace!.headOid,
+          ...(snapshot.version >= 45
+            ? {
+                submission: (await reviewCapture(ctx, caller, experiment, tx))!.workspace!
+                  .submission!.sessionId,
+              }
+            : {}),
         }
       : {}),
     artifacts: await allowedArtifacts(ctx, caller, experiment, tx),
@@ -311,7 +319,13 @@ function reviewerCode(experiment: Data) {
   const capture = experiment.codeCapture as unknown as CodeCapture | null | undefined;
   return capture?.workspace
     ? {
-        submittedCommit: capture.workspace.headOid,
+        ...(capture.workspace.submission
+          ? {
+              parentCommit: capture.workspace.headOid,
+              submittedTree: capture.workspace.treeOid,
+              submissionSession: capture.workspace.submission.sessionId,
+            }
+          : { submittedCommit: capture.workspace.headOid }),
         startingCommit: capture.attachedBaseOid ?? capture.workspace.baseOid,
       }
     : undefined;
@@ -430,7 +444,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
                   approvedReviewId: experiment.attempt.approvedReviewId,
                 }
               : {}),
-            ...(state === 'experiment_review' ? { code: reviewerCode(inputs.experiment) } : {}),
+            ...(reviewing(state) ? { code: reviewerCode(inputs.experiment) } : {}),
           }),
           {
             embed: 'always',
@@ -533,13 +547,17 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   const recipe = ctx.contexts.get(recipeKey(state, context.snapshot.version));
   check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);
   const gitInstruction =
-    state === 'running'
-      ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
-      : state === 'experiment_review'
-        ? '\nInspect the provided read-only checkout at code.submittedCommit against the approved plan and retained results. code.startingCommit identifies the starting point for comparison. Do not substitute another branch or a newer head.'
-        : designCheckout(context.snapshot.version)
-          ? '\nThe read-only checkout holds the code execution will start from: this experiment’s pinned base (project main with the accepted code of the tasks it depends on) and, after an earlier attempt, that attempt’s commits on it. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution resumes in a configured private Git workspace from the same commit.'
-          : '\nThis experiment will execute in a configured private Git workspace on its pinned base; planning and design review have no checkout. Read the accepted code’s delivery evidence (task.get, artifact.read) instead, design against what it reports, and leave verifying the code itself to execution, which starts from that base.';
+    context.snapshot.version >= 45
+      ? state === 'planned' || state === 'running'
+        ? '\nUse ordinary Git on your assigned branch. You may inspect other branches, merge, cherry-pick, bring selected files, and commit and push whenever useful. After submitting the plan or results, stop. The runner freezes your exact working tree and parent history for independent review without committing. Merv creates milestone commits after approval. Ordinary session endings preserve working files without a commit; planned VM shutdown captures remaining changes as progress without approving them.'
+        : '\nInspect the isolated read-only submitted tree and its parent history. HEAD is the parent; uncommitted submitted files are the exact candidate under review. Do not substitute HEAD or another branch for the candidate. Use separate scratch for test outputs. An approval commits this exact tree.'
+      : state === 'running'
+        ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
+        : state === 'experiment_review'
+          ? '\nInspect the provided read-only checkout at code.submittedCommit against the approved plan and retained results. code.startingCommit identifies the starting point for comparison. Do not substitute another branch or a newer head.'
+          : designCheckout(context.snapshot.version)
+            ? '\nThe read-only checkout holds the code execution will start from: this experiment’s pinned base (project main with the accepted code of the tasks it depends on) and, after an earlier attempt, that attempt’s commits on it. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution resumes in a configured private Git workspace from the same commit.'
+            : '\nThis experiment will execute in a configured private Git workspace on its pinned base; planning and design review have no checkout. Read the accepted code’s delivery evidence (task.get, artifact.read) instead, design against what it reports, and leave verifying the code itself to execution, which starts from that base.';
   const needsClaim = review?.status === 'requested';
   const instruction = needsClaim
     ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'

@@ -31,7 +31,6 @@ import { mervRefusals } from '@sandboxes/merv-host/errors';
 import { MervService } from '@sandboxes/merv-host/merv';
 import type { ApiPrincipal, ApiRequest, MountHandler } from '@merv/api/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { CodeGitHubService } from '../packages/code/src/github.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { secretsRoutes } from '../packages/secrets/src/api.js';
 import type { Secrets } from '../packages/secrets/src/types.js';
@@ -287,35 +286,6 @@ test('credentials stay the signed-in person’s: a key, an emailed-code key, a w
         refused('forbidden', 403),
         `${kind} ${method}`,
       );
-
-  // GitHub's OAuth connection: begin and finish are hers alone.
-  const github = await createService(
-    new CodeGitHubService(
-      f.state,
-      f.scope,
-      {
-        origin: 'http://127.0.0.1:4317',
-        appSlug: 'merv-test',
-        clientId: 'Iv1.synthetic',
-        clientSecret: 'synthetic-client-secret',
-        encryptionKey: 'bc'.repeat(32),
-      },
-      async () => {
-        throw new Error('GitHub is never reached');
-      },
-    ),
-  );
-  t.after(() => github.close());
-  assert.match((await github.begin(f.person, { expectedRevision: 0 })).url, /^https:/);
-  await assert.rejects(github.finish(f.person, 'unknown'), (error: MervError) => {
-    assert.notEqual(error.code, 'github_human_required');
-    return true;
-  });
-  for (const [kind, caller] of agents) {
-    const refusal = refused('github_human_required', 403);
-    await assert.rejects(github.begin(caller, { expectedRevision: 0 }), refusal, kind);
-    await assert.rejects(github.finish(caller, 'unknown'), refusal, kind);
-  }
 
   // The Sandboxes console's sign-in code.
   const consoles = new MervService({

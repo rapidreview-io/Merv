@@ -300,16 +300,28 @@ const plan =
   '# Summary\nCompare two methods.\n# Objective & hypothesis\nA improves held-out accuracy.\n# Evaluation\nUse the same held-out examples, baseline, metric and denominator.\n';
 
 test('an experiment whose design rounds are used up is offered only a pass, with nowhere to return it', async (t) => {
+  // This owner-gate test has no harness snapshot uploader. Advance the fixture clock past
+  // the production grace for a stopped planner before testing its next design round.
+  const wallClock = Date.now;
+  let elapsed = 0;
+  t.mock.method(Date, 'now', () => wallClock() + elapsed);
   const f = await fixture(t);
+  // Sessions captured its clock at construction; Git writer fences keep real elapsed time.
+  Date.now = wallClock;
   await waitForManagedCode(f.app.ctx.codeWork, f.operator);
   const reviewer = await f.issue('Reviewer', 'reviewer');
-  const attach = async (e: Experiment, role: 'plan' | 'feasibility', path: string) => {
-    const artifact = await f.app.ctx.artifacts.create(f.operator, {
+  const attach = async (
+    e: Experiment,
+    role: 'plan' | 'feasibility',
+    path: string,
+    caller: Caller,
+  ) => {
+    const artifact = await f.app.ctx.artifacts.create(caller, {
       title: role,
       content: role === 'feasibility' ? feasibilityStatement() : plan,
       mediaType: role === 'feasibility' ? 'application/json' : 'text/markdown',
     });
-    await f.app.ctx.experiments.attach(f.operator, {
+    await f.app.ctx.experiments.attach(caller, {
       experimentId: e.id,
       expectedRevision: e.workflow.revision,
       attemptIndex: e.attempt.index,
@@ -320,14 +332,20 @@ test('an experiment whose design rounds are used up is offered only a pass, with
     });
   };
   const design = async (e: Experiment) => {
-    await attach(e, 'feasibility', 'feasibility.json');
-    await attach(e, 'plan', 'design/plan.md');
-    return await f.app.ctx.experiments.transition(f.operator, {
-      experimentId: e.id,
-      expectedRevision: e.workflow.revision,
-      transition: 'submit_design',
-      requestId: f.id('submit'),
-    });
+    const held = await f.work.lease(e, f.operator);
+    await attach(e, 'feasibility', 'feasibility.json', held.worker);
+    await attach(e, 'plan', 'design/plan.md', held.worker);
+    const pending = await f.work.run(
+      held,
+      'experiment.transition',
+      {
+        transition: 'submit_design',
+        requestId: f.id('submit'),
+      },
+      (caller, input) => f.app.ctx.experiments.transition(caller, input as never),
+    );
+    await f.work.release(held);
+    return pending;
   };
   let experiment = await design(
     await f.app.ctx.experiments.create(f.operator, {
@@ -355,6 +373,7 @@ test('an experiment whose design rounds are used up is offered only a pass, with
       expectedRevision: experiment.workflow.revision,
       requestId: f.id('verdict'),
     } as ReviewApplication);
+    elapsed += 60_001;
     experiment = await design(experiment);
   }
   const used = (await desk()).body.result;

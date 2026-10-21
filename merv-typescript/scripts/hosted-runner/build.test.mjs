@@ -94,7 +94,10 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     // A networked assignment can reach sshd on loopback, which takes no password; and the step's
     // server-side deadline, not a clock in the supervisor, ends a hosted launch.
     assert.match(dockerfile, /'PasswordAuthentication no\\nKbdInteractiveAuthentication no\\n'/);
-    assert.match(readFileSync(join(here, 'smoke-supervisor.ts'), 'utf8'), /while \(!stopping\) \{/);
+    assert.match(
+      readFileSync(join(here, 'smoke-supervisor.ts'), 'utf8'),
+      /await runner\.prepareShutdown\(\)/,
+    );
     assert.match(
       dockerfile,
       /^FROM \$\{SANDBOX_IMAGE\}\n(#.*\n)*RUN test -x \/usr\/local\/bin\/sandboxes-agent /m,

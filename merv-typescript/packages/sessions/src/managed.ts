@@ -35,6 +35,7 @@ import {
   runnerPlatformSchema as profile,
 } from './rules.js';
 import { lostAfterMs } from './runners.js';
+import { shutdownReceiptSchema, type ManagedShutdownControl } from './managed-shutdown.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
 const huggingFaceBinding = z.strictObject({
@@ -181,6 +182,15 @@ export class ManagedRunnerBindings {
     return validator;
   }
   async admits(row: ManagedBindingRow, tx: Transaction): Promise<void> {
+    check(
+      !(await tx.get(
+        'SELECT allocation_id FROM session_managed_shutdowns WHERE allocation_id=?',
+        row.allocation_id,
+      )),
+      'managed_shutdown_only',
+      'This runner is shutting down',
+      409,
+    );
     check(
       await (await this.current(row, tx)).admits(row.allocation_id, Number(row.epoch), tx),
       'managed_not_admitted',
@@ -360,6 +370,21 @@ export class ManagedRunnerBindings {
       401,
     );
     return await this.state.snapshotTransaction(async (tx) => {
+      const cleanup = await tx.get<ManagedBindingRow>(
+        `SELECT r.* FROM session_managed_runners r
+        JOIN session_managed_shutdowns d ON d.allocation_id=r.allocation_id AND d.epoch=r.epoch
+        JOIN identity_credentials c ON c.token_hash=r.control_hash AND c.kind='managed-control' AND c.revoked_at IS NULL
+        WHERE r.control_hash=? AND r.worker_nonce_hash IS NOT NULL`,
+        tokenDigest(token),
+      );
+      if (cleanup) {
+        const caller = this.caller({
+          ...cleanup,
+          bound_session_id: await this.currentSessionId(cleanup, tx),
+        });
+        caller.managed!.cleanup = true;
+        return caller;
+      }
       const credential = await this.credentials.authenticate(token, 'managed-control', tx);
       const row = await tx.get<ManagedBindingRow>(
         'SELECT * FROM session_managed_runners WHERE control_hash=?',
@@ -447,6 +472,7 @@ export class ManagedRunnerBindings {
   ): Promise<{ row: ManagedBindingRow; sourceCaller: Caller }> {
     const managed = caller.managed;
     check(managed, 'forbidden', 'Managed runner authority required', 403);
+    check(!managed.cleanup, 'managed_shutdown_only', 'This runner may only finish shutdown', 403);
     const row = await this.allocation(managed.allocationId, tx);
     check(
       row &&
@@ -684,10 +710,18 @@ export class ManagedRunnerBindings {
     runnerId: string | undefined,
     tx: Transaction,
   ): Promise<void> {
-    const { row } = await this.require(caller, tx);
+    const { row } = caller.managed?.cleanup
+      ? await this.requireCleanup(caller, tx)
+      : await this.require(caller, tx);
+    const held = caller.managed?.cleanup
+      ? !!(await tx.get(
+          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND session_id=?',
+          row.allocation_id,
+          sessionId,
+        ))
+      : (await this.currentSessionId(row, tx)) === sessionId;
     check(
-      (await this.currentSessionId(row, tx)) === sessionId &&
-        (!runnerId || row.runner_id === runnerId),
+      held && (!runnerId || row.runner_id === runnerId),
       'session_forbidden',
       'Session is not bound to this managed runner',
       403,
@@ -695,7 +729,9 @@ export class ManagedRunnerBindings {
   }
   /** The release of `caller`'s bound session, which the caller's control already admitted. */
   async acknowledgeRelease(caller: Caller, sessionId: string, tx: Transaction): Promise<void> {
-    const { row } = await this.require(caller, tx);
+    const { row } = caller.managed?.cleanup
+      ? await this.requireCleanup(caller, tx)
+      : await this.require(caller, tx);
     await tx.run(
       'UPDATE session_managed_assignments SET release_ack_at=COALESCE(release_ack_at,?) WHERE allocation_id=? AND session_id=?',
       new Date(this.clock()).toISOString(),
@@ -764,6 +800,167 @@ export class ManagedRunnerBindings {
         tx,
       ))
     );
+  }
+  private async requireCleanup(caller: Caller, tx: Transaction, acknowledged = false) {
+    const managed = caller.managed;
+    check(managed, 'managed_runner_forbidden', 'Managed runner required', 403);
+    const row = await this.allocation(managed.allocationId, tx);
+    const request = await tx.get<{ receipt_json: string | null }>(
+      'SELECT receipt_json FROM session_managed_shutdowns WHERE allocation_id=? AND epoch=?',
+      managed.allocationId,
+      managed.epoch,
+    );
+    const credential =
+      row &&
+      (await tx.get(
+        "SELECT id FROM identity_credentials WHERE token_hash=? AND kind='managed-control' AND revoked_at IS NULL",
+        row.control_hash,
+      ));
+    check(
+      row &&
+        request &&
+        (acknowledged || request.receipt_json === null) &&
+        credential &&
+        row.control_hash === managed.credentialHash &&
+        Number(row.epoch) === managed.epoch &&
+        row.project_id === caller.projectId,
+      'managed_shutdown_only',
+      'No pending shutdown belongs to this runner',
+      403,
+    );
+    return { row, request };
+  }
+  async requestShutdown(allocationId: string, epoch: number): Promise<boolean> {
+    this.available();
+    return await this.state.transaction(async (tx) => {
+      const row = await this.allocation(allocationId, tx);
+      // A launch that never enrolled never received credentials or an assignment.
+      if (!row) return true;
+      check(Number(row.epoch) === epoch, 'managed_binding_conflict', 'Shutdown epoch differs', 409);
+      await tx.run(
+        'INSERT INTO session_managed_shutdowns(allocation_id,epoch,requested_at) VALUES(?,?,?) ON CONFLICT(allocation_id) DO NOTHING',
+        allocationId,
+        epoch,
+        new Date(this.clock()).toISOString(),
+      );
+      const found = await tx.get<{ receipt_json: string | null }>(
+        'SELECT receipt_json FROM session_managed_shutdowns WHERE allocation_id=?',
+        allocationId,
+      );
+      return !!found?.receipt_json || row.worker_nonce_hash === null;
+    });
+  }
+  async shutdown(
+    caller: Caller,
+    value?: unknown,
+    request = false,
+  ): Promise<ManagedShutdownControl> {
+    this.available();
+    if (request && !caller.managed?.cleanup) {
+      await this.state.snapshotTransaction((tx) => this.require(caller, tx));
+      await this.requestShutdown(caller.managed!.allocationId, caller.managed!.epoch);
+      caller = structuredClone(caller);
+      caller.managed!.cleanup = true;
+    }
+    return await this.state.transaction(async (tx) => {
+      if (!caller.managed?.cleanup) {
+        await this.require(caller, tx);
+        check(value === undefined, 'managed_shutdown_only', 'Shutdown has not been requested', 409);
+        return { requested: false, acknowledged: false };
+      }
+      const { row, request } = await this.requireCleanup(caller, tx, true);
+      if (value === undefined)
+        return { requested: true, acknowledged: request.receipt_json !== null };
+      const parsed = shutdownReceiptSchema.safeParse(value);
+      check(parsed.success, 'invalid_shutdown_receipt', 'Invalid shutdown capture receipt');
+      const receipt = parsed.data;
+      if (request.receipt_json !== null) {
+        check(
+          request.receipt_json === canonical(receipt),
+          'managed_shutdown_conflict',
+          'Shutdown receipt cannot change',
+          409,
+        );
+        return { requested: true, acknowledged: true };
+      }
+      check(
+        !(await tx.get(
+          `SELECT s.id FROM worker_sessions s JOIN session_managed_assignments a ON a.session_id=s.id
+        WHERE a.allocation_id=? AND s.status IN ('offered','active') LIMIT 1`,
+          row.allocation_id,
+        )),
+        'managed_shutdown_pending',
+        'Every producer must stop before shutdown acknowledgement',
+        409,
+      );
+      const code = await tx.get<{ present: boolean }>(
+        "SELECT to_regclass('code_workspaces') IS NOT NULL AS present",
+      );
+      const writers = code?.present
+        ? await tx.all<{
+            unit_id: string;
+            writer_session_id: string;
+            head_oid: string | null;
+            writer_state: string;
+            generation: number;
+            final_owed: boolean;
+          }>(
+            `
+        SELECT w.unit_id,w.writer_session_id,w.head_oid,w.writer_state,w.generation,w.final_owed FROM code_workspaces w
+        JOIN session_managed_assignments a ON a.session_id=w.writer_session_id
+        WHERE a.allocation_id=? AND w.project_id=?`,
+            row.allocation_id,
+            row.project_id,
+          )
+        : [];
+      check(
+        writers.length === receipt.captures.length &&
+          new Set(receipt.captures.map((c) => c.unitId)).size === writers.length,
+        'managed_shutdown_pending',
+        'Every owned writer needs its retained Git receipt',
+        409,
+      );
+      for (const writer of writers) {
+        const capture = receipt.captures.find(
+          (c) => c.unitId === writer.unit_id && c.sessionId === writer.writer_session_id,
+        );
+        check(
+          capture &&
+            capture.headOid === writer.head_oid &&
+            writer.writer_state === 'closed' &&
+            !writer.final_owed,
+          'managed_shutdown_pending',
+          'Shutdown capture differs from the retained writer',
+          409,
+        );
+        const operation = await tx.get<{ payload_json: string; result_json: string | null }>(
+          `SELECT payload_json,result_json FROM code_operations
+          WHERE id=? AND project_id=? AND unit_id=? AND principal_scope=? AND generation=? AND kind='upload' AND status='completed'`,
+          capture.operationId,
+          row.project_id,
+          writer.unit_id,
+          `session:${capture.sessionId}`,
+          Number(writer.generation),
+        );
+        const result = operation?.result_json ? JSON.parse(operation.result_json) : null;
+        check(
+          operation &&
+            JSON.parse(operation.payload_json).kind === 'final' &&
+            result?.head === capture.headOid &&
+            result?.tree === capture.treeOid,
+          'managed_shutdown_pending',
+          'A durable final Git capture is required',
+          409,
+        );
+      }
+      await tx.run(
+        'UPDATE session_managed_shutdowns SET receipt_json=?,acknowledged_at=? WHERE allocation_id=? AND receipt_json IS NULL',
+        canonical(receipt),
+        new Date(this.clock()).toISOString(),
+        row.allocation_id,
+      );
+      return { requested: true, acknowledged: true };
+    });
   }
   async inspect(
     allocationId: string,

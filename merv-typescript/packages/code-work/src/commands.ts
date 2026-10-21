@@ -1,106 +1,55 @@
-import { z } from 'zod';
 import {
-  canonical,
   check,
-  cleanText,
-  codeCommandCompletionSchema,
-  codeCommandControlSchema,
-  codeCommitInputSchema,
-  codeMergeInputSchema,
-  type CodeMergeInput,
-  digest,
-  newId,
-  now,
   parsed,
+  idSchema,
   type Caller,
-  type CodeCommandControl,
   type CodeCommandRecord,
-  type CodeCommitCommand,
-  type CodeCommitInput,
-  type CodeCommitReceipt,
-  type Data,
-  MervError,
   type Scope,
   type Sql,
   type State,
   type Transaction,
-  idSchema,
-  isCheckpointRequestId,
-  type Workflows,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
-import { live } from '@merv/sessions/rules';
-import { pendingMerge } from '@merv/code/pending-merge';
 import { postgresMigrations } from './commands.postgres.js';
 import type { CodeCommands } from './types.js';
 
-/** Code Work's own storage, which its operator receipts live in; every caller migrates it. */
+/** Historical command receipts and Code Work operator receipts keep their published schema. */
 export async function migrateCommands(state: State): Promise<void> {
   await state.migrate('code_commands', postgresMigrations);
 }
-
 type Row = {
   id: string;
   project_id: string;
   session_id: string;
-  actor_id: string;
-  request_id: string;
-  input_hash: string;
   command_json: string;
   status: CodeCommandRecord['status'];
   receipt_json: string | null;
   error: string | null;
 };
-/**
- * A runner's next-command control, which may ask for a periodic checkpoint: when the session has
- * nothing outstanding, one commit of its checkout at `expectedHead`, made as the agent's own
- * code.commit would be. A writer generation ends with its session, so this bounds what losing
- * the machine costs.
- */
-const nextInputSchema = codeCommandControlSchema
-  .extend({
-    checkpoint: codeCommitInputSchema.pick({ expectedHead: true, requestId: true }).optional(),
-  })
-  .strict();
-/** Whose work a checkpoint saves, as a valid message; the name never changes, so a retry is the same. */
-const checkpointMessage = (name: string | undefined) =>
-  name ? cleanText(`Checkpoint: ${name}`, 200) : 'Checkpoint: work in progress';
-/** Whether a command is one of the runner's periodic checkpoints, as `checkpoint` queues them. */
-const automatic = (row: Row) =>
-  isCheckpointRequestId(row.request_id) &&
-  (JSON.parse(row.command_json) as CodeCommitCommand).message.startsWith('Checkpoint: ');
-/** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
-
-// Share the bounded, descriptor-safe JSON parser used by the other service inputs.
-const parse = <T>(schema: z.ZodType<T>, input: unknown): T =>
+const parse = (schema: typeof idSchema, input: unknown) =>
   parsed(schema, input, 'invalid_code_input', {
     nodes: 128,
     depth: 8,
-    bytes: 16_384,
+    bytes: 16384,
     strings: 'json',
     undefined: 'reject',
     nullPrototype: false,
   });
 
-/** Durable server commands. Git execution and object verification belong to the runner. */
+/** Read-only access to commands retained by earlier runtimes. New work uses ordinary Git. */
 export class CodeCommandService implements CodeCommands {
   private closed = false;
   constructor(
-    protected readonly state: State,
-    protected readonly scope: Scope,
-    protected readonly sessions: Sessions,
-    /** Where a checkpoint learns the name of the work it saves. */
-    protected readonly workflows?: Pick<Workflows, 'relations'>,
+    private readonly state: State,
+    private readonly scope: Scope,
+    private readonly sessions: Sessions,
   ) {}
-
-  /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await migrateCommands(this.state);
   }
-
   private async transaction<T>(fn: (tx: Transaction) => T): Promise<T> {
-    check(!this.closed, 'code_unavailable', 'Code commands are unavailable', 503);
+    check(!this.closed, 'code_unavailable', 'Code command history is unavailable', 503);
     const tx = this.state.ambient;
     return tx ? await fn(tx) : await this.state.transaction(fn);
   }
@@ -112,89 +61,10 @@ export class CodeCommandService implements CodeCommands {
       error: row.error,
     };
   }
-  private async row(tx: Transaction, id: string): Promise<Row> {
-    const row = await tx.get<Row>('SELECT * FROM code_commands WHERE id=?', id);
-    check(row, 'code_command_not_found', 'Code command not found', 404);
-    return row;
-  }
   private async reader(caller: Caller, tx: Transaction): Promise<Session | undefined> {
     await this.scope.require(caller, 'read', tx);
     return caller.session ? await this.sessions.session(caller) : undefined;
   }
-  private writable(session: Session): void {
-    check(session.status === 'active', 'session_closed', 'An active session is required', 409);
-    check(
-      !session.execution.policy.readOnly,
-      'code_read_only',
-      'A read-only session cannot commit code',
-      403,
-    );
-    check(
-      session.hostRef && session.workspace,
-      'code_workspace_required',
-      'An attached Git workspace is required',
-      409,
-    );
-    check(
-      session.workspace.result === null,
-      'code_workspace_closed',
-      'The workspace has already been captured',
-      409,
-    );
-    check(
-      session.execution.policy.tools.some((tool) => tool.name === 'code.commit'),
-      'execution_tool_forbidden',
-      'The session does not grant code.commit',
-      403,
-    );
-  }
-  private async authorizeCommit(
-    caller: Caller,
-    input: CodeCommitInput | CodeMergeInput,
-    tool = 'code.commit',
-  ): Promise<void> {
-    const data: Data = { ...input };
-    if (caller.session?.invocationId) await this.sessions.invocations.validate(caller, tool, data);
-    else {
-      const invocation = await this.sessions.invocations.prepare(caller, tool, data);
-      try {
-        await this.sessions.invocations.validate(invocation.caller, tool, data);
-      } finally {
-        await this.sessions.invocations.cancel(invocation);
-      }
-    }
-  }
-  private async controlled(caller: Caller, input: CodeCommandControl): Promise<Session> {
-    check(!caller.session, 'session_forbidden', 'Session credentials cannot control runners', 403);
-    const session = await this.sessions.get(caller, input.sessionId);
-    check(
-      session.runnerId === input.runnerId && session.hostRef === input.hostRef,
-      'session_forbidden',
-      'Command control belongs to another runner or launch',
-      403,
-    );
-    return session;
-  }
-  private async event(
-    tx: Transaction,
-    command: CodeCommitCommand,
-    status: Row['status'],
-  ): Promise<void> {
-    await this.state.appendEvent(tx, {
-      projectId: command.projectId,
-      actorId: command.actorId,
-      type: `code.command_${status}`,
-      subjectId: command.id,
-      data: {
-        source: { kind: 'session', sessionId: command.sessionId },
-        instanceId: command.instanceId,
-        expectedRevision: command.expectedRevision,
-        repositoryId: command.workspace.repositoryId,
-        workspaceId: command.workspace.workspaceId,
-      },
-    });
-  }
-
   async list(caller: Caller): Promise<CodeCommandRecord[]> {
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
@@ -243,285 +113,11 @@ export class CodeCommandService implements CodeCommands {
             record.command.instanceId === session.instanceId),
         'code_command_not_found',
         id.startsWith('cop_')
-          ? 'code.operation reads the codecmd_ id code.commit or code.merge returned; a cop_ id is one of Code’s store operations, which code.status lists'
+          ? 'code.operation reads a historical codecmd_ receipt; a cop_ id is a store operation listed by code.status'
           : 'No code command with this id belongs to this project, or, for a worker, to its unit of work',
         404,
       );
       return record!;
-    });
-  }
-  async commit(caller: Caller, value: CodeCommitInput): Promise<CodeCommandRecord> {
-    return await this.enqueue(caller, parse(codeCommitInputSchema, value));
-  }
-  async merge(caller: Caller, value: CodeMergeInput): Promise<CodeCommandRecord> {
-    return await this.enqueue(caller, parse(codeMergeInputSchema, value));
-  }
-  private async enqueue(
-    caller: Caller,
-    input: CodeCommitInput | CodeMergeInput,
-  ): Promise<CodeCommandRecord> {
-    caller = structuredClone(caller);
-    const merge = 'operation' in input ? input.operation : undefined;
-    return await this.transaction(async (tx) => {
-      check(caller.session, 'session_required', 'Only a worker session can request a commit', 403);
-      await this.scope.require(caller, 'write', tx);
-      const session = await this.sessions.session(caller);
-      this.writable(session);
-      await this.authorizeCommit(caller, input, merge ? 'code.merge' : 'code.commit');
-      const pending = merge ? await pendingMerge(tx, caller.projectId, session.instanceId) : null;
-      if (merge)
-        check(
-          pending &&
-            session.execution.policy.tools.some((tool) => tool.name === 'code.merge') &&
-            session.workspace?.attachment.pendingMerge?.plan === pending.plan,
-          'code_merge_forbidden',
-          'Only a merge-capable assignment may operate its frozen merge',
-          403,
-        );
-      const hash = digest(input);
-      const prior = await tx.get<Row>(
-        'SELECT * FROM code_commands WHERE session_id=? AND request_id=?',
-        session.id,
-        input.requestId,
-      );
-      if (prior) {
-        check(
-          prior.input_hash === hash,
-          'code_request_conflict',
-          'The request ID already identifies different commit input',
-          409,
-        );
-        return this.decode(prior);
-      }
-      if (merge)
-        check(
-          !pending!.firstMerge,
-          'code_merge_completed',
-          'The planned merge is already complete; later rounds use code.commit',
-          409,
-        );
-      const outstanding = await tx.get<Row>(
-        "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
-        session.id,
-      );
-      // The refusal names the outstanding command: the runner's checkpoint, which the agent
-      // never asked for, by its id; the agent's own also by its first line.
-      if (outstanding)
-        throw new MervError(
-          'code_command_pending',
-          automatic(outstanding)
-            ? `The runner's automatic checkpoint ${outstanding.id} of this checkout is still running: call code.commit again in a few seconds, with the same input, and it lands on top of that checkpoint`
-            : `The session already has an outstanding code command, ${outstanding.id} (“${cleanText(this.decode(outstanding).command.message.split('\n')[0]!, 80)}”): poll code.operation with that commandId and call code.commit again once it has ended`,
-          409,
-          { commandId: outstanding.id, automatic: automatic(outstanding) },
-        );
-      check(
-        input.expectedHead.length === session.workspace!.attachment.baseOid.length,
-        'code_object_format',
-        'The expected head must use the workspace Git object format',
-      );
-      const { message } = input;
-      // A merge starts and completes on exactly the head named: no checkpoint runs beside one.
-      const expectedHead = merge
-        ? input.expectedHead
-        : await this.pastCheckpoints(tx, session.id, input.expectedHead);
-      const commit = { ...(merge ? { merge } : {}), expectedHead, message };
-      return this.decode(await this.queue(tx, session, input.requestId, hash, commit));
-    });
-  }
-  /**
-   * Where an agent's commit lands. The runner's periodic checkpoints commit this session's
-   * checkout and move its HEAD without the agent knowing: a head that only they have moved past
-   * stands for the newest of them, so a commit on the head the agent last read follows them
-   * instead of failing with workspace_head_conflict. Its tree is the checkout's either way.
-   */
-  private async pastCheckpoints(tx: Transaction, sessionId: string, head: string) {
-    const moved = new Map<string, string>();
-    for (const row of await tx.all<Row>(
-      "SELECT * FROM code_commands WHERE session_id=? AND status='succeeded' ORDER BY _merv_rowid",
-      sessionId,
-    ))
-      if (automatic(row)) {
-        const receipt = JSON.parse(row.receipt_json!) as CodeCommitReceipt;
-        moved.set(receipt.parentOid, receipt.headOid);
-      }
-    const seen = new Set<string>();
-    while (moved.has(head) && !seen.has(head)) {
-      seen.add(head);
-      head = moved.get(head)!;
-    }
-    return head;
-  }
-  /** Queues a commit of the session's checkout, its agent's or a checkpoint, for its runner. */
-  private async queue(
-    tx: Transaction,
-    session: Session,
-    requestId: string,
-    hash: string,
-    commit: Pick<CodeCommitCommand, 'merge' | 'expectedHead' | 'message'>,
-  ): Promise<Row> {
-    const command: CodeCommitCommand = {
-      id: newId('codecmd'),
-      projectId: session.projectId,
-      sessionId: session.id,
-      actorId: session.actorId,
-      instanceId: session.instanceId,
-      expectedRevision: session.expectedRevision,
-      runnerId: session.runnerId,
-      hostRef: session.hostRef!,
-      workspace: session.workspace!.attachment,
-      ...commit,
-      createdAt: now(),
-    };
-    await tx.run(
-      `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
-       VALUES (?,?,?,?,?,?,?,'queued')`,
-      command.id,
-      command.projectId,
-      command.sessionId,
-      command.actorId,
-      requestId,
-      hash,
-      canonical(command),
-    );
-    await this.event(tx, command, 'queued');
-    return await this.row(tx, command.id);
-  }
-  async nextCommand(caller: Caller, value: unknown): Promise<CodeCommitCommand | null> {
-    caller = structuredClone(caller);
-    const { checkpoint, ...input } = parse(nextInputSchema, value);
-    const outstanding = async (tx: Transaction) => {
-      const session = await this.controlled(caller, input);
-      const sql =
-        "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')";
-      return [session, await tx.get<Row>(sql, session.id)] as const;
-    };
-    // A poll that finds nothing (each running writer's, every second) reads only a snapshot.
-    if (!checkpoint && !(await this.state.snapshot(() => this.transaction(outstanding)))[1])
-      return null;
-    return await this.transaction(async (tx) => {
-      const [session, found] = await outstanding(tx);
-      const row =
-        found ?? (checkpoint ? await this.checkpoint(tx, session, checkpoint) : undefined);
-      if (!row) return null;
-      const { command } = this.decode(row);
-      // A session no longer offered or active holds no lease.
-      if (!live(session)) {
-        // Recover an already-issued descriptor after a lost response. This records no
-        // new dispatch; the runner may reconcile its stopped/fenced Git outcome only.
-        if (row.status === 'dispatched') return command;
-        if (row.status === 'queued') {
-          await tx.run(
-            "UPDATE code_commands SET status='cancelled',error='session_closed' WHERE id=?",
-            row.id,
-          );
-          await this.event(tx, command, 'cancelled');
-        }
-        return null;
-      }
-      this.writable(session);
-      if (row.status === 'queued') {
-        await tx.run("UPDATE code_commands SET status='dispatched' WHERE id=?", row.id);
-        await this.event(tx, command, 'dispatched');
-      }
-      return command;
-    });
-  }
-  /**
-   * The periodic checkpoint a runner asked for, queued for it, or none: the session is no longer
-   * active and writable, or is planned to merge first, or the request was answered before.
-   */
-  private async checkpoint(
-    tx: Transaction,
-    session: Session,
-    input: { expectedHead: string; requestId: string },
-  ): Promise<Row | undefined> {
-    if (
-      session.status !== 'active' ||
-      session.execution.policy.readOnly ||
-      !session.hostRef ||
-      !session.workspace ||
-      session.workspace.result !== null ||
-      session.workspace.attachment.pendingMerge ||
-      !session.execution.policy.tools.some((tool) => tool.name === 'code.commit') ||
-      input.expectedHead.length !== session.workspace.attachment.baseOid.length
-    )
-      return undefined;
-    const message = checkpointMessage(
-      (await this.workflows?.relations(session.projectId, session.instanceId, tx))?.instance.name,
-    );
-    const hash = digest({ ...input, message });
-    const prior = await tx.get<Row>(
-      'SELECT * FROM code_commands WHERE session_id=? AND request_id=?',
-      session.id,
-      input.requestId,
-    );
-    if (prior) {
-      check(
-        prior.input_hash === hash,
-        'code_request_conflict',
-        'The request ID already identifies a different checkpoint',
-        409,
-      );
-      return undefined;
-    }
-    const commit = { expectedHead: input.expectedHead, message };
-    return await this.queue(tx, session, input.requestId, hash, commit);
-  }
-  async completeCommand(caller: Caller, value: unknown): Promise<CodeCommandRecord> {
-    caller = structuredClone(caller);
-    const input = parse(codeCommandCompletionSchema, value);
-    return await this.transaction(async (tx) => {
-      const session = await this.controlled(caller, input);
-      const row = await this.row(tx, input.commandId);
-      check(
-        row.session_id === session.id && row.project_id === session.projectId,
-        'code_command_not_found',
-        'Code command not found',
-        404,
-      );
-      const record = this.decode(row);
-      const receipt = 'receipt' in input ? input.receipt : null;
-      const error = 'error' in input ? input.error : null;
-      if (receipt) {
-        check(
-          receipt.commandId === record.command.id &&
-            receipt.repositoryId === record.command.workspace.repositoryId &&
-            receipt.workspaceId === record.command.workspace.workspaceId &&
-            receipt.baseOid === record.command.workspace.baseOid &&
-            receipt.parentOid === record.command.expectedHead,
-          'code_receipt_conflict',
-          'The receipt does not describe the dispatched command',
-          409,
-        );
-      }
-      const status = receipt ? 'succeeded' : 'failed';
-      if (['succeeded', 'failed', 'cancelled'].includes(row.status)) {
-        check(
-          record.status === status &&
-            canonical(record.receipt) === canonical(receipt) &&
-            record.error === error,
-          'code_result_conflict',
-          'The command already has a different terminal result',
-          409,
-        );
-        return record;
-      }
-      check(
-        row.status === 'dispatched',
-        'code_not_dispatched',
-        'The runner must claim the command before reporting a result',
-        409,
-      );
-      await tx.run(
-        'UPDATE code_commands SET status=?,receipt_json=?,error=? WHERE id=?',
-        status,
-        receipt ? canonical(receipt) : null,
-        error ?? null,
-        row.id,
-      );
-      await this.event(tx, record.command, status);
-      return this.decode(await this.row(tx, row.id));
     });
   }
   close(): void {

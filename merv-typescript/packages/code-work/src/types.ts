@@ -2,9 +2,6 @@ import type { CodeBrowsed, CodeLogEntry } from '@merv/code/models';
 import type {
   Caller,
   CodeCommandRecord,
-  CodeCommitCommand,
-  CodeCommitInput,
-  GitHubPullDetails,
   RunningMark,
   RunningNode,
   RunningPanelPart,
@@ -30,33 +27,19 @@ import type {
 
 /** A project's check and admission lists, all restated on every call. */
 export type CodeRepositoryConfigureInput = Omit<CodeStoreLimits, 'format'> & { requestId: string };
-export interface CodePublicationMerge {
-  proposalId: string;
-  expectedHead: string;
-  expectedBase: string;
-  requestId: string;
-}
 export interface CodePublicationApi {
   publications(caller: Caller): Promise<CodePublication[]>;
   syncPublications(caller: Caller): Promise<CodePublication[]>;
   publicationDetails(
     caller: Caller,
     proposalId: string,
-  ): Promise<{ publication: CodePublication; details: GitHubPullDetails | null }>;
-  mergePublication(caller: Caller, input: CodePublicationMerge): Promise<CodePublication>;
+  ): Promise<{ publication: CodePublication; details: null }>;
 }
 
+/** Read-only historical command evidence. */
 export interface CodeCommands {
-  merge(
-    caller: Caller,
-    input: import('@merv/contracts').CodeMergeInput,
-  ): Promise<CodeCommandRecord>;
   list(caller: Caller): Promise<CodeCommandRecord[]>;
-  commit(caller: Caller, input: CodeCommitInput): Promise<CodeCommandRecord>;
   operation(caller: Caller, commandId: string): Promise<CodeCommandRecord>;
-  /** Each control parses its own input, so callers hand it the body they received. */
-  nextCommand(caller: Caller, input: unknown): Promise<CodeCommitCommand | null>;
-  completeCommand(caller: Caller, input: unknown): Promise<CodeCommandRecord>;
   close(): void;
 }
 export type { CodeCaptureRef } from './models.js';
@@ -73,6 +56,8 @@ export interface CodeCapture {
    * before — or without — a final result.
    */
   attachedBaseOid?: string;
+  /** Exact immutable attachment, including a submitted tree, even before session settlement. */
+  attachedWorkspace?: SessionWorkspace;
   observedAt: string | null;
   eventId: number | null;
   error?: string;
@@ -107,6 +92,12 @@ export interface CodeCaptures {
  * the owner contract: no tool route reaches them, and the owner has already checked authority.
  */
 export interface CodeUnits {
+  expectSubmission(caller: Caller, tx: Transaction): Promise<CodeCapture>;
+  approveSubmission(
+    caller: Caller,
+    input: import('./submissions.js').SubmissionApproval,
+    tx: Transaction,
+  ): Promise<void>;
   declareUnit(
     caller: Caller,
     unitId: string,
@@ -198,10 +189,6 @@ export interface CodeRepositoryControls {
       action: import('./models.js').CodeBaseControlInput['action'] | 'release' | 'repair';
     },
   ): Promise<import('./models.js').CodeBaseRecord>;
-  importRepository(
-    caller: Caller,
-    input: import('@merv/code/store/protocol').CodeRepositoryImportInput,
-  ): Promise<import('@merv/code/store/protocol').CodeStoreOperation>;
   configureRepository(
     caller: Caller,
     input: CodeRepositoryConfigureInput,
@@ -210,11 +197,6 @@ export interface CodeRepositoryControls {
     caller: Caller,
     input: import('./models.js').CodeUnitFenceInput,
   ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
-  /** Put a ref publication that waits for an operator back in the queue; it never forces. */
-  retryMirror(
-    caller: Caller,
-    input: import('./models.js').CodeMirrorRetryInput,
-  ): Promise<import('@merv/code/store/protocol').CodeMirrorStatus>;
 }
 /**
  * Code's part of the Running page. Each is one read inside the page's snapshot, and none
@@ -251,7 +233,7 @@ export interface ResolutionInput {
 /**
  * What the reviewed work Code asks for has to achieve, as facts; its owner words the brief.
  * `base`: two inputs of a base whose merge conflicted, or merged cleanly and failed the
- * project check. `sync`: a GitHub branch head to integrate with Merv main.
+ * project check. `sync`: a retained source branch head to integrate with Merv main.
  */
 export type ResolutionWork =
   | {
@@ -273,7 +255,7 @@ export type ResolutionWork =
   | { kind: 'sync'; branch: string; main: string; head: string };
 /**
  * The port a work owner binds so Code can open the reviewed work that resolves a base or
- * integrates a GitHub branch, starting at `baseReference`. It runs in Code's transaction; no
+ * integrates a retained source branch, starting at `baseReference`. It runs in Code's transaction; no
  * public input selects it.
  */
 export interface ResolutionWorkCreator {
@@ -293,6 +275,7 @@ export interface Code
     CodeRepositoryControls,
     CodePublicationApi,
     CodeRunning {
+  readonly gitRemote: import('@merv/code/store/http').CodeGitRemote;
   /** A capture, checked to come from exactly this origin, and whether it holds its result. */
   checkCapture(
     caller: Caller,
@@ -301,16 +284,12 @@ export interface Code
     tx?: Transaction,
   ): Promise<CheckedCodeCapture>;
   bindServiceTasks(provider: ResolutionWorkCreator): () => void;
-  controlPublication(caller: Caller, input: unknown): Promise<unknown>;
-  readonly github: import('@merv/contracts').CodeGitHub;
   /**
-   * The workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
-   * bytes of one part. Each parses what it receives. Absent once Code is closing.
+   * Workspace metadata below `/code/v2/`; repository bytes use the ordinary Git remote.
+   * Each route parses its JSON input. Absent once Code is closing.
    */
   readonly v2?: {
     call(caller: Caller, route: string, body: unknown): Promise<unknown>;
-    putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer): Promise<unknown>;
-    readPart(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
   };
 }
 declare module 'cordis' {

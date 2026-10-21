@@ -1,18 +1,15 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
-  closeSync,
   cpSync,
   existsSync,
   lchownSync,
   lstatSync,
-  openSync,
   realpathSync,
   renameSync,
   rmSync,
-  writeSync,
 } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
-import { CODE_DRIVER, type SessionWorkspace } from '@merv/contracts';
+import { NATIVE_CODE_DRIVER as CODE_DRIVER, type SessionWorkspace } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { CodeWorkspaceManifest } from '../store/protocol.js';
 import { pathStat } from '@merv/contracts/private-directory';
@@ -75,75 +72,41 @@ export abstract class DriverCheckout extends DriverCore {
     );
   }
 
-  /**
-   * Bring the named commit into the cache. Code is told which commits are already here so it
-   * sends less; should that ever be wrong the import fails, and the one retry claims nothing.
-   */
+  /** Native fetch negotiates history and retains the assignment's exact immutable objects. */
   protected async fetch(
     cache: string,
     manifest: CodeWorkspaceManifest,
     control: { sessionId: string; runnerId: string; hostRef: string },
   ): Promise<void> {
-    const present = async () =>
-      (await this.has(cache, manifest.head)) &&
-      (!manifest.pendingMerge || (await this.has(cache, manifest.pendingMerge.secondParent)));
-    if (await present()) return;
-    const haves = (
-      await this.git.ok([
+    const credentials = await this.credentials(control, manifest.remote);
+    const env = this.gitEnvironment(credentials.url, credentials.token);
+    await this.git.ok(
+      [
         '--git-dir',
         cache,
-        'for-each-ref',
-        '--sort=-creatordate',
-        '--count=256',
-        '--format=%(objectname)',
-        'refs/merv/known',
-      ])
-    )
-      .split('\n')
-      .filter(Boolean);
-    const downloads = driverDirectory(join(dirname(cache), 'downloads'));
-    const file = join(downloads, `${hash(control.hostRef).slice(0, 32)}.bundle`);
-    for (const claimed of haves.length ? [haves, []] : [[]]) {
-      const { download } = (await this.ask(() =>
-        this.transport.call('downloads', { ...control, haves: claimed }),
-      )) as {
-        download:
-          | { upToDate: true }
-          | { exportId: string; sha256: string; bytes: number; head: string; partBytes: number };
-      };
-      if ('upToDate' in download) continue;
-      if (download.head !== manifest.head) throw new WorkspaceError('workspace_invalid_manifest');
-      const digest = createHash('sha256');
-      const fd = openSync(file, 'w', 0o600);
-      try {
-        for (let offset = 0; offset < download.bytes;) {
-          const part = await this.ask(() =>
-            this.transport.readPart(download.exportId, {
-              ...control,
-              offset,
-              length: Math.min(download.partBytes, download.bytes - offset),
-            }),
-          );
-          if (!part.length) throw new WorkspaceError('workspace_download_failed');
-          digest.update(part);
-          writeSync(fd, part);
-          offset += part.length;
-        }
-      } finally {
-        closeSync(fd);
-      }
-      const intact = digest.digest('hex') === download.sha256;
-      const imported =
-        intact && (await this.git.run(['--git-dir', cache, 'bundle', 'unbundle', file])).code === 0;
-      rmSync(file, { force: true });
-      if (imported && (await present())) break;
-    }
-    if (!(await present())) throw new WorkspaceError('workspace_download_failed');
+        '-c',
+        'protocol.https.allow=always',
+        '-c',
+        'protocol.http.allow=always',
+        'fetch',
+        '--no-tags',
+        credentials.url,
+        '+refs/heads/*:refs/remotes/merv/*',
+        manifest.head,
+        ...(manifest.pendingMerge ? [manifest.pendingMerge.secondParent] : []),
+        ...(manifest.submission
+          ? [`refs/merv/submissions/${manifest.submission.sessionId}/tree`]
+          : []),
+      ],
+      { env },
+    );
+    if (!(await this.has(cache, manifest.head)))
+      throw new WorkspaceError('workspace_download_failed');
     await this.know(cache, manifest.head);
     if (manifest.pendingMerge) await this.know(cache, manifest.pendingMerge.secondParent);
   }
 
-  /** Remember a commit Code holds, so the next download can build on it. */
+  /** Keep an assigned commit reachable in the private cache. */
   protected async know(cache: string, commit: string): Promise<void> {
     await this.git.ok(['--git-dir', cache, 'update-ref', `refs/merv/known/${commit}`, commit]);
   }
@@ -170,9 +133,42 @@ export abstract class DriverCheckout extends DriverCore {
       ]);
       return;
     }
-    // Code is the authority and this branch a cache of it: a checkout kept from an earlier
-    // generation is put on exactly the head Code names, whatever that generation left.
+    // A known writer keeps its files and index. Only an exact frozen-tree approval
+    // may advance its baseline without a local agent commit.
     if (!row.branch) throw new WorkspaceError('workspace_foreign_checkout');
+    const previous = this.prior(row, true);
+    if (previous && !previous.read_only && !this.refusedFinal(previous)) {
+      // Ordinary session ends leave both the working tree and index in place.
+      // The server's head was advanced by the previous agent's own Git commits.
+      const branch = (
+        await this.git.ok(['symbolic-ref', '--short', 'HEAD'], { cwd: row.path })
+      ).trim();
+      const head = await this.resolve(row, 'HEAD^{commit}');
+      if (branch === row.branch && head === row.head_oid) return;
+      const submitted = this.submission(previous.launch_id);
+      if (
+        branch === row.branch &&
+        previous.repository_id === row.repository_id &&
+        submitted?.sessionId === previous.session_id &&
+        submitted.parentOid === head
+      ) {
+        const lineage = (
+          await this.git.ok(['rev-list', '--parents', '-n', '1', row.head_oid], {
+            cwd: row.path,
+          })
+        )
+          .trim()
+          .split(/\s+/);
+        const tree = await this.resolve(row, `${row.head_oid}^{tree}`);
+        if (lineage.length === 2 && lineage[1] === head && tree === submitted.treeOid) {
+          // Approval retained precisely the tree this runner froze. Adopt its baseline
+          // without touching working files: later edits, deletions and untracked data stay.
+          await this.git.ok(['reset', '--mixed', '--quiet', row.head_oid], { cwd: row.path });
+          return;
+        }
+      }
+      throw new WorkspaceError('workspace_continuity_conflict');
+    }
     await this.git.ok(['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid], {
       cwd: row.path,
     });
@@ -255,7 +251,7 @@ export abstract class DriverCheckout extends DriverCore {
     retryPreparing: boolean,
   ): Promise<void> {
     this.assignmentPath(row.path);
-    if (await this.continuesInPlace(cache, row)) return;
+    if (!row.read_only && (await this.continuesInPlace(cache, row))) return;
     const preserved = this.preservedPath();
     const previous = this.prior(row, true);
     const lastVisible = this.prior(row);
@@ -372,21 +368,31 @@ export abstract class DriverCheckout extends DriverCore {
     if (!this.assignmentRoot) return;
     this.assignmentPath(row.path);
     const cache = this.repository(row.project_ref)!;
-    if (await this.has(cache, commit)) return;
-    const ref = `refs/merv/export/${hash(`${row.launch_id}:${commit}`)}`;
-    const bundle = join(row.path, '.git', `merv-export-${randomUUID()}.bundle`);
+    if ((await this.git.run(['--git-dir', cache, 'cat-file', '-e', commit])).code === 0) return;
+    const prefix = join(row.path, '.git', `merv-export-${randomUUID()}`);
     const staged = join(
       driverDirectory(join(dirname(cache), 'transfers')),
-      `import-${randomUUID()}.bundle`,
+      `import-${randomUUID()}.pack`,
     );
+    let pack: string | undefined;
     try {
-      await this.git.ok(['update-ref', ref, commit], { cwd: row.path });
-      await this.git.ok(['bundle', 'create', bundle, ref], { cwd: row.path });
-      stageAssignmentBundle(bundle, staged, this.host.assignmentUser?.uid);
-      await this.git.ok(['--git-dir', cache, 'bundle', 'unbundle', staged]);
-      if (!(await this.has(cache, commit))) throw new WorkspaceError('workspace_transfer_lost');
+      const hash = oid(
+        await this.git.ok(['pack-objects', '--revs', prefix], {
+          cwd: row.path,
+          stdin: `${commit}\n`,
+        }),
+      );
+      pack = `${prefix}-${hash}`;
+      stageAssignmentBundle(`${pack}.pack`, staged, this.host.assignmentUser?.uid);
+      await this.git.ok(['--git-dir', cache, 'index-pack', '--stdin', '--fix-thin'], {
+        stdinFile: staged,
+      });
+      if ((await this.git.run(['--git-dir', cache, 'cat-file', '-e', commit])).code !== 0)
+        throw new WorkspaceError('workspace_transfer_lost');
     } finally {
-      rmSync(bundle, { force: true });
+      if (pack)
+        for (const extension of ['.pack', '.idx', '.rev'])
+          rmSync(pack + extension, { force: true });
       rmSync(staged, { force: true });
     }
   }
@@ -399,6 +405,7 @@ export abstract class DriverCheckout extends DriverCore {
     const cache = this.repository(row.project_ref)!;
     const git = (args: string[]) => this.git.ok(['--git-dir', cache, ...args]);
     const pending = this.mergeMetadata(row);
+    const submission = this.submission(row.launch_id);
     return {
       repositoryId: row.repository_id,
       workspaceId: `workspace_${hash(`${CODE_DRIVER}:${row.project_ref}:${row.unit_id}:${row.read_only ? row.launch_id : 'work'}`)}`,
@@ -406,9 +413,10 @@ export abstract class DriverCheckout extends DriverCore {
       branch: row.branch,
       baseOid: row.base_oid,
       headOid: head,
-      treeOid: oid(await git(['rev-parse', '--verify', `${head}^{tree}`])),
+      treeOid: submission?.treeOid ?? oid(await git(['rev-parse', '--verify', `${head}^{tree}`])),
+      ...(submission ? { submission } : {}),
       ...(pending ? { pendingMerge: { ...pending, checkpoint: head } } : {}),
-      stats: await diffStats(git, row.base_oid, head),
+      stats: await diffStats(git, row.base_oid, head, submission?.treeOid),
     };
   }
 

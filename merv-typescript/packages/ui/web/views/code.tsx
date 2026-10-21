@@ -1,9 +1,8 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
-import type { GitHubStatus } from '@merv/contracts/types';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { permits } from '@merv/scope/rules';
-import { githubRequest, useScopeVersion, useTool, type Actor } from '../api';
+import { useTool, type Actor } from '../api';
 import { EmptyState, LoadState, PageLoad, Short, StatusPill } from '../components';
 import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
@@ -13,53 +12,10 @@ import { CodeFiles } from './code-files';
 import { CodeCard, CodeOperations, type Reader } from './code-card';
 import { MAIN, chipsOf, gitModel } from './code-model';
 import { UnitCode } from './code-section';
-import { GitHubPublications } from './github-publications';
+import { CodeIntegrations } from './code-integrations';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import type { CodeProjectStatus } from '@merv/code-work/models';
-
-/**
- * Code: the branches Merv made drawn as one picture, and the pull requests they
- * became listed under it. Nothing else — the connection and its automation are
- * settings, and the diff, the conversation and the commit list belong to GitHub.
- * Lanes are named by the records that own them, from the lists the app already
- * reads, so a task, a resolution task and a consolidation are as visible as an
- * experiment and no generated ref reaches the page.
- *
- * Which node is selected is the address: `/code/merge/<key>` and `/code/unit/<id>`
- * are this page with that node in hand, not a second view. Nothing remounts when
- * the address changes, so a half-open guard survives a selection made beside it.
- */
-
-/**
- * The one connection this project has, read for the base branch and for whether
- * there is one. `settled` is true once the question has an answer, or has failed
- * to get one, so the page never draws a guess in between.
- */
-function useGitHubStatus() {
-  const epoch = useScopeVersion();
-  const [read, setRead] = useState<{ connection?: GitHubStatus; settled: boolean }>({
-    settled: false,
-  });
-  useEffect(() => {
-    let live = true;
-    setRead({ settled: false });
-    void githubRequest<GitHubStatus>()
-      .then((connection) => live && setRead({ connection, settled: true }))
-      .catch(() => live && setRead({ settled: true }));
-    return () => {
-      live = false;
-    };
-  }, [epoch]);
-  return read;
-}
-
-/** Where the connection is made: the link is the page's one control while there is none. */
-const connect = (label: string, primary = false) => (
-  <Link className={primary ? 'btn btn--primary' : 'btn-text'} to="/settings/integrations">
-    {label}
-  </Link>
-);
 
 /** What the address says is selected. A base is named by the one digest nothing prints. */
 const addressed = (pathname: string, root: string): string | null => {
@@ -90,9 +46,8 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
   }>('ui.read', { rowId: row.id }, { every: 10_000 });
   // Names change rarely, so the lists that hold them are read once and never polled.
   const home = useTool<NamedHome>('ui.home');
-  const { connection: github, settled } = useGitHubStatus();
   const published = read.data?.status?.publication?.records ?? [];
-  const branch = github?.baseBranch ?? github?.repository?.defaultBranch ?? null;
+  const branch = 'merv-main';
   // The model is rebuilt only when something it is made of answers again, so the ten-second
   // poll costs a render and not a re-derivation of the whole project.
   const { model, names } = useMemo(() => {
@@ -104,18 +59,10 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
     };
   }, [read.data, home.data, branch, shell.rows]);
   const merges = model.nodes.filter((node) => node.kind === 'base').length;
-  const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
-  // With no repository and nothing Merv made, the page has one thing to say and one
-  // thing to offer, and counts nothing.
-  const bare =
-    unlinked &&
-    !read.error &&
-    !read.data?.status?.project &&
-    !model.lanes.length &&
-    !published.length;
+  const bare = !read.error && !read.loading && !read.data?.status?.project && !model.lanes.length;
   // The counts stand on the line the shell titles the page with, beside its name.
   usePageFacts(
-    bare || !settled
+    bare
       ? []
       : [
           ['Work histories', read.data ? model.lanes.length : EM],
@@ -148,21 +95,11 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
   const [chip, setChip] = useState<string | null>(null);
   const lit = chips.find((item) => item.label === chip)?.lights ?? null;
 
-  const label = github?.status === 'disconnected' ? 'Connect GitHub' : 'Select repository';
-  // The way to Integrations is offered to whoever can do something there:
-  // a server with no GitHub app, or a reader who may not manage it, is shown no door
-  // to a room that holds nothing for them.
-  const mends = !!github?.configured && !!github.canManage;
-  if (!settled || (unlinked && read.loading)) return <PageLoad loading />;
-  // Two empty sections under that one state would say it twice more.
+  if (read.loading) return <PageLoad loading />;
   if (bare)
     return (
       <div className="page-stage">
-        <EmptyState
-          kind="code"
-          title={github.status === 'disconnected' ? 'GitHub not connected' : 'No repository linked'}
-          action={mends && connect(label, true)}
-        />
+        <EmptyState kind="code" title="Repository initializing" />
       </div>
     );
   const card = selected
@@ -183,22 +120,6 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
     : undefined;
   return (
     <div className="page-stage stack stack--lg">
-      {/* The repository linked, as the way to it. What Merv made outlives the connection it
-          was made over, so it stays on the page; a missing one is a pill and the way to mend it. */}
-      {unlinked ? (
-        <p className="cluster">
-          <span>{read.data?.status?.project ? 'Managed Git · ' : ''}GitHub not connected</span>
-          {mends && connect(label)}
-        </p>
-      ) : (
-        github?.repository && (
-          <p>
-            <a href={github.repository.url} target="_blank" rel="noreferrer">
-              {github.repository.fullName}
-            </a>
-          </p>
-        )
-      )}
       {/* One press keeps the drawing whole and lights only what that blocker names;
           a chip of zero is a filter with nothing behind it and is not drawn. */}
       {chips.length > 0 && (
@@ -218,7 +139,7 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
       <LoadState {...read} />
       {model.lanes.length === 0 && read.data?.status?.project && (
         <p className="cluster" aria-label="Managed main">
-          <span className="branch">main</span>
+          <span className="branch">merv-main</span>
           <Short value={read.data.status.project.main.oid} />
           <StatusPill value={read.data.status.project.main.stored ? 'ready' : 'initializing'} />
         </p>
@@ -235,12 +156,11 @@ export function CodePage({ row, shell, manages, administers }: ViewProps & Omit<
           />
         </div>
       )}
-      <GitHubPublications
+      <CodeIntegrations
         rows={published}
         onDone={read.reload}
         operator={administers}
         named={named}
-        controls={unlinked ? undefined : read.data?.status?.publication?.controls}
       />
       <CodeOperations status={read.data?.status} manages={manages} onDone={read.reload} />
     </div>

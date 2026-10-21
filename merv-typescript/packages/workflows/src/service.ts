@@ -22,6 +22,7 @@ import type {
 } from './models.js';
 import { readBlockers, replaceBlockers } from './blockers.js';
 import { persistContract, readPinned } from './pinned.js';
+import { initializeNativeMigrations } from './native-migration.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
 import { extendsAt, instanceName } from './rules.js';
@@ -46,6 +47,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('workflows', postgresMigrations);
+    await initializeNativeMigrations(this.state);
     await this.state.read(async (sql) => await this.contracts.preload(sql));
   }
 

@@ -32,7 +32,7 @@ flowchart LR
   runner -- "launches" --> workerAgent
   runner -- "HTTP /sessions/*" --> sessions
   runner -- "imports @merv/sessions/rules, agent-stream" --> sessions
-  runner -- "HTTP /code/commands" --> codeWork
+  code -- "Git smart HTTP + /code/v2 metadata" --> codeWork
   runner -- "PUT signed upload" --> blobStore
   runner -- "imports hosted-codex" --> fleet
   workerAgent -- "HTTP /mcp" --> api
@@ -47,11 +47,11 @@ The runner lives on the agent machine, outside Main's plugin graph: it injects n
 
 ## Configuration and drivers
 
-The CLI always composes the Code driver (`code.v2`); an older configuration's `workspaceDrivers` key is accepted and ignored. Work whose policy names no driver runs in a scratch directory and needs no Git. The runner itself runs no Git and has no repository of its own: work whose Git policy names no driver is never offered to it, and a configuration naming the removed `workspace` key is refused.
+The CLI always composes the Code driver (`code.git.1`); an older configuration's `workspaceDrivers` key is accepted and ignored. Work whose policy names no driver runs in a scratch directory and needs no Git. The runner itself runs no Git and has no repository of its own: work whose Git policy names no driver is never offered to it, and a configuration naming the removed `workspace` key is refused.
 
 Presence advertises each composed driver as a capability, plus `runner.2`: the runner ignores fields a server adds to lease, settings and session replies (what `runner.1` meant). A managed runner, a work host (`workInstanceId`), advertises its drivers and `workflow.workhost.1` instead, because its capabilities must equal its enrolment (`inquiry.1` aside); it leases only its own work item, one step at a time, and its next step only once the previous one settled, resetting the assignment identity (`resetAssignment`) in between while the step's working directory carries over.
 
-The `WorkspaceDriver` contract owns preparation, capture and close. A driver that runs Code commands also implements `checkpointCommit`, `pendingCommits`, `commitOutcome` and `acknowledgeCommit`; a lifecycle-only driver never polls Code commands, so a policy granting `code.commit` must name a driver that runs them.
+The `WorkspaceDriver` contract owns preparation, submission capture and close. Code writers use ordinary Git commands over the project’s native remote. Review submissions freeze a retained commit and tree; an ordinary session close creates no new commit. Before a planned host shutdown, `prepareShutdown()` stops every producer, settles its session, captures remaining writer files and verifies their native Git push. Fleet keeps the host until Sessions acknowledges the exact retained receipt.
 
 ## Durable intent and credentials
 
@@ -117,7 +117,7 @@ The stop rule: a user-machine runner's `stop()` (Ctrl-C, systemd, an upgrade) re
 
 ## Git workspaces
 
-Every checkout belongs to the driver a policy names, today Code's `code.v2` ([the workspace contract](../../docs/WORKSPACES.md)); it keeps its own tables beside the ledger. The runner keeps only scratch directories, each with a status row in `runner_workspaces`: one per launch, or on a work host one per work item under `assignmentWorkspaceDirectory`, which the configuration accepts only together with `workInstanceId`. A scratch directory is occupied until its launch has provably stopped and been captured, and a launch that finds its path still open under another launch is refused. A work host never meets one, because it runs one launch at a time and capacity counts a launch until its workspace is closed. An existing directory no row records is taken over only when the preceding step of the same work item closed and retained it.
+Every checkout belongs to the driver a policy names, today Code's `code.git.1` ([the workspace contract](../../docs/WORKSPACES.md)); it keeps its own tables beside the ledger. The runner keeps only scratch directories, each with a status row in `runner_workspaces`: one per launch, or on a work host one per work item under `assignmentWorkspaceDirectory`, which the configuration accepts only together with `workInstanceId`. A scratch directory is occupied until its launch has provably stopped and been captured, and a launch that finds its path still open under another launch is refused. A work host never meets one, because it runs one launch at a time and capacity counts a launch until its workspace is closed. An existing directory no row records is taken over only when the preceding step of the same work item closed and retained it.
 
 ## Runtime resource and tests
 

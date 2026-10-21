@@ -1,6 +1,6 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
-import { createService, type Caller } from '@merv/contracts';
+import { canonical, createService, digest, newId, now, type Caller } from '@merv/contracts';
 import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,6 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -18,18 +17,20 @@ import { LeasedSessions } from '@merv/sessions';
 import type { Sessions } from '@merv/sessions/types';
 import { CodeService, type CodeStoreOptions } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
+import type { CodeStore, CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
+import type { StoreCore, UploadPayload } from '../../packages/code/src/store/core.js';
+import type { CodeReceiver } from '../../packages/code/src/store/receive.js';
 import { boundProject } from './code-binding.js';
 import { openState, schemaFor } from './state.js';
 import { ReviewService } from '@merv/reviews';
+
+/** Internal historical-transfer fixture only; no old transfer routes are mounted by Code. */
+export const legacyStore = (code: unknown): CodeStore => (code as { store: CodeStore }).store;
 
 /** Git as a test runs it: no configuration of the machine or the user reaches it. */
 /** One maintenance pass of Code Work's store now, as its timer would make it. */
 export const maintainStore = async (code: CodeService) =>
   void (await (code as unknown as { store: { maintain(): Promise<unknown> } }).store.maintain());
-/** One publication pass of Code Work's mirror now, as its timer would make it. */
-export const mirrorStep = async (code: CodeService) =>
-  void (await (code as unknown as { mirrorStore: { run(): Promise<unknown> } }).mirrorStore.run());
 export function git(cwd: string, args: string[], input?: string | Buffer): string {
   return execFileSync('git', args, {
     cwd,
@@ -133,32 +134,88 @@ export function seededSource<T>(
   return { source: gitSource(t, 'sha1', seed.repository), value: seed.value as T };
 }
 
-/**
- * Imports `bundle` as the project's history through Code's upload protocol, as an operator's
- * client does, and waits for the admission to complete.
- */
+/** Seed the immutable state an older runtime left on disk; no live transfer API is involved. */
+export async function seedLegacyOperation(
+  code: unknown,
+  caller: Caller,
+  bundle: Bundle,
+  options: { requestId?: string; upload?: UploadPayload; received?: number } = {},
+): Promise<string> {
+  const { core } = legacyStore(code) as unknown as { core: StoreCore };
+  const requestId = options.requestId ?? newId('seed');
+  const payload = options.upload ?? {
+    format: 1,
+    source: 'bundle',
+    actorId: caller.actorId,
+    tip: bundle.tip,
+    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+  };
+  const principal = options.upload
+    ? `session:${options.upload.sessionId}`
+    : `actor:${caller.actorId}`;
+  const previous = await core.state.read((sql) =>
+    sql.get<{ id: string }>(
+      'SELECT id FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      caller.projectId,
+      principal,
+      requestId,
+    ),
+  );
+  if (previous) return previous.id;
+  const id = newId('cop'),
+    at = now();
+  const received = options.received ?? bundle.bytes;
+  const directory = join(core.repositories.paths(caller.projectId).quarantine, id);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(join(directory, 'bundle.part'), bundle.content.subarray(0, received), {
+    mode: 0o600,
+  });
+  await core.state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,generation,phase,progress_json,updated_at) VALUES(?,?,?,?,?,?,?,'prepared',?,?,?,'receiving',?,?)",
+      id,
+      caller.projectId,
+      principal,
+      requestId,
+      options.upload ? 'upload' : 'import',
+      digest(payload),
+      canonical(payload),
+      at,
+      options.upload?.unitId ?? null,
+      options.upload?.generation ?? null,
+      canonical({ received }),
+      at,
+    ),
+  );
+  return id;
+}
+
+/** Invoke the same recovery path maintenance uses for an already persisted operation. */
+export async function recoverLegacyOperation(
+  code: unknown,
+  id: string,
+): Promise<CodeStoreOperation> {
+  const { core, receiver } = legacyStore(code) as unknown as {
+    core: StoreCore;
+    receiver: CodeReceiver;
+  };
+  const row = await core.state.read((sql) => core.row(sql, id));
+  assert.ok(row, `missing historical operation ${id}`);
+  await receiver.start(row);
+  return core.view((await core.state.read((sql) => core.row(sql, id)))!);
+}
+
+/** Retained historical fixture; runtime clients seed repositories with ordinary Git pushes. */
 export async function importBundle(
   code: unknown,
   caller: Caller,
   bundle: Bundle,
   requestId = 'import',
 ): Promise<CodeStoreOperation> {
-  const service = code as CodeService;
-  const v2 = service.v2!;
-  const begun = await service.importRepository(caller, {
-    source: 'bundle',
-    tip: bundle.tip,
-    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-    requestId,
-  });
-  await v2.putPart(caller, begun.id, 0, bundle.content);
-  let operation = begun;
-  for (let tries = 0; operation.status === 'prepared' && tries < 200; tries++) {
-    ({ operation } = (await v2.call(caller, `uploads/${begun.id}/complete`, {})) as {
-      operation: CodeStoreOperation;
-    });
-    if (operation.status === 'prepared') await delay(25);
-  }
+  const operation = await recoverLegacyOperation(
+    code,
+    await seedLegacyOperation(code, caller, bundle, { requestId }),
+  );
   assert.equal(operation.status, 'completed', JSON.stringify(operation));
   return operation;
 }
@@ -218,7 +275,7 @@ export async function codeStoreFixture(
     );
     code = new CodeService(state, scope, seen, workflows, reviews, core, {
       ...options,
-      config: { settleMs: 60_000, ...config, ...options.config },
+      config: { ...config, ...options.config },
     });
     await code.initialize();
     return code;
@@ -281,32 +338,20 @@ export async function codeStoreFixture(
     get core() {
       return core!;
     },
+    get store() {
+      return legacyStore(code);
+    },
     /** Refs of the project's repository as `name oid` lines. */
     refs: () =>
       git(paths.repository, ['for-each-ref', '--format=%(refname) %(objectname)'])
         .split('\n')
         .filter(Boolean),
-    /** Promise a bundle, send it in parts and ask for it to be admitted. */
-    async deliver(bundle: Bundle, partBytes = 1024 * 1024, requestId = `import-${++requests}`) {
-      const begun = await code!.importRepository(admin, {
-        source: 'bundle',
-        tip: bundle.tip,
-        bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-        requestId,
-      });
-      if (begun.status !== 'prepared' || begun.phase !== 'receiving') return begun;
-      for (let offset = begun.received; offset < bundle.bytes; offset += partBytes)
-        await code!.v2!.putPart(
-          admin,
-          begun.id,
-          offset,
-          bundle.content.subarray(offset, offset + partBytes),
-        );
-      return (
-        (await code!.v2!.call(admin, `uploads/${begun.id}/complete`, {})) as {
-          operation: typeof begun;
-        }
-      ).operation;
+    /** Restore a legacy import fixture and run its retained recovery path. */
+    async deliver(bundle: Bundle, requestId = `import-${++requests}`) {
+      return recoverLegacyOperation(
+        code,
+        await seedLegacyOperation(code, admin, bundle, { requestId }),
+      );
     },
     operationRow: async (id: string) => {
       const row = await state.read(

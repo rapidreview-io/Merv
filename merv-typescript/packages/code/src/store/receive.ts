@@ -1,42 +1,24 @@
-import { OperationJournal } from '../request-journal.js';
 import {
   canonical,
   check,
-  digest,
   MervError,
-  newId,
   now,
-  type Caller,
   type CodePendingMerge,
-  type Sql,
   type SessionWorkspace,
   type Transaction,
 } from '@merv/contracts';
-import {
-  CODE_BUNDLE_MAX_BYTES,
-  codeRepositoryImportInputSchema,
-  type CodeFinding,
-  type CodeRepositoryImportInput,
-  type CodeStoreOperation,
-  type CodeUpload,
-} from './protocol.js';
-import { appendFile, chmod, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
+import type { CodeFinding } from './protocol.js';
+import { chmod, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashFile, syncPath } from '../files.js';
 import { pendingMerge, verifyResolution } from '../pending-merge.js';
-import { parseCodeInput } from '../input.js';
 import type { WriterFence } from '../writers.js';
 import { admit, AdmissionRejected, bundleHeader } from './admission.js';
-import { enqueueMirror } from './mirror.js';
 import { workRef } from './refs.js';
 import { diffStats } from '../driver/git.js';
 import { diskBytes, type ObjectFormat } from './repository.js';
 import {
-  columns,
-  FETCH_TIMEOUT_MS,
-  serial,
   type Bundle,
-  type ImportPayload,
   type OperationRow,
   type Payload,
   type Progress,
@@ -61,19 +43,21 @@ const fenceRefusals = ['code_generation_stale', 'code_writer_closed', 'code_head
 
 const next: Record<string, string> = {
   code_store_full:
-    'Free space on the Code volume or raise the project’s quota, then complete the operation again.',
+    'Free space on the Code volume or raise the project’s quota, then run maintenance again.',
   code_recovery_required:
     'An operator inspects the named ref in the project’s repository: it holds neither the value this operation expected nor the one it writes, and Code will not choose for them.',
   code_drain_pending: 'Nothing: the operation is journalled and the next start of Code replays it.',
   code_git_failed:
     'Read what Git said on this operation: the project’s repository on the Code volume could not take the step it names, and the operation replays once it can.',
   code_import_interrupted:
-    'Call code.write repository_import again with the same requestId; reading GitHub needs the administrator who asked for it.',
-  code_upload_incomplete: 'Send the parts from `received` on, then complete the operation again.',
-  code_bundle_hash_mismatch: 'Send the whole bundle again from offset 0, then complete it again.',
+    'GitHub imports are retired. Push the history to the project Git remote.',
+  code_upload_incomplete:
+    'The legacy transfer is incomplete; finish its drain with the previous runtime before rollout.',
+  code_bundle_hash_mismatch:
+    'The retained legacy bundle is corrupt; an operator must restore its verified bytes.',
 };
 
-const resume = 'Complete the operation again; it resumes where it stopped.';
+const resume = 'Run maintenance again; it resumes where it stopped.';
 
 /** The frozen merge plan an upload carries, with the first merge its lineage holds. */
 const mergeOf = (pending: CodePendingMerge, firstMerge: string | null): Progress['merge'] => ({
@@ -90,85 +74,12 @@ const refusal = (error: unknown) =>
     : error;
 
 /**
- * Receiving and admitting what an import or an upload sends, and walking each operation through
- * the journal's phases. Downloads (export.ts) and rebinding (rebind.ts) work on the same
- * StoreCore beside it, and `CodeStore` composes all three with the journal's lifecycle
- * (operations.ts).
+ * Recovery of legacy imports and uploads already present in the journal. New work reaches
+ * Code through its native Git remote; this class has no transfer-construction API.
  */
 export class CodeReceiver {
   readonly jobs = new Map<string, Promise<void>>();
-  readonly parts = new Map<string, Promise<void>>();
   constructor(private readonly core: StoreCore) {}
-
-  async importRepository(caller: Caller, value: unknown): Promise<CodeStoreOperation> {
-    this.core.assertOpen();
-    caller = structuredClone(caller);
-    const input: CodeRepositoryImportInput = parseCodeInput(codeRepositoryImportInputSchema, value);
-    const { requestId, ...body } = input;
-    const payload: ImportPayload =
-      input.source === 'bundle'
-        ? {
-            format: 1,
-            actorId: caller.actorId,
-            source: 'bundle',
-            tip: input.tip!,
-            bundle: input.bundle!,
-          }
-        : {
-            format: 1,
-            actorId: caller.actorId,
-            source: 'github',
-            ref: input.ref!,
-            ...(input.expectedHead ? { expectedHead: input.expectedHead } : {}),
-            ...(input.githubBinding ? { githubBinding: input.githubBinding } : {}),
-          };
-    const inputHash = digest(body);
-    const principal = `actor:${caller.actorId}`;
-    const begin = async (insert: boolean) =>
-      await this.core.state.transaction(async (tx) => {
-        await this.core.administrator(caller, tx);
-        check(
-          await this.core.project(tx, caller.projectId),
-          'code_project_unbound',
-          'This project has no Code repository yet: Merv creates one for every project, so wait for it and import again',
-          409,
-        );
-        const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
-        const previous = await journal.previous<OperationRow>(columns);
-        if (previous || !insert) return previous;
-        await this.assertReceiving(tx, caller.projectId);
-        const id = newId('cop'),
-          at = now();
-        await tx.run(
-          'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          id,
-          caller.projectId,
-          principal,
-          requestId,
-          'import',
-          inputHash,
-          canonical(payload),
-          'prepared',
-          at,
-          'receiving',
-          canonical({ received: 0 } satisfies Progress),
-          at,
-        );
-        return (await this.core.row(tx, id))!;
-      });
-    let row = await begin(false);
-    if (!row) {
-      await this.core.repositories.assertRoom(
-        caller.projectId,
-        payload.source === 'bundle' ? payload.bundle.bytes : 0,
-      );
-      row = (await begin(true))!;
-    }
-    // GitHub is read as the administrator who asked, so only their own call can start it.
-    if (input.source === 'github' && row.status === 'prepared')
-      await this.settle(this.start(row, caller));
-    return this.core.view((await this.core.state.read((sql) => this.core.row(sql, row.id)))!);
-  }
 
   /** Whether the project's repository holds this commit. */
   async contains(projectId: string, oid: string): Promise<boolean> {
@@ -192,298 +103,6 @@ export class CodeReceiver {
     );
   }
 
-  /**
-   * Begin the upload of one commit or of the final capture of a unit, under its writer fence.
-   * The caller has already shown that the session is theirs and runs on the machine they
-   * name. An upload that moves nothing completes here; one that carries a bundle first ends
-   * every transfer of the unit that was only receiving, because nobody will complete it.
-   * `ownEnd`: the session closed by its worker's own hand, whose machine still owes its final.
-   */
-  async beginUpload(
-    caller: Caller,
-    input: CodeUpload,
-    ownEnd = false,
-  ): Promise<CodeStoreOperation> {
-    this.core.assertOpen();
-    caller = structuredClone(caller);
-    await this.core.managedRead(caller, input.sessionId);
-    const requestId = input.kind === 'final' ? `final:${input.sessionId}` : input.requestId;
-    check(
-      input.kind === 'final' || input.requestId === input.commandId,
-      'invalid_input',
-      'A checkpoint upload is requested under the id of its command',
-    );
-    check(
-      (input.bundle === null) === (input.proposedHead === input.expectedHead),
-      'invalid_input',
-      'An upload carries a bundle exactly when it proposes another head than it expects',
-    );
-    const payload: UploadPayload = {
-      format: 1,
-      source: 'upload',
-      actorId: caller.actorId,
-      kind: input.kind,
-      runnerId: input.runnerId,
-      hostRef: input.hostRef,
-      sessionId: input.sessionId,
-      leaseId: input.leaseId,
-      unitId: input.unitId,
-      generation: input.generation,
-      commandId: input.kind === 'checkpoint' ? input.commandId : null,
-      expectedHead: input.expectedHead,
-      tip: input.proposedHead,
-      treeOid: input.treeOid,
-      bundle: input.bundle,
-    };
-    const inputHash = digest(payload);
-    const principal = `session:${input.sessionId}`;
-    const fence = fenceOf({ project_id: caller.projectId }, payload);
-    // An upload that is past admission is never overtaken: it is finished first.
-    for (const row of await this.core.state.read(
-      async (sql) =>
-        await sql.all<OperationRow>(
-          `SELECT ${columns} FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'`,
-          caller.projectId,
-          input.unitId,
-        ),
-    ))
-      await this.start(row).catch(() => {});
-    const journal = (sql: Sql) =>
-      new OperationJournal(sql, caller.projectId, principal, requestId, inputHash);
-    // A replayed begin takes no more room: its bytes already count.
-    if (input.bundle && !(await this.core.state.read((sql) => journal(sql).previous())))
-      await this.core.repositories.assertRoom(caller.projectId, input.bundle.bytes);
-    // A head that does not move was admitted before: Git, not the machine, names its tree.
-    const kept = input.bundle
-      ? null
-      : await this.core.owned(() =>
-          this.core.repositories.resolve(caller.projectId, `${input.proposedHead}^{tree}`),
-        );
-    const superseded: OperationRow[] = [];
-    const id = await this.core.state.transaction(async (tx) => {
-      await this.core.scope.require(caller, 'read', tx);
-      this.core.managedSession(caller, input.sessionId);
-      const previous = await journal(tx).previous<OperationRow>(columns);
-      if (previous) return previous.id;
-      await this.core.hooks.fenced(tx, fence, input.kind, true, ownEnd);
-      const open = await tx.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'`,
-        caller.projectId,
-        input.unitId,
-      );
-      check(
-        open.every((row) => row.phase === 'receiving'),
-        'code_operation_unresolved',
-        'An admitted upload of this unit is unfinished; begin again once it has completed',
-        409,
-      );
-      const at = now();
-      for (const row of open) {
-        await tx.run(
-          "UPDATE code_operations SET status='failed',error=?,detail_json=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared'",
-          Number(row.generation) === input.generation
-            ? 'code_upload_superseded'
-            : 'code_generation_stale',
-          canonical({ message: 'A later upload of this unit began' }),
-          at,
-          at,
-          row.id,
-        );
-        superseded.push(row);
-      }
-      const id = newId('cop');
-      const insert = async (status: 'prepared' | 'completed', result: string | null) =>
-        await tx.run(
-          'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id,generation,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          id,
-          caller.projectId,
-          principal,
-          requestId,
-          'upload',
-          inputHash,
-          canonical(payload),
-          status,
-          result,
-          at,
-          status === 'completed' ? at : null,
-          input.unitId,
-          input.generation,
-          status === 'completed' ? 'refs_applied' : 'receiving',
-          canonical({ received: 0 } satisfies Progress),
-          at,
-        );
-      if (input.bundle) {
-        await this.assertReceiving(tx, caller.projectId);
-        await insert('prepared', null);
-      } else {
-        const pending = await pendingMerge(tx, caller.projectId, input.unitId);
-        await insert(
-          'completed',
-          canonical({
-            head: input.proposedHead,
-            tree: kept,
-            receiptRef: null,
-            objects: 0,
-            bytes: 0,
-            ...(pending ? { merge: mergeOf(pending, pending.firstMerge) } : {}),
-          }),
-        );
-        await this.admitted(tx, id, caller.projectId, payload);
-      }
-      return id;
-    });
-    for (const row of superseded)
-      await this.hold((await this.core.state.read((sql) => this.core.row(sql, row.id)))!).catch(
-        () => {},
-      );
-    return this.core.view((await this.core.state.read((sql) => this.core.row(sql, id)))!);
-  }
-
-  async operation(caller: Caller, operationId: string): Promise<CodeStoreOperation> {
-    this.core.assertOpen();
-    caller = structuredClone(caller);
-    return this.core.view(
-      await this.core.state.transaction(
-        async (tx) => await this.authorized(caller, operationId, tx),
-      ),
-    );
-  }
-
-  /**
-   * Append one part of a bundle. The file's size is what was received, so a part at that
-   * offset is appended, one that lies wholly inside it is a replay, and any other is refused
-   * and the sender reads where to continue. Nothing is synced here: the whole file is hashed
-   * against the promised sha256 before anything reads it. A crash can leave file and row apart
-   * either way, so the row learns the file's size before any refusal: senders resume from it.
-   */
-  async putPart(
-    caller: Caller,
-    operationId: string,
-    offset: number,
-    bytes: Buffer,
-  ): Promise<{ received: number }> {
-    this.core.assertOpen();
-    caller = structuredClone(caller);
-    check(
-      bytes.length > 0 && bytes.length <= this.core.config.partBytes,
-      'code_upload_part',
-      `A part carries between 1 and ${this.core.config.partBytes} bytes`,
-      413,
-    );
-    const job = serial(this.parts, operationId, async () => {
-      // A read: the fence's one write (reserved to active) was made when the upload began.
-      const row = await this.core.state.snapshotTransaction(async (tx) => {
-        const row = await this.authorized(caller, operationId, tx);
-        check(
-          row.status === 'prepared' && row.phase === 'receiving',
-          'code_upload_closed',
-          'This operation no longer receives bytes',
-          409,
-        );
-        return row;
-      });
-      const declared = this.core.declared(row);
-      check(declared !== null, 'code_upload_closed', 'This operation receives no bundle', 409);
-      await this.core.repositories.assertRoom(row.project_id, 0);
-      const directory = join(this.core.repositories.paths(row.project_id).quarantine, row.id);
-      const file = join(directory, 'bundle.part');
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      const held = (await stat(file).catch(() => null))?.size ?? 0;
-      check(
-        !(await lstat(join(directory, 'bundle')).catch(() => null)),
-        'code_upload_closed',
-        'This operation already holds its whole bundle',
-        409,
-      );
-      let received = held;
-      if (offset === held) {
-        check(
-          held + bytes.length <= declared,
-          'code_upload_too_large',
-          'These bytes exceed what the operation was promised',
-          413,
-        );
-        await appendFile(file, bytes, { mode: 0o600 });
-        received = held + bytes.length;
-      }
-      this.core.fault('after_part');
-      await this.note(row.id, { received });
-      check(
-        offset === held || offset + bytes.length <= held,
-        'code_upload_offset',
-        `This operation holds ${held} bytes; send the part that starts there`,
-        409,
-      );
-      return { received };
-    });
-    return await job.catch((error: unknown) => {
-      throw refusal(error);
-    });
-  }
-
-  /**
-   * Ask for a received bundle to be admitted. Admission runs in the project's turn and may
-   * outlast any request, so this answers with the operation as it stands after a short wait
-   * and the caller asks again; asking again never starts a second admission.
-   */
-  async complete(caller: Caller, operationId: string): Promise<CodeStoreOperation> {
-    this.core.assertOpen();
-    caller = structuredClone(caller);
-    const row = await this.core.state.transaction(
-      async (tx) => await this.authorized(caller, operationId, tx),
-    );
-    if (row.status === 'prepared') await this.settle(this.start(row, caller));
-    return this.core.view((await this.core.state.read((sql) => this.core.row(sql, row.id)))!);
-  }
-
-  /**
-   * Every later call on an operation is made by whoever began it. The row pins that
-   * principal; its authority in the project is read again each time, because a transfer can
-   * outlive it.
-   */
-  private async authorized(
-    caller: Caller,
-    operationId: string,
-    tx: Transaction,
-  ): Promise<OperationRow> {
-    const row = await this.core.row(tx, operationId);
-    check(
-      row && row.project_id === caller.projectId && row.phase !== null,
-      'code_operation_not_found',
-      'No such Code operation in this project',
-      404,
-    );
-    const payload = JSON.parse(row.payload_json) as Payload;
-    if (payload.source === 'upload') {
-      await this.core.scope.require(caller, 'read', tx);
-      this.core.managedSession(caller, payload.sessionId);
-      check(!caller.session, 'session_forbidden', 'A leased worker cannot move bundles', 403);
-    } else await this.core.administrator(caller, tx);
-    check(
-      ['import', 'upload'].includes(row.kind) && payload.actorId === caller.actorId,
-      'code_operation_forbidden',
-      'Only the principal that began this operation continues it',
-      403,
-    );
-    // A transfer can outlive the generation it was begun for; one still receiving ends here.
-    if (payload.source === 'upload' && row.status === 'prepared' && row.phase === 'receiving')
-      await this.core.hooks.fenced(tx, fenceOf(row, payload), payload.kind);
-    return row;
-  }
-
-  private async assertReceiving(tx: Transaction, projectId: string): Promise<void> {
-    const open = await tx.get<{ count: number | string }>(
-      "SELECT COUNT(*) AS count FROM code_operations WHERE project_id=? AND status='prepared' AND phase='receiving'",
-      projectId,
-    );
-    check(
-      Number(open?.count ?? 0) < this.core.config.receiving,
-      'code_store_unavailable',
-      'This project already has as many open transfers as it may; complete or wait for them',
-      503,
-    );
-  }
-
   /** Merge a change into an unfinished operation's progress, in a transaction of its own. */
   private async note(id: string, change: Partial<Progress>): Promise<void> {
     await this.core.state.transaction(async (tx) => {
@@ -504,11 +123,11 @@ export class CodeReceiver {
   }
 
   /** One admission at a time for an operation, in its project's turn. */
-  start(row: OperationRow, caller?: Caller): Promise<void> {
+  start(row: OperationRow): Promise<void> {
     let job = this.jobs.get(row.id);
     if (!job) {
       job = this.core
-        .owned(() => this.core.repositories.run(row.project_id, () => this.advance(row.id, caller)))
+        .owned(() => this.core.repositories.run(row.project_id, () => this.advance(row.id)))
         .catch(async (failure: unknown) => {
           const error = refusal(failure);
           await this.stalled(row.id, error).catch(() => {});
@@ -519,19 +138,6 @@ export class CodeReceiver {
       job.catch(() => {});
     }
     return job;
-  }
-
-  /** Wait a little for a job: its refusal is the caller's answer, its slowness is not an error. */
-  private async settle(job: Promise<void>): Promise<void> {
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      await Promise.race([
-        job,
-        new Promise<void>((resolve) => (timer = setTimeout(resolve, this.core.config.settleMs))),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   /** Say on the row why an unfinished operation stopped, and what would move it. */
@@ -560,7 +166,7 @@ export class CodeReceiver {
    * Walk one operation as far as it goes. Every step first reads where the row stands, so
    * the same code serves a first run, a repeated completion and a start after a crash.
    */
-  private async advance(id: string, caller?: Caller): Promise<void> {
+  private async advance(id: string): Promise<void> {
     let row = await this.core.state.read((sql) => this.core.row(sql, id));
     if (!row || row.status !== 'prepared') return;
     // A rebind moves no object and is never journalled through these phases: it finishes in the
@@ -643,7 +249,7 @@ export class CodeReceiver {
       check(payload.source !== 'retain-ref', 'code_operation_changed', 'Nothing to receive', 409);
       const target =
         payload.source === 'github'
-          ? await this.fetched(row, payload, project, directory, caller)
+          ? await this.fetched(row, directory)
           : await this.received(row, { tip: payload.tip, bundle: payload.bundle! }, directory);
       if (target === null) return;
       const admission = await examine(target.oid);
@@ -802,18 +408,7 @@ export class CodeReceiver {
           at,
           id,
         );
-        if (payload.source === 'retain-ref') {
-          if (payload.mirror && payload.retentionKey)
-            await enqueueMirror(
-              tx,
-              row!.project_id,
-              'mirror-retained',
-              payload.retentionKey,
-              progress.target!,
-              progress.receiptRef,
-            );
-          return;
-        }
+        if (payload.source === 'retain-ref') return;
         if (upload) return await this.admitted(tx, id, row!.project_id, upload, progress.merge);
         await tx.run(
           'UPDATE code_projects SET store_json=?,updated_at=? WHERE project_id=? AND store_json IS NULL',
@@ -893,10 +488,6 @@ export class CodeReceiver {
       operationId: id,
       final,
     });
-    // The branch is durable here, which is what a handoff needs; publishing it is the
-    // server's own asynchronous work and is never on anybody's path.
-    if (payload.bundle)
-      await enqueueMirror(tx, projectId, 'mirror-work', payload.unitId, payload.tip);
     await this.core.state.appendEvent(tx, {
       projectId,
       actorId: payload.actorId,
@@ -989,164 +580,21 @@ export class CodeReceiver {
     return { oid: payload.tip };
   }
 
-  /**
-   * Read one ref of the linked GitHub repository into this operation's quarantine and turn
-   * what arrived into a bundle, which then takes exactly the path an uploaded one takes. The
-   * project's repository is only ever borrowed from: no ref, FETCH_HEAD or tag is written to
-   * it, and a fetch that grows past the transfer limit is ended.
-   */
+  /** Only drain already-admitted legacy imports; retirement never contacts GitHub. */
   private async fetched(
     row: OperationRow,
-    payload: Extract<ImportPayload, { source: 'github' }>,
-    project: ProjectRow,
     directory: string,
-    caller: Caller | undefined,
-  ): Promise<{ oid: string; github: { id: number; fullName: string } } | null> {
+  ): Promise<{ oid: string; github?: { id: number; fullName: string } } | null> {
     const progress = JSON.parse(row.progress_json ?? '{}') as Progress;
-    const bundle = join(directory, 'bundle');
-    const refuse = async (error: string, message: string) => {
-      await this.fail(row, error, null, message);
-      return null;
-    };
-    const tooLarge =
-      'The history is larger than one transfer may be; import it in steps with code-import';
-    if (progress.target && progress.github && (await lstat(bundle).catch(() => null)))
+    if (progress.target && (await lstat(join(directory, 'bundle')).catch(() => null)))
       return { oid: progress.target, github: progress.github };
-    if (!caller || !this.core.remote)
-      throw new MervError(
-        'code_import_interrupted',
-        'Reading GitHub stopped before the history arrived',
-        409,
-      );
-    const git = this.core.repositories.git;
-    const paths = this.core.repositories.paths(row.project_id);
-    await this.repository(row, project, 'sha1');
-    await rm(directory, { recursive: true, force: true });
-    await mkdir(join(directory, 'objects'), { recursive: true, mode: 0o700 });
-    const scratch = join(directory, 'scratch.git');
-    await git.ok([
-      'init',
-      '--quiet',
-      '--bare',
-      `--template=${join(this.core.config.root, 'empty-template')}`,
-      scratch,
-    ]);
-    const env = {
-      GIT_DIR: scratch,
-      GIT_OBJECT_DIRECTORY: join(directory, 'objects'),
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(paths.repository, 'objects'),
-    };
-    const result = await this.core.repositories.transfer(
-      async () =>
-        await this.core.remote!.read(
-          caller,
-          async (target) => {
-            const stop = new AbortController();
-            const watch = setInterval(() => {
-              // A measurement that fails is only skipped; the next one is a second away.
-              void diskBytes(directory).then(
-                (bytes) => {
-                  if (bytes > CODE_BUNDLE_MAX_BYTES) stop.abort();
-                },
-                () => {},
-              );
-            }, 1000);
-            try {
-              const fetch = await git
-                .run(
-                  [
-                    '-c',
-                    'http.followRedirects=false',
-                    '-c',
-                    'fetch.fsckObjects=true',
-                    '-c',
-                    'fetch.unpackLimit=1',
-                    '-c',
-                    'gc.auto=0',
-                    'fetch',
-                    '--quiet',
-                    '--no-tags',
-                    '--no-write-fetch-head',
-                    '--no-recurse-submodules',
-                    target.url,
-                    `+${payload.ref}:refs/merv/fetched`,
-                  ],
-                  {
-                    env: { ...target.env, ...env },
-                    protocol: target.protocol,
-                    timeoutMs: FETCH_TIMEOUT_MS,
-                    signal: stop.signal,
-                  },
-                )
-                .catch((error: unknown) => {
-                  if (
-                    error instanceof MervError &&
-                    error.code === 'code_git_aborted' &&
-                    stop.signal.aborted &&
-                    !this.core.cancellation.signal.aborted
-                  )
-                    return null;
-                  throw error;
-                });
-              return { fetch, repository: target.repository };
-            } finally {
-              clearInterval(watch);
-            }
-          },
-          payload.githubBinding,
-        ),
+    await this.fail(
+      row,
+      'github_integration_retired',
+      null,
+      'Push the history to the project Git remote.',
     );
-    if (!result.fetch) return await refuse('code_import_too_large', tooLarge);
-    if (result.fetch.code !== 0)
-      return await refuse('code_import_fetch_failed', 'GitHub did not deliver that ref');
-    const oid = (await git.ok(['rev-parse', '--verify', 'refs/merv/fetched^{commit}'], { env }))
-      .toString('utf8')
-      .trim();
-    if (payload.expectedHead && oid !== payload.expectedHead)
-      return await refuse(
-        'code_branch_changed',
-        'The selected remote ref moved before it was imported',
-      );
-    // Admission expects the selected commit in the bundle header, including when the
-    // fetched ref names an annotated tag (or a tag of a tag).
-    await git.ok(['update-ref', 'refs/merv/fetched', oid], { env });
-    const part = join(directory, 'bundle.part');
-    // What every earlier import reached is held: the repository is the scratch's alternate.
-    const made = await git.run(
-      [
-        '-c',
-        'core.alternateRefsPrefixes=refs/merv/imports/',
-        'bundle',
-        'create',
-        part,
-        'refs/merv/fetched',
-        '--not',
-        '--alternate-refs',
-      ],
-      { env, timeoutMs: FETCH_TIMEOUT_MS },
-    );
-    const size = (await stat(part).catch(() => null))?.size ?? 0;
-    // Only Git's refusal to write an empty bundle means the repository already holds that
-    // history. Any other failure reported as "already current" would send an administrator
-    // away from the retry the import actually needs.
-    if (made.code !== 0 && !/empty bundle/i.test(made.stderr))
-      return await refuse(
-        'code_import_fetch_failed',
-        `git bundle failed: ${made.stderr.split('\n')[0] ?? ''}`.trim(),
-      );
-    if (made.code !== 0)
-      return await refuse(
-        'code_import_current',
-        'The repository already holds everything that ref reaches',
-      );
-    if (size > CODE_BUNDLE_MAX_BYTES) return await refuse('code_import_too_large', tooLarge);
-    const github = { id: result.repository.id, fullName: result.repository.fullName };
-    await this.note(row.id, { target: oid, github, received: size });
-    await syncPath(part);
-    await rm(scratch, { recursive: true, force: true });
-    await rename(part, bundle);
-    await syncPath(directory);
-    return { oid, github };
+    return null;
   }
 
   /**

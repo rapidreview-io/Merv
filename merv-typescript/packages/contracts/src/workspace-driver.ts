@@ -1,10 +1,11 @@
-import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
 import type { WorkflowExecution } from './index.js';
 
 /** The workspace driver that checks out Code's repository: the capability a runner carrying it
  * advertises, and the key of the execution policies it serves. */
 export const CODE_DRIVER = 'code.v2';
+/** Native Git only: old checkpointing runners cannot claim current assignments. */
+export const NATIVE_CODE_DRIVER = 'code.git.1';
 
 /**
  * What a machine runner asks of whatever prepares its checkouts. The runner schedules,
@@ -32,22 +33,23 @@ export interface WorkspaceSession {
   execution: Pick<WorkflowExecution, 'policy'>;
 }
 export interface WorkspaceDriver {
+  /** An assignment-only Git capability; never the runner's controller credential. */
+  agentGit?(launchId: string): {
+    url: string;
+    token: string;
+    branch: string | null;
+    startingCommit: string;
+  };
+  /** Explicit planned VM teardown, only after the caller stopped every process. */
+  shutdownCapture?(): Promise<
+    { sessionId: string; unitId: string; headOid: string; treeOid: string; operationId: string }[]
+  >;
   get(launchId: string): WorkspaceHandle | undefined;
   prepare(launch: WorkspaceLaunch, session: WorkspaceSession): Promise<WorkspaceHandle>;
   /** Only after the launch's process has provably stopped. */
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined>;
   close(launch: WorkspaceLaunch): Promise<void>;
   dispose(): void;
-  /** Code commands, journalled until acknowledged: a driver that runs them has all four. */
-  checkpointCommit?(
-    launch: WorkspaceLaunch,
-    command: CodeCommitCommand,
-  ): Promise<CodeCommitReceipt>;
-  pendingCommits?(launchId: string): CodeCommitCommand[];
-  commitOutcome?(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
-  acknowledgeCommit?(commandId: string): void;
-  /** Where a periodic checkpoint of a live checkout commits, or null with nothing to commit. */
-  checkpointHead?(launchId: string): Promise<string | null>;
 }
 /** What a runner lends a driver: its ledger's place on disk and what it knows of a launch. */
 export interface WorkspaceDriverHost {
@@ -91,11 +93,11 @@ export class WorkspaceDeferred extends Error {
 }
 /**
  * How a driver reaches the server through the runner's own authenticated client: a route
- * with an opaque body, or the bytes of one part. A refusal is thrown with the server's
+ * with an opaque metadata body. Repository content uses Git. A refusal has the server's
  * `code` and `status`; `status` 0 means the server could not be reached.
  */
 export interface WorkspaceTransport {
+  /** Resolve the server-owned path against this authenticated runner's configured origin. */
+  remoteUrl(path: string): string;
   call(route: string, body: unknown): Promise<unknown>;
-  putPart(operationId: string, offset: number, bytes: Uint8Array): Promise<unknown>;
-  readPart(exportId: string, input: unknown): Promise<Uint8Array>;
 }

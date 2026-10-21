@@ -11,7 +11,7 @@ flowchart LR
   subgraph Server
     W[Workflows] --> S[Sessions]
     S --> A[HTTP / MCP API]
-    K[Code command queue and receipts] <--> A
+    K[Code Git remote and receipts] <--> A
   end
   subgraph Machine
     R[Runner plugin] --> L[Private launch ledger]
@@ -27,8 +27,8 @@ These arrows describe communication, not Cordis injection. Runner has `inject: [
 and provides `ctx.runner`; it does not require the server State, API or Sessions
 providers in its own process. Its SQLite ledger is private machine state. The
 server's default configuration does not install it, and it adds no agent tools.
-The server-side [Code service](CODE_OPERATIONS.md) exposes `code.commit` and
-`code.operation`; Runner consumes its fixed command protocol through HTTP.
+The server-side [Code service](CODE_OPERATIONS.md) serves native Git smart HTTP.
+Runner uses bounded metadata requests for credentials, submissions and shutdown receipts.
 
 ## Running it
 
@@ -47,7 +47,7 @@ Bare executable names use `PATH`; command arguments remain literal strings.
 The CLI installs only the runner plugin and handles SIGINT/SIGTERM through its
 Cordis disposer. Readiness includes an offline state if the server is unavailable.
 
-A runner has no repository of its own: Git work comes through Code's `code.v2`
+A runner has no repository of its own: Git work comes through Code's `code.git.1`
 driver, which `merv runner` always composes. Workflows
 must declare their Git policy; assignments without one still use scratch.
 
@@ -161,67 +161,27 @@ closed or invalid assignments even when the child makes no further MCP calls.
 
 ## Workspace drivers and capabilities
 
-The runner schedules, launches and reports through one generic driver interface and never learns how a checkout is made. Policies that name no driver (`task@3`/`task@4`, `experiment@6`/`experiment@7`) were served by the runner's own repository, which was removed; no runner is offered them. After binding and import, new automatic-base work uses `task@5` / `experiment@8`; service resolution uses `task@6`. `merv runner` also composes the runner with Code's `code.v2` driver, which needs only `/usr/bin/git`: no local source repository and no GitHub credential. Each driver the machine can run is advertised in the heartbeat as a capability, and the server offers work whose policy names a driver only to runners that list it; a runner without the capability keeps receiving everything else. A launch records the driver it was reserved for, so a restart finishes it with the same one. The server must be deployed before such a runner: an older server refuses a heartbeat that carries `capabilities`.
+The runner schedules, launches and reports through a generic driver interface. Current task, experiment and customer-experiment policies require Code's `code.git.1` driver, which needs Git but no local source repository or GitHub credential. A runner advertises its composed drivers; Sessions offers only compatible assignments. A launch records its driver so restart uses the same one. Historical `code.v2` definitions remain unchanged, but legacy work and runners must drain before native cutover.
 
-When a driver cannot prepare a checkout because the place that work's history lives is away, busy or full, the lease goes back as `preparation_deferred` with the cause rather than as a failure of the launch: nothing counts it, no hold forms, and the target is simply offered again after the usual backoff. Everything else — a bad launch, a checkout that could not be made, a process that would not stay up — is reported exactly as before.
+When a driver cannot prepare because storage or transport is unavailable, the lease returns as `preparation_deferred` with its cause. This does not count as a failed launch or form a hold. A missing composed driver is also a deferral. See [workspaces](WORKSPACES.md) for admission and recovery.
 
 ## Git workspace lifecycle
 
-Runner keeps no repository of its own: the driver a policy names (`code.v2`) owns each
-checkout (see [WORKSPACES.md](WORKSPACES.md)). A workflow selects scratch, a detached
-ephemeral checkout, or a persistent one.
+Checkout intent is durable before Git preparation, and the stable launch ID and initial snapshot are attached before spawn. Writable workers use ordinary Git in their assigned branch. The server enforces scoped credentials, object admission and the current writer generation.
 
-Checkout intent is durable before Git preparation. The stable launch ID and
-initial snapshot are attached before spawn. Native workers edit files inside
-their sandbox. If their fixed policy grants `code.commit`, they can request a
-named commit and wait for its immutable receipt through `code.operation` before
-handoff. Runner performs the fixed commit against that worker's owned checkout;
-the request cannot supply Git arguments or paths. After confirmed termination, Runner captures writable
-changes as a bounded WIP commit. A read-only session is reported as attached and
-its checkout put back on that commit.
+An ordinary session end confirms the producer has stopped, pushes any agent-created commits and closes the generation. It preserves dirty files for continuing work on that host without making a commit. A workflow submission instead freezes the stopped producer's exact tree and parent as retained Git objects. Independent review waits until those objects and their immutable receipt are durable. Review runs with read-only code and Git metadata, separate writable scratch and no producer credential; unsupported isolation refuses the launch.
 
-Code owns the durable server queue; Runner owns the durable local operation
-journal. A command freezes its parent/tree/message/timestamp before an atomic
-HEAD and receipt-ref update guarded by the current checkout owner. Pending
-receipts survive controller restart, lost command replies and worker closure.
-Capture permanently closes the owner fence before final HEAD work; ambiguous
-operations are reconciled and acknowledged before releasing the checkout.
-See [Code operations](CODE_OPERATIONS.md) for admission, retries and receipts.
+A passing review journals an approved milestone. Reconciliation creates the exact approved commit, if needed, before admitting the next writer or exposing accepted code to dependencies. Planned VM teardown has a separate capture handshake: stop producers, settle submissions, commit remaining work if needed, push and verify, then acknowledge shutdown. Fleet cannot release the host before that receipt. Unexpected provider loss can lose files that were never transferred.
 
-An ended launch is released first, then captured, reported and closed; an outage only
-delays those steps, and the checkout stays reserved until they are done.
-One immutable final snapshot is reported under the original source authority;
-identical retries survive lost replies and controller restarts. Closed sessions
-can receive their exact late result without reactivation. A persistent successor
-cannot take the checkout until result acknowledgment and cleanup finish.
-Per-launch history remains unchanged by later reuse.
+One immutable session result is reported under the original source authority. Identical retries survive lost replies and controller restart; closed sessions can receive their exact late result without reactivation. A persistent successor waits for result acknowledgement and cleanup. Read-only results preserve their complete attachment. Unknown process ownership and foreign or partial paths remain available for recovery.
 
-`retain: false` removes the acknowledged Git checkout while preserving its branch
-and objects. Retained checkouts and scratch output stay on disk. Failed reports,
-unknown process ownership and foreign/partial paths remain available for recovery
-rather than being silently deleted. See [WORKSPACES.md](WORKSPACES.md) for policy
-fields, source/host identity checks, storage layout and failure behavior.
+## Supported scope and validation
 
-## Supported scope and next work
+Native Git transport, immutable submission review, approved milestone retention and planned shutdown capture are integrated. Session results are authenticated observations; Code separately verifies Git objects and Code Work verifies review authority. Neither a push nor a result advances managed main without its integration policy.
 
-This slice supports scratch and Git workspace preparation, fixed live commit operations and capture on Darwin and
-Linux. Server results are immutable source-authenticated observations; the server
-does not fetch or independently verify Git objects. Capture acknowledgment is not
-approval or central publication. Native workers use the fixed Code request path
-for allowed commits; arbitrary Git metadata writes and general merges remain outside that contract.
+Pairing, source-key rotation for an existing ledger, an operational settings editor and additional native harnesses remain separate work. The ledger stays bound to its original source credential digest. A different key requires a new ledger until a verified rotation handoff exists.
 
-Next are `code.propose`, reviewed-proposal publication, central compare-and-swap receipts,
-ancestry verification and cross-machine Git object transfer. Pairing, source-key rotation for an existing
-ledger, an operational settings editor, bounded trace delivery/telemetry and
-additional native harnesses also remain open. The existing ledger is intentionally
-bound to its original source credential digest; a different key requires a new
-ledger until a verified rotation handoff is implemented. Workspace capture does
-not complete production runner parity or the overall Python migration.
-
-Use `npm run test:runner` for synthetic process/HTTP tests. The explicit
-`node --import tsx scripts/live-runner.ts /absolute/new/directory` acceptance run
-uses two fresh Codex agents and a disposable arithmetic task; it exercises native
-shell execution, scoped MCP evidence, independent review and final cleanup.
+Use `npm run test:runner` for synthetic process and HTTP tests. Hosted review isolation requires the Linux image gates described in [hosted runner operations](../scripts/hosted-runner/README.md). Native provider acceptance and production deployment are explicit operations.
 
 The historical workspace-capture checkpoint passed all 490 repository tests, backend/UI typechecks
 and builds. Native Git acceptance also passed on 2026-09-15 using the since-removed

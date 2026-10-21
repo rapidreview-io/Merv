@@ -20,6 +20,7 @@ import type { TaskLeaseRow, TaskRow, TasksContext } from './index.js';
 import { purposeOf, serviceOwned } from './workflow.js';
 import { assignment, contextType } from './context.js';
 import { reviewCommit } from './policy.js';
+import { artifactReview, requireArtifactReview } from './legacy-artifact-review.js';
 
 // A task's lease hooks and checkpoints: who may hold the lease, what it pins and the checkpoints
 // it freezes, and the checkpoints its worker saves. Each runs on TaskService
@@ -55,6 +56,10 @@ export async function leasedClaim(
   tx: Transaction,
 ) {
   ctx.registration(snapshot.version);
+  if (artifactReview(snapshot.version)) {
+    await requireArtifactReview(tx, caller.projectId, snapshot.id);
+    return;
+  }
   if (caller.session) {
     if ((await leaseRows(tx, { projectId: caller.projectId, id: caller.session.id })).length)
       await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
@@ -63,7 +68,7 @@ export async function leasedClaim(
   check(
     !!(await ctx.workflows.exhaustedLimit(caller, snapshot.id, tx)),
     'leased_review_required',
-    'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task',
+    'Only a leased review worker, in a checkout of the submitted code, can pass a Git task',
     403,
   );
 }
@@ -98,7 +103,9 @@ export async function leaseRole(
     409,
   );
   check(directsIndependently(review, caller.actorId), ...NOT_INDEPENDENT);
-  await reviewCommit(ctx, caller, snapshot, review, tx);
+  if (artifactReview(snapshot.version))
+    await requireArtifactReview(tx, caller.projectId, snapshot.id);
+  else await reviewCommit(ctx, caller, snapshot, review, tx);
   contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, 'review');
   return 'reviewer';
 }

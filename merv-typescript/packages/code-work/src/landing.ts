@@ -7,7 +7,6 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { CodeGitHubService } from '@merv/code/github';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import { baseKey } from './base-plan.js';
 import type { CodeBaseRecord, CodeMainLanding, CodeMainLandingOutcome } from './models.js';
@@ -15,7 +14,7 @@ import type { CodeUnitService } from './units.js';
 
 /**
  * Accepted work lands on main (founder decision, 2026-10-11). In a project Code hosts with no
- * linked GitHub repository main means all accepted work: the server carries each accepted unit
+ * external repository dependency, main means all accepted work: the server carries each accepted unit
  * with code into it, oldest acceptance first and one at a time. A head that already contains
  * main moves main forward; any other is merged through the same base record dependents share,
  * and a conflict is the one resolution task every base gets. Work a dependent's base already
@@ -133,7 +132,6 @@ export class MainLanding {
     private readonly state: State,
     private readonly units: CodeUnitService,
     private readonly repositories: CodeRepositories,
-    private readonly github: Pick<CodeGitHubService, 'linked'>,
     private readonly workflows: Pick<Workflows, 'relations'>,
     /** The rollout switch, MERV_CODE_MAIN_LANDING; off, nothing lands and status still plans. */
     readonly enabled: boolean,
@@ -150,9 +148,7 @@ export class MainLanding {
       ? 'disabled'
       : !project?.main.stored
         ? 'main_not_stored'
-        : (await this.github.linked(projectId, sql))
-          ? 'github_linked'
-          : null;
+        : null;
     return { reason, main: project?.main.stored ? project.main.oid : null };
   }
 
