@@ -1,0 +1,14 @@
+{
+  "status": "blocked",
+  "reviewer": "REPLACE_WITH_ACTUAL_REVIEWER",
+  "workflowIds": [],
+  "receiptIds": [],
+  "cleanup": {"status": "pending", "resources": [], "notes": "Inspect exact run-owned resources."},
+  "checks": {
+    "saved_connection": {"status": "blocked", "observation": "Not run", "proofPaths": []},
+    "skill_discovery": {"status": "blocked", "observation": "Not run", "proofPaths": []},
+    "project_brief": {"status": "blocked", "observation": "Not run", "proofPaths": []},
+    "workflow_context": {"status": "blocked", "observation": "Not run", "proofPaths": []},
+    "live_tool_inventory": {"status": "blocked", "observation": "Not run", "proofPaths": []}
+  }
+}

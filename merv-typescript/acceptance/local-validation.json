@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "local_preparation_only",
+  "date": "2026-10-21",
+  "clientPreflight": {
+    "checkedAt": "2026-10-21T10:25:36.402313+00:00",
+    "clients": {
+      "codex": {
+        "version": "codex-cli 0.155.0-alpha.2",
+        "missingFlags": [],
+        "status": "pass"
+      },
+      "claude": {
+        "version": "2.1.304 (Claude Code)",
+        "missingFlags": [],
+        "status": "pass"
+      }
+    },
+    "status": "pass"
+  },
+  "selfTests": {
+    "command": "python3 -m unittest discover -s acceptance -v",
+    "passed": 10
+  },
+  "dryRuns": [
+    "codex experiment",
+    "claude git"
+  ],
+  "fixture": {
+    "seed": 1729,
+    "n": 64,
+    "sampleSha256": "8a05fd51876ea8a592c1bf7881a5d78dcec167cf80d2c409e59988c6fe55f34d",
+    "meanMse": 304.2255859375,
+    "zeroMse": 509.96875
+  },
+  "production": {
+    "status": "not_run",
+    "reason": "Awaiting combined release and parent-coordinated genuine client/browser/workflow execution"
+  },
+  "cleanup": {
+    "localChildProcesses": "terminated by tests",
+    "productionResourcesCreated": false
+  }
+}

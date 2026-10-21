@@ -1,0 +1,2315 @@
+{
+  "generatedAt": "2026-10-21T10:26:39.927529+00:00",
+  "warning": "Static candidates/legacy snapshots; reconcile with live tools and noun action schemas after deployment. Area mapping is not action coverage.",
+  "tools": [
+    {
+      "tool": "actor.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.credentials",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.issue_token",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.revoke",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.revoke_token",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.rotate_token",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "actor.whoami",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.read",
+      "sources": [
+        "merv-typescript/packages/artifacts/src/tools.ts",
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.storage_status",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.upload_begin",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.upload_complete",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.upload_resume",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "artifact.write",
+      "sources": [
+        "merv-typescript/packages/artifacts/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "storage"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.draw",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.look",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.read",
+      "sources": [
+        "merv-typescript/packages/board/src/tools.ts",
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.save",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.scene",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.set",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "board.write",
+      "sources": [
+        "merv-typescript/packages/board/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.cancel",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.quarantine",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.release",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.repair",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.resume",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.retry",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.base.suspend",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.commit",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.files",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.log",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.merge",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.mirror.retry",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.operation",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.publication.control",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.publication.merge",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.publication.read",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.publication.sync",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.read",
+      "sources": [
+        "merv-typescript/packages/code-work/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.repository.configure",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.repository.import",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.repository.prepare",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.status",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.unit.fence",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.unit.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "code.write",
+      "sources": [
+        "merv-typescript/packages/code-work/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "git"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "customer_experiment.file_download",
+      "sources": [
+        "merv-typescript/packages/customer-experiments/src/worker-tools.ts"
+      ],
+      "scenarios": [
+        "public-intake"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "customer_experiment.files",
+      "sources": [
+        "merv-typescript/packages/customer-experiments/src/worker-tools.ts"
+      ],
+      "scenarios": [
+        "public-intake"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "customer_experiment.get",
+      "sources": [
+        "merv-typescript/packages/customer-experiments/src/worker-tools.ts"
+      ],
+      "scenarios": [
+        "public-intake"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "customer_experiment.progress",
+      "sources": [
+        "merv-typescript/packages/customer-experiments/src/worker-tools.ts"
+      ],
+      "scenarios": [
+        "public-intake"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "customer_experiment.submit_results",
+      "sources": [
+        "merv-typescript/packages/customer-experiments/src/worker-tools.ts"
+      ],
+      "scenarios": [
+        "public-intake"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.attach",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.exhibit",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.get_state",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.read",
+      "sources": [
+        "merv-typescript/packages/experiments/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.transition",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "experiment.write",
+      "sources": [
+        "merv-typescript/packages/experiments/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.activity",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.post",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.read",
+      "sources": [
+        "merv-typescript/packages/feed/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "feed.write",
+      "sources": [
+        "merv-typescript/packages/feed/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "feed-board"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "history.read",
+      "sources": [
+        "merv-typescript/packages/legacy-history/src/tools.ts"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.excerpts",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.paper",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.read",
+      "sources": [
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.related",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.research",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.search",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.semantic_search",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "nisa.write",
+      "sources": [
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "paper.cite",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "paper.patch",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "paper.read",
+      "sources": [
+        "merv-typescript/packages/paper/src/tools.ts",
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "paper.write",
+      "sources": [
+        "merv-typescript/packages/paper/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "project.brief",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions",
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "project.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions",
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "project.read",
+      "sources": [
+        "merv-typescript/packages/scope/src/tools.ts",
+        "merv-typescript/packages/sessions/src/tools.ts",
+        "merv-typescript/packages/knowledge/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions",
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "project.records",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions",
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "project.references",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "permissions",
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.end",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.lens",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.read",
+      "sources": [
+        "merv-typescript/packages/reflections/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.submit",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.submit_lens",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "reflection.write",
+      "sources": [
+        "merv-typescript/packages/reflections/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.approve_visual",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.check",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.clear",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.open",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.read",
+      "sources": [
+        "merv-typescript/packages/reports/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.render",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.review_visual",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "report.write",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.advance",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.end",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.lineage",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.read",
+      "sources": [
+        "merv-typescript/packages/research/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.replan",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "research.write",
+      "sources": [
+        "merv-typescript/packages/research/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.read",
+      "sources": [
+        "merv-typescript/packages/reviews/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.release",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.start",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.submit",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "review.write",
+      "sources": [
+        "merv-typescript/packages/reviews/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "experiment",
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.access",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.job",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.sandbox",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.snapshot",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.spend",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.storage",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "sandboxes.workflow",
+      "sources": [
+        "snapshot:workers",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "screen.read",
+      "sources": [
+        "merv-typescript/packages/pi/src/tools.ts"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "script.run",
+      "sources": [
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "script.tools",
+      "sources": [
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.ask_owner",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.ask_thread",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.await_compute",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.dispatch",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.halt",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.message",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.message.ack",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.messages",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.question.resolve",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.read",
+      "sources": [
+        "merv-typescript/packages/sessions/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.release_hold",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "session.write",
+      "sources": [
+        "merv-typescript/packages/sessions/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "compute",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "system.status",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.checkpoint",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.context",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.create",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.get",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.list",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.mark_failed",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.read",
+      "sources": [
+        "merv-typescript/packages/tasks/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.submit_delivery",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "task.write",
+      "sources": [
+        "merv-typescript/packages/tasks/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "task",
+        "revision-resume"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "usage.read",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "usage.set_budget",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "operations"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "web.extract",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "web.read",
+      "sources": [
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "web.search",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "knowledge"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.assignment",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.begin",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.catalog",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.extend_limit",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.process",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.read",
+      "sources": [
+        "merv-typescript/packages/workflows/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.status_and_next",
+      "sources": [
+        "snapshot:workers"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    },
+    {
+      "tool": "workflow.write",
+      "sources": [
+        "merv-typescript/packages/workflows/src/tools.ts",
+        "snapshot:scripts",
+        "snapshot:schemas"
+      ],
+      "scenarios": [
+        "fresh-chat",
+        "experiment",
+        "task",
+        "revision-resume",
+        "pi",
+        "cleanup"
+      ],
+      "status": "not_run",
+      "coverage": "area_only"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "setup-url",
+      "areas": [],
+      "prompt": "Start with only the supplied /connect/agent.md URL. Follow the published agent guide to install the persistent native Merv plugin. Record installed package/version and connection count without reading tokens. Browser sign-in/account creation/project selection requires the human; stop there for interactive completion. Do not silently use legacy connector or direct bearer configuration.",
+      "checks": [
+        "published_guide",
+        "native_plugin_installed",
+        "browser_consent",
+        "project_selected",
+        "single_connection"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "website",
+      "areas": [],
+      "prompt": "Inspect the published human setup instructions and compare their commands, browser sign-in, new account/project and fresh-chat instructions with the agent guide. Record visible evidence. The human must perform actual website onboarding; do not claim success from text inspection.",
+      "checks": [
+        "website_instructions",
+        "new_account_or_invitation",
+        "project_creation",
+        "consent_identity_matches"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "fresh-chat",
+      "areas": [
+        "project",
+        "actor",
+        "workflow"
+      ],
+      "prompt": "Use Merv. Discover tools and installed skills. List available projects, read the selected project brief and workflow status. Recover one existing record and its reference/history using only saved configuration; do not reinstall. Record exact tool/action names and project/actor role.",
+      "checks": [
+        "saved_connection",
+        "skill_discovery",
+        "project_brief",
+        "workflow_context",
+        "live_tool_inventory"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "permissions",
+      "areas": [
+        "actor",
+        "credential",
+        "project"
+      ],
+      "prompt": "Read your role and permitted projects. Using a separately prepared reader identity in this synthetic project, attempt one harmless write and verify server denial with unchanged state. Check inaccessible synthetic project isolation. Do not change roles or create credentials yourself.",
+      "checks": [
+        "reader_write_denied",
+        "project_isolation",
+        "unchanged_state"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "auth-lifecycle",
+      "areas": [],
+      "prompt": "With operator-coordinated expiry/revocation of this test OAuth grant only, verify refresh and then revoked access failure. Reconnect through genuine browser consent. Verify fresh-process reuse and one connection. Do not read token files or force expiry by altering credentials.",
+      "checks": [
+        "refresh",
+        "revocation_denial",
+        "reconsent",
+        "fresh_process",
+        "unrelated_config_preserved"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "migration",
+      "areas": [],
+      "prompt": "Inspect whether legacy Merv registration exists without reading credentials. Follow published migration for this isolated client only after operator preparation. Verify unrelated sentinel configuration remains, one Merv server, saved fresh chat, and no connector daemon.",
+      "checks": [
+        "legacy_removed",
+        "single_connection",
+        "unrelated_config_preserved",
+        "fresh_chat"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "experiment",
+      "areas": [
+        "experiment",
+        "report",
+        "artifact",
+        "review",
+        "workflow"
+      ],
+      "prompt": "Create or recover a tiny seeded CPU experiment with explicit intent and details: test whether the sample mean minimizes empirical squared error compared with fixed zero on the exact fixture sample. Attach a plan specifying seed 1729, n=64, exact comparison, no population generalization. Follow workflow guidance through independent design review, execution, results/artifacts/report and independent result review. Stop at gates requiring an authorized independent worker. Never act as your own reviewer. Use fixture actual output including its caveats.",
+      "checks": [
+        "intent_details",
+        "plan_retained",
+        "independent_design_review",
+        "actual_execution",
+        "metrics_report_artifacts",
+        "independent_result_review",
+        "terminal_state"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "task",
+      "areas": [
+        "task",
+        "review",
+        "workflow",
+        "artifact"
+      ],
+      "prompt": "Create or recover a small task to run the fixture and retain its output plus a README explaining empirical versus population claims. Done-when: exact seed/n, computed metric comparison, reproducible command and caveat retained. Follow assignment, submit real evidence for each check, and wait for genuinely independent task review. Do not self-approve.",
+      "checks": [
+        "brief_checks",
+        "assignment",
+        "execution",
+        "delivery_evidence",
+        "independent_task_review",
+        "terminal_state"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "revision-resume",
+      "areas": [
+        "workflow",
+        "review",
+        "task",
+        "experiment"
+      ],
+      "prompt": "Use an operator-designated existing synthetic task with intentionally missing reproducibility evidence. Have an independent reviewer inspect and return it for changes. Read rejection/revision, repair missing evidence, resubmit and independently review. Check dependency blocking before prerequisite completion and release afterward. Never duplicate task on timeout or fake a review verdict.",
+      "checks": [
+        "independent_rejection",
+        "revision_fence",
+        "dependency_block",
+        "repair_resubmit",
+        "resume_same_record",
+        "dependency_release"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "storage",
+      "areas": [
+        "artifact"
+      ],
+      "prompt": "Create one small artifact from the actual fixture output, read exact contents and metadata, and verify hash/bytes. Exercise supported upload begin/resume/complete on a tiny local file through documented tools, record storage status and immutable IDs. Signed URLs must not appear in evidence. Do not upload private files.",
+      "checks": [
+        "create_read",
+        "hash_bytes",
+        "upload_resume_complete",
+        "immutable_version",
+        "storage_status"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "knowledge",
+      "areas": [
+        "paper",
+        "research",
+        "claim",
+        "reference",
+        "nisa",
+        "web",
+        "project",
+        "reflection"
+      ],
+      "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise the supported research/reflection cycle with five independent lens contributions, independent reflection review and code consolidation review if exposed. Stop when authorized workers are unavailable.",
+      "checks": [
+        "paper_context",
+        "claim_evidence",
+        "real_reference",
+        "research_cycle",
+        "five_lenses",
+        "reflection_review",
+        "consolidation_review"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "feed-board",
+      "areas": [
+        "feed",
+        "board"
+      ],
+      "prompt": "If enabled, post a concise synthetic fixture result to the project feed and read it back; create a tiny board linking its artifact and verify the retained scene. If disabled, record capability/configuration evidence as blocked, never fabricate a pass.",
+      "checks": [
+        "feed_write_read",
+        "board_write_read",
+        "artifact_link"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "compute",
+      "areas": [
+        "sandbox",
+        "sandboxes",
+        "fleet",
+        "session",
+        "job",
+        "storage",
+        "pipeline",
+        "access",
+        "registry"
+      ],
+      "prompt": "Inspect configured compute/dispatch/status using normal tools. Use only an already-authorized bounded CPU worker allocated for this test. Dispatch the tiny fixture, observe session/receipt and output, cancel a separate harmless waiting job, confirm cleanup and no active compute. Do not provision paid resources or enable dispatch. Record blockers explicitly.",
+      "checks": [
+        "dispatch",
+        "hosted_execution_receipt",
+        "status_observation",
+        "cancel",
+        "cleanup_no_active_compute"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "git",
+      "areas": [
+        "code"
+      ],
+      "prompt": "After successful native plugin OAuth setup, follow only the published optional ordinary Git setup path. OAuth tokens are MCP-resource-bound: never reuse them for Git or silently inject a test API key. The human obtains a project-scoped user/machine key through Settings \u2192 Keys, selects a short expiry and stores it through an ordinary Git credential manager (never chat, URL, argv, transcript or a custom Merv helper). Record actual user steps, required current project role, scope/expiry metadata and native credential-manager choice without reading secrets. Use the exact remote URL from the Code page; clone/fetch, restart and fetch using persisted credentials. An authorized project administrator may push a tiny fixture README to an ordinary user branch; user keys must be denied pushes to merv-main and merv/* reserved branches. Separately verify a genuinely leased hosted worker can push its assigned branch and is denied another assigned branch. Verify immutable submission and independent review/approval commit lifecycle through normal workflow. Finally have the human revoke ONLY the dedicated Git test key and verify a fresh Git request fails while MCP OAuth still works. Never force-push, modify the default branch or provision workers. Missing published setup instructions or unaffordable permissions are blockers.",
+      "checks": [
+        "published_optional_setup",
+        "human_key_creation",
+        "credential_scope_role_expiry",
+        "ordinary_credential_manager_no_merv_helper",
+        "persisted_clone_fetch",
+        "owner_user_branch_push",
+        "owner_reserved_branch_denied",
+        "worker_assigned_branch",
+        "worker_wrong_branch_denied",
+        "immutable_submission",
+        "approval_commit",
+        "git_revocation_denial",
+        "oauth_still_works"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "pi",
+      "areas": [
+        "pi",
+        "session",
+        "workflow"
+      ],
+      "prompt": "Using the already configured internal Pi, ask it to read this synthetic project status and execute the small task through supported assignment and independent review. Record Pi/session identity, actual tool evidence, hosted execution receipt and terminal workflow. Check stop/resume and tool/context recovery. Do not warm/provision a new machine without operator allocation.",
+      "checks": [
+        "pi_context",
+        "pi_actual_tools",
+        "hosted_worker",
+        "independent_review",
+        "stop_resume",
+        "cleanup"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "cleanup",
+      "areas": [
+        "session",
+        "sandbox",
+        "fleet",
+        "workflow"
+      ],
+      "prompt": "Read all retained acceptance record IDs and running sessions for this run. Cancel only its disposable jobs and stop only its allocated test machines using normal tools after confirming ownership. Preserve artifacts/reviews/Git receipts. Report exact remaining resources and any required manual cleanup; never bulk-delete a project.",
+      "checks": [
+        "owned_resources_only",
+        "no_running_jobs",
+        "no_allocated_compute",
+        "evidence_retained"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "operations",
+      "areas": [
+        "system",
+        "usage",
+        "script",
+        "screen",
+        "history"
+      ],
+      "prompt": "Inspect system status, usage and supported scripts, screen/context and history using exposed read tools. Run only a documented harmless local arithmetic script if permitted. Budget changes require explicit operator authorization and must target this synthetic project. Record disabled or retired surfaces as blocked with discovery evidence.",
+      "checks": [
+        "system_status",
+        "usage_read",
+        "script_discovery",
+        "safe_script",
+        "history_context",
+        "budget_permission_boundary"
+      ],
+      "initialStatus": "not_run"
+    },
+    {
+      "id": "public-intake",
+      "areas": [
+        "customer_experiment"
+      ],
+      "prompt": "Inspect the published /start/agent.md public experiment intake, distinct from account plugin setup. Use only an operator-created synthetic intake assignment. Read intent/files/progress and submit actual fixture results through supported assigned worker tools. Do not create a customer request or impersonate a worker. Stop if no assignment is available.",
+      "checks": [
+        "public_guide",
+        "assigned_identity",
+        "files_progress",
+        "actual_results",
+        "owner_visible_receipt"
+      ],
+      "initialStatus": "not_run"
+    }
+  ]
+}
