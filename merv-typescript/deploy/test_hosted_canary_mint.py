@@ -47,7 +47,7 @@ process.env.MERV_CANARY_PROJECT='project';process.env.MERV_CANARY_NAME='pilot';
         calls=json.loads(result.stdout);self.assertEqual(calls[:2],[['reissue'],['revoke','stale']]);self.assertEqual(calls[-1],['close'])
     def test_no_active_operator_refuses(self):
         result=self.execute([dict(id='operator',role='operator',active=False)])
-        self.assertNotEqual(result.returncode,0);self.assertIn('no active operator',result.stderr)
+        self.assertNotEqual(result.returncode,0);self.assertIn('no active independent nonmember operator',result.stderr)
     def test_saved_credential_replay_checks_private_file_and_identity_without_mint(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'credential.json';cred=dict(projectId='project',actorId='reader',credentialId='saved',token='fixture-only');path.write_text(json.dumps(cred));path.chmod(0o600)

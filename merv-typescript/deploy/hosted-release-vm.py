@@ -113,9 +113,9 @@ import { deploymentSchema } from '/app/deploy/schema.mjs';
 const projectId=process.env.MERV_CANARY_PROJECT, name=process.env.MERV_CANARY_NAME;
 const state=await PostgresState.open({connectionString:process.env.MERV_DB_URL,schema:deploymentSchema(),maxConnections:2,readConnections:1});
 try{const scope=new ProjectScope(state);await scope.initialize();
-const actors=await state.transaction((tx)=>tx.all("SELECT id,name,role,active FROM actors WHERE project_id=? AND session_id IS NULL AND service_owner IS NULL ORDER BY id",projectId));
+const actors=await state.transaction((tx)=>tx.all("SELECT a.id,a.name,a.role,a.active FROM actors a WHERE a.project_id=? AND a.session_id IS NULL AND a.service_owner IS NULL AND NOT EXISTS(SELECT 1 FROM member_actors m WHERE m.actor_id=a.id) ORDER BY a.id",projectId));
 const operator=actors.find((a)=>a.role==='operator'&&a.active);
-if(!operator)throw new Error('the project has no active operator actor');
+if(!operator)throw new Error('the project has no active independent nonmember operator; have an authorized operator provision the reader through normal authenticated Scope tools');
 const caller={projectId,actorId:operator.id}, existing=actors.find((a)=>a.name===name&&a.role==='reader'&&a.active);
 const issued=existing?await scope.credentials.issueActorCredential(caller,{actorId:existing.id,expiresAt:null}):await scope.credentials.issueActor(caller,{name,role:'reader',expiresAt:null});
 // A lost file is replaced, never left beside a second live token.
