@@ -400,3 +400,10 @@ receiving-key directory without emitting plaintext credentials. Parsing and repl
 validation run inside the cleanup scope; an inner finally removes the verified
 private directory even when launching cache shutdown fails. Directory ownership,
 mode and identity are checked before removal.
+
+Receiving-key preparation also cleans its newly created directory on failure. The
+regression generates and validates a real RSA key, forces OpenSSL public-key
+extraction to fail, and verifies the directory is gone without returning key data.
+The skill explicitly distinguishes execution-tool denial before a batch starts:
+cleanup then requires a separate authorized action, and denied cleanup must be
+reported rather than bypassed or claimed complete.

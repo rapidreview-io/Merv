@@ -637,3 +637,51 @@ test(
     }
   },
 );
+
+test('receiving-key preparation cleans up when public-key extraction fails after real generation', () => {
+  const skill = readFileSync(
+    new URL('../../clients/codex/skills/git-access/SKILL.md', import.meta.url),
+    'utf8',
+  );
+  const preparation = [...skill.matchAll(/```python\n([\s\S]*?)```/g)][0]![1]!;
+  const harness = `
+import json, os, shutil, subprocess, tempfile
+from unittest.mock import patch
+created = []
+original_mkdtemp = tempfile.mkdtemp
+original_output = subprocess.check_output
+checked_key = False
+def track_directory(*args, **kwargs):
+    directory = original_mkdtemp(*args, **kwargs)
+    created.append(directory)
+    return directory
+def fail_extraction(args, **kwargs):
+    global checked_key
+    assert args[:2] == ["openssl", "pkey"]
+    key = args[args.index("-in") + 1]
+    assert os.path.isfile(key)
+    subprocess.run(["openssl", "pkey", "-in", key, "-check", "-noout"],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    checked_key = True
+    return original_output([*args, "-invalid-extraction-option"], **kwargs)
+try:
+    with patch("tempfile.mkdtemp", track_directory), patch("subprocess.check_output", fail_extraction):
+        try:
+            exec(${JSON.stringify(preparation)})
+            raise AssertionError("Expected extraction failure")
+        except subprocess.CalledProcessError:
+            pass
+    assert checked_key and len(created) == 1
+    assert not os.path.exists(created[0]), "Preparation left its private key directory"
+    print("cleanup verified")
+finally:
+    for directory in created:
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+`;
+  const output = execFileSync('python3', ['-c', harness], {
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  assert.equal(output.trim(), 'cleanup verified');
+});

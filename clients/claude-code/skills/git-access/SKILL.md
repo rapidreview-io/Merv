@@ -112,16 +112,22 @@ Run this locally. The output contains only a temporary directory and public key.
 Keep the directory for the next step; never read or print `key.pem`.
 
 ```python
-import json, os, subprocess, tempfile
+import json, os, shutil, subprocess, tempfile
 os.umask(0o077)
 directory = tempfile.mkdtemp(prefix="merv-git-", dir="/tmp")
 key = os.path.join(directory, "key.pem")
-subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
-                "rsa_keygen_bits:2048", "-out", key],
-               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-public = subprocess.check_output(["openssl", "pkey", "-in", key, "-pubout"],
-                                 stderr=subprocess.DEVNULL).decode()
-print(json.dumps({"directory": directory, "publicKey": public}))
+try:
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                    "rsa_keygen_bits:2048", "-out", key],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    public = subprocess.check_output(["openssl", "pkey", "-in", key, "-pubout"],
+                                     stderr=subprocess.DEVNULL).decode()
+    print(json.dumps({"directory": directory, "publicKey": public}), flush=True)
+except BaseException:
+    # This exact directory was created above; no receiving-key result was returned.
+    shutil.rmtree(directory)
+    raise
+
 ```
 
 Call `code.git_credential` through the installed MCP connection with that public
@@ -239,8 +245,12 @@ switches or Git expiry. If the account grant itself expires or is revoked, use t
 client's native sign-in action, just as for other MCP tools.
 
 The block clears its cache and private directory on both success and failure. If
-MCP minting fails before the block runs, remove only the receiving-key directory you
-created. No persistent Merv process remains. Git's own cache exists only for the live
-batch. Standalone Git cannot renew through a native client's private MCP connection;
+MCP minting fails, or the execution tool denies the batch before it starts, the
+block's cleanup cannot run. Remove only the exact receiving-key directory returned
+by preparation using an authorized local cleanup action. If cleanup is also denied,
+report the leftover directory and the denial; do not bypass permissions or claim it
+was removed. Preparation itself removes its new directory if generation, extraction
+or returning the result fails. No persistent Merv process remains. Git's own cache
+exists only for the live batch. Standalone Git cannot renew through a native client's private MCP connection;
 renewal happens when the authenticated agent runs the next batch. If a batch is
 interrupted after a push, re-mint and inspect the exact remote ref before retrying.
