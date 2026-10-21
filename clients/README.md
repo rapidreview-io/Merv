@@ -4,9 +4,9 @@ Merv connects your agent to research projects, experiments, tasks, reviews and G
 through remote MCP with browser sign-in. The plugin includes four skills and the
 MCP connection; no local server, API key copy-paste or background daemon is needed.
 
-The public distribution target is
+Install from
 [rapidreview-io/merv-plugins](https://github.com/rapidreview-io/merv-plugins).
-The commands below use that repository once published. Both clients keep the
+Both clients keep the
 plugin identity **`merv@merv`**, regardless of the GitHub repository name.
 
 ## Install and sign in
@@ -29,7 +29,8 @@ login authenticates the bundled MCP server; a desktop app is not required.
 
 ### Claude Code
 
-Run in your terminal:
+Open **Plugins → Marketplaces → Add**, paste **`rapidreview-io/merv-plugins`**,
+then install **Merv** for your user account. Or run in your terminal:
 
 ```sh
 claude plugin marketplace add rapidreview-io/merv-plugins
@@ -89,10 +90,11 @@ regenerate the embedded bundle and run the focused client tests.
 
 The standalone marketplace can be published independently of Main. Publication
 does not update the deployed `/connect/bundle.*` or setup guide and requires no
-Main image rebuild. The legacy `publish-client-bundle.yml` workflow builds from
-`merv/`, not this canonical `clients/` tree.
+Main image rebuild. The application repository exports only an explicit allowlist from `clients/`
+through `tools/export_plugins.py`. Its client publication workflow targets this
+standalone repository and does not build the application.
 
-Version 0.5.6 keeps the canonical Python blocks free of curly braces to avoid a
+Version 0.5.7 keeps the canonical Python blocks free of curly braces to avoid a
 Claude shell parser false-positive. Temporary receiving keys stay in an authorized
 workspace. Credential storage, Git operations, verification and cleanup run in one
 live invocation; later batches mint fresh credentials through saved MCP sign-in.
