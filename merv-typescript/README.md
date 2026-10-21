@@ -2,14 +2,10 @@
 
 ## Connect an agent
 
-Tell Claude Code, Codex or Cursor: _Connect to Merv using
-https://experiments.rapidreview.io/connect_. The agent follows the installer, asks for
-your Merv email, and signs in with the 8-digit code you read back from the email.
-No browser login or pasted API key is needed. One account key on that machine serves
-your projects; `project.read` with `{"action":"list","list":{}}` lists them.
-Choose a project, then pass its `projectId` on subsequent calls.
-See [connection and approval settings](deploy/CLIENT_CUTOVER.md) and
-[optional client skills](../clients/README.md).
+Tell Claude Code or Codex: _Connect to Merv using
+https://experiments.rapidreview.io/connect/agent.md_. Install the remote MCP plugin,
+sign in once in the browser and select a project. The client saves the connection
+for fresh chats; no local connector or Git repository is required.
 
 ## Agent tools
 

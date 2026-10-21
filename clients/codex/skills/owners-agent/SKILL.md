@@ -22,8 +22,8 @@ permitted reads. Neither gives you more authority than direct calls.
 - Read before you answer or act. Never guess an id, a name or a number you could read.
 - If a call is refused, say what was refused and why; do not look for another route to the same
   effect.
-- Never read `~/.merv/connect`, never ask for or print a key, and never run `merv-connect logout`
-  unless the person asks.
+- Let the client manage authentication and refresh. Never read credential storage or ask for
+  tokens, passwords or email codes. Reconnect through browser sign-in when required.
 
 ## How to answer
 

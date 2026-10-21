@@ -1,6 +1,7 @@
 import { expiry } from './expiry.js';
 import {
   visible,
+  inTransaction,
   check,
   forRead,
   newId,
@@ -67,6 +68,19 @@ export class UserKeys {
       );
       check(row, 'unauthorized', 'User key is invalid, expired or revoked', 401);
       return hydrate(row);
+    });
+  }
+
+  /** Internal OAuth delegation: the OAuth owner validates its access token first. */
+  async authenticateDelegation(id: string): Promise<UserKey> {
+    return this.state.read(async (sql) => hydrate(await this.current(sql, id)));
+  }
+
+  /** Internal grant revocation retains the same key audit trail and transactional fence. */
+  async revokeDelegation(id: string, transaction?: Transaction): Promise<void> {
+    await inTransaction(this.state, transaction, async (tx) => {
+      const row = await tx.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', id);
+      if (row) await this.revokeLineage(tx, row);
     });
   }
 
@@ -221,6 +235,7 @@ export class UserKeys {
       label?: string | null;
       expiresAt?: string | null;
     },
+    transaction?: Transaction,
   ): Promise<IssuedUserKey> {
     const { projectId, grantScope = 'project', label, expiresAt } = input;
     check(
@@ -235,7 +250,7 @@ export class UserKeys {
       'invalid_label',
       'Key label must be nonblank text of 1–120 characters or null',
     );
-    return await this.state.transaction(async (tx) => {
+    return await inTransaction(this.state, transaction, async (tx) => {
       const human = await this.members.human(principal, tx);
       const caller = await this.members.resolve(human, projectId, tx);
       const time = this.time();
@@ -351,81 +366,6 @@ export class UserKeys {
     await this.state.transaction(async (tx) =>
       this.revokeLineage(tx, await this.owned(tx, principal, keyId)),
     );
-  }
-
-  /**
-   * The account key a consumed email-code challenge yields, in the transaction that consumes it.
-   * The owner is the challenge's; no principal or tool reaches this. It replaces the key of the
-   * same connector install, expires after a fixed `keyDays` and is never renewed.
-   */
-  async issueForEmailLogin(
-    tx: Transaction,
-    login: { issuer: string; subject: string; install_id: string; client: string; host: string },
-    limits: { keyDays: number; keysPerPerson: number },
-  ): Promise<IssuedUserKey> {
-    const { issuer, subject } = login;
-    // Authorized, as account-key rotation is, through the owner's first active membership.
-    const anchor = (await this.members.memberProjects(tx, issuer, subject, null))[0];
-    check(
-      anchor,
-      'membership_required',
-      'Sign in to Merv on the web and join or create a project first',
-      409,
-    );
-    const time = this.time();
-    const agentKeys = `FROM agent_logins l JOIN user_keys k ON k.id=l.key_id
-      WHERE l.issuer=? AND l.subject=? AND k.revoked_at IS NULL`;
-    const live = await tx.get<{ count: string | number }>(
-      `SELECT COUNT(*) AS count ${agentKeys} AND k.expires_at>? AND l.install_id<>?`,
-      issuer,
-      subject,
-      time,
-      login.install_id,
-    );
-    check(
-      Number(live?.count ?? 0) < limits.keysPerPerson,
-      'agent_key_limit',
-      'Revoke an agent key on the Keys page first',
-      409,
-    );
-    const label = `${login.client} on ${login.host}`;
-    const expiresAt = new Date(Date.parse(time) + limits.keyDays * 86_400_000).toISOString();
-    const issued = await this.issue(
-      tx,
-      {
-        owner: { issuer, subject },
-        projectId: anchor.id,
-        grantScope: 'account',
-        label,
-        expiresAt,
-        previousId: null,
-      },
-      time,
-    );
-    for (const earlier of await tx.all<KeyRow>(
-      `SELECT k.* ${agentKeys} AND l.install_id=?`,
-      issuer,
-      subject,
-      login.install_id,
-    ))
-      await this.revokeLineage(tx, earlier);
-    await this.state.appendEvent(tx, {
-      projectId: anchor.id,
-      actorId: await this.ownerActor(tx, { project_id: anchor.id, issuer, subject }),
-      type: 'actor.key_created',
-      subjectId: issued.key.id,
-      data: { grantScope: 'account', label, expiresAt, via: 'email_code' },
-    });
-    return issued;
-  }
-
-  /** Withdraws a key just issued whose sign-in could not be completed. */
-  async revokeIssued(keyId: string): Promise<void> {
-    await this.state.transaction(async (tx) => {
-      const row = await tx.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', keyId);
-      check(row, 'not_found', 'User key not found', 404);
-      await this.revokeLineage(tx, row);
-    });
   }
 
   /** The presenting key revokes itself, with its lineage: it can name no other key. */

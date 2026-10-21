@@ -757,46 +757,11 @@ test('invitation delivery is opt-in and renders credential names, never secret v
   assert.equal(plugin('identity').config.directoryAdmin, undefined);
 });
 
-test('agent sign-in is opt-in, needs the service key and a mail key, and asks for the admin API', (t) => {
+test('OAuth is explicit, requires no email sender or admin directory key, and refuses old login deployment flags', (t) => {
   const { run, plugin } = renderer(t);
-  const keys = {
-    SUPABASE_SERVICE_KEY: 'private-directory-fixture',
-    RESEND_API_KEY: 'private-mail-fixture',
-  };
-  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true', MERV_CONNECTOR_NAME: 'merv' }).status, 0);
-  assert.notEqual(
-    run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'Merv' }).status,
-    0,
-  );
-  // No default name: a staging that forgot it would take over production's "merv" registration.
-  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true', ...keys }).status, 0);
-  assert.equal(run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'merv' }).status, 0);
-  assert.deepEqual(plugin('scope-api').config, {
-    agentLogin: {
-      apiKeyEnv: 'RESEND_API_KEY',
-      from: 'Merv <login@rapidreview.io>',
-      publicOrigin: 'https://merv.example',
-      serverName: 'merv',
-      trustedProxies: ['127.0.0.1/32', '::1/128'],
-    },
-  });
-  // Production names its bridge gateway, the one address host Caddy reaches the container from.
-  const production = '127.0.0.1/32,::1/128,172.18.0.1/32';
-  assert.equal(
-    run({
-      MERV_AGENT_LOGIN: 'true',
-      ...keys,
-      MERV_CONNECTOR_NAME: 'merv',
-      MERV_TRUSTED_PROXIES: production,
-    }).status,
-    0,
-  );
-  assert.deepEqual(plugin('scope-api').config.agentLogin.trustedProxies, production.split(','));
-  assert.equal(plugin('identity').config.directoryKeyEnv, 'SUPABASE_SERVICE_KEY');
-  assert.equal(plugin('identity').config.directoryAdmin, true);
-  assert.equal(
-    run({ MERV_AGENT_LOGIN: 'true', ...keys, MERV_CONNECTOR_NAME: 'merv-staging' }).status,
-    0,
-  );
-  assert.equal(plugin('scope-api').config.agentLogin.serverName, 'merv-staging');
+  assert.notEqual(run({ MERV_AGENT_LOGIN: 'true' }).status, 0);
+  assert.equal(run({ MERV_MCP_OAUTH: 'true' }).status, 0);
+  assert.deepEqual(plugin('scope-api').config.oauth, { publicOrigin: 'https://merv.example' });
+  assert.equal(plugin('identity').config.directoryAdmin, undefined);
+  assert.equal(plugin('identity').config.directoryKeyEnv, undefined);
 });

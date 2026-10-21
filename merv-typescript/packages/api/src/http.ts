@@ -84,7 +84,7 @@ function send(res: ServerResponse, status: number, type: string, body: string | 
     ...(typeof body !== 'string' && { 'content-length': body.length }),
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
-    ...(status === 401 && { 'www-authenticate': 'Bearer' }),
+    ...(status === 401 && !res.hasHeader('www-authenticate') && { 'www-authenticate': 'Bearer' }),
   });
   res.end(body);
 }
@@ -228,6 +228,15 @@ function bearer(req: IncomingMessage): string {
  * by the owner of its bearer's namespace. One stateless MCP transport serves each MCP request.
  */
 export class ApiServer {
+  private oauthProvider?: { metadataUrl: string; authenticate(token: string): Promise<Principal> };
+  oauth(provider: NonNullable<ApiServer['oauthProvider']>): () => void {
+    if (this.oauthProvider)
+      throw new MervError('oauth_conflict', 'OAuth is already registered', 409);
+    this.oauthProvider = provider;
+    return () => {
+      if (this.oauthProvider === provider) this.oauthProvider = undefined;
+    };
+  }
   private server?: HttpServer;
   private stopping = false;
   /** Set once stop() has drained the requests in flight when it began, or at drainMs: later
@@ -320,7 +329,14 @@ export class ApiServer {
             pathOf(req) === '/mcp' && {
               connect: this.mounts.get(CONNECT_PAGE) ? CONNECT_PAGE : KEYS_PAGE,
             };
-          if (!res.headersSent) json(res, status, { error: body, ...connect });
+          if (!res.headersSent) {
+            if (status === 401 && pathOf(req) === '/mcp' && this.oauthProvider)
+              res.setHeader(
+                'www-authenticate',
+                `Bearer resource_metadata="${this.oauthProvider.metadataUrl}", scope="merv"`,
+              );
+            json(res, status, { error: body, ...connect });
+          }
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
           logFailure(error, status, body.code, `${req.method} ${pathOf(req)}`);
@@ -425,7 +441,7 @@ export class ApiServer {
 
   /** Serves one lowercase path segment; the disposer withdraws it, and it then answers 503. */
   mount(prefix: string, handler: MountHandler, options: MountOptions = {}): () => void {
-    if (!/^\/[a-z][a-z0-9-]*$/.test(prefix))
+    if (!/^\/(?:[a-z][a-z0-9-]*|\.well-known)$/.test(prefix))
       throw new MervError('invalid_mount', 'Mount prefix must be one lowercase segment');
     const paths = options.public;
     const within = (path: string) =>
@@ -490,6 +506,11 @@ export class ApiServer {
 
   private async authenticate(req: IncomingMessage, url: URL): Promise<ApiPrincipal> {
     const token = bearer(req);
+    if (token.startsWith('mo_') && !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      if (url.pathname !== '/mcp' || !this.oauthProvider)
+        throw new MervError('unauthorized', 'OAuth token is only valid for MCP', 401);
+      return this.oauthProvider.authenticate(token);
+    }
     if (namespaced(token)) {
       // Never Scope's or JWT verification: only the namespace's owner knows its bearers.
       const registered = this.credentials.get(/^[a-z]+_/.exec(token)![0]);

@@ -476,9 +476,11 @@ function Projects({
 export function SessionProvider({
   children,
   accountOnly = false,
+  preservePath = false,
 }: {
   children: ReactNode;
   accountOnly?: boolean;
+  preservePath?: boolean;
 }) {
   const invitationId = new URLSearchParams(window.location.search).get('invitation');
   if (invitationId) safely(() => sessionStorage.setItem('merv:invitation', invitationId));
@@ -615,7 +617,7 @@ export function SessionProvider({
       }).catch(() => undefined);
     setAuthMode('local');
     setState({ phase: 'anonymous' });
-    navigate('/', { replace: true });
+    if (!preservePath) navigate('/', { replace: true });
     void auth?.client?.auth.signOut({ scope: 'local' }).catch(() => undefined);
   };
   if (state.phase === 'checking' || ('epoch' in state && state.epoch !== epoch))
@@ -671,7 +673,7 @@ export function SessionProvider({
     signOut,
     chooseProject: () => {
       setProject(null);
-      navigate('/', { replace: true });
+      if (!preservePath) navigate('/', { replace: true });
       reload();
     },
   };

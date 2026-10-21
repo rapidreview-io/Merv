@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { ConnectConsent } from './connect';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { readOnly } from './api';
 import { SessionProvider, useSession } from './session';
@@ -127,10 +128,11 @@ function Workspace() {
 export function App() {
   const { pathname } = useLocation();
   // The platform admin is an account-wide app of its own; its drill-in is this Workspace.
+  const connect = /^\/connect\/([A-Za-z0-9_-]{43})$/.exec(pathname);
   const admin = !readOnly() && /^\/admin(\/|$)/.test(pathname);
   return (
-    <SessionProvider key={admin ? 'admin' : 'member'} accountOnly={admin}>
-      {admin ? <AdminApp /> : <Workspace />}
+    <SessionProvider key={admin ? 'admin' : 'member'} accountOnly={admin} preservePath={!!connect}>
+      {admin ? <AdminApp /> : connect ? <ConnectConsent requestId={connect[1]!} /> : <Workspace />}
     </SessionProvider>
   );
 }

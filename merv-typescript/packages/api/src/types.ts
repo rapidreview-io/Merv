@@ -195,6 +195,11 @@ export interface ApiCredential {
 
 export interface Api {
   readonly url?: string;
+  /** Remote MCP OAuth only; never grants browser/account administration. */
+  oauth(provider: {
+    metadataUrl: string;
+    authenticate(token: string): Promise<Principal>;
+  }): () => void;
   stop(): Promise<void>;
   /** Serves one lowercase path segment (409 when taken). Until it is mounted, and once its
    *  disposer withdraws it, a credential's request to it answers 503. */

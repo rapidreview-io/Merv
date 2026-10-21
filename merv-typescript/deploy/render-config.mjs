@@ -112,49 +112,31 @@ set('secrets', {
   huggingFaceEndpoint: `${origin('MERV_TS_PUBLIC_ORIGIN')}/hf`,
 });
 const projectInvitations = optIn('MERV_PROJECT_INVITATIONS');
-// Agent sign-in by emailed code (/connect). It needs the directory's admin API, so the service key
-// must be a service-role key: identity refuses to boot otherwise. Off until a staging check passes.
-const agentLogin = optIn('MERV_AGENT_LOGIN');
-// The name each client registers is per deployment, never defaulted, so staging's connector
-// cannot take production's "merv" registration over: `merv` on production, `merv-staging` on staging.
-const connectorName = agentLogin ? required('MERV_CONNECTOR_NAME') : undefined;
-if (agentLogin && !/^[a-z][a-z0-9-]{0,31}$/.test(connectorName))
-  throw new Error('Invalid MERV_CONNECTOR_NAME');
-// Loopback only unless named: production adds the Docker bridge gateway its host Caddy reaches the
-// published port from (172.18.0.1/32), never a whole range another container could send from.
-const trustedProxies = (process.env.MERV_TRUSTED_PROXIES ?? '127.0.0.1/32,::1/128')
-  .split(',')
-  .map((range) => range.trim());
-if (projectInvitations || agentLogin) {
-  required('SUPABASE_SERVICE_KEY');
-  const resendKeyEnv = process.env.MERV_INVITATION_RESEND_KEY_ENV
+if (optIn('MERV_AGENT_LOGIN'))
+  throw new Error(
+    'MERV_AGENT_LOGIN is retired. Follow CLIENT_CUTOVER.md and explicitly enable MERV_MCP_OAUTH after validation.',
+  );
+const mcpOAuth = optIn('MERV_MCP_OAUTH');
+if (projectInvitations) required('SUPABASE_SERVICE_KEY');
+const scopeApi = {};
+if (projectInvitations) {
+  const key = process.env.MERV_INVITATION_RESEND_KEY_ENV
     ? envName('MERV_INVITATION_RESEND_KEY_ENV')
     : 'RESEND_API_KEY';
-  required(resendKeyEnv);
-  const mail = (fromEnv, from) => ({
-    apiKeyEnv: resendKeyEnv,
-    from: process.env[fromEnv]?.trim() || from,
+  required(key);
+  scopeApi.invitations = {
+    apiKeyEnv: key,
+    from: process.env.MERV_INVITATION_FROM?.trim() || 'Merv <invites@rapidreview.io>',
     publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
-  });
-  set('scope-api', {
-    ...(projectInvitations && {
-      invitations: mail('MERV_INVITATION_FROM', 'Merv <invites@rapidreview.io>'),
-    }),
-    ...(agentLogin && {
-      agentLogin: {
-        ...mail('MERV_AGENT_LOGIN_FROM', 'Merv <login@rapidreview.io>'),
-        serverName: connectorName,
-        trustedProxies,
-      },
-    }),
-  });
+  };
 }
+if (mcpOAuth) scopeApi.oauth = { publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN') };
+if (projectInvitations || mcpOAuth) set('scope-api', scopeApi);
 set('identity', {
   supabaseUrl: origin('SUPABASE_URL'),
   mode,
   publishableKeyEnv: 'SUPABASE_ANON_KEY',
-  ...(projectInvitations || agentLogin ? { directoryKeyEnv: 'SUPABASE_SERVICE_KEY' } : {}),
-  ...(agentLogin ? { directoryAdmin: true } : {}),
+  ...(projectInvitations ? { directoryKeyEnv: 'SUPABASE_SERVICE_KEY' } : {}),
   ...(mode === 'hs256' ? { secretEnv: 'SUPABASE_JWT_SECRET' } : {}),
 });
 set('api', {

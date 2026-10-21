@@ -1,34 +1,39 @@
 # Merv client plugins
 
-Tell your agent: _Connect to Merv using https://experiments.rapidreview.io/connect_
-(or your server's `/connect` URL). The agent installs the connector, asks for your
-Merv email, then asks you to read back the emailed 8-digit code. Match the request
-words in the email to the sign-in the agent started. Restart the client once when
-installation asks. Sign-in needs no browser and no API key pasted into chat.
+Tell your agent to read **https://experiments.rapidreview.io/connect/agent.md**.
+The guide downloads an ordinary plugin package, installs it in Codex or Claude
+Code, and starts the client's browser sign-in. No local connector runs. The
+connection and credentials belong to the client and persist across chats.
 
-The connector registers one `merv` MCP server for Claude Code, Codex and Cursor.
-It stores one account key per machine, shared across the clients and projects on
-that server. The agent calls `project.read` with `{"action":"list","list":{}}`,
-then passes the selected `projectId` on subsequent calls. Keys expire after at most
-90 days and can be revoked in Settings → Keys. Do not read or print the key store.
+The 0.5.0 bundles combine remote MCP and three concise skills. Codex uses portable
+`plugin.json` + `mcp.json`; Claude Code uses `.claude-plugin/plugin.json` +
+`.mcp.json`. The server publishes the same files at `/connect/bundle.tar.gz` and
+`/connect/bundle.json`, stamping its origin and a distinct marketplace/plugin name
+for nonproduction hosts. Installing Merv does not preapprove every tool.
 
-Installation pre-approves Merv's tools: Codex's Merv server entry gets
-`default_tools_approval_mode = "approve"`; Claude Code's `permissions.allow` gains
-`mcp__merv`. Server-side role and workflow checks still apply. `merv-connect uninstall`
-removes the connector's registrations and approval entries, preserving unrelated
-settings and permissions. Staging uses its own server name and permission.
+From a checkout, add `clients/` as a local marketplace, then install `merv@merv`:
 
-These optional plugins add three skills: research, operations and acting for the
-person. They do not register another MCP server. Disable the old Python-backend
-plugin and its skills before using them.
+- Codex: `codex plugin marketplace add /absolute/path/to/clients`, then
+  `codex plugin add merv@merv` where supported, or install through desktop Plugins.
+- Claude Code: `claude plugin marketplace add /absolute/path/to/clients`, then
+  `claude plugin install merv@merv --scope user`. Authenticate from `/mcp`.
 
-- **Claude Code:** `claude plugin marketplace add ./clients` and
-  `claude plugin install merv@merv` (or `claude --plugin-dir clients/claude-code`).
-- **Codex:** `codex plugin marketplace add ./clients` and `codex plugin add merv@merv`.
+Use one bundled or direct MCP connection per origin. If Merv is already connected,
+reuse it. Older client versions without portable plugin support need updating or
+the documented direct remote MCP fallback; that fallback alone has no skills.
 
-Machines, CI and VMs may use keys from Settings → Keys; see
-[connection details](../merv-typescript/deploy/CLIENT_CUTOVER.md).
+Sign in or create an account through the browser's normal identity flow (Google
+sign-in can create an account when enabled). Create/join a project on the website,
+select it, and approve the connection. Neither account creation nor repository
+setup is a job for the agent. Research tools work without Git.
 
-`manifest.json` is the source of truth for the bundles. Edit a skill in
-`claude-code/skills/` and copy it to `codex/skills/`.
-`merv-typescript/tests/client-bundles.test.ts` checks that they match and name listed tools.
+In a fresh chat, “use Merv” loads the skills; the agent lists projects and reads
+the selected project's brief and workflow status. If needed, reconnect through
+the client's sign-in action. Never put a token in chat or plugin files.
+
+See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and
+[validation evidence](../merv-typescript/docs/MCP_OAUTH_VALIDATION.md).
+
+Edit skills in `claude-code/skills/` and copy to `codex/skills/`. After editing any
+bundle file, run `npm run build:clients` in `merv-typescript/`. The generated
+server-side bundle is checked against the originals in the bundle tests.

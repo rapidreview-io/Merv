@@ -62,6 +62,13 @@ export function serveBundle(root: string): MountHandler {
     const headers = {
       'content-type': type,
       'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+      ...(url.pathname.startsWith('/ui/connect/')
+        ? {
+            'content-security-policy': "frame-ancestors 'none'",
+            'x-frame-options': 'DENY',
+            'referrer-policy': 'no-referrer',
+          }
+        : {}),
     };
     const encoding = String(req.headers['accept-encoding'] ?? '')
       .split(',')

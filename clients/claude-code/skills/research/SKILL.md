@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do research in a Merv project. Orient with project.read brief and workflow.read status, then create experiments, attach plans and evidence, move them through independent review, and keep files as artifacts. Use for experiment, task, review or file work in Merv.
+description: Use Merv when the user says “use Merv” or asks to work in a Merv project. Do research in a Merv project. Orient with project.read brief and workflow.read status, then create experiments, attach plans and evidence, move them through independent review, and keep files as artifacts. Use for experiment, task, review or file work in Merv.
 ---
 
 # Research in Merv
@@ -15,12 +15,11 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
 
 ## Orient first
 
-0. Connect through the server’s `/connect` installer if Merv is not installed.
-   `project.read` (list) when no project is chosen yet: the projects you can work in, with your role in
-   each. Pass the chosen project's id as `projectId` on every call. If any Merv tool says _not
-   signed in_, ask the person for the email they use for Merv and call `connector.login` with
-   it, then call it again with the emailed 8-digit code they read back. Match the email’s
-   request words to this sign-in. Never request or read an API key.
+0. Use the saved Merv remote MCP connection. If it is absent, follow the server's
+   `/connect/agent.md` guide once. If authentication is required, use the client's browser
+   sign-in action. Never ask for credentials or email codes. Call `project.list` or
+   `project.read` (list), select the intended project and pass `projectId` on every call.
+   Ask which project only when ambiguous. Git is optional; do not require a repository.
 1. `project.read` (brief): your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on

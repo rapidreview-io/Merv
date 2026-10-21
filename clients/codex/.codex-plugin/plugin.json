@@ -1,8 +1,10 @@
 {
   "name": "merv",
-  "version": "0.4.1",
-  "description": "Merv for your own agent: a research project's paper, experiments, tasks, reviews, files and machines. Skills on top of Merv's connector, which /connect installs.",
-  "author": { "name": "RapidReview" },
+  "version": "0.5.0",
+  "description": "Use Merv for research projects: experiments, tasks, papers, artifacts, reviews and status through remote MCP with browser sign-in.",
+  "author": {
+    "name": "RapidReview"
+  },
   "keywords": ["research", "ml", "mcp", "experiments"],
   "skills": "./skills/",
   "interface": {
@@ -13,5 +15,6 @@
     "defaultPrompt": [
       "Use Merv. Start with project.read brief, then workflow.read status."
     ]
-  }
+  },
+  "mcpServers": "./.mcp.json"
 }

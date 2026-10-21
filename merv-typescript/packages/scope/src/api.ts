@@ -1,15 +1,6 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isIP, isIPv4, type BlockList } from 'node:net';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import {
-  check,
-  MervError,
-  pathSegment,
-  ROLES,
-  type AgentLoginDirectory,
-  type Scope,
-} from '@merv/contracts';
+import { check, MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 import { projectSelection, unknownEndpoint, validated } from '@merv/api/errors';
 import type { IdentityProvider } from '@merv/identity/types';
@@ -18,21 +9,10 @@ import {
   ResendInvitationSender,
   type InvitationSender,
 } from './invitation-email.js';
-import {
-  addressBucket,
-  Admission,
-  agentLoginSchema,
-  canonicalIp,
-  codeMail,
-  connectAssets,
-  Deliveries,
-  noticeMail,
-  proxyList,
-  startInput,
-  verifyInput,
-  type AgentLoginConfig,
-} from './connect.js';
-import { ResendMailer, type Mail } from './mail.js';
+import { OAuth, oauthConfig } from './oauth.js';
+import { oauthRoutes } from './oauth-api.js';
+import { setupRoutes } from './setup.js';
+import type { ProjectScope } from './index.js';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -264,133 +244,15 @@ export function scopeRoutes(
   };
 }
 
-const LOOPBACK = proxyList(['127.0.0.1/32', '::1/128']);
-/** The client's address: the rightmost X-Forwarded-For entry, but only from a trusted proxy. */
-export function clientIp(req: IncomingMessage, proxies: BlockList = LOOPBACK): string | null {
-  const remote = req.socket.remoteAddress;
-  if (!remote) return null;
-  const address = canonicalIp(remote);
-  const trusted = proxies.check(address, isIPv4(address) ? 'ipv4' : 'ipv6');
-  const forwarded = req.headers['x-forwarded-for'];
-  const last = (Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? ''))
-    .split(',')
-    .map((entry) => entry.trim())
-    .at(-1);
-  return trusted && last && isIP(last) ? canonicalIp(last) : address;
-}
-
-function reply(res: ServerResponse, status: number, type: string, body: string): void {
-  res.writeHead(status, {
-    'content-type': type,
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
-  res.end(body);
-}
-
-/**
- * `/connect`, public: the page an agent reads, the installer, the connector, and the two sign-in
- * calls. A code is mailed in the background after the reply, so a start answers the same for
- * every address; drain() waits for the mail in flight.
- */
-export function connectRoutes(
-  scope: Scope,
-  {
-    config: input,
-    directory,
-    mailer,
-    clock = Date.now,
-  }: {
-    config: AgentLoginConfig;
-    directory: AgentLoginDirectory;
-    mailer: { send(mail: Mail): Promise<void> };
-    clock?: () => number;
-  },
-): { handler: MountHandler; drain(): Promise<void> } {
-  const config = agentLoginSchema.parse(input);
-  const { limits } = config;
-  const storeLimits = { ...limits, keyDays: config.keyDays, retentionDays: config.retentionDays };
-  const { origin, page, installer, connector } = connectAssets(config);
-  const deliveries = new Deliveries(limits.queueConcurrency, limits.queueWaiting, clock);
-  const proxies = proxyList(config.trustedProxies);
-  const verifies = new Admission(limits.verifyPerIpMinute, limits.verifyPerNetworkMinute, clock);
-  const handler: MountHandler = async (req, res, r) => {
-    const path = r.url.pathname;
-    if (req.method === 'GET' && path === '/connect')
-      return reply(res, 200, 'text/plain; charset=utf-8', page);
-    if (req.method === 'GET' && path === '/connect/install.sh')
-      return reply(res, 200, 'text/plain; charset=utf-8', installer);
-    if (req.method === 'GET' && path === '/connect/merv-connect.mjs')
-      return reply(res, 200, 'text/javascript; charset=utf-8', connector);
-    const verifyRoute = /^\/connect\/login\/([^/]{1,80})\/verify$/.exec(path);
-    if (req.method !== 'POST' || (path !== '/connect/login' && !verifyRoute))
-      throw unknownEndpoint();
-    // An IPv6 client counts by its /64 and by its /48; an IPv4 one by its address.
-    const address = clientIp(req, proxies);
-    try {
-      if (!verifyRoute) {
-        const body = await r.json(startInput, 4096);
-        const login = await scope.agentLogins.start(
-          {
-            ...body,
-            ip: address && addressBucket(address),
-            network: address && addressBucket(address, 48),
-          },
-          storeLimits,
-        );
-        deliveries.push(Date.parse(login.expiresAt), () =>
-          scope.agentLogins.deliver(login, body.email, storeLimits, directory, (mail) =>
-            mailer.send(codeMail(mail, origin)),
-          ),
-        );
-        const { loginId, phrase, expiresAt } = login;
-        return reply(
-          res,
-          202,
-          'application/json; charset=utf-8',
-          JSON.stringify({ loginId, phrase, expiresAt, retryAfterSeconds: 60 }),
-        );
-      }
-      // Before the body is read or the store is asked: an unknown id costs this and one lookup.
-      verifies.admit(address);
-      const { code, verifier } = await r.json(verifyInput, 4096);
-      const digits = code.replace(/[\s-]/g, '');
-      const issued = await scope.agentLogins.verify(
-        verifyRoute[1]!,
-        { code: /^\d{8}$/.test(digits) ? digits : '', verifier },
-        storeLimits,
-        directory,
-        (notice) => mailer.send(noticeMail(notice, origin)),
-      );
-      return {
-        ...issued,
-        projects: issued.projects.map(({ id, name, role }) => ({ id, name, role })),
-      };
-    } catch (error) {
-      const wait = error instanceof MervError && error.status === 429 && error.details;
-      if (wait)
-        res.setHeader(
-          'retry-after',
-          String((wait as { retryAfterSeconds: number }).retryAfterSeconds),
-        );
-      throw error;
-    }
-  };
-  return { handler, drain: () => deliveries.drain() };
-}
-
 const Config = z
-  .object({
-    invitations: invitationEmailSchema.optional(),
-    agentLogin: agentLoginSchema.optional(),
-  })
+  .object({ invitations: invitationEmailSchema.optional(), oauth: oauthConfig.optional() })
   .strict()
   .default({});
 export const scopeApiPlugin = {
   name: 'merv-scope-api',
   Config,
-  inject: ['scope', 'api', 'identity'],
-  apply(ctx: Context, config: z.infer<typeof Config>) {
+  inject: ['scope', 'api', 'identity', 'state'],
+  async apply(ctx: Context, config: z.infer<typeof Config>) {
     const routes = scopeRoutes(
       ctx.scope,
       config.invitations
@@ -399,26 +261,26 @@ export const scopeApiPlugin = {
     );
     ctx.effect(() => ctx.api.mount('/account', routes));
     ctx.effect(() => ctx.api.mount('/projects', routes));
-    const login = config.agentLogin;
-    if (login) {
-      const { findUserByEmail, directoryUser } = ctx.identity;
-      // Eligibility needs the directory's admin record: without it, agent sign-in stays off.
-      if (!findUserByEmail || !directoryUser)
+    if (config.oauth) {
+      const identity = ctx.identity.configuration();
+      if (!identity.enabled || !identity.login)
         throw new MervError(
-          'agent_login_unavailable',
-          'Agent sign-in needs identity.directoryAdmin with a service-role directory key',
+          'oauth_identity_unavailable',
+          'OAuth requires configured browser account sign-in',
           503,
         );
-      const connect = connectRoutes(ctx.scope, {
-        config: login,
-        directory: {
-          find: (email) => findUserByEmail.call(ctx.identity, email),
-          user: (subject) => directoryUser.call(ctx.identity, subject),
-        },
-        mailer: new ResendMailer(login.apiKeyEnv, login.from),
-      });
-      ctx.effect(() => ctx.api.mount('/connect', connect.handler, { public: true }));
-      ctx.effect(() => () => connect.drain());
+      const oauth = new OAuth(ctx.state, ctx.scope as ProjectScope, config.oauth.publicOrigin);
+      await oauth.initialize();
+      const handler = oauthRoutes(oauth, ctx.identity);
+      ctx.effect(() => ctx.api.mount('/oauth', handler, { public: true }));
+      ctx.effect(() => ctx.api.mount('/.well-known', handler, { public: true }));
+      ctx.effect(() =>
+        ctx.api.oauth({
+          metadataUrl: `${oauth.origin}/.well-known/oauth-protected-resource/mcp`,
+          authenticate: (token) => oauth.authenticate(token),
+        }),
+      );
+      ctx.effect(() => ctx.api.mount('/connect', setupRoutes(oauth.origin), { public: true }));
     }
   },
 };
