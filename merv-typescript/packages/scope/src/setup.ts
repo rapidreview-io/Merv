@@ -28,7 +28,11 @@ Preserve unrelated configuration; the bundle contains only manifests, metadata a
 Run: codex plugin marketplace add MARKETPLACE
 On versions offering it, run: codex plugin add ${name}@${name}
 Otherwise install Merv from that marketplace in the desktop Plugins directory.
-Connect/sign in from the plugin's connection UI. Complete the browser authorization.
+After installing, run: codex mcp login ${name}
+This native terminal command authenticates the plugin-bundled server; do not run mcp add.
+Open the authorization URL shown by Codex in your browser and complete sign-in and consent.
+Keep the command running until Codex confirms login. No desktop app or local auth helper is needed.
+This bundled login command was verified with Codex CLI 0.155.0-alpha.2.
 The package uses Codex's supported compatibility manifest and remote MCP bundle.
 A direct remote connection is also supported: codex mcp add ${name} --url ${origin}/mcp, then codex mcp login ${name}.
 Choose that route instead of the bundled connection, not alongside it. Direct registration
@@ -111,7 +115,8 @@ export function setupRoutes(origin: string): MountHandler {
 <p><strong>Let your agent set it up:</strong> ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>.</p>
 <h2>1. Get the plugin</h2><p><a href="/connect/bundle.tar.gz">Download the Merv plugin package</a> and extract it into a permanent folder you own. Use that folder's absolute path as <code>MARKETPLACE</code> below.</p><p>If Merv already connects to this server, reuse that connection. Before replacing an older installation, follow the <a href="/connect/agent.md">migration instructions</a> to preserve unrelated settings.</p>
 <h2>2. Install in your client</h2><h3>Codex</h3><pre>codex plugin marketplace add MARKETPLACE
-codex plugin add ${name}@${name}</pre><p>If your version has no plugin install command, install Merv from the added marketplace in desktop Plugins. Use the plugin's Connect action to sign in.</p>
+codex plugin add ${name}@${name}
+codex mcp login ${name}</pre><p>The login command authenticates the installed plugin's server. Open the URL it displays, complete browser sign-in and consent, and wait for login confirmation. No desktop app is needed. If your version has no plugin install command, use desktop Plugins or the direct-connection alternative in the full guide.</p>
 <h3>Claude Code</h3><pre>claude plugin marketplace add MARKETPLACE
 claude plugin install ${name}@${name} --scope user</pre><p>Open <code>/mcp</code>, select Merv and authenticate. Reload plugins or restart only if your client requires it.</p>
 <h2>3. Sign in and select a project</h2><p>Complete Merv's browser sign-in. A new account must create a project or accept an invitation on the website before authorizing the connection. Review the client and callback address, select your project, and authorize. Your agent keeps your current permissions.</p>

@@ -122,8 +122,9 @@ This opt-in harness makes paid model calls. It privately copies existing Codex
 model authentication into a temporary directory and reads Claude model OAuth
 from macOS Keychain into child-process memory. It never prints these credentials.
 Merv consent remains synthetic; native clients perform DCR, PKCE and token storage.
-Codex uses its native app-server OAuth interface; its fixture is test-only and is
-not shipped in the plugin. Configuration directories are removed afterward.
+The four model sessions originally used native app-server OAuth for Codex. A
+separate follow-up verified ordinary terminal login for the installed bundle,
+and the harness now uses that command. Configuration directories are removed afterward.
 
 Both Codex 0.155.0-alpha.2 and desktop 0.163.0-alpha.10.2 silently omitted bundled
 MCP when root portable manifests shadowed the compatibility manifest. The bundle
@@ -134,6 +135,34 @@ names and marketplace names all receive the same origin-specific suffix.
 Follow-up security checks cover authorization-code replay revocation (only after
 validating the original client, resource, callback and PKCE proof), stripping
 client-supplied registration response fields, and bounded public-route admission.
+
+## Terminal-only bundled sign-in follow-up
+
+On the same installed CLI versions, an isolated plugin install followed by
+`codex mcp login <bundled-server-name>` completed native DCR, PKCE, callback and
+credential saving with exit code 0. No `mcp add`, desktop app, app-server helper,
+model credentials or model call was involved. Claude also passed native
+`claude mcp login plugin:<name>:<name> --no-browser` with exit code 0.
+For production the Codex command is `codex mcp login merv`; the served guide
+stamps the origin-specific server name for other deployments.
+
+Reproduce the native login checks without using model credentials or paid calls:
+
+```sh
+MERV_TEST_POSTGRES_URL=postgres://postgres:oauth-local-test@127.0.0.1:55441/postgres \
+  node --import tsx scripts/oauth-plugin-model-smoke.ts --login-only
+```
+
+The test-only app-server authentication fixture has been removed. This verifies
+the terminal command, not the complete URL-only human onboarding experience:
+consent is still supplied by the synthetic test person. In production, keep the
+native command running, open its authorization URL, sign in/create an account,
+create/join and select a project, review and approve consent, and wait for the
+client's success message. Then perform the production reads and fresh-chat check.
+
+Official documentation supports [native MCP OAuth login](https://developers.openai.com/codex/mcp).
+The installed binary test establishes that the command also resolves this bundle.
+No interactive `/plugins` or `/mcp` terminal sign-in path is claimed here.
 
 ## Required combined-release acceptance
 
