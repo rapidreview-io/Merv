@@ -1,0 +1,45 @@
+{
+  "implementationCommit": "ab7887ac066ea535a0d60efd984e3c2a93a6f581",
+  "parentBase": "080dc36c5a28ee09bb3939b17711d651ee4aea79",
+  "scope": "local preparation only; no live acceptance",
+  "tests": {
+    "deploy": {
+      "passed": 140,
+      "failed": 0
+    },
+    "isolationPostgres": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "pythonRecovery": {
+      "passed": 10,
+      "failed": 0
+    }
+  },
+  "runtimePreflight": {
+    "image": "sha256:faf3307584ae474f3be6c832c07fca17f3c7d36d9c79597fdbad3823ec72593d",
+    "base": "merv-client-release:a8a0ddf12",
+    "network": "none",
+    "hostMounts": false,
+    "fullForwardMainImage": false
+  },
+  "logs": [
+    {
+      "path": "/tmp/merv-staging-preparation-supported-deploy-final.log",
+      "sha256": "95ff5623ca048d849acf55eef1862b168c9b6f3bd36ec1eaeb31ce0a4f6858ae"
+    },
+    {
+      "path": "/tmp/merv-staging-isolation-tests-final.log",
+      "sha256": "1c62db9cbb8d4546d85c0be588f98addb4b7457843c53a022d1291fffe026f84"
+    },
+    {
+      "path": "/tmp/merv-staging-runtime-build-final.log",
+      "sha256": "a281285eafd88eb4d282d2e519997a0211413a4451d0db24514dc1e900fbe286"
+    },
+    {
+      "path": "/tmp/merv-staging-runtime-final.log",
+      "sha256": "a4cc7b6a79c38cac828bde8a297f57a3423a2c72a9c36198e3e09a54b938cd37"
+    }
+  ]
+}
