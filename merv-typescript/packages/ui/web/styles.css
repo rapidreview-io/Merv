@@ -3229,22 +3229,25 @@ pre.math--source {
 .hub-needs .ov-body {
   gap: 0;
 }
-/* The name is the way to the record and says so: the accent, an arrow after it, and the
-   whole row lifts under the pointer. */
+/* The name is the way to the record: plain and quiet, an arrow after it, and the row lifts
+   and the name takes the accent only under the pointer. */
 .hub-needs .ov-name {
   padding-block: 0;
   margin-block: 0;
-  color: var(--active);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
 }
 .hub-needs .ov-name::after {
   content: ' \2192';
   font-weight: 400;
+  color: var(--ghost);
 }
 .hub-needs .ov-list > li:hover {
   background: var(--bg-soft);
 }
-.hub-needs .ov-name:hover {
-  text-decoration: underline;
+.hub-needs .ov-list > li:hover .ov-name {
+  color: var(--active);
 }
 .hub-needs .ov-say,
 .hub-needs .ov-meta,

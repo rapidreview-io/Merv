@@ -95,7 +95,8 @@ export function BackLink({ home, label }: { home: string; label: string }) {
   };
   return previous ? (
     <Link className="back-link" to={previous.path} onClick={back} title={previous.title}>
-      ← {previous.title || label}
+      {/* Home titles the tab with the project's name, but is Home to whoever left it. */}←{' '}
+      {previous.path === '/' ? 'Home' : previous.title || label}
     </Link>
   ) : (
     <Link className="back-link" to={home}>

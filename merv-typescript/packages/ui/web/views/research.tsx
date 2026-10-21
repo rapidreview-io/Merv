@@ -7,6 +7,7 @@ import { homeOf, pathOf } from '../navigation';
 import { Gate, Relations, StageMark, useRecordRead } from '../process';
 import type { ViewProps } from './index';
 import { CycleMove } from './work';
+import { BackLink } from '../trail';
 
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
@@ -29,7 +30,7 @@ function CycleDetail({ row, shell }: ViewProps) {
   ];
   return (
     <RecordPage
-      back={<Link to={back.to}>← {back.label}</Link>}
+      back={<BackLink home={back.to} label={back.label} />}
       kind={row.view.kind}
       name={record.name}
       state={<StageMark graph={process} shapes={shell.workflows} workflow={record.workflow} />}

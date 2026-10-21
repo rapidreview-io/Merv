@@ -22,6 +22,7 @@ import { ArtifactBody } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
+import { BackLink } from '../trail';
 
 export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
   const [title, setTitle] = useState('');
@@ -99,7 +100,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   };
   return (
     <RecordPage
-      back={<Link to={homeOf(shell.rows).to}>← {homeOf(shell.rows).label}</Link>}
+      back={<BackLink home={homeOf(shell.rows).to} label={homeOf(shell.rows).label} />}
       kind={row.view.kind}
       name={wave.title}
       state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}

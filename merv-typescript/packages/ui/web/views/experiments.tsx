@@ -27,6 +27,7 @@ import { type Review } from './reviews';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 import type { CodeUnit } from '@merv/code-work/models';
+import { BackLink } from '../trail';
 
 const STAGE = { design: 'Design review', results: 'Results review' };
 
@@ -136,7 +137,7 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   const thread = historyEntries(record.data.history ?? [], nameOf);
   return (
     <RecordPage
-      back={<Link to={back.to}>← {back.label}</Link>}
+      back={<BackLink home={back.to} label={back.label} />}
       kind="experiments"
       name={e.name}
       state={<StageMark graph={process} workflow={e.workflow} />}

@@ -31,6 +31,7 @@ import {
   assessmentProblem,
   synopsisProblem,
 } from '@merv/reviews/rules';
+import { BackLink } from '../trail';
 
 /** review.submit enumerates exactly these finding words. */
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
@@ -307,7 +308,7 @@ function ReviewRecord({ id }: { id: string }) {
   const reviewer = nameOf(r.reviewerId);
   return (
     <RecordPage
-      back={<Link to={homeOf(rows).to}>← {homeOf(rows).label}</Link>}
+      back={<BackLink home={homeOf(rows).to} label={homeOf(rows).label} />}
       kind="reviews"
       // A review is named by what it judged, and the name is the way back to it.
       name={subject?.to ? <Link to={subject.to}>{subject.name}</Link> : (subject?.name ?? 'Review')}

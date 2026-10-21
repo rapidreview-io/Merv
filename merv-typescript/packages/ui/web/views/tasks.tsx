@@ -13,6 +13,7 @@ import type { ProcessGraph } from '@merv/workflows/models';
 import type { RunningUnitEntry } from '@merv/contracts/running';
 import type { Task } from '@merv/tasks/models';
 import type { CodeUnit } from '@merv/code-work/models';
+import { BackLink } from '../trail';
 
 /**
  * The page's one section. A check is stated once, in its row, with everything said
@@ -88,7 +89,7 @@ function TaskDetail({ row, shell }: ViewProps) {
   const thread = historyEntries(record.data?.history ?? [], nameOf);
   return (
     <RecordPage
-      back={<Link to={back.to}>← {back.label}</Link>}
+      back={<BackLink home={back.to} label={back.label} />}
       kind={row.view.kind}
       name={t.title}
       standing={t.goal}
