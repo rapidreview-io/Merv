@@ -1,0 +1,33 @@
+{
+  "base": "056b1689106b674d4b98a4d281049800c00710f1",
+  "scope": "Native jobs synthetic principal traversal only; no generic missing-token exception, no live operations.",
+  "pinnedContract": [
+    "packages/jobs/src/executor.ts jobsPrincipal uses jobs:<job_id>",
+    "packages/jobs/src/ssh-executor/ssh-executor.ts issues user certificate for launch sandbox",
+    "packages/access/src/service.ts binds key ID to namespace/token and principals to sbx:sandbox",
+    "packages/kernel/src/ids.ts job ID alphabet and accepted 8-32 character body"
+  ],
+  "behavior": "Preserve exact certificate fields, validate user kind/key ID/SSH principal and referenced terminal job namespace+sandbox, then follow job closure on export. Import revalidates the same contract. All other token strings retain strict traversal. Missing-certificate manifest policy unchanged.",
+  "tests": {
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "serverDefault": "America/Los_Angeles",
+    "coverage": [
+      "Valid native job principal and certificate-root traversal into job closure",
+      "Malformed or missing synthetic jobs reject",
+      "Nonterminal, cross-namespace (including both namespaces approved), cross-sandbox jobs reject",
+      "Incorrect certificate key ID and SSH sandbox principal reject",
+      "Import independently rejects missing/nonterminal/mismatched job closure",
+      "Genuine missing API token and arbitrary prefix reject",
+      "Active real API token still rejects",
+      "Exact certificate roundtrip, idempotent import and SQL text dump/restore pass",
+      "Existing orphan-session manifest, numeric precision and timezone regressions pass"
+    ]
+  },
+  "log": {
+    "path": "/tmp/merv-job-principal-suite.log",
+    "sha256": "0b593e818065214e48d60325aa303d34324a13656ff4278ac742d8ef1da10203"
+  },
+  "next": "Parent independent review and fresh read-only source export before image/import."
+}

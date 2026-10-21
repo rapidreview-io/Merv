@@ -185,6 +185,51 @@ const parents = {
   job_reader_progress: [['jobs', 'job_id', 'id']],
   sandbox_events: [['sandboxes', 'sandbox_id', 'id']],
 };
+// Native jobsPrincipal + SSH executor issue a sandbox-bound user certificate, not an API token.
+function jobPrincipalId(certificate) {
+  const token = certificate.token_id;
+  if (typeof token !== 'string' || !token.startsWith('jobs:')) return null;
+  const match = /^jobs:(job_[0-9a-z]{8,32})$/.exec(token);
+  need(match && match[0] === token, 'malformed native job principal');
+  need(
+    certificate.kind === 'user' &&
+      certificate.key_id === `${certificate.namespace}/${token}` &&
+      typeof certificate.sandbox_id === 'string' &&
+      certificate.sandbox_id.length > 0 &&
+      canonical(JSON.parse(certificate.principals_json)) ===
+        canonical([`sbx:${certificate.sandbox_id}`]),
+    'invalid native job certificate binding',
+  );
+  return match[1];
+}
+function validateJobPrincipal(meta, certificate, jobs, namespaces) {
+  need(
+    !meta.certificates.fk.some((f) => f.columns.includes('token_id')),
+    'native job principal cannot bypass declared token FK',
+  );
+  need(jobs.length === 1, 'missing or ambiguous native principal job');
+  const job = jobs[0];
+  safeRow('certificates', certificate, namespaces);
+  safeRow('jobs', job, namespaces);
+  need(
+    job.id === jobPrincipalId(certificate) &&
+      job.namespace === certificate.namespace &&
+      job.sandbox_id === certificate.sandbox_id,
+    'native job principal namespace or sandbox mismatch',
+  );
+}
+function validateJobPrincipals(bundle) {
+  for (const { original: certificate } of bundle.rows.certificates ?? []) {
+    const jobId = jobPrincipalId(certificate);
+    if (jobId !== null)
+      validateJobPrincipal(
+        bundle.schema,
+        certificate,
+        (bundle.rows.jobs ?? []).filter((r) => r.original.id === jobId).map((r) => r.original),
+        bundle.selection.namespaces,
+      );
+  }
+}
 // The only permitted missing logical parent is an observed, pre-existing closed-session
 // certificate reference. Declared foreign keys always retain their normal closure rules.
 function missingCertificateRecord(meta, session, namespaces) {
@@ -274,6 +319,15 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       }
       for (const [target, col, dest] of parents[table] ?? []) {
         if (original[col] == null) continue;
+        if (table === 'certificates' && col === 'token_id') {
+          const jobId = jobPrincipalId(original);
+          if (jobId !== null) {
+            const jobs = await select(db, 'jobs', { id: jobId }, meta.jobs);
+            validateJobPrincipal(meta, original, jobs, selection.namespaces);
+            queue.push({ table: 'jobs', key: { id: jobId } });
+            continue;
+          }
+        }
         if (table === 'sessions' && col === 'certificate_serial') {
           const targets = await select(db, target, { [dest]: original[col] }, meta[target]);
           need(targets.length <= 1, 'ambiguous certificate reference');
@@ -414,6 +468,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       files,
       dataFiles,
     };
+    validateJobPrincipals(body);
     validateMissingReferences(body);
     validateOutputFiles(body, blobDir);
     await db.query('ROLLBACK');
@@ -572,6 +627,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
   );
   need(canonical(expectedIdentity) !== canonical(bundle.source), 'source and destination coincide');
   need(canonical(await schema(db)) === canonical(bundle.schema), 'schema drift');
+  validateJobPrincipals(bundle);
   const missingReferences = validateMissingReferences(bundle);
   for (const f of bundle.files) {
     const b = readFileSync(join(blobDir, f.sha256));

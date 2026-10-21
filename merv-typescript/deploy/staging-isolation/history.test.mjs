@@ -318,6 +318,19 @@ test(
           }
         }
       }
+      const principalJob = 'job_12345678';
+      await source.query(
+        "INSERT INTO jobs(id,namespace,sandbox_id,state,revision,command,request_json,epoch,attempts,run_after,created_at,updated_at) VALUES($1,$2,'stopped-one','succeeded',1,'echo history','{}','epoch',1,now(),now(),now())",
+        [principalJob, LEGACY],
+      );
+      await source.query(
+        'UPDATE certificates SET token_id=$1,key_id=$2,principals_json=$3 WHERE serial=42',
+        [
+          `jobs:${principalJob}`,
+          `${LEGACY}/jobs:${principalJob}`,
+          JSON.stringify(['sbx:stopped-one']),
+        ],
+      );
       for (const [path, bytes] of outputs) {
         mkdirSync(join(sourceData, path, '..'), { recursive: true });
         writeFileSync(join(sourceData, path), bytes);
@@ -485,6 +498,98 @@ test(
         ),
         /missing or ambiguous certificates reference/,
       );
+      const jobCertificate = bundle.rows.certificates.find((r) => r.key.serial === '42');
+      assert.equal(jobCertificate.original.token_id, `jobs:${principalJob}`);
+      assert.deepEqual(jobCertificate.value, jobCertificate.original);
+      assert.equal(
+        bundle.rows.jobs.find((r) => r.key.id === principalJob).value.state,
+        'succeeded',
+      );
+      assert.ok(!bundle.rows.api_tokens.some((r) => r.key.id === `jobs:${principalJob}`));
+      // Traversal from a certificate root must find its actual job, even without a job root.
+      const certificateRoot = await exportHistory(
+        source,
+        { ...selection, roots: [{ table: 'certificates', key: { serial: '42' } }] },
+        dir,
+      );
+      assert.ok(certificateRoot.rows.jobs.some((r) => r.key.id === principalJob));
+      for (const [token, pattern] of [
+        ['jobs:', /malformed native job principal/],
+        ['jobs:job_12345678:extra', /malformed native job principal/],
+        ['jobs:job_87654321', /missing or ambiguous native principal job/],
+        ['tok_missing00000000', /missing or ambiguous api_tokens reference/],
+        ['arbitrary:job_12345678', /missing or ambiguous api_tokens reference/],
+      ]) {
+        await source.query('UPDATE certificates SET token_id=$1,key_id=$2 WHERE serial=42', [
+          token,
+          `${LEGACY}/${token}`,
+        ]);
+        await assert.rejects(exportHistory(source, selection, dir), pattern);
+      }
+      await source.query('UPDATE certificates SET token_id=$1,key_id=$2 WHERE serial=42', [
+        `jobs:${principalJob}`,
+        `${LEGACY}/jobs:${principalJob}`,
+      ]);
+      for (const [field, value, pattern] of [
+        ['state', 'running', /unfinished job/],
+        ['namespace', 'customer', /unapproved namespace/],
+        ['sandbox_id', 'customer-one', /namespace or sandbox mismatch/],
+      ]) {
+        await source.query(`UPDATE jobs SET ${field}=$1 WHERE id=$2`, [value, principalJob]);
+        await assert.rejects(exportHistory(source, selection, dir), pattern);
+        await source.query(`UPDATE jobs SET ${field}=$1 WHERE id=$2`, [
+          { state: 'succeeded', namespace: LEGACY, sandbox_id: 'stopped-one' }[field],
+          principalJob,
+        ]);
+      }
+      await source.query('UPDATE jobs SET namespace=$1 WHERE id=$2', ['customer', principalJob]);
+      await assert.rejects(
+        exportHistory(source, { ...selection, namespaces: [LEGACY, 'customer'] }, dir),
+        /namespace or sandbox mismatch/,
+      );
+      await source.query('UPDATE jobs SET namespace=$1 WHERE id=$2', [LEGACY, principalJob]);
+      await source.query(
+        'UPDATE certificates SET principals_json=\'["sbx:customer-one"]\' WHERE serial=42',
+      );
+      await assert.rejects(
+        exportHistory(source, selection, dir),
+        /invalid native job certificate binding/,
+      );
+      await source.query('UPDATE certificates SET principals_json=$1 WHERE serial=42', [
+        jobCertificate.original.principals_json,
+      ]);
+      await source.query("UPDATE api_tokens SET revoked_at=NULL WHERE id='revoked'");
+      await assert.rejects(exportHistory(source, selection, dir), /active credential/);
+      await source.query("UPDATE api_tokens SET revoked_at=$1 WHERE id='revoked'", [
+        bundle.rows.api_tokens[0].original.revoked_at,
+      ]);
+      // Import independently enforces job closure and terminal identity binding.
+      for (const mutate of [
+        (b) => {
+          b.rows.jobs = b.rows.jobs.filter((r) => r.key.id !== principalJob);
+        },
+        (b) => {
+          b.rows.jobs.find((r) => r.key.id === principalJob).original.state = 'running';
+        },
+        (b) => {
+          b.rows.jobs.find((r) => r.key.id === principalJob).original.namespace = 'customer';
+        },
+        (b) => {
+          b.rows.jobs.find((r) => r.key.id === principalJob).original.sandbox_id = 'customer-one';
+        },
+        (b) => {
+          b.rows.certificates.find((r) => r.key.serial === '42').original.key_id = 'wrong';
+        },
+      ]) {
+        const altered = structuredClone(bundle);
+        mutate(altered);
+        const { sha256: ignored, ...body } = altered;
+        altered.sha256 = hash(body);
+        await assert.rejects(
+          importHistory(dest, altered, binding, dir, altered.sha256),
+          /native principal job|unfinished job|unapproved namespace|namespace or sandbox mismatch|invalid native job certificate/,
+        );
+      }
       assert.equal(bundle.rows.api_tokens[0].value.id, 'revoked');
       assert.equal(bundle.dataFiles.length, outputs.size);
       process.env.STAGING_HISTORY_DATA_DIR = targetData;

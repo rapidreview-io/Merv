@@ -342,3 +342,12 @@ extra or altered entries. It checks destination certificate absence under a tran
 lock and returns the manifest in its receipt, including on idempotent replay. Operators must
 independently compare this manifest with read-only source evidence and bind the fresh export
 digest before importing; a destination cannot independently reconstruct a past source absence.
+
+Native job certificate identities (`jobs:job_<id>`) follow the pinned jobs executor's identity
+contract, rather than an API-token lookup. Export and import require a sandbox-bound user
+certificate with the matching namespace/key ID and `sbx:<sandbox_id>` SSH principal, and exactly
+one terminal job in that same namespace and sandbox. The referenced job is included in closure;
+certificate fields stay unchanged. Malformed identities, missing/nonterminal jobs, binding
+mismatches and declared token FKs refuse. This handles only the evidenced jobs identity form;
+other token strings retain strict API-token traversal and active-token rejection. The closed
+session missing-certificate manifest is unchanged.
