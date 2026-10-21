@@ -4,7 +4,6 @@ import type {
   CodeCommandRecord,
   CodeCommitCommand,
   CodeCommitInput,
-  CodeProjectBinding,
   GitHubPullDetails,
   RunningMark,
   RunningNode,

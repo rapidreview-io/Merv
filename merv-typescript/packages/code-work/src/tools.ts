@@ -12,22 +12,16 @@ import {
   codeMirrorRetryInputSchema,
   codeRepositoryImportInputSchema,
   codeUnitFenceInputSchema,
-  type CodeRepositoryImportInput,
 } from '@merv/code/store/protocol';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { baseControlSchema, type CodeBaseControl } from './bases.js';
+import { baseControlSchema } from './bases.js';
 import { publicationControlSchema } from './publication-host.js';
 import { repositoryPrepareSchema } from './repository-setup.js';
 import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
 import { codePublicationIdSchema, codePublicationMergeSchema } from './publications.js';
-import type { CodePublicationMerge, CodeRepositoryConfigureInput } from './types.js';
-import type { CodeMirrorRetryInput, CodeUnitFenceInput } from './models.js';
 
-/**
- * What a worker does about a refusal of its checkout's own content. The runner reports only the
- * code, so the move names the limit and how to find what broke it.
- */
+/** Runner refusals carry only codes; explain limits and recovery without exposing content. */
 const REFUSALS: Record<string, string> = {
   workspace_file_too_large:
     'Code keeps no file over 50 MiB, and a new or changed file in the checkout that is not ignored is larger. List the large files with `find . -path ./.git -prune -o -type f -size +50M -print`; each one `git check-ignore` does not name must be ignored in .gitignore or removed (retain data you need with artifact.upload_begin). Then commit again with a new requestId.',
@@ -37,11 +31,7 @@ const REFUSALS: Record<string, string> = {
     'A new or changed path in the checkout lies under a symbolic link that leads outside it. Replace the link with the files themselves or remove it, then commit again with a new requestId.',
 };
 
-/**
- * A command as a worker reads it. Its workspace is the checkout as it was attached, which is
- * how its runner knows the command for its own; the head and stats there are that moment's,
- * not the checkout's now, so they are left out. The receipt carries the commit's own.
- */
+/** Omit stale attachment head/stats; the receipt carries the commit's own. */
 const attached = async (record: Promise<CodeCommandRecord>) => {
   const { command, ...rest } = await record;
   const { headOid: _head, stats: _stats, ...workspace } = command.workspace;
@@ -50,94 +40,77 @@ const attached = async (record: Promise<CodeCommandRecord>) => {
 };
 
 /** The fields a script relies on in each read, as passthrough objects: never validators. */
-const commandOutput = z
-  .object({
-    status: z.string(),
-    error: z.string().nullable(),
-    command: z.object({ id: z.string(), expectedHead: z.string() }).passthrough(),
-    receipt: z.object({}).passthrough().nullable(),
-  })
-  .passthrough();
+const output = (shape: z.ZodRawShape) => z.object(shape).passthrough();
+const commandOutput = output({
+  status: z.string(),
+  error: z.string().nullable(),
+  command: output({ id: z.string(), expectedHead: z.string() }),
+  receipt: output({}).nullable(),
+});
 const outputs = {
-  files: z
-    .object({
-      ref: z.string(),
-      commit: z.string(),
-      path: z.string(),
-      kind: z.enum(['folder', 'file']),
-      entries: z
-        .array(z.object({ name: z.string(), kind: z.string(), size: z.number().optional() }))
-        .optional(),
-      text: z.string().optional(),
-      withheld: z.enum(['too_large', 'binary']).optional(),
-    })
-    .passthrough(),
-  log: z
-    .object({
-      ref: z.string(),
-      commit: z.string(),
-      commits: z.array(
-        z
-          .object({
-            oid: z.string(),
-            parents: z.array(z.string()),
-            date: z.string(),
-            subject: z.string(),
-            unit: z.object({ id: z.string(), kind: z.string(), title: z.string() }).optional(),
-          })
-          .passthrough(),
-      ),
-    })
-    .passthrough(),
-  status: z
-    .object({
-      project: z.object({}).passthrough().nullable(),
-      bases: z.array(z.object({ key: z.string() }).passthrough()),
-      units: z.array(z.object({}).passthrough()),
-      blockers: z.array(z.object({}).passthrough()),
-      operations: z.array(z.object({}).passthrough()),
-      warnings: z.array(z.unknown()),
-    })
-    .passthrough(),
-  unit: z
-    .object({
-      unitId: z.string().optional(),
-      canonicalHead: z.string().nullable().optional(),
-      acceptance: z.object({}).passthrough().nullable(),
-    })
-    .passthrough(),
+  files: output({
+    ref: z.string(),
+    commit: z.string(),
+    path: z.string(),
+    kind: z.enum(['folder', 'file']),
+    entries: z
+      .array(z.object({ name: z.string(), kind: z.string(), size: z.number().optional() }))
+      .optional(),
+    text: z.string().optional(),
+    withheld: z.enum(['too_large', 'binary']).optional(),
+  }),
+  log: output({
+    ref: z.string(),
+    commit: z.string(),
+    commits: z.array(
+      output({
+        oid: z.string(),
+        parents: z.array(z.string()),
+        date: z.string(),
+        subject: z.string(),
+        unit: z.object({ id: z.string(), kind: z.string(), title: z.string() }).optional(),
+      }),
+    ),
+  }),
+  status: output({
+    project: output({}).nullable(),
+    bases: z.array(output({ key: z.string() })),
+    units: z.array(output({})),
+    blockers: z.array(output({})),
+    operations: z.array(output({})),
+    warnings: z.array(z.unknown()),
+  }),
+  unit: output({
+    unitId: z.string().optional(),
+    canonicalHead: z.string().nullable().optional(),
+    acceptance: output({}).nullable(),
+  }),
   operation: commandOutput,
 };
+
+const browseInput = z
+  .object({
+    ref: z.string().trim().max(200).optional(),
+    path: z.string().max(4096).optional(),
+  })
+  .strict();
 
 const reads = (ctx: Context): NounActions => ({
   files: {
     description:
       "Read the project's code as files, the way GitHub shows a repository: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",
-    input: z
-      .object({
-        ref: z.string().trim().max(200).optional(),
-        path: z.string().max(4096).optional(),
-      })
-      .strict(),
+    input: browseInput,
     output: outputs.files,
     was: ['code.files'],
-    handler: async (caller: Caller, input: { ref?: string; path?: string }) =>
-      await ctx.codeWork.files(caller, input),
+    handler: (caller, input) => ctx.codeWork.files(caller, input),
   },
   log: {
     description:
       "Read the project's Git history newest first, like git log, with the task or experiment each commit came from (unit: its id, kind and title) — Git itself does not carry those names. ref chooses whose history: main (the default), a task or experiment by its work unit id, or a full commit id; path narrows it to commits that changed that file or folder; limit is at most 200 (default 50). Each commit has its subject, its bullet-point body, parents and date. It changes nothing.",
-    input: z
-      .object({
-        ref: z.string().trim().max(200).optional(),
-        path: z.string().max(4096).optional(),
-        limit: z.number().int().min(1).max(200).optional(),
-      })
-      .strict(),
+    input: browseInput.extend({ limit: z.number().int().min(1).max(200).optional() }),
     output: outputs.log,
     was: ['code.log'],
-    handler: async (caller: Caller, input: { ref?: string; path?: string; limit?: number }) =>
-      await ctx.codeWork.history(caller, input),
+    handler: (caller, input) => ctx.codeWork.history(caller, input),
   },
   status: {
     description:
@@ -145,7 +118,7 @@ const reads = (ctx: Context): NounActions => ({
     input: z.object({}).strict(),
     output: outputs.status,
     was: ['code.status'],
-    handler: async (caller: Caller) => await ctx.codeWork.status(caller),
+    handler: (caller) => ctx.codeWork.status(caller),
   },
   unit: {
     description:
@@ -153,8 +126,7 @@ const reads = (ctx: Context): NounActions => ({
     input: z.object({ unitId: idSchema }).strict(),
     output: outputs.unit,
     was: ['code.unit.get'],
-    handler: async (caller: Caller, input: { unitId: string }) =>
-      await ctx.codeWork.unit(caller, input.unitId),
+    handler: (caller, input) => ctx.codeWork.unit(caller, input.unitId),
   },
   operation: {
     description:
@@ -162,8 +134,7 @@ const reads = (ctx: Context): NounActions => ({
     input: z.object({ commandId: idSchema }).strict(),
     output: outputs.operation,
     was: ['code.operation'],
-    handler: async (caller: Caller, input: { commandId: string }) =>
-      await attached(ctx.codeWork.operation(caller, input.commandId)),
+    handler: (caller, input) => attached(ctx.codeWork.operation(caller, input.commandId)),
   },
 });
 
@@ -198,8 +169,7 @@ const writes = (ctx: Context): NounActions => ({
         description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a project administrator or their agent may call it, never a leased worker.`,
         input: baseControlSchema.omit({ action: true }),
         was: [`code.base.${action}`],
-        handler: async (caller: Caller, input: Omit<CodeBaseControl, 'action'>) =>
-          ctx.codeWork.controlBase(caller, { ...input, action }),
+        handler: async (caller, input) => ctx.codeWork.controlBase(caller, { ...input, action }),
       },
     ]),
   ),
@@ -208,62 +178,56 @@ const writes = (ctx: Context): NounActions => ({
       'End the writer generation of a unit whose final capture is quarantined (code_capture_quarantined; read the findings in code.status first): every other writer generation ends by itself with its session. Refused with code_fence_unneeded for a unit no quarantined capture holds. The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a project administrator or their agent may call it, never a leased worker. Supply a stable requestId.',
     input: codeUnitFenceInputSchema,
     was: ['code.unit.fence'],
-    handler: async (caller: Caller, input: CodeUnitFenceInput) =>
-      await ctx.codeWork.fenceUnit(caller, input),
+    handler: (caller, input) => ctx.codeWork.fenceUnit(caller, input),
   },
   mirror_retry: {
     description:
       'Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.',
     input: codeMirrorRetryInputSchema,
     was: ['code.mirror.retry'],
-    handler: async (caller: Caller, input: CodeMirrorRetryInput) =>
-      await ctx.codeWork.retryMirror(caller, input),
+    handler: (caller, input) => ctx.codeWork.retryMirror(caller, input),
   },
   repository_import: {
     description:
       'Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker. New projects already have a managed repository. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.',
     input: codeRepositoryImportInputSchema,
     was: ['code.repository.import'],
-    handler: async (caller: Caller, input: CodeRepositoryImportInput) =>
-      await ctx.codeWork.importRepository(caller, input),
+    handler: (caller, input) => ctx.codeWork.importRepository(caller, input),
   },
   repository_configure: {
     description:
       'Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.',
     input: codeRepositoryConfigureInputSchema,
     was: ['code.repository.configure'],
-    handler: async (caller: Caller, input: CodeRepositoryConfigureInput) =>
-      await ctx.codeWork.configureRepository(caller, input),
+    handler: (caller, input) => ctx.codeWork.configureRepository(caller, input),
   },
   repository_prepare: {
     description:
       'Prepare the linked GitHub repository using its selected base branch and exact head. A project administrator or their agent selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.',
     input: repositoryPrepareSchema,
     was: ['code.repository.prepare'],
-    handler: (caller: Caller, input: z.infer<typeof repositoryPrepareSchema>) =>
-      ctx.codeWork.prepareRepository(caller, input),
+    handler: (caller, input) => ctx.codeWork.prepareRepository(caller, input),
   },
   publication_sync: {
     description:
       'Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.',
     input: z.object({}).strict(),
     was: ['code.publication.sync'],
-    handler: (caller: Caller) => ctx.codeWork.syncPublications(caller),
+    handler: (caller) => ctx.codeWork.syncPublications(caller),
   },
   publication_merge: {
     description:
       'Project administrator or their agent, never a leased worker: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
     input: codePublicationMergeSchema,
     was: ['code.publication.merge'],
-    handler: (caller: Caller, input: CodePublicationMerge) =>
-      ctx.codeWork.mergePublication(caller, input),
+    handler: (caller, input) => ctx.codeWork.mergePublication(caller, input),
   },
   publication_control: {
     description:
       'Project administrator or their agent, never a leased worker: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
     input: publicationControlSchema,
     was: ['code.publication.control'],
-    handler: (caller: Caller, input: unknown) => ctx.codeWork.controlPublication(caller, input),
+    handler: (caller, input) => ctx.codeWork.controlPublication(caller, input),
   },
 });
 

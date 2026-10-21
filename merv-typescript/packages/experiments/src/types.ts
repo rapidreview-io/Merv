@@ -16,7 +16,6 @@ import type {
   ExperimentAttach,
   ExperimentAttached,
   ExperimentCreate,
-  ExperimentEvidence,
   ExperimentExhibit,
   ExperimentTransition,
 } from './models.js';

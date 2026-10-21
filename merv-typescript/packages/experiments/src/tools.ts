@@ -1,13 +1,7 @@
 import type { Context } from 'cordis';
-import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
-import type {
-  ExperimentAttach,
-  ExperimentCreate,
-  ExperimentExhibit,
-  ExperimentTransition,
-} from './types.js';
+import type { ExperimentExhibit } from './types.js';
 import {
   experimentAttachSchema,
   experimentCreateSchema,
@@ -17,14 +11,9 @@ import {
   experimentTransitionSchema,
 } from './input.js';
 
-/** The largest exhibit an agent is shown whole; Merv's page reads every exhibit whole. */
 export const EXHIBIT_SHOWN_BYTES = 16_000;
 
-/**
- * What an agent is shown of an exhibit preview: its name, hash and result files by id, and its
- * content only while small. The content repeats every result file's data, so a large one
- * (0.5–1.3 MB, escaped inside the JSON) filled executors' contexts at each call (2026-10).
- */
+/** Large exhibits repeat result-file bytes; show references instead to preserve context space. */
 export function exhibitPreview(exhibit: ExperimentExhibit) {
   const bytes = Buffer.byteLength(exhibit.content);
   return {
@@ -82,7 +71,7 @@ export const experimentsToolsPlugin = {
             input: experimentListSchema,
             output: z.array(record),
             was: ['experiment.list'],
-            handler: async (caller: Caller) => await experiments.list(caller),
+            handler: (caller) => experiments.list(caller),
           },
           get: {
             description:
@@ -90,8 +79,7 @@ export const experimentsToolsPlugin = {
             input: experimentGetSchema,
             output: record,
             was: ['experiment.get_state'],
-            handler: async (caller: Caller, input: { experimentId: string }) =>
-              await experiments.get(caller, input.experimentId),
+            handler: (caller, input) => experiments.get(caller, input.experimentId),
           },
           exhibit: {
             description:
@@ -99,8 +87,7 @@ export const experimentsToolsPlugin = {
             input: experimentExhibitSchema,
             output: exhibitOutput,
             was: ['experiment.exhibit'],
-            handler: async (caller: Caller, input: { experimentId: string }) =>
-              await experiments.exhibit(caller, input.experimentId),
+            handler: (caller, input) => experiments.exhibit(caller, input.experimentId),
             present: (exhibit: unknown) => ({
               content: [
                 {
@@ -124,24 +111,21 @@ export const experimentsToolsPlugin = {
               'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are task IDs in the same project; an order between two experiments is a task between them. Starts planning attempt 1; at most seven experiments may remain active. Full training and evaluations require independent design approval. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
             input: experimentCreateSchema.omit({ workspace: true }),
             was: ['experiment.create'],
-            handler: async (caller: Caller, input: ExperimentCreate) =>
-              await experiments.create(caller, input),
+            handler: (caller, input) => experiments.create(caller, input),
           },
           attach: {
             description:
               'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. A plan, feasibility statement, report or JSON result must be valid UTF-8 and at most 64,000 bytes; compact JSON before upload without dropping run-level evidence. A result with resultFormat qualitative is referenced without being read, so attach a larger or binary output (a checkpoint, an archive, a capture collection) that way and the reviewer receives it with the submission. An attempt keeps at most 100 result files. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence; to give it information or an authorization meanwhile, send it with session.message. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[string]}, with no other keys, at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A result at a path the attempt already holds replaces that result, and a plan, feasibility statement or report replaces the attempt’s current one at any path, so put an addendum in the report itself or attach it as a qualitative result; earlier versions stay retained, and the response lists under replaced what left the selection. A caller attaches evidence it created or, as a worker, evidence any earlier visit to this step at the same revision created, this attempt’s Sandboxes capture or evidence the step had selected when the visit began; the plan or report a submission is made with must still be the submitting worker’s own. The metrics exhibit is system-generated.',
             input: experimentAttachSchema,
             was: ['experiment.attach'],
-            handler: async (caller: Caller, input: ExperimentAttach) =>
-              await experiments.attach(caller, input),
+            handler: (caller, input) => experiments.attach(caller, input),
           },
           transition: {
             description:
               'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals the evidence attached with experiment.attach and queues independent review atomically, so submit_design and submit_results take no evidence argument; reviewers alone apply their verdict through review.submit. submit_results comes only from the leased worker session that ran the attempt. retry_running, for an infrastructure interruption, preserves the approved plan and attempt and requires the interruption’s reason in evidence.reason, as terminal closure requires a specific reason there. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
             input: experimentTransitionSchema,
             was: ['experiment.transition'],
-            handler: async (caller: Caller, input: ExperimentTransition) =>
-              await experiments.transition(caller, input),
+            handler: (caller, input) => experiments.transition(caller, input),
           },
         },
       }),
