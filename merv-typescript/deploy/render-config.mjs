@@ -47,6 +47,11 @@ const json = (name) => {
   }
 };
 const sandboxesEnabled = !!process.env.SANDBOXES_DATABASE_URL;
+for (const name of ['MERV_FLEET_ENABLED', 'MERV_FLEET_WORKFLOW_ENABLED', 'MERV_PI_ENABLED'])
+  if (optIn(name) && !sandboxesEnabled)
+    throw new Error(
+      `${name}=true requires SANDBOXES_DATABASE_URL; refusing to omit hosted plugins`,
+    );
 const fleetEnabled = sandboxesEnabled && optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = sandboxesEnabled && optIn('MERV_FLEET_WORKFLOW_ENABLED');
 // MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS and MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS are

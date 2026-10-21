@@ -703,6 +703,15 @@ class Step:
     def __init__(self, run, plan):
         self.run, self.plan = run, plan
 
+    def hosted_plugins(self):
+        # Inspect the running Main's rendered config, not enablement flags or generic /health.
+        script = "const c=JSON.parse(require('fs').readFileSync('/tmp/merv-config.json','utf8'));console.log(JSON.stringify(c.plugins.map(p=>({id:p.id,disabled:p.disabled===true}))));"
+        plugins = json.loads(run(['docker', 'exec', MAIN, 'node', '-e', script]))
+        required = {'sandboxes-host', 'sandboxes-integration', 'fleet', 'fleet-workflow', 'pi', 'pi-api', 'pi-tools'}
+        need(isinstance(plugins, list) and all(sum(p.get('id') == name and not p.get('disabled') for p in plugins) == 1 for name in required),
+             'Main lacks required Sandboxes/Fleet/Pi plugins; generic health is not hosted readiness')
+        return {'requiredPlugins': sorted(required)}
+
     def staging_preflight(self, _):
         need(self.plan.get('stagingCutover') and self.plan.get('cutover'), 'not a staging cutover')
         claim(self.run.name)
@@ -713,6 +722,7 @@ class Step:
             need(state['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
                  'staging requires native-compatible Main')
             need(env_of(MAIN).get('MERV_TS_DB_SCHEMA') == 'merv_ts_staging', 'not the staging schema')
+            self.hosted_plugins()
             self.staging_census()
             live, saved = machines(env_of(MAIN)), machines(file_env(ENV.read_bytes()))
             need(set(live) == set(saved) == set(STAGING_PROVIDERS) and live == saved,
@@ -749,6 +759,7 @@ class Step:
         return {'drained': True, 'readOnly': True}
 
     def staging_pair(self):
+        self.hosted_plugins()
         before = read(self.run / 'preflight.json')
         need(before and inspect(MAIN)['Image'] == before['cutoverMainImage'], 'prepared staging Main image changed')
         target = self.plan['stagingReleases']

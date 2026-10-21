@@ -101,15 +101,24 @@ test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t
     SANDBOXES_DATABASE_URL: undefined,
     SANDBOXES_VAULT_KEY: undefined,
     MERV_SANDBOXES_PROXY_URL: undefined,
-    MERV_FLEET_ENABLED: 'true',
-    MERV_FLEET_WORKFLOW_ENABLED: 'true',
-    MERV_PI_ENABLED: 'true',
+    MERV_FLEET_ENABLED: 'false',
+    MERV_FLEET_WORKFLOW_ENABLED: 'false',
+    MERV_PI_ENABLED: 'false',
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(readFileSync(output)).plugins.length, 13);
   assert.ok(
     JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
   );
+});
+
+test('explicit hosted enablement without a Sandboxes database fails before writing config', (t) => {
+  const { run } = renderer(t);
+  for (const flag of ['MERV_FLEET_ENABLED', 'MERV_FLEET_WORKFLOW_ENABLED', 'MERV_PI_ENABLED']) {
+    const result = run({ SANDBOXES_DATABASE_URL: undefined, [flag]: 'true' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(`${flag}=true requires SANDBOXES_DATABASE_URL`));
+  }
 });
 
 test('welcome credits render from MERV_NEW_PERSON_CREDITS: providers to positive USD text', (t) => {

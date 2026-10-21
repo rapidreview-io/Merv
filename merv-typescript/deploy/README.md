@@ -71,14 +71,18 @@ Before the first hosted run after cutover, fetch `5157f1ed` into the releasing c
 `git -C vendor/merv-sandboxes fetch ../../merv-sandboxes codex/managed-ml-account-limits`
 (or fetch a pushed tag containing it). Until then, use `--skip-hosted`.
 
-Prepare staging Main to keep deploying without Sandboxes:
+Historical API-only staging (not eligible for hosted acceptance):
 
 1. Put the same `SANDBOXES_TS_IMAGE` registry digest reference or local image ID in
    `/etc/sandboxes/release.env`.
 2. Create an empty root:root 0600 `/etc/sandboxes/shared.env`.
 3. Run `docker network create sandboxes_default` and `docker volume create sandboxes_sandboxes-data`.
 4. Stop Merv, back up `/var/lib/merv-ts`, then run `chown -R 10001:10001 /var/lib/merv-ts`.
-5. Leave `SANDBOXES_DATABASE_URL` unset in `/etc/merv/typescript.env`.
+5. Leave `SANDBOXES_DATABASE_URL` unset in `/etc/merv/typescript.env` and explicitly disable
+   `MERV_FLEET_ENABLED`, `MERV_FLEET_WORKFLOW_ENABLED` and `MERV_PI_ENABLED`. Enabling any
+   of those without the database now fails rendering. This API-only mode cannot pass a hosted
+   cutover; generic health does not prove Fleet/Pi readiness. See
+   [staging native Sandboxes prerequisites](STAGING_SANDBOXES_PREREQUISITES.md).
 
 Docker builds, Compose validation and live acceptance must run on the release host. A return
 to native Merv requires the runbook's coordinated database/data restore; restarting an old

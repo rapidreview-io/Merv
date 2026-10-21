@@ -1602,6 +1602,7 @@ vm.inspect=lambda _:{'Image':image[0],'Config':{'Labels':{'org.merv.native-git-p
 vm.urllib.request.urlopen=lambda *a,**k:io.BytesIO(json.dumps(health).encode())
 vm.claim=lambda _:None;vm.owner=lambda:'';vm.main_release_running=lambda:False
 vm.credential=lambda _:{'projectId':'staging','actorId':'reader'}
+vm.run=lambda *a,**k:json.dumps([{'id':n} for n in ['sandboxes-host','sandboxes-integration','fleet','fleet-workflow','pi','pi-api','pi-tools']]).encode()
 queries=[];counts={'worker_sessions':0}
 vm.main_read=lambda q,*a,**k:queries.append([q,k]) or dict(counts)
 step=vm.Step(r,{'cutover':True,'stagingCutover':True,'current':{'image':'accepted@sha256:abc'},
@@ -1826,4 +1827,24 @@ print(json.dumps(res))`);
     'rollout',
     'health',
   ]);
+});
+
+test('staging hosted readiness refuses missing or disabled plugins despite generic health', () => {
+  const result = py(`${scratch}
+step=vm.Step(r,{})
+required=['sandboxes-host','sandboxes-integration','fleet','fleet-workflow','pi','pi-api','pi-tools']
+plugins=[{'id':n} for n in required]
+vm.run=lambda *a,**k:json.dumps(plugins).encode()
+passed=step.hosted_plugins()
+refused=[]
+for missing in required:
+ plugins=[{'id':n} for n in required if n!=missing]
+ try:step.hosted_plugins()
+ except RuntimeError:refused.append(missing)
+plugins=[{'id':n,'disabled':n=='pi'} for n in required]
+try:step.hosted_plugins()
+except RuntimeError:refused.append('disabled')
+print(json.dumps({'passed':passed,'refused':refused}))`);
+  assert.equal(result.passed.requiredPlugins.length, 7);
+  assert.equal(result.refused.length, 8);
 });
