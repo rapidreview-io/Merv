@@ -63,4 +63,28 @@ class ExportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'nonregular'):export(repo,'HEAD',pathlib.Path(tmp)/'bad')
             self.assertFalse((pathlib.Path(tmp)/'bad').exists())
 
-if __name__ == '__main__': unittest.main()
+class LegacyMarketplaceTests(unittest.TestCase):
+    def test_both_clients_use_current_dedicated_repository(self):
+        for manifest, subdir in [('.agents/plugins/marketplace.json', 'codex'),
+                                 ('.claude-plugin/marketplace.json', 'claude-code')]:
+            with self.subTest(client=subdir):
+                catalog = json.loads((ROOT / manifest).read_text())
+                self.assertEqual(catalog['name'], 'rapidreview')
+                self.assertEqual(len(catalog['plugins']), 1)
+                plugin = catalog['plugins'][0]
+                self.assertEqual(plugin['name'], 'merv')
+                source = plugin['source']
+                self.assertEqual(source['source'], 'git-subdir')
+                self.assertEqual(source['url'], 'https://github.com/rapidreview-io/merv-plugins.git')
+                self.assertEqual(source['path'].removeprefix('./'), subdir)
+                self.assertEqual(source['ref'], 'main')
+                self.assertNotIn('version', plugin)  # The published plugin owns its version.
+                self.assertNotIn('sha', source)  # Updates follow the one canonical release stream.
+
+    def test_new_install_identity_unchanged(self):
+        for name in ['.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json']:
+            self.assertEqual(json.loads((ROOT / 'clients' / name).read_text())['name'], 'merv')
+
+
+if __name__ == '__main__':
+    unittest.main()

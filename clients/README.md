@@ -13,7 +13,8 @@ plugin identity **`merv@merv`**, regardless of the GitHub repository name.
 
 Use a current client with plugin support. For an existing modern `merv@merv`
 installation, update it instead of adding another connection. If you used the old
-Python plugin (`merv@rapidreview`), follow the migration note below first.
+Python plugin (`merv@rapidreview`), you can update it in place as described below.
+Keep only one Merv plugin enabled.
 
 ### Codex
 
@@ -88,12 +89,39 @@ codex plugin add merv@merv
 
 Start a fresh chat after updating. Reuse your saved browser connection.
 
-**Coming from the Python plugin (`merv@rapidreview`)?** Back up your client settings,
-disable or uninstall only the old Merv plugin, then install this marketplace and
-sign in through the browser. Preserve other plugins, servers and permissions.
-Do not copy old API keys into the new plugin or register a duplicate Merv server.
-The [migration guide](https://experiments.rapidreview.io/connect/agent.md#migrate-an-older-installation)
-covers old standalone connectors and revoking their old keys after the new connection works.
+**Already using `merv@rapidreview`?** The old marketplace is now a compatibility
+entry that fetches the same current plugin from `rapidreview-io/merv-plugins`.
+Refresh the old marketplace and update your existing installation:
+
+```sh
+# Claude Code
+claude plugin marketplace update rapidreview
+claude plugin update merv@rapidreview --scope user
+
+# Codex
+codex plugin marketplace upgrade rapidreview
+codex plugin add merv@rapidreview
+```
+
+Start a fresh chat and use browser sign-in if prompted. The identity stays
+`merv@rapidreview`; this is an update, not an automatic rename. You get the current
+four skills and OAuth MCP connection, including board tools, without installing a
+second Merv plugin. The legacy marketplace catalog still lives in the application
+repository, so refreshing that old catalog can fetch its repository; the installed
+plugin itself comes only from the small dedicated plugin repository.
+
+**For new installations, use `merv@merv`.** To migrate an existing installation to
+that canonical identity, back up your client settings, disable or uninstall only
+`merv@rapidreview`, then install `merv@merv` from the commands above. Keep only one
+Merv plugin enabled and remove old standalone Merv MCP entries. Preserve other
+plugins, servers and permissions. Reuse browser sign-in when the client can; it
+may require consent again under the new identity. Never copy old API keys into
+the plugin. Revoke old keys only after the new connection works.
+
+The compatibility entry follows the same published `main` bundle, so there is no
+separate legacy implementation or version number to maintain. Existing clients
+must refresh/update their marketplace; this does not silently replace a cached
+plugin in an already-open chat.
 
 ## Other installation paths
 
