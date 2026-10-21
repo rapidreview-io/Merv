@@ -51,7 +51,17 @@ export const reviewToolsPlugin = {
             act: { title: 'Claim review' },
             description:
               'Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
-            input: z.object({ reviewId: id, override: z.literal(true).optional() }).strict(),
+            input: z
+              .object({
+                reviewId: id,
+                override: z
+                  .literal(true)
+                  .optional()
+                  .describe(
+                    "The project owner deciding the review themself, which is recorded as the owner's override. Only the owner, acting as themself, may.",
+                  ),
+              })
+              .strict(),
             was: ['review.start'],
             handler: (caller, input) =>
               guided(caller, reviews.start(caller, input.reviewId, undefined, input.override)),

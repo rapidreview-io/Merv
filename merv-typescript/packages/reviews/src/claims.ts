@@ -53,7 +53,7 @@ export async function checkStart(
       'review_independence',
       override
         ? 'Only the project owner, acting as themself, may decide a review as owner'
-        : 'A producer, contributor or directing authority cannot review their own work',
+        : 'A producer, contributor or directing authority cannot review their own work; the project owner may decide it as owner (start with override), which is recorded',
       403,
     );
     check(
