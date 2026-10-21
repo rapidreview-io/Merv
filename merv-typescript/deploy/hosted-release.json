@@ -4,15 +4,15 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:a3da28241e1e0c52c4a219fc12f7c589e4a513b1d16c7b898410466a7e8dd663",
-    "releaseId": "rt1_ef86a5bc1d8f70658f0fd8a507acc20b43f05d25b56df4f511e5371ca7f6effd",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:e642793d76ca9aa3d65a780d5c281ab4a2539c86234ec7db822718dcc895c60a",
+    "releaseId": "rt1_e2d51f24f1cc115246365d02ad63dfbbfd2a4e71f1c48991c27dd40177329454",
     "releases": {
-      "cloudflare-fleet": "rt1_ef86a5bc1d8f70658f0fd8a507acc20b43f05d25b56df4f511e5371ca7f6effd",
-      "cloudflare-fleet-large": "rt1_550ce2a5c6d310b9606bc1fa97d76c4c3de32e1b255cf7eb2f85c9005e22eb88"
+      "cloudflare-fleet": "rt1_e2d51f24f1cc115246365d02ad63dfbbfd2a4e71f1c48991c27dd40177329454",
+      "cloudflare-fleet-large": "rt1_0272786e5a9019ba4038cc14dfe04e66cc62c8f57b6d7f2d65d4bfa3a5d792d8"
     },
-    "localId": "sha256:b5adfc8bcbd7b3387f9ba80eab14ce0b42964b7c7bf836a0120282794fd911d1",
-    "sourceCommit": "2c235f8c4a9401163612e8a6ca1f1de652313feb",
-    "sandboxesCommit": "718b2f78b5d7758da843460dfae591d859693048"
+    "localId": "sha256:dd14a51fa46416cb3f2ad0670dbd5aa3ec30b4e6165701320e47826976370b02",
+    "sourceCommit": "38072c3384fc16f77f58e106c09a2fa1a86d0ded",
+    "sandboxesCommit": "a0048a4c661b5c6d4b2bc889786540141646e0ea"
   },
   "inputs": [
     "packages/code/src/driver/checkout.ts",
@@ -66,5 +66,12 @@
     "packages/sessions/src/compute.ts",
     "packages/sessions/src/rules.ts",
     "scripts/hosted-runner/smoke-supervisor.ts"
-  ]
+  ],
+  "staging": {
+    "status": "deferred",
+    "reason": "Staging native isolation remains fenced pending scoped storage credentials",
+    "sourceRun": "20261021T203349Z-38072c33",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:e642793d76ca9aa3d65a780d5c281ab4a2539c86234ec7db822718dcc895c60a",
+    "releaseId": "rt1_e2d51f24f1cc115246365d02ad63dfbbfd2a4e71f1c48991c27dd40177329454"
+  }
 }
