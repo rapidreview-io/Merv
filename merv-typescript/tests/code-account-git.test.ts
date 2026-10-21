@@ -497,7 +497,7 @@ test(
     const inWorkspace = (script: string) =>
       script.replace('"<authorized-isolated-workspace>"', JSON.stringify(skillWorkspace));
     for (const block of blocks)
-      assert.ok(!/\{\s*["']/.test(block), 'no brace-quote shell false-positive');
+      assert.ok(!/[{}]/.test(block), 'canonical blocks contain no curly braces');
     const heredoc = (python: string, script: string) =>
       `'${python.replace(/'/g, "'\\''")}' - <<'MERV_PY'\n${script}\nMERV_PY`;
     const prepare = () =>
@@ -526,7 +526,7 @@ test(
         .replace('"<reply-encryptedToken>"', JSON.stringify(reply.encryptedToken))
         .replace('"<existing-working-directory>"', JSON.stringify(f.directory))
         .replace('<JSON-Git-argument-arrays>', overrides.rawBatch ?? JSON.stringify(batch));
-      assert.ok(!/\{\s*["']/.test(script), 'populated command avoids brace-quote form');
+      assert.ok(!/[{}]/.test(script), 'populated command contains no curly braces');
       const result = await execute('/bin/sh', ['-c', heredoc(python, script)], {
         env: { ...env, ...(overrides.path ? { PATH: overrides.path } : {}) },
       }).catch((error: { stdout: string; stderr: string }) => {
@@ -658,7 +658,7 @@ test('receiving-key preparation cleans up when public-key extraction fails after
     '"<authorized-isolated-workspace>"',
     JSON.stringify(skillWorkspace),
   );
-  assert.ok(!/\{\s*["']/.test(preparation));
+  assert.ok(!/[{}]/.test(preparation));
   const harness = `
 import json, os, shutil, subprocess, tempfile
 from unittest.mock import patch
@@ -700,4 +700,39 @@ finally:
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   assert.equal(output.trim(), 'cleanup verified');
+});
+
+test('published Git validation preserves project and credential length and alphabet checks', () => {
+  const skill = readFileSync(
+    new URL('../../clients/codex/skills/git-access/SKILL.md', import.meta.url),
+    'utf8',
+  );
+  const projectCheck = skill
+    .split('\n')
+    .find((line) => line.trim().startsWith('assert 1 <= len(project_id)'))!
+    .trim();
+  const tokenCheck = skill
+    .split('\n')
+    .find((line) => line.trim().startsWith('assert len(token)'))!
+    .trim();
+  const script = `
+import re
+project_check = ${JSON.stringify(projectCheck)}
+token_check = ${JSON.stringify(tokenCheck)}
+def accepted(check, **values):
+    try:
+        exec(check, dict(re=re, **values))
+        return True
+    except AssertionError:
+        return False
+for value, expected in [("a", True), ("a" * 200, True), ("a" * 201, False), ("", False), ("a_b-9", True), ("a/b", False), ("a\\n", False), ("é", False)]:
+    assert accepted(project_check, project_id=value) == expected
+for value, expected in [(b"mg_" + b"a" * 43, True), (b"mg_" + b"_" * 43, True), (b"mg_" + b"a" * 42, False), (b"mg_" + b"a" * 44, False), (b"xx_" + b"a" * 43, False), (b"mg_" + b"a" * 42 + b"/", False), (b"mg_" + b"a" * 42 + b"\\n", False), (b"", False)]:
+    assert accepted(token_check, token=value) == expected
+print("validation boundaries verified")
+`;
+  assert.equal(
+    execFileSync('python3', ['-c', script], { encoding: 'utf8' }).trim(),
+    'validation boundaries verified',
+  );
 });

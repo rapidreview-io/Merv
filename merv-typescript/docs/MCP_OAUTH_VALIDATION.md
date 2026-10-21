@@ -426,3 +426,12 @@ a fresh Claude permission-engine acceptance run: the installed CLI exposes no
 standalone supported shell-check command, and no model call or live credential
 injection was used. Public plugin publication is independent of Main; the hosted
 embedded bundle remains at its deployed version until a later application release.
+
+The first native 0.5.6 candidate still hit the Claude heuristic on regex quantifiers
+ending in a closing brace next to a quote. The corrected candidate removes every
+curly brace from both Python blocks, including the environment comprehension.
+Separate length checks plus full-match alphabet checks preserve the original
+project-ID and token validation. Focused tests reject any curly brace in canonical
+or populated blocks and exercise valid bounds, off-by-one lengths, prefix errors,
+invalid characters and trailing newlines. Native acceptance remains a separate
+parent-owned check before publication; this local correction does not claim it.

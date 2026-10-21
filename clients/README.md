@@ -1,84 +1,98 @@
-# Merv client plugins
+# Merv plugins for Codex and Claude Code
 
-Tell your agent to read **https://experiments.rapidreview.io/connect/agent.md**.
-The guide downloads an ordinary plugin package, installs it in Codex or Claude
-Code, and starts the client's browser sign-in. No local connector runs. The
-connection and credentials belong to the client and persist across chats.
+Merv connects your agent to research projects, experiments, tasks, reviews and Git
+through remote MCP with browser sign-in. The plugin includes four skills and the
+MCP connection; no local server, API key copy-paste or background daemon is needed.
 
-The 0.5.1 bundles combine remote MCP and three concise skills. Codex uses
-`.codex-plugin/plugin.json` + `.mcp.json`; Claude Code uses `.claude-plugin/plugin.json` +
-`.mcp.json`. The server publishes the same files at `/connect/bundle.tar.gz` and
-`/connect/bundle.json`, stamping its origin and a distinct marketplace/plugin name
-for nonproduction hosts. Installing Merv does not preapprove every tool.
-The setup guide includes a one-time, plugin-scoped permission choice for operation
-across fresh chats: Codex saved tool/server policy or Claude Code user-level
-`/permissions` rules. OAuth consent alone does not save tool approval.
+The public distribution target is
+[rapidreview-io/merv-plugins](https://github.com/rapidreview-io/merv-plugins).
+The commands below use that repository once published. Both clients keep the
+plugin identity **`merv@merv`**, regardless of the GitHub repository name.
 
-From a checkout, add `clients/` as a local marketplace, then install `merv@merv`:
+## Install and sign in
 
-- Codex: `codex plugin marketplace add /absolute/path/to/clients`, then
-  `codex plugin add merv@merv`, then `codex mcp login merv`. The last command
-  authenticates the bundled server in the terminal; no desktop app is needed.
-  Complete the displayed browser sign-in and consent before using tools.
-- Claude Code: `claude plugin marketplace add /absolute/path/to/clients`, then
-  `claude plugin install merv@merv --scope user`. Authenticate from `/mcp`.
+Use a current client with plugin support. If you already have Merv connected,
+update that installation instead of adding a second connection to the same server.
 
-Use one bundled or direct MCP connection per origin. If Merv is already connected,
-reuse it. Client versions without plugin support need updating or
-the documented direct remote MCP fallback; that fallback alone has no skills.
+### Codex
 
-Sign in or create an account through the browser's normal identity flow (Google
-sign-in can create an account when enabled), then approve account access. No project
-membership or selection is required. The connection follows current project permissions;
-new memberships appear without reconnecting and removed memberships lose access.
-If the project list is empty, create/join a project on the website and list again.
-Research tools work without Git. Revoke access at `/ui/account/keys`, even with zero projects.
+Run in your terminal:
 
-In a fresh chat, “use Merv” loads the skills; the agent lists projects and reads
-the intended project's brief and workflow status, passing its explicit `projectId`.
-Ask the person which project when ambiguous; never silently reuse another chat's selection.
-Switch between permitted projects without reconnecting. If needed, reconnect through
-the client's sign-in action. Never put a token in chat or plugin files.
+```sh
+codex plugin marketplace add rapidreview-io/merv-plugins
+codex plugin add merv@merv
+codex mcp login merv
+```
 
-See [migration and deployment](../merv-typescript/deploy/CLIENT_CUTOVER.md) and
-[validation evidence](../merv-typescript/docs/MCP_OAUTH_VALIDATION.md).
+Complete browser sign-in and consent, then start a fresh Codex chat. The terminal
+login authenticates the bundled MCP server; a desktop app is not required.
 
-Edit skills in `claude-code/skills/` and copy to `codex/skills/`. After editing any
-bundle file, run `npm run build:clients` in `merv-typescript/`. The generated
-server-side bundle is checked against the originals in the bundle tests.
+### Claude Code
 
-Terminal Git uses the same saved account connection: the git-access skill calls
-`code.git_credential` with an ephemeral RSA public key and explicit projectId, then
-decrypts the reply directly into Git's built-in memory credential cache. No Settings
-key, manual token copy, second login, Merv daemon or helper installation is needed.
-The agent renews ten-minute credentials through MCP for later Git batches. Native
-Git outside an active agent cannot renew through the client's private MCP session.
-Read access follows current membership; producer/operator users can push user branches, while readers/reviewers retain read-only
-access. All protected-ref and repository admission checks remain. Revoking the account grant revokes derived access.
+Run in your terminal:
 
-For code-linked work, the installed agents sync the selected branch by default:
-add/reuse a separate Merv remote, preserve origin, push existing and newly committed
-work, then fetch/compare exact heads before reporting success or starting cloud work.
-Other branches, ignored files and unrelated uncommitted changes are not swept in.
-Divergence and dirty/local-only inputs are reported explicitly. `code.read` status
-exposes live user-branch heads, observation time and the research baseline commit.
-User-branch sync does not advance the baseline: reviewed integration governs new
-baseline code, and running/completed experiments retain their pinned commits.
-Synchronization runs while the agent is active, with no offline-daemon promise.
+```sh
+claude plugin marketplace add rapidreview-io/merv-plugins
+claude plugin install merv@merv --scope user
+```
 
-Git credential lifetime in native shells: store, authorized Git commands, exact-head
-verification and cache cleanup run inside one live exec invocation. Never rely on
-a returned cache socket in another exec call; the executor may have killed its
-process. The 0.5.5 skill re-mints through saved MCP auth for each later batch and
-clears the cache and ephemeral key directory on both success and failure.
+Start a fresh Claude Code chat, open `/mcp`, select Merv and authenticate through
+the browser. Installing the plugin and signing in are separate steps.
 
-Version 0.5.6 uses Python `dict(...)` for reply data and JSON output to avoid Claude
-Code's brace-and-quote shell false-positive. Receiving keys stay in a private child
-of an already authorized isolated workspace, with the same live-batch cleanup.
+### Permissions
 
-The standalone `clients/` marketplace can be published and installed independently
-of Main. Updating that public plugin does not update the server's embedded
-`/connect/bundle.*` or direct setup guide. Regenerate the embedded source with
-`build:clients` for the next application release; a plugin-only rollout needs no
+Sign-in grants account access; it does not approve every agent action. In Codex,
+review tool approval prompts and use its saved server/tool policy if you want
+approvals to persist. In Claude Code, review `/permissions` and save only the Merv
+tool permissions you intend to allow, at user scope for use across projects.
+
+MCP permissions do not grant shell or filesystem access. Git work also needs an
+authorized local workspace and permission to run its Git/Python commands. Keep
+receiving keys inside that workspace. If a command or cleanup is denied, the agent
+must report it; do not disable permission checks or grant blanket shell access.
+
+## Start using Merv
+
+Tell your agent: **“Use Merv. List my projects.”** Choose the intended project, or
+create/join one on the website if the list is empty. Sign-in does not require an
+existing project membership. The connection follows your current permissions;
+project changes do not require a new login.
+
+Account sign-in persists across chats in the native client. Reconnect through the
+client if the grant expires or is revoked. Never put tokens in chat or plugin
+files. You can revoke Merv access from
+[account settings](https://experiments.rapidreview.io/ui/account/keys).
+
+For code-linked work, the Git skill syncs authorized committed work to a separate
+Merv remote, preserves existing remotes and verifies exact remote heads. It reports
+uncommitted files and divergence rather than sweeping unrelated work into commits.
+Readers can fetch; producers and operators can push permitted user branches.
+Branch sync does not advance the reviewed research baseline or change experiment
+pins. Research tools also work without Git.
+
+## Other installation paths
+
+For a local checkout of this marketplace, replace `rapidreview-io/merv-plugins` in
+the add command with its absolute directory path. In the application source repo,
+that directory is `clients/`. Keep the install selector `merv@merv`.
+
+The [connection guide](https://experiments.rapidreview.io/connect/agent.md) offers
+server-hosted bundles and direct MCP setup. A direct connection alone has no
+plugin skills. Server-hosted bundles can lag a plugin-only publication; check the
+version before switching installation sources.
+
+## Maintaining the bundle
+
+Edit skills in `claude-code/skills/` and copy them to `codex/skills/`. In the
+application source repo, run `npm run build:clients` from `merv-typescript/` to
+regenerate the embedded bundle and run the focused client tests.
+
+The standalone marketplace can be published independently of Main. Publication
+does not update the deployed `/connect/bundle.*` or setup guide and requires no
 Main image rebuild. The legacy `publish-client-bundle.yml` workflow builds from
-`merv/`, not this canonical `clients/` tree, so do not use it for this publication.
+`merv/`, not this canonical `clients/` tree.
+
+Version 0.5.6 keeps the canonical Python blocks free of curly braces to avoid a
+Claude shell parser false-positive. Temporary receiving keys stay in an authorized
+workspace. Credential storage, Git operations, verification and cleanup run in one
+live invocation; later batches mint fresh credentials through saved MCP sign-in.
