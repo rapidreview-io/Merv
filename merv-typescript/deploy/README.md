@@ -241,3 +241,27 @@ Paper Problem, so the summary is their only description. Release in this order:
 4. New TypeScript writes will not appear in the legacy UI. Record that continuity limit and retain them; importing them back into Python is a separate task.
 
 Authorized staging has created an isolated role/schema, private environment, localhost-only service and separate object prefix. The reviewed rehearsal may create only its additional versioned schema/prefix. Legacy tables, configuration, services, source objects and public routing remain unchanged; no Caddy or Vercel cutover has been performed. See `STAGING_2026-09-16.md` and the protected rehearsal receipts for actual evidence.
+
+### Retry a Main release that failed before candidate startup
+
+After reviewing the release-driver fix, an operator can reuse a failed release's
+already-built immutable image with:
+
+```sh
+node deploy/release.mjs --retry-prestart RELEASE_ID --no-rollback --skip-hosted
+```
+
+This requires the retained previous Main container to be stopped. Under the
+maintenance lock, the driver verifies the original archive hash, build manifest,
+image ID, compiled-CLI result, previous-container image, and archived Compose file.
+It refuses a release with a deploy status, deployment log, or candidate-started
+marker. It never rebuilds or restarts the previous Main; after any candidate startup
+failure it leaves Main stopped for forward recovery. Original build and rollback
+records remain intact. Each retry has its own `retry-TIMESTAMP/release-job.sh`, log,
+and exit-code file. `--resume RELEASE_ID` observes an existing job; it does not retry.
+
+The preflight uses the candidate's Compose `control` service with `run --rm
+--no-deps -T --interactive=false`, an overridden Node entrypoint, and closed stdin.
+This preserves Compose dotenv interpolation, shared raw environment values, and
+both service networks while running only the read-only cutover check. Candidate
+startup and preflight use the immutable image ID, and schema checks are unchanged.

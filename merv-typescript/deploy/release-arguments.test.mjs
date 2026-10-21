@@ -85,3 +85,16 @@ test('release.mjs reaches only the VM that serves --public, and refuses a mismat
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('prestart retry requires explicit no-rollback and skips hosted work', () => {
+  for (const args of [
+    ['--retry-prestart', 'release'],
+    ['--retry-prestart', 'release', '--no-rollback'],
+    ['--retry-prestart', '../release', '--no-rollback', '--skip-hosted'],
+    ['--retry-prestart', 'release', '--no-rollback', '--skip-hosted', '--resume', 'release'],
+  ]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], { env: { PATH: '/nonexistent' }, encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--retry-prestart requires/);
+  }
+});

@@ -29,6 +29,7 @@ const { values: args, tokens } = parseArgs({
     public: { type: 'string', default: 'https://experiments.rapidreview.io' },
     sandboxes: { type: 'string' },
     resume: { type: 'string' },
+    'retry-prestart': { type: 'string' },
     'dry-run': { type: 'boolean' },
     'skip-hosted': { type: 'boolean' },
     'no-rollback': { type: 'boolean' },
@@ -36,7 +37,7 @@ const { values: args, tokens } = parseArgs({
 });
 if (args.help) {
   console.log(
-    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE] [--skip-hosted] [--no-rollback]',
+    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE | --retry-prestart RELEASE] [--skip-hosted] [--no-rollback]',
   );
   process.exit(0);
 }
@@ -58,10 +59,13 @@ const sandboxes = (() => {
 const dryRun = args['dry-run'];
 const noRollback = args['no-rollback'];
 const resume = args.resume;
+const retry = args['retry-prestart'];
+if (retry !== undefined && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,120}$/.test(retry) || resume || !noRollback || !args['skip-hosted']))
+  throw new Error('--retry-prestart requires a safe release ID, --no-rollback --skip-hosted, and no --resume');
 const { PUBLIC, host, RELEASES, ssh } = releaseTarget(args);
 
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
-const remoteJob = ({ release, archiveSha256 }) => `
+const remoteJob = ({ release, archiveSha256, retryImage }) => `
 set -euo pipefail
 # Serialize Main's entire release with recovery capture and hosted-image changes.
 mkdir -p /run/lock
@@ -76,7 +80,25 @@ IMG=merv-typescript:${release}
 BK=/var/backups/merv/typescript-staging-refresh/${release}
 cd "$REL"
 echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
-echo "${archiveSha256}  source.tar.gz" > archive.sha256
+${retryImage ? `[ ! -e deploy-status.json ] && [ ! -e deploy.log ] && [ ! -e candidate-started ] || { echo 'release already attempted candidate startup; prestart retry refused' >&2; exit 1; }
+[ "$(docker inspect --format '{{.State.Status}}' merv-typescript-control-1)" = exited ] || { echo 'previous Main must remain stopped' >&2; exit 1; }
+IMAGE_ID=${retryImage}
+[ "$(docker image inspect --format '{{.Id}}' "$IMAGE_ID")" = "$IMAGE_ID" ]
+PREVIOUS_ID=$(docker inspect --format '{{.Image}}' merv-typescript-control-1)
+python3 - "$IMAGE_ID" "$PREVIOUS_ID" "$BK/rollback.json" <<'VERIFY'
+import json, pathlib, sys, tarfile
+m=json.load(open('build-manifest.json'))
+r=json.load(open(sys.argv[3]))
+assert m['release']=='${release}' and m['imageId']==sys.argv[1]
+assert m['archiveSha256']=='${archiveSha256}' and m['buildAndCompiledCli']=='passed'
+assert r['previousImageId']==sys.argv[2]
+with tarfile.open('source.tar.gz') as archive:
+    members=[x for x in archive.getmembers() if x.name.lstrip('./')=='deploy/compose.yml']
+    assert len(members)==1
+    assert archive.extractfile(members[0]).read()==pathlib.Path('source/deploy/compose.yml').read_bytes()
+VERIFY
+SANDBOXES_TS_IMAGE=$(python3 -c 'import json; print(json.load(open("build-manifest.json"))["sandboxesImage"])')
+` : `echo "${archiveSha256}  source.tar.gz" > archive.sha256
 mkdir -p source && tar -xizf source.tar.gz -C source
 docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE} >> build.log 2>&1
 SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.env)
@@ -87,11 +109,12 @@ docker builder prune -af --keep-storage 10GB >> build.log 2>&1 || echo 'build-ca
 docker build --platform linux/amd64 --build-arg SANDBOXES_TS_IMAGE="$SANDBOXES_TS_IMAGE" --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
 docker run --rm --entrypoint node "$IMG" --import tsx dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
+`}
 # The served UI is ${UI_DIR}, which deploy/ui-release.mjs also writes: this image's bundle goes
 # there beside the hashed assets already served, and its index.html only once it is healthy.
 umask 022
 rm -rf ui && mkdir ui
-docker run --rm --entrypoint tar "$IMG" -C /app/dist/packages/ui/dist -cf - . | tar -C ui -xf -
+docker run --rm --entrypoint tar "$IMAGE_ID" -C /app/dist/packages/ui/dist -cf - . | tar -C ui -xf -
 [ -s ui/index.html ] || { echo 'the image has no UI bundle' >&2; exit 1; }
 mkdir -p ${UI_DIR}/assets
 cp -rn ui/assets/. ${UI_DIR}/assets/
@@ -114,9 +137,10 @@ if [ "${noRollback ? '1' : '0'}" = 0 ] && [ -n "$PREV" ] && [ "$PREV_NATIVE" = t
   PREV_SBX=$(docker image inspect --format '{{index .Config.Labels "org.merv.sandboxes-image"}}' "$PREV_ID")
   [ "$PREV_SBX" != "$SANDBOXES_TS_IMAGE" ] || ALLOW_ROLLBACK=true
 fi
-mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
+${retryImage ? "" : `mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
 printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":%s}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" "$ALLOW_ROLLBACK" > "$BK/rollback.json"
 printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","sandboxesImage":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" "$SANDBOXES_TS_IMAGE" > build-manifest.json
+`}
 # Until the new container is healthy, any failure (a failed compose up included) ends here.
 # A schema cutover may make the previous image unsafe: --no-rollback leaves it stopped.
 rollback() {
@@ -124,7 +148,7 @@ rollback() {
   set +e
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
   if [ "$ALLOW_ROLLBACK" != true ]; then
-    (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1
+    (cd source/deploy && MERV_TS_IMAGE="$IMAGE_ID" docker compose -f compose.yml down) > rollback.log 2>&1
     printf '{"release":"%s","image":"%s","imageId":"%s","noRollback":true,"rolledBack":false,"containerHealth":"%s","restarts":"%s","previousImage":"%s","log":"%s"}\\n' \\
       "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$LOG" > deploy-status.json
     exit 1
@@ -145,8 +169,8 @@ H=not-started; R=0
 # A failed recheck can restart a native-capable exact previous image. Otherwise,
 # both reports must prove that neither protocol nor Code migration has happened.
 cutover() {
-  docker run --rm --network deploy_default --env-file /etc/merv/typescript.env \\
-    --entrypoint node "$IMG" --import tsx deploy/git-cutover-preflight.mjs
+  (cd source/deploy && MERV_TS_IMAGE="$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false \
+    --entrypoint node control --import tsx deploy/git-cutover-preflight.mjs) < /dev/null
 }
 cutover > git-cutover-before.json
 cp git-cutover-before.json git-cutover.json
@@ -171,7 +195,8 @@ PY
   fi
 fi
 trap rollback EXIT
-(cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
+touch candidate-started
+(cd source/deploy && MERV_TS_IMAGE="$IMAGE_ID" docker compose -f compose.yml up -d) > deploy.log 2>&1
 for i in $(seq 1 60); do
   H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || H=starting
   R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null) || R=0
@@ -223,8 +248,9 @@ echo started
     throw new Error('remote job did not start');
 }
 
-function waitForVm(release) {
+function waitForVm(release, jobDirectory = "") {
   const rel = `/opt/merv-typescript/releases/${release}`;
+  const jobRoot = jobDirectory || rel;
   const deadline = Date.now() + 9 * 60_000;
   // A job that is between two commands, or not yet spawned, can be missed by one process
   // check; only two consecutive misses without a status file mean the job died.
@@ -232,7 +258,9 @@ function waitForVm(release) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
   while (Date.now() < deadline) {
     const r = ssh(
-      `if [ -f ${rel}/deploy-status.json ]; then cat ${rel}/deploy-status.json; elif pgrep -f ${rel}/release-job.sh >/dev/null; then echo RUNNING; else echo FAILED; tail -n 20 ${rel}/release-job.log ${rel}/build.log 2>/dev/null; fi`,
+      `${jobDirectory ? `if [ -f ${jobRoot}/exit-code ] && [ "$(cat ${jobRoot}/exit-code)" != 0 ]; then echo FAILED; tail -n 20 ${jobRoot}/release-job.log; exit 0; fi
+if [ ! -f ${jobRoot}/exit-code ]; then echo RUNNING; exit 0; fi
+` : ''}if [ -f ${rel}/deploy-status.json ]; then cat ${rel}/deploy-status.json; elif pgrep -f "${jobRoot}/(retry-[0-9]+/)?release-job.sh" >/dev/null; then echo RUNNING; else echo FAILED; tail -n 20 ${jobRoot}/release-job.log ${rel}/build.log 2>/dev/null; fi`,
     );
     const out = r.stdout.trim();
     if (out.startsWith('{')) return JSON.parse(out);
@@ -241,7 +269,7 @@ function waitForVm(release) {
     process.stdout.write('.');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
   }
-  throw new Error(`still building; rerun with --resume ${release}`);
+  throw new Error(`job still running; observe with --resume ${release}; do not launch another retry`);
 }
 
 async function publicChecks() {
@@ -253,7 +281,7 @@ async function publicChecks() {
   return { health: await code('/health'), ui: await code('/ui/'), assets: assetCodes.join('; ') };
 }
 
-const local = resume ? null : packageSource();
+const local = resume || retry ? null : packageSource();
 if (local)
   console.log(
     JSON.stringify({
@@ -296,7 +324,7 @@ if (local && PUBLIC === PRODUCTION && !args['skip-hosted'] && hosted('--check') 
   console.error("The hosted pins differ from the host's record (above); Main was not released.");
   process.exit(1);
 }
-const release = resume ?? local.release;
+const release = resume ?? retry ?? local.release;
 const log = (row) => {
   appendFileSync(join(root, RELEASES), `| ${new Date().toISOString().slice(0, 16)}Z | ${row} |\n`);
   execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
@@ -304,7 +332,28 @@ const log = (row) => {
     publishLedgers([join(root, RELEASES)], `Record release ${release} in production`);
 };
 if (local) upload(local);
-const vm = waitForVm(release);
+let retryDirectory;
+if (retry) {
+  const rel = `/opt/merv-typescript/releases/${retry}`;
+  const result = ssh(`test ! -e ${rel}/deploy-status.json && test ! -e ${rel}/deploy.log && test ! -e ${rel}/candidate-started && cat ${rel}/build-manifest.json`);
+  if (result.status !== 0) throw new Error('Cannot read original build manifest');
+  const manifest = JSON.parse(result.stdout);
+  if (manifest.release !== retry || !/^sha256:[a-f0-9]{64}$/.test(manifest.imageId) || !/^[a-f0-9]{64}$/.test(manifest.archiveSha256))
+    throw new Error('Invalid original build manifest');
+  retryDirectory = `${rel}/retry-${Date.now()}`;
+  const job = remoteJob({ release: retry, archiveSha256: manifest.archiveSha256, retryImage: manifest.imageId });
+  const started = ssh(`set -euo pipefail
+mkdir -m 700 ${retryDirectory}
+cat > ${retryDirectory}/release-job.sh <<'JOB'
+${job}
+JOB
+chmod 700 ${retryDirectory}/release-job.sh
+nohup bash -c 'bash ${retryDirectory}/release-job.sh; result=$?; echo "$result" > ${retryDirectory}/exit-code; exit "$result"' > ${retryDirectory}/release-job.log 2>&1 < /dev/null &
+echo started`);
+  if (started.status !== 0 || !started.stdout.includes('started')) throw new Error('Retry did not launch');
+  console.log(`Retry job: ${retryDirectory}`);
+}
+const vm = waitForVm(release, retryDirectory);
 console.log('\n' + JSON.stringify(vm));
 if (vm.rolledBack) {
   // The VM already restored the previous image; record the failure and stop.

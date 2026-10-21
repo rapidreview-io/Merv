@@ -200,17 +200,18 @@ test('Git cutover restart and rollback require exact previous image capability o
     const block = job.slice(start, job.indexOf('trap rollback EXIT', start));
     const dir = mkdtempSync(join(tmpdir(), 'merv-cutover-gate-'));
     try {
+      mkdirSync(join(dir, "source/deploy"), { recursive: true });
       writeFileSync(join(dir, 'rollback.json'), '{"automaticRollbackAllowed":true}');
       const result = spawnSync(
         'bash',
         [
           '-c',
           `set -euo pipefail
-IMG=new; PREV=old; PREV_NATIVE=${nativeCapable}; BK="$PWD"; ALLOW_ROLLBACK=${nativeCapable && !noRollback}; attempts=0
+IMAGE_ID=new; IMG=new; PREV=old; PREV_NATIVE=${nativeCapable}; BK="$PWD"; ALLOW_ROLLBACK=${nativeCapable && !noRollback}; attempts=0; TEST_ROOT="$PWD"; echo 0 > "$TEST_ROOT/attempts"
 docker() {
-  echo "$1" >> commands
-  if [ "$1" = run ]; then
-    attempts=$((attempts+1))
+  if [ "$1" = compose ]; then echo run >> "$TEST_ROOT/commands"; else echo "$1" >> "$TEST_ROOT/commands"; fi
+  if [ "$1" = compose ]; then
+    attempts=$(($(cat "$TEST_ROOT/attempts")+1)); echo "$attempts" > "$TEST_ROOT/attempts"
     if [ "$attempts" != "${failAt}" ] || ${!unreadable}; then
       echo '{"ready":true,"protocolMigrated":${migrated}${native ? ',"alreadyNative":true' : ''}}'
     fi
@@ -447,5 +448,80 @@ test('Main release cache cleanup is bounded, never prunes images or volumes, and
     assert.match(readFileSync(join(dir, 'build.log'), 'utf8'), /cleanup failed/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cutover uses real Compose dotenv interpolation and shared raw overrides', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merv-compose-env-'));
+  try {
+    writeFileSync(join(dir, 'main.env'), 'DB_HOST=database\nDATABASE_URL="postgres://user@${DB_HOST}/main"\nDATABASE_SCHEMA="native_main"\nOVERRIDE="dotenv"\n');
+    writeFileSync(join(dir, 'shared.env'), 'OVERRIDE="raw $LITERAL ${UNCHANGED}"\n');
+    const compose = readFileSync(new URL('./compose.yml', import.meta.url), 'utf8')
+      .replace('/etc/merv/typescript.env', join(dir, 'main.env'))
+      .replace('/etc/sandboxes/shared.env', join(dir, 'shared.env'));
+    writeFileSync(join(dir, 'compose.yml'), compose);
+    const parsed = spawnSync('docker', ['compose', '-f', join(dir, 'compose.yml'), 'config', '--format', 'json'], {
+      encoding: 'utf8', env: { ...process.env, MERV_TS_IMAGE: 'sha256:' + '1'.repeat(64) },
+    });
+    assert.equal(parsed.status, 0, parsed.stderr);
+    const config = JSON.parse(parsed.stdout);
+    const control = config.services.control;
+    assert.equal(control.environment.DATABASE_URL, 'postgres://user@database/main');
+    assert.equal(control.environment.DATABASE_SCHEMA, 'native_main');
+    // Compose serializes literal dollar signs doubled so its config can be read again.
+    assert.equal(control.environment.OVERRIDE, '"raw $$LITERAL $${UNCHANGED}"');
+    assert.equal(config.networks.legacy_database.name, 'deploy_default');
+    assert.equal(config.networks.sandboxes.name, 'sandboxes_default');
+    assert.equal(control.read_only, true);
+    const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64) });
+    const cutover = job.slice(job.indexOf('cutover() {'), job.indexOf('\ncutover >'));
+    assert.match(cutover, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false/);
+    assert.match(cutover, /--entrypoint node control --import tsx deploy\/git-cutover-preflight.mjs/);
+    assert.match(cutover, /< \/dev\/null/);
+    assert.doesNotMatch(cutover, /--env-file|compose.* up/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('prestart retry retains immutable build and refuses any previous candidate startup', () => {
+  const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64), retryImage: 'sha256:' + 'b'.repeat(64) });
+  assert.doesNotMatch(job, /docker build |docker pull |docker builder prune|> build-manifest.json|> "\$BK\/rollback.json"/);
+  assert.match(job, /IMAGE_ID=sha256:b{64}/);
+  assert.match(job, /m\['imageId'\]==sys.argv\[1\]/);
+  assert.match(job, /archive.extractfile/);
+  const guard = job.slice(job.indexOf('[ ! -e deploy-status.json ]'), job.indexOf('IMAGE_ID=sha256:'));
+  for (const marker of ['deploy-status.json', 'deploy.log', 'candidate-started', 'running', 'exited']) {
+    const dir = mkdtempSync(join(tmpdir(), 'merv-retry-guard-'));
+    try {
+      if (!['running', 'exited'].includes(marker)) writeFileSync(join(dir, marker), '');
+      const result = spawnSync('bash', ['-c', `set -euo pipefail\ndocker() { echo ${marker === 'running' ? 'running' : 'exited'}; }\n${guard}`], { cwd: dir, encoding: 'utf8' });
+      assert.equal(result.status, marker === 'exited' ? 0 : 1, result.stderr);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('retry validates retained image, archive Compose, and previous image provenance', () => {
+  const imageId = 'sha256:' + 'b'.repeat(64);
+  const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64), retryImage: imageId });
+  const guard = job.slice(job.indexOf('[ ! -e deploy-status.json ]'), job.indexOf('# The served UI'));
+  for (const mismatch of ['none', 'image', 'archive', 'previous', 'compose', 'cli']) {
+    const dir = mkdtempSync(join(tmpdir(), 'merv-retry-provenance-'));
+    try {
+      mkdirSync(join(dir, 'source/deploy'), { recursive: true });
+      writeFileSync(join(dir, 'source/deploy/compose.yml'), 'services: {}\n');
+      const tar = spawnSync('tar', ['-czf', join(dir, 'source.tar.gz'), '-C', join(dir, 'source'), 'deploy/compose.yml']);
+      assert.equal(tar.status, 0);
+      writeFileSync(join(dir, 'build-manifest.json'), JSON.stringify({ release: 'test', imageId: mismatch === 'image' ? 'wrong' : imageId, archiveSha256: mismatch === 'archive' ? 'wrong' : 'a'.repeat(64), buildAndCompiledCli: mismatch === 'cli' ? 'failed' : 'passed', sandboxesImage: imageId }));
+      writeFileSync(join(dir, 'rollback.json'), JSON.stringify({ previousImageId: mismatch === 'previous' ? 'wrong' : 'previous' }));
+      if (mismatch === 'compose') writeFileSync(join(dir, 'source/deploy/compose.yml'), 'changed');
+      const result = spawnSync('bash', ['-c', `set -euo pipefail
+BK="$PWD"
+docker() {
+  if [ "$1" = image ]; then echo '${imageId}';
+  elif [ "$3" = '{{.State.Status}}' ]; then echo exited;
+  else echo previous; fi
+}
+${guard}`], { cwd: dir, encoding: 'utf8' });
+      assert.equal(result.status, mismatch === 'none' ? 0 : 1, mismatch + result.stderr);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 });
