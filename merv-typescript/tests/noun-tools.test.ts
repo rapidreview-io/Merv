@@ -15,6 +15,9 @@ import { describeTool, ToolRegistry } from '../packages/api/src/registry.js';
 import type { AgentToolCall, NounDefinition, ToolDefinition } from '../packages/api/src/types.js';
 import { codeToolsPlugin } from '../packages/code-work/src/tools.js';
 import { taskToolsPlugin } from '../packages/tasks/src/tools.js';
+import { scopeToolsPlugin } from '../packages/scope/src/tools.js';
+import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
+import { knowledgeToolsPlugin } from '../packages/knowledge/src/tools.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { PiProfiles } from '../packages/pi/src/profiles.js';
 import { profileGrants, requireGranted } from '../packages/pi/src/profile-tools.js';
@@ -870,6 +873,49 @@ test('recovery guidance names each action by its address and says it as its call
       ],
     },
   });
+});
+
+test('the assembled project.read contributors register within the shared description limit', async () => {
+  const tools = new ToolRegistry(scope as never);
+  const ctx = { scope, sessions: {}, knowledge: {}, tools, effect: (fn: () => unknown) => fn() };
+  for (const plugin of [scopeToolsPlugin, sessionsToolsPlugin, knowledgeToolsPlugin])
+    assert.doesNotThrow(
+      () => plugin.apply(ctx as never),
+      `${plugin.name} must register alongside every project.read contributor`,
+    );
+  const catalog = await tools.describe(owner, true);
+  const registered = catalog.find(({ name }) => name === 'project.read')!;
+  assert.ok(
+    registered.description!.length <= 600,
+    'combined description includes routing guidance',
+  );
+  const schema = expanded(registered.inputSchema);
+  assert.deepEqual([...schema.properties.action.enum].sort(), [
+    'actors',
+    'brief',
+    'get',
+    'list',
+    'records',
+    'references',
+    'status',
+    'usage',
+    'whoami',
+  ]);
+  assert.match(schema.properties.status.description, /cumulative project\/dependency limits/);
+  assert.match(schema.properties.status.description, /withheld steps.*covering budgets/);
+  // A later oversized contribution fails without withdrawing the working shared tool.
+  assert.throws(
+    () =>
+      tools.noun('project.read', {
+        tier: 'core',
+        readOnly: true,
+        description: 'x'.repeat(600),
+        actions: { extra: { description: 'Extra.', input: z.object({}), handler: () => ({}) } },
+      }),
+    { code: 'invalid_tool', message: /project\.read.*600/ },
+  );
+  assert.deepEqual(await tools.describe(owner, true), catalog);
+  await tools.close();
 });
 
 test('plugins contribute actions to one noun, which loses an action when its plugin unloads', async () => {

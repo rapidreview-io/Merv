@@ -25,7 +25,7 @@ export const sessionsToolsPlugin = {
         readOnly: true,
         summary: 'Read operations (status first) and usage/budgets.',
         description:
-          'status (dispatch, machines, sessions, waiting work, budgets and blockers; first for an operational question) and usage (what closed sessions cost, and budgets).',
+          'status (dispatch, machines, sessions, waiting work, budgets and blockers) and usage (closed-session costs and budgets).',
         actions: {
           status: {
             description:
