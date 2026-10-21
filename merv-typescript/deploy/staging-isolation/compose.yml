@@ -1,0 +1,45 @@
+# Existing staging PostgreSQL and networks only. Resolve immutable image digests before use.
+name: sandboxes
+services:
+  control:
+    image: ${SANDBOXES_TS_IMAGE:?immutable reviewed image required}
+    restart: unless-stopped
+    user: '10001:10001'
+    env_file:
+      - path: /etc/sandboxes/shared.env
+        format: raw
+    volumes: [sandboxes-data:/data]
+    networks:
+      default:
+        aliases: [sbx-control]
+      postgres: {}
+    ports: ['127.0.0.1:8000:8000']
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    stop_grace_period: 60s
+  gateway:
+    image: ${SANDBOXES_GATEWAY_IMAGE:?immutable reviewed gateway image required}
+    restart: unless-stopped
+    user: '10001:10001'
+    depends_on:
+      control:
+        condition: service_healthy
+    environment:
+      SANDBOXES_CONTROL_URL: http://sbx-control:8000
+    volumes: [sandboxes-data:/data]
+    networks: [default]
+    ports: ['0.0.0.0:2222:2222']
+networks:
+  default:
+    external: true
+    name: sandboxes_default
+  postgres:
+    external: true
+    name: deploy_default
+volumes:
+  sandboxes-data:
+    external: true
+    name: sandboxes_staging-native-data

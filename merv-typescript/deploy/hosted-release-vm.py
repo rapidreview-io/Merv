@@ -579,13 +579,14 @@ def rootfs(image):
         subprocess.run(['docker', 'rm', container], capture_output=True)
 
 
-def busy(release=False):
+def busy(release=False, database_reader=None):
     """Pi turns and launches in flight, by id; idle warm runtimes do not count. With `release` (the
     drain) the same statement first releases idle Pi hosts (IDLE) and holds work machines (HOLD):
     every Pi machine up for a host, which a turn could still land on, counts until Main has released
     it, and every work machine Fleet rented for workflow steps until its step has settled and Fleet
     has released it, since a rollout replaces it. Outside the drain (the catalog's wait) work
     machines never count: their steps run for hours, and only the drain's hold ends them."""
+    database_reader = database_reader or main_read
     agg = "coalesce((SELECT json_agg({}) FROM {} WHERE {}), '[]'::json)::text"
     reads = {'turns': ("conversation_id || '/' || id", '{s}.pi_commands', f"status IN {ACTIVE}"),
              'launches': ('id', '{s}.fleet_allocations',
@@ -596,10 +597,10 @@ def busy(release=False):
              **({'warm': ('id', '{s}.fleet_allocations', "phase <> 'released' AND data_json::jsonb->>'intent' = "
                           "'run' AND data_json::jsonb#>>'{owner,kind}' = 'pi-host'"),
                  'work': ('id', '{s}.fleet_allocations', f"phase <> 'released' AND {WORKFLOW}")} if release else {})}
-    main = main_read((f'WITH {IDLE}, {HOLD} ' if release else '') + 'SELECT ' +
+    main = database_reader((f'WITH {IDLE}, {HOLD} ' if release else '') + 'SELECT ' +
                      ', '.join(agg.format(*read) + ' AS ' + key for key, read in reads.items()), write=release)
     kept = {part for pair in json.loads(main.pop('kept', '[]')) for part in pair if part}
-    lists = {**main, **main_read('SELECT ' + agg.format('id', 'public.sandboxes',
+    lists = {**main, **database_reader('SELECT ' + agg.format('id', 'public.sandboxes',
                                  "provider LIKE 'cloudflare-fleet%' AND state IN ('provisioning','deleting')") +
                                  ' AS machines, ' + agg.format('launch_id', 'public.runtime_bootstraps',
                                  "state='pending' AND expires_at > now()") + ' AS bootstraps',
@@ -608,12 +609,12 @@ def busy(release=False):
             if ids}
 
 
-def quiet(limit, release=False):
+def quiet(limit, release=False, database_reader=None):
     """Wait, bounded, until nothing is in flight for 10 s. The drain (`release`) that gives up lifts
     its hold on work machines first."""
     deadline, calm = time.monotonic() + limit, None
     while True:
-        now = busy(release)
+        now = busy(release, database_reader) if database_reader else busy(release)
         if now:
             calm = None
         elif calm is None:
@@ -723,6 +724,8 @@ class Step:
                  'staging requires native-compatible Main')
             need(env_of(MAIN).get('MERV_TS_DB_SCHEMA') == 'merv_ts_staging', 'not the staging schema')
             self.hosted_plugins()
+            if self.plan.get('isolatedStaging'):
+                need(isolation_identity() == self.plan.get('isolation'), 'staging isolation changed')
             self.staging_census()
             live, saved = machines(env_of(MAIN)), machines(file_env(ENV.read_bytes()))
             need(set(live) == set(saved) == set(STAGING_PROVIDERS) and live == saved,
@@ -760,6 +763,8 @@ class Step:
 
     def staging_pair(self):
         self.hosted_plugins()
+        if self.plan.get('isolatedStaging'):
+            need(isolation_identity() == self.plan.get('isolation'), 'prepared isolation changed')
         before = read(self.run / 'preflight.json')
         need(before and inspect(MAIN)['Image'] == before['cutoverMainImage'], 'prepared staging Main image changed')
         target = self.plan['stagingReleases']
@@ -1014,7 +1019,7 @@ class Step:
             subprocess.run(['docker', 'logout', 'registry.cloudflare.com'], env=env, capture_output=True)
             shutil.rmtree(config, ignore_errors=True)
 
-    def sandboxes_file(self):
+    def sandboxes_file(self, network_none=False, before_recreate=lambda: None):
         """The shared raw env and a coordinated recreate of its two readers on their current images."""
         need(not main_release_running(), 'a Main release job is running')
         commands = []
@@ -1032,7 +1037,15 @@ class Step:
         def apply(raw):
             atomic(SHARED, raw)
             for name, command, env, cwd in commands:
-                if name == MAIN:
+                if name == MAIN and network_none:
+                    effective = env_of(MAIN)
+                    effective.update(file_env(raw))
+                    need(all('\n' not in v and '\r' not in v for v in effective.values()), 'multiline env cannot be rendered with docker env-file')
+                    render_env = self.run / 'render.effective.env'
+                    atomic(render_env, ('\n'.join(k + '=' + v for k, v in effective.items()) + '\n').encode())
+                    run(['docker', 'run', '--rm', '--network', 'none', '--env-file', str(render_env),
+                         '--entrypoint', 'node', env['MERV_TS_IMAGE'], '/app/deploy/render-config.mjs', '/tmp/hosted-release-render.json'])
+                elif name == MAIN:
                     run(command + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'control',
                                    '/app/deploy/render-config.mjs', '/tmp/hosted-release-render.json'],
                         env=env, cwd=cwd)
@@ -1040,6 +1053,7 @@ class Step:
                     run(command + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'sbx', 'control',
                                    'migrate', '--status'], env=env, cwd=cwd)
             for name, command, env, cwd in commands:
+                before_recreate()
                 run(command + ['up', '-d', '--no-deps', 'control'],
                     env=env, cwd=cwd, timeout=240)
                 healthy(name, 90, 2)
@@ -1217,6 +1231,25 @@ class Step:
         cred, target = credential(Path(self.plan['canary']['credential'])), arg['releaseId']
         whoami(cred)
         nonce = secrets.token_hex(4)
+        if self.plan.get('isolatedStaging'):
+            intent = read(self.run / 'isolated-canary.intent.json')
+            if intent:
+                need(intent['releaseId'] == target and intent['isolation'] == isolation_identity(), 'canary intent changed')
+                previous_result=read(self.run / 'isolated-canary.result.json') or {}
+                if (previous_result.get('nonce') == intent['nonce'] and previous_result.get('released')
+                        and previous_result.get('status') not in (*ACTIVE, None) and previous_result.get('accepted') is False):
+                    # Only a terminal, stopped and fully censused attempt can be replaced.
+                    self.staging_census()
+                    isolated_census()
+                    atomic(self.run / ('isolated-canary.attempt-' + intent['nonce'] + '.json'),
+                           json.dumps({'intent':intent,'result':previous_result}).encode())
+                    intent={**intent,'nonce':nonce,'generation':intent.get('generation',1)+1}
+                    atomic(self.run / 'isolated-canary.intent.json',json.dumps(intent).encode())
+                nonce = intent['nonce']
+            else:
+                self.staging_census()
+                atomic(self.run / 'isolated-canary.intent.json', json.dumps({'nonce': nonce, 'releaseId': target,
+                       'isolation': isolation_identity()}).encode())
         word, started = 'canary-' + nonce, time.monotonic()
         conversation = tool(cred, 'pi.create', {'requestId': 'hosted-' + nonce, 'title': CANARY_NAME})['id']
         command = {}
@@ -1232,9 +1265,16 @@ class Step:
         finally:
             # Pi v2 shares the person's machine and keeps it 10 idle minutes, so the canary releases it
             # as a person would (Release machine); v1 has no such tool, and its pi.stop releases it.
-            for name, body in (('pi.stop', {'id': conversation}), ('pi.machine.stop', {})):
+            cleanup = (('pi.stop', {'id': conversation}), ('pi.machine.stop', {}))
+            if self.plan.get('isolatedStaging'):
+                # Lost reads/process death leave the same command resumable. Never cancel a
+                # live attempt or the person's shared machine; wait for natural idle release.
+                cleanup = ()
+            for name, body in cleanup:
                 with contextlib.suppress(RuntimeError):
                     tool(cred, name, body, tries=3)
+        if self.plan.get('isolatedStaging'):
+            need(command.get('status') and command['status'] not in ACTIVE, 'canary attempt still active; resume the same durable command')
         allocation = command.get('runtimeId')  # the machine that served the turn
         profiles = json.loads(run(['docker', 'exec', '-w', '/app', MAIN, 'node', '--import', 'tsx',
                                    '--input-type=module', '-e', FLEET_PROFILES]))
@@ -1243,7 +1283,7 @@ class Step:
                            [profile for profile, release in profiles.items() if release == target])['n']
         # Native deletion and Fleet retries can each back off for a minute. Wait for
         # observed stop, not just Fleet's lease-expiry fallback freeing its slot.
-        released, release_deadline = False, time.monotonic() + 600
+        released, release_deadline = False, time.monotonic() + (900 if self.plan.get('isolatedStaging') else 600)
         while time.monotonic() < release_deadline:
             released = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
                                  "phase = 'released' AND data_json::jsonb->'runtime'->>'state' = 'stopped'",
@@ -1262,10 +1302,16 @@ class Step:
                   'apps': {p: n['image'] == image and not n.get('rollout') and (n.get('health') or {}).get(
                       'errors') == [] and not n['health'].get('instances', {}).get('failed') for p, n in apps.items()},
                   'seconds': round(time.monotonic() - started)}
+        result['accepted'] = bool(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released'] and all(result['apps'].values()))
+        if self.plan.get('isolatedStaging'):
+            isolated_census()
+            result['nonce']=nonce
+            atomic(self.run / 'isolated-canary.result.json', json.dumps(result).encode())
         need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released']
              and all(result['apps'].values()), 'canary_failed ' + json.dumps(result))
         if not self.plan.get('cutover'):
             unhold()  # normal release removes only its own drain hold
+        atomic(self.run / 'canary.json', json.dumps({**result,'releaseId':target,'image':image}).encode())
         return result
 
     def note(self, arg):
@@ -1281,6 +1327,12 @@ class Step:
             with authorized(self.run.name):
                 unhold()
         if arg.get('state'):
+            current=arg['state'].get('current') or {}
+            canary=read(self.run / 'canary.json') or {}
+            if (arg.get('result') in ('pass','rechecked','abandoned') and current.get('verified') is not False
+                    and canary.get('accepted') is True and canary.get('image') == current.get('image')
+                    and canary.get('releaseId') == current.get('releaseId')):
+                atomic(self.run / 'acceptance.json',json.dumps({'current':current,'canary':canary}).encode())
             atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
         for name in ('catalog.before', 'stage.before', 'env.before'):  # they hold secrets
             if (self.run / name).exists():
@@ -1461,16 +1513,46 @@ def staging_source(owned=None):
     need(current and current.get('verified') is not False and
          re.fullmatch(r'registry\.cloudflare\.com/[a-z0-9/_-]+@sha256:[0-9a-f]{64}', current.get('image', '')),
          'production has no verified immutable release')
-    accepted = []
+    accepted, native_baseline = [], False
+    records=[]
     for finish in RUNS.glob('*/finish.json'):
         record, plan = read(finish), read(finish.parent / 'plan.json') or {}
         progress = read(finish.parent / 'progress.json') or {}
-        if (record.get('result') == 'pass' and (read(finish.parent / 'push.json') or {}).get('image') == current['image']
-                and plan.get('sourceCommit') == current.get('sourceCommit')
-                and plan.get('sandboxesCommit') == current.get('sandboxesCommit')
-                and plan.get('cutover') and not plan.get('stagingCutover') and progress.get('cutoverPrepared')):
-            accepted.append(finish.parent.name)
-    need(accepted, 'production native cutover has no completed acceptance receipt')
+        if record.get('result') == 'pass' and plan.get('cutover') and not plan.get('stagingCutover') and progress.get('cutoverPrepared'):
+            native_baseline = True
+        records.append((finish.parent,record,plan,progress))
+    def provenance(wanted, seen=frozenset()):
+        identity=(wanted.get('sourceCommit'),wanted.get('sandboxesCommit'),wanted.get('image'))
+        if identity in seen or wanted.get('verified') is False:
+            return []
+        found=[]
+        for path,record,plan,progress in records:
+            receipt=read(path / 'acceptance.json') or {}
+            attested=receipt.get('current') or {}
+            canary=read(path / 'canary.json') or {}
+            if (not plan.get('stagingCutover') and record.get('result') in ('pass','rechecked','abandoned')
+                    and canary.get('accepted') is True and receipt.get('canary') == canary
+                    and canary.get('image') == wanted.get('image') and canary.get('releaseId') == wanted.get('releaseId')
+                    and attested.get('verified') is not False
+                    and all(attested.get(k)==wanted.get(k) for k in ('sourceCommit','sandboxesCommit','image','releaseId','releases'))):
+                found.append(path.name)
+            if plan.get('stagingCutover') or plan.get('sourceCommit') != identity[0] or plan.get('sandboxesCommit') != identity[1]:
+                continue
+            if (record.get('result') == 'pass' and (read(path / 'push.json') or {}).get('image') == identity[2]
+                    and (not plan.get('cutover') or progress.get('cutoverPrepared'))):
+                found.append(path.name)
+            elif record.get('result') == 'current':
+                old=plan.get('current') or {}
+                build=read(path / 'build.json') or {}
+                # The actual builder proved identical filesystem AND configuration. A bare
+                # finish flag cannot extend acceptance to another executable or failed run.
+                identical=(build.get('lane')=='none' and build.get('changedCount')==0 and build.get('configChanged') is False)
+                same=all(old.get(k)==wanted.get(k) for k in ('image','releaseId','releases'))
+                if identical and same and provenance(old,seen|{identity}):
+                    found.append(path.name)
+        return found
+    accepted=provenance(current)
+    need(accepted and native_baseline, 'production has no completed acceptance receipt for its native baseline and current release')
     need(inspect(MAIN)['Config'].get('Labels', {}).get('org.merv.native-git-protocol') == '1',
          'production Main is not native compatible')
     live = Step(Path('/unused'), {}).pins()
@@ -1486,17 +1568,20 @@ def staging_source(owned=None):
             'releases': dict(zip(STAGING_PROVIDERS, release_ids(entries)))}
 
 
-def staging_provider_census():
+def staging_provider_census(database_reader=None, status_reader=None, inventory_reader=None):
+    database_reader = database_reader or main_read
+    status_reader = status_reader or native
+    inventory_reader = inventory_reader or (lambda provider: sbx(MERV_PROVIDER=provider, MERV_INVENTORY='1'))
     # Every staging provider object counts, including owners unknown to Main and pending bootstrap.
-    row = main_read("SELECT count(*)::int AS n FROM public.sandboxes WHERE provider = ANY($1::text[]) "
+    row = database_reader("SELECT count(*)::int AS n FROM public.sandboxes WHERE provider = ANY($1::text[]) "
                     "AND state NOT IN ('stopped','deleted','failed')", list(STAGING_PROVIDERS), url='SANDBOXES_DATABASE_URL')
-    launches = main_read("SELECT count(*)::int AS n FROM public.runtime_bootstraps b JOIN public.sandboxes s "
+    launches = database_reader("SELECT count(*)::int AS n FROM public.runtime_bootstraps b JOIN public.sandboxes s "
                         "ON s.id=b.sandbox_id AND s.namespace=b.namespace WHERE s.provider = ANY($1::text[]) "
                         "AND b.state='pending' AND b.expires_at > now()",
                         list(STAGING_PROVIDERS), url='SANDBOXES_DATABASE_URL')
     need(row['n'] == launches['n'] == 0, 'staging provider ownership is not empty')
     for provider in STAGING_PROVIDERS:
-        status = native(provider)
+        status = status_reader(provider)
         health = status.get('health') or {}
         counts = health.get('instances')
         fields = {'active', 'assigned', 'healthy', 'stopped', 'failed', 'scheduling', 'starting'}
@@ -1509,7 +1594,7 @@ def staging_provider_census():
         need(status.get('rollout') is None and health.get('errors') == [] and
              all(counts[key] == 0 for key in fields - {'healthy'}),
              'staging provider instances are not confirmed empty')
-        inventory = sbx(MERV_PROVIDER=provider, MERV_INVENTORY='1')
+        inventory = inventory_reader(provider)
         need(isinstance(inventory, dict) and inventory.get('liveEmpty') is True and
              type(inventory.get('instances')) is int and inventory['instances'] == 0 and
              type(inventory.get('assignedObjects')) is int and inventory['assignedObjects'] == 0 and
@@ -1587,9 +1672,128 @@ def verify_production_pair(current):
          'production hosted image changed during staging catalog/propagation recovery')
 
 
+ISOLATION = Path('/var/lib/merv-fleet-pilot/staging-isolation/accepted.json')
+STAGING_APPS = {'cloudflare-fleet-staging': 'a03c1f13-92c1-46c7-a246-17c9304c0f21',
+                'cloudflare-fleet-staging-large': 'a03d8ea0-6914-4a7c-9f45-08e25da4a6ab'}
+
+
+def reader_read(query, *params, **flags):
+    """Read-only one-shot on the reader's actual image/networks, including stopped readers."""
+    need(not flags.get('write'), 'ephemeral reader is read-only')
+    effective=env_of(MAIN)
+    effective.pop('MERV_W',None)
+    effective.update(MERV_URL=flags.get('url','MERV_DB_URL'),MERV_Q=query,MERV_P=json.dumps(params))
+    info=inspect(MAIN)
+    networks=list(info.get('NetworkSettings',{}).get('Networks',{})) or ['sandboxes_default']
+    return json.loads(run(['docker','run','--rm',*[part for n in networks for part in ('--network',n)],
+                           '-w','/app',*[part for k in effective for part in ('-e',k)],
+                           '--entrypoint','node',info['Image'],'--input-type=module','-e',MAIN_READ],
+                          env=dict(os.environ,**effective)))
+
+
+def isolated_read(query, *params, **flags):
+    need(flags.get('url') == 'SANDBOXES_DATABASE_URL' and not flags.get('write'), 'isolated reader is Sandboxes read-only')
+    return reader_read(query,*params,**flags)
+
+
+def isolated_probe(provider, inventory=False):
+    need(provider in STAGING_APPS, 'not a staging app')
+    effective = env_of(CONTROL)
+    effective.update(MERV_PROVIDER=provider, MERV_INVENTORY='1' if inventory else '')
+    source = globals().get('_STAGING_PROBE') or Path(__file__).with_name('hosted-sandboxes-probe.mjs').read_bytes()
+    return json.loads(run(['docker', 'run', '--rm', '-i', '--network', 'sandboxes_default',
+                           '-w', '/opt/sandboxes/typescript', *[part for key in effective for part in ('-e', key)],
+                           '--entrypoint', 'node', inspect(CONTROL)['Image'], '--import', 'tsx', '--input-type=module', '-'],
+                          payload=source, env=dict(os.environ, **effective), timeout=60))
+
+
+def isolated_census():
+    return staging_provider_census(isolated_read, isolated_probe, lambda p: isolated_probe(p, True))
+
+
+def isolation_identity(binding_override=None):
+    need(ISOLATION.is_file() and not ISOLATION.is_symlink() and
+         ISOLATION.stat().st_uid == 0 and ISOLATION.stat().st_mode & 0o077 == 0,
+         'root-private isolated staging acceptance is missing')
+    binding = binding_override or read(ISOLATION)
+    need(binding.get('phase') == 'destination-enabled' and binding.get('apps') == STAGING_APPS,
+         'staging controller handoff is incomplete')
+    need(binding.get('sourceRelinquished') is True and binding.get('restoreRehearsal') and
+         binding.get('historySha256') and binding.get('relay'), 'missing isolation preservation proof')
+    live = env_of(MAIN)
+    need(live.get('MERV_TS_DB_SCHEMA') == 'merv_ts_staging', 'not staging Main')
+    for service in (MAIN, CONTROL):
+        effective = env_of(service)
+        need(effective.get('SANDBOXES_DATABASE_URL') == live.get('SANDBOXES_DATABASE_URL') and
+             effective.get('SANDBOXES_VAULT_KEY') == live.get('SANDBOXES_VAULT_KEY'),
+             'staging readers disagree on database or vault')
+        providers = json.loads(effective['SANDBOXES_PROVIDERS'])
+        need({p['name'] for p in providers} == set(STAGING_APPS) and all(p['settings']['application_id'] == STAGING_APPS[p['name']] for p in providers), 'staging provider/app set changed')
+        need(inspect(service)['Image'] == binding['images'][service], 'isolated reader image changed')
+    db = isolated_read("SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS oid, "
+                   "current_user AS role,inet_server_addr()::text AS address,inet_server_port() AS port",
+                   url='SANDBOXES_DATABASE_URL')
+    need(db == binding['database'] and db['database'] == 'sandboxes_staging', 'isolated database identity changed')
+    need(live.get('MERV_SANDBOXES_PUBLIC_ORIGIN') == binding['publicOrigin'] and
+         binding['publicOrigin'] != 'https://sandboxes.rapidreview.io', 'staging public origin changed')
+    return binding
+
+
+def isolated_staging_gateway(arg):
+    """Everything except accepted-image discovery stays on the staging host. Never fallback."""
+    need(arg['action'] in ('identity', 'catalog', 'native', 'census'), 'invalid local gateway action')
+    HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
+        need(locked(maintenance, 1200) and locked(lock, 1200), 'staging owner is busy')
+        need(not RECOVERY_PENDING.exists() and not main_release_running(), 'staging recovery/release is active')
+        binding = isolation_identity()
+        if arg['action'] == 'identity':
+            return binding
+        name = arg.get('run', '')
+        need(re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}-staging', name), 'invalid local staging run')
+        need(owner() == name, 'local hosted run does not own staging')
+        plan = read(RUNS / name / 'plan.json') or {}
+        need(plan.get('isolatedStaging') and plan.get('isolation') == binding and
+             plan.get('stagingSource') == arg.get('source'), 'local source or isolation binding changed')
+        source = arg['source']
+        if arg['action'] == 'native':
+            need(arg.get('provider') in STAGING_PROVIDERS, 'not a staging app')
+            return isolated_probe(arg['provider'])
+        isolated_census()
+        if arg['action'] == 'census':
+            return {'drained': True, 'readOnly': True, 'isolation': binding}
+        directory = RUNS / name / 'local-catalog'
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        journal = read(directory / 'intent.json')
+        if journal:
+            need(journal['source'] == source and journal['isolation'] == binding, 'local catalog intent changed')
+        else:
+            before = SHARED.read_bytes()
+            atomic(directory / 'original.env', before)
+            target = before
+            for entry in source['entries']:
+                need(entry['provider'] in STAGING_PROVIDERS, 'non-staging catalog entry')
+                target, _ = with_release(target, entry)
+            atomic(directory / 'target.env', target)
+            atomic(directory / 'intent.json', json.dumps({'source': source, 'isolation': binding,
+                   'before': sha(before), 'target': sha(target)}).encode())
+            journal = read(directory / 'intent.json')
+        target = (directory / 'target.env').read_bytes()
+        need(sha(target) == journal['target'] and sha(SHARED.read_bytes()) in (journal['before'], journal['target']),
+             'local catalog files drifted')
+        # An interrupted reader recreation always rolls forward to the same durable target.
+        Step(directory, {}).sandboxes_file(network_none=True)[1](target)
+        need(isolation_identity() == binding, 'isolation changed during catalog apply')
+        atomic(directory / 'complete.json', json.dumps({'target': journal['target']}).encode())
+        return {'entries': source['entries'], 'releases': source['releases'], 'isolation': binding}
+
+
 def staging_gateway(arg):
     need(os.geteuid() == 0, 'run as root')
+    if arg.get('isolated'):
+        return isolated_staging_gateway(arg)
     action = arg['action']
+    need(action == 'source' or not Path('/var/lib/merv-fleet-pilot/staging-isolation/relinquished.json').exists(), 'staging apps were handed off; use isolated staging mode')
     need(action in ('source', 'catalog', 'native', 'census'), 'invalid staging gateway action')
     HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
     with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:

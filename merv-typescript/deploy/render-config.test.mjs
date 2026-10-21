@@ -792,3 +792,23 @@ test('OAuth trusts only explicitly configured proxy IP addresses', (t) => {
     0,
   );
 });
+
+test('isolated staging requires an explicit standalone HTTPS origin', (t) => {
+  const { run, plugin } = renderer(t);
+  let result = run({ MERV_TS_DB_SCHEMA: 'merv_ts_staging' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /explicit MERV_SANDBOXES_PUBLIC_ORIGIN/);
+  result = run({
+    MERV_TS_DB_SCHEMA: 'merv_ts_staging',
+    MERV_SANDBOXES_PUBLIC_ORIGIN: 'https://staging.example:8443',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(plugin('sandboxes-host').config.publicOrigin, 'https://staging.example:8443');
+  for (const origin of [
+    'https://staging.example/sbx',
+    'http://staging.example',
+    'https://staging.example/',
+  ]) {
+    assert.notEqual(run({ MERV_SANDBOXES_PUBLIC_ORIGIN: origin }).status, 0);
+  }
+});

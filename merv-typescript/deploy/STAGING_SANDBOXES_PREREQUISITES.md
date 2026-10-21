@@ -1,3 +1,11 @@
+# Historical prerequisite investigation (superseded)
+
+The topology decision below was resolved by the isolated native implementation. Use
+[staging-isolation/README.md](staging-isolation/README.md) and
+[STAGING_SANDBOXES_ISOLATION_PLAN.md](STAGING_SANDBOXES_ISOLATION_PLAN.md) for the current
+operator sequence. This retained investigation is not an instruction to share production DBs,
+wait for generic topology approval, or repair the old image with env-only origins.
+
 # Staging native Sandboxes prerequisites
 
 On October 21, 2026, staging migrated its three preserved tasks and started native Main

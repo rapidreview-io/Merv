@@ -52,6 +52,12 @@ for (const name of ['MERV_FLEET_ENABLED', 'MERV_FLEET_WORKFLOW_ENABLED', 'MERV_P
     throw new Error(
       `${name}=true requires SANDBOXES_DATABASE_URL; refusing to omit hosted plugins`,
     );
+if (
+  sandboxesEnabled &&
+  deploymentSchema() === 'merv_ts_staging' &&
+  process.env.MERV_SANDBOXES_PUBLIC_ORIGIN === 'https://sandboxes.rapidreview.io'
+)
+  throw new Error('Staging cannot use the production Sandboxes origin');
 const fleetEnabled = sandboxesEnabled && optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = sandboxesEnabled && optIn('MERV_FLEET_WORKFLOW_ENABLED');
 // MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS and MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS are
@@ -207,7 +213,13 @@ if (sandboxesEnabled)
         schema: 'public',
         vaultKeyEnv: 'SANDBOXES_VAULT_KEY',
         dataDir: '/data',
-        publicOrigin: 'https://sandboxes.rapidreview.io',
+        publicOrigin: process.env.MERV_SANDBOXES_PUBLIC_ORIGIN
+          ? origin('MERV_SANDBOXES_PUBLIC_ORIGIN')
+          : (() => {
+              if (deploymentSchema() === 'merv_ts_staging')
+                throw new Error('Staging requires explicit MERV_SANDBOXES_PUBLIC_ORIGIN');
+              return 'https://sandboxes.rapidreview.io';
+            })(),
         registerUi: true,
         registerTools: true,
         relayEvents: true,

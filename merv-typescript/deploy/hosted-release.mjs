@@ -360,6 +360,7 @@ async function main(args) {
       'replace-predeploy-cutover': { type: 'string' },
       'accept-cutover': { type: 'boolean' },
       'staging-cutover': { type: 'boolean' },
+      'isolated-staging': { type: 'boolean' },
       'canary-project': { type: 'string' },
     },
   });
@@ -386,6 +387,9 @@ async function main(args) {
   if (values['prepare-cutover'] && (values.abandon || values.check || values['mint-canary']))
     throw new Error('--prepare-cutover cannot abandon, check or mint a credential');
   const stagingCutover = values['staging-cutover'] === true;
+  const isolatedStaging = values['isolated-staging'] === true;
+  if (isolatedStaging && !stagingCutover)
+    throw new Error('--isolated-staging requires --staging-cutover');
   if (
     stagingCutover &&
     (values.check ||
@@ -519,8 +523,14 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
   const production = (action, arg = {}) =>
     onStaging(
       'staging-gateway',
-      { action, source: stagingSource, run: stagingRun, ...arg },
-      values.host,
+      {
+        action,
+        source: stagingSource,
+        run: stagingRun,
+        isolated: isolatedStaging && action !== 'source',
+        ...arg,
+      },
+      isolatedStaging && action !== 'source' ? values['staging-host'] : values.host,
     );
   const upload = (run, sandboxesCommit) => {
     const src = packageSource();
@@ -650,6 +660,8 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       current: target,
       cutover: true,
       stagingCutover: true,
+      isolatedStaging,
+      ...(isolatedStaging ? { isolation: production('identity') } : {}),
       stagingSource,
       stagingReleases: stagingSource.releases,
       canary,
@@ -768,6 +780,8 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     }
     const { plan, preflight: pre } = s;
     let { build, gates, push: pushed, progress = {} } = s;
+    if (!!plan?.isolatedStaging !== isolatedStaging)
+      throw new Error('Resume must preserve isolated staging mode');
     if (!!plan?.stagingCutover !== stagingCutover)
       throw new Error('Run scope differs; use --staging-cutover only for a staging run');
     if (stagingCutover) {

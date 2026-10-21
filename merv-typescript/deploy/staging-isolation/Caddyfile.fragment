@@ -1,0 +1,6 @@
+# Merge into the existing staging Caddy configuration after preserving its exact bytes.
+# Main's existing customer/worker fence remains unchanged. Native Sandboxes owns authentication
+# for /mcp, /agent, /ui and /v1 at this separate complete origin.
+https://dev-experiments.rapidreview.io:8443 {
+    reverse_proxy 127.0.0.1:8000
+}
