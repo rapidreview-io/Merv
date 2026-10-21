@@ -133,7 +133,13 @@ for (const origin of ['https://experiments.rapidreview.io', 'https://release-fix
     const name = packageName(origin);
     assert.ok(guide.includes('codex mcp login '+name));
     assert.ok(page.includes('codex mcp login '+name));
-    assert.ok(guide.includes('From the extraction directory (MARKETPLACE)'));
+    if (name === 'merv') {
+      assert.ok(guide.includes('claude plugin marketplace add rapidreview-io/merv-plugins'));
+      assert.ok(page.includes('rapidreview-io/merv-plugins'));
+    } else {
+      assert.ok(guide.includes('From the extraction directory (MARKETPLACE)'));
+      assert.ok(!page.includes('rapidreview-io/merv-plugins'));
+    }
     const bundle = await (await fetch(base+'/connect/bundle.json')).json();
     assert.equal(JSON.parse(bundle.files['codex/.mcp.json']).mcpServers[name].url,origin+'/mcp');
     assert.equal(JSON.parse(bundle.files['claude-code/.mcp.json']).mcpServers[name].url,origin+'/mcp');
