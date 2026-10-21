@@ -1,4 +1,7 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
+import { projectHolds, type HoldRow } from './dispatch-holds.js';
+export type { HoldRow } from './dispatch-holds.js';
 import { postgresMigrations } from './dispatch.postgres.js';
 import { z } from 'zod';
 import {
@@ -121,17 +124,6 @@ export const releaseHoldSchema = z.strictObject({
   reason: z.string().min(1).max(500).refine(visible),
   requestId: z.string().min(1),
 });
-export interface HoldRow {
-  instance_id: string;
-  revision: number;
-  attempts: number;
-  last_code: string;
-  last_message: string;
-  last_session_id: string | null;
-  first_at: string;
-  last_at: string;
-  held_at: string | null;
-}
 interface Target {
   instanceId: string;
   expectedRevision: number;
@@ -226,10 +218,24 @@ export class SessionDispatch {
         "SELECT to_regclass('session_dispatch_holds')::text AS name",
       );
       if (!table?.name) return;
-      for (const row of await tx.all<HoldRow & { project_id: string }>(
-        'SELECT DISTINCT ON (project_id,instance_id) * FROM session_dispatch_holds WHERE held_at IS NOT NULL ORDER BY project_id,instance_id,revision DESC',
-      ))
-        await this.reportHold(row.project_id, row.instance_id, row, tx);
+      const rows = await tx.all<HoldRow & { project_id: string }>(
+        'SELECT * FROM session_dispatch_holds ORDER BY project_id,instance_id,revision',
+      );
+      for (const projectId of new Set(rows.map((row) => row.project_id))) {
+        const continuity = await nativeRevisionContinuity(tx, projectId);
+        const holds = projectHolds(
+          rows.filter((row) => row.project_id === projectId),
+          continuity,
+        )
+          .filter((row) => row.held_at)
+          .sort((a, b) => b.revision - a.revision);
+        const reported = new Set<string>();
+        for (const row of holds)
+          if (!reported.has(row.instance_id)) {
+            await this.reportHold(projectId, row.instance_id, row, tx);
+            reported.add(row.instance_id);
+          }
+      }
       // A go-ahead (a release, or dispatch switched off and on) that left its blocker behind:
       // work whose counts were reset and that nothing holds now has none.
       for (const row of await tx.all<{ project_id: string; instance_id: string }>(
@@ -285,12 +291,15 @@ export class SessionDispatch {
     failure: { code: string; message: string; sessionId: string | null },
     tx: Transaction,
   ): Promise<DispatchHold | undefined> {
-    const old = await tx.get<HoldRow>(
-      'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision=?',
+    const continuity = await nativeRevisionContinuity(tx, projectId);
+    const rows = await tx.all<HoldRow>(
+      'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision IN (?,?)',
       projectId,
       target.instanceId,
       target.expectedRevision,
+      continuity.source(target.instanceId, target.expectedRevision),
     );
+    const old = projectHolds(rows, continuity)[0];
     const time = isoNow(this.clock);
     // An agent that stopped without a handoff twice running at one revision waits for something
     // another visit does not bring: the work is held now, for a person to read why, rather than
@@ -311,9 +320,13 @@ export class SessionDispatch {
       time,
       stoppedAgain || (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
     ))!;
-    if (!row.held_at || old?.held_at) return undefined;
-    await this.reportHold(projectId, target.instanceId, row, tx);
-    return publicHold(row);
+    const combined = projectHolds(
+      [...rows.filter((previous) => Number(previous.revision) !== target.expectedRevision), row],
+      continuity,
+    )[0]!;
+    if (!combined.held_at || old?.held_at) return undefined;
+    await this.reportHold(projectId, target.instanceId, combined, tx);
+    return publicHold(combined);
   }
   /**
    * A hold is a project admin's move, reported on the work it holds so it reaches Needs you;
@@ -494,12 +507,24 @@ export class SessionDispatch {
         'session.release_hold',
         input,
         async () => {
-          const row = await tx.get<HoldRow>(
-            'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision=?',
-            caller.projectId,
-            input.instanceId,
-            input.expectedRevision,
+          const continuity = await nativeRevisionContinuity(tx, caller.projectId);
+          check(
+            continuity.current(input.instanceId, input.expectedRevision) === input.expectedRevision,
+            'revision_conflict',
+            'Release the hold at its current migrated revision',
+            409,
           );
+          const sourceRevision = continuity.source(input.instanceId, input.expectedRevision);
+          const row = projectHolds(
+            await tx.all<HoldRow>(
+              'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision IN (?,?)',
+              caller.projectId,
+              input.instanceId,
+              input.expectedRevision,
+              sourceRevision,
+            ),
+            continuity,
+          )[0];
           check(row, 'hold_not_found', 'No failed dispatch is counted against this target', 404);
           check(
             row.held_at,
@@ -508,20 +533,26 @@ export class SessionDispatch {
             409,
           );
           await tx.run(
-            'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=? AND instance_id=? AND revision=?',
+            'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=? AND instance_id=? AND revision IN (?,?)',
             caller.projectId,
             input.instanceId,
             input.expectedRevision,
+            sourceRevision,
           );
           // A hold of a later revision, if one stands, is still reported.
           await this.reportHold(
             caller.projectId,
             input.instanceId,
-            (await tx.get<HoldRow>(
-              'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND held_at IS NOT NULL ORDER BY revision DESC LIMIT 1',
-              caller.projectId,
-              input.instanceId,
-            )) ?? null,
+            projectHolds(
+              await tx.all<HoldRow>(
+                'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=?',
+                caller.projectId,
+                input.instanceId,
+              ),
+              continuity,
+            )
+              .filter((hold) => hold.held_at)
+              .sort((a, b) => b.revision - a.revision)[0] ?? null,
             tx,
           );
           await recorded(this.state, tx, caller, 'session.hold_released', input.instanceId, {
@@ -538,6 +569,7 @@ export class SessionDispatch {
     });
   }
   async candidates(caller: Caller, tx: Transaction) {
+    const continuity = await nativeRevisionContinuity(tx, caller.projectId);
     const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
     /** The project's targets a query of `instance_id,revision` rows names. */
@@ -550,7 +582,10 @@ export class SessionDispatch {
             ...params,
           )
         ).map((row) =>
-          targetKey({ instanceId: row.instance_id, expectedRevision: Number(row.revision) }),
+          targetKey({
+            instanceId: row.instance_id,
+            expectedRevision: continuity.current(row.instance_id, Number(row.revision)),
+          }),
         ),
       );
     const declared = new Date(this.clock() - declaredWithinMs).toISOString();
@@ -581,10 +616,13 @@ export class SessionDispatch {
     // spaces the attempts, so the hold is what ends them. An expiry after activation never
     // counts, because that is also how long honest work ends. A hold names one revision, so a
     // record that moves simply stops matching it.
-    const holds = await tx.all<HoldRow>(
-      'SELECT * FROM session_dispatch_holds WHERE project_id=? AND (held_at IS NOT NULL OR last_at>?)',
-      caller.projectId,
-      new Date(this.clock() - backoffMs).toISOString(),
+    const holds = projectHolds(
+      await tx.all<HoldRow>(
+        'SELECT * FROM session_dispatch_holds WHERE project_id=? AND (held_at IS NOT NULL OR last_at>?)',
+        caller.projectId,
+        new Date(this.clock() - backoffMs).toISOString(),
+      ),
+      continuity,
     );
     const held = (row: HoldRow) => `${row.instance_id}:${row.revision}`;
     const exhausted = new Set(holds.filter((row) => row.held_at).map(held));
@@ -725,15 +763,16 @@ export class SessionDispatch {
         caller,
         tx,
         new Set(input.capabilities ?? []),
-        await this.recentFailures(tx, owner, input.platform.name),
+        await this.recentFailures(tx, caller.projectId, owner, input.platform.name),
         this.passing(owner),
         input.platform,
       );
+      const continuity = await nativeRevisionContinuity(tx, caller.projectId);
       const candidates: DispatchDemand['candidates'] = selected.candidates.map(
         ({ instanceId, expectedRevision, updatedAt }) => ({
           instanceId,
           expectedRevision,
-          since: updatedAt,
+          since: continuity.updatedAt(instanceId, expectedRevision, updatedAt),
         }),
       );
       // A question to an agent wants a machine too, on the work item it asks about, at that
@@ -754,7 +793,7 @@ export class SessionDispatch {
           candidates.push({
             instanceId,
             expectedRevision: item.revision,
-            since: item.updatedAt,
+            since: continuity.updatedAt(instanceId, item.revision, item.updatedAt),
             // Its own host while every host of the item is busy with another visit.
             ...((await this.hooks.managed.hostsBusy(caller.projectId, instanceId, tx)) && {
               ownHost: true as const,
@@ -771,11 +810,13 @@ export class SessionDispatch {
    */
   private async recentFailures(
     tx: Transaction,
+    projectId: string,
     ownerHash: string,
     platform: string,
     runnerId?: string,
   ): Promise<Failure[]> {
-    return await tx.all<Failure>(
+    const continuity = await nativeRevisionContinuity(tx, projectId);
+    const failures = await tx.all<Failure>(
       'SELECT u.instance_id AS "instanceId",CAST(u.revision AS INTEGER) AS "expectedRevision",u.outcome,u.closed_at AS "closedAt" FROM session_dispatch_receipts d JOIN session_usage u ON u.session_id=d.session_id JOIN worker_sessions s ON s.id=d.session_id WHERE u.kind=\'work\' AND s.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR d.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> \'{name}\')=? AND u.closed_at>?',
       ownerHash,
       runnerId ?? null,
@@ -783,6 +824,10 @@ export class SessionDispatch {
       platform,
       new Date(this.clock() - backoffMs).toISOString(),
     );
+    return failures.map((failure) => ({
+      ...failure,
+      expectedRevision: continuity.current(failure.instanceId, failure.expectedRevision),
+    }));
   }
   private async admitRunner(
     ownerHash: string,
@@ -1065,6 +1110,7 @@ export class SessionDispatch {
         const phaseOwner = await ownerOf(this.scope, source, tx);
         const failures = await this.recentFailures(
           tx,
+          source.projectId,
           phaseOwner.hash,
           platform.name,
           managed ? undefined : input.runnerId,

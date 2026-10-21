@@ -8,6 +8,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import { computeProfile } from './compute.js';
 import { isoNow, ordinary, ownLive, text, type Row } from './common.js';
 import type {
@@ -369,13 +370,17 @@ export class ComputeWaits implements SessionComputeWaits {
     }));
   }
   private async pass(): Promise<void> {
-    const { open, work } = await this.host.reading(async (tx) => {
+    const { open, work, revisions } = await this.host.reading(async (tx) => {
       const open = await tx.all<WaitRow>(
         'SELECT * FROM session_compute_waits WHERE settled_at IS NULL ORDER BY _merv_rowid',
       );
       const work = new Map<string, { revision: number; ended: boolean }>();
+      const revisions = new Map<string, number>();
       for (const projectId of new Set(open.map((row) => row.project_id))) {
         const items = open.filter((row) => row.project_id === projectId);
+        const continuity = await nativeRevisionContinuity(tx, projectId);
+        for (const row of items)
+          revisions.set(row.id, continuity.current(row.instance_id, Number(row.revision)));
         for (const [id, item] of await this.host.work(
           projectId,
           [...new Set(items.map((row) => row.instance_id))],
@@ -383,21 +388,27 @@ export class ComputeWaits implements SessionComputeWaits {
         ))
           work.set(`${projectId} ${id}`, item);
       }
-      return { open, work };
+      return { open, work, revisions };
     });
     // Each wait on its own, all at once: one that cannot be read now holds back no other.
     const failed = (
       await Promise.allSettled(
-        open.map((row) => this.check(row, work.get(`${row.project_id} ${row.instance_id}`))),
+        open.map((row) =>
+          this.check(row, work.get(`${row.project_id} ${row.instance_id}`), revisions.get(row.id)!),
+        ),
       )
     ).find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failed) throw failed.reason;
   }
   /** One open wait, settled once nothing will be offered at its revision, its until has passed or
    *  what it names is over; else what it names as it stands now, where a status moved. */
-  private async check(row: WaitRow, item: { revision: number; ended: boolean } | undefined) {
-    // Nothing is offered at its revision any more: its work ended, or moved on by any hand.
-    if (!item || item.ended || item.revision !== Number(row.revision))
+  private async check(
+    row: WaitRow,
+    item: { revision: number; ended: boolean } | undefined,
+    revision: number,
+  ) {
+    // A protocol migration preserves the wait; an ordinary revision still ends it.
+    if (!item || item.ended || item.revision !== revision)
       return await this.host.transaction((tx) => this.settle(tx, row, 'moved'));
     if (row.wait_until <= isoNow(this.clock))
       return await this.host.transaction((tx) => this.settle(tx, row, 'deadline'));
@@ -454,17 +465,20 @@ export class ComputeWaits implements SessionComputeWaits {
     revision: number,
     resumed: string | null,
   ): Promise<ComputeWake | undefined> {
+    const continuity = await nativeRevisionContinuity(tx, projectId);
+    const sourceRevision = continuity.source(instanceId, revision);
     for (const row of await tx.all<WaitRow>(
-      'SELECT * FROM session_compute_waits WHERE project_id=? AND instance_id=? AND revision=? AND settled_at IS NULL',
+      'SELECT * FROM session_compute_waits WHERE project_id=? AND instance_id=? AND revision IN (?,?) AND settled_at IS NULL',
       projectId,
       instanceId,
       revision,
+      sourceRevision,
     ))
       await this.settle(tx, row, this.early(row));
     // The work's newest visit that ran waited (a lost offer or an inquiry visit leaves it newest),
     // or the conversation taken up ends with the wait: the visit after it lost its own.
     const row = await tx.get<WaitRow>(
-      `SELECT w.* FROM session_compute_waits w WHERE w.project_id=? AND w.instance_id=? AND w.revision=?
+      `SELECT w.* FROM session_compute_waits w WHERE w.project_id=? AND w.instance_id=? AND w.revision IN (?,?)
         AND w.outcome<>'moved' AND w.session_id IN (?, (
           SELECT s.id FROM worker_sessions s WHERE s.project_id=? AND s.instance_id=? AND s.kind='work'
             AND s.activated_at IS NOT NULL ORDER BY s._merv_rowid DESC LIMIT 1))
@@ -472,6 +486,7 @@ export class ComputeWaits implements SessionComputeWaits {
       projectId,
       instanceId,
       revision,
+      sourceRevision,
       resumed,
       projectId,
       instanceId,

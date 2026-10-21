@@ -1,6 +1,6 @@
 # Native Git migration and production acceptance
 
-**Implemented locally; production migration has not run.** The parent release chat coordinates the combined native Git, OAuth and plugin release. Do not deploy this worktree independently. The original planning request was followed by authorization to implement migration and finish production acceptance. No customer approval, payment or review verdict may be invented to clear a gate.
+**Implemented locally; production migration has not run.** The parent release chat coordinates the combined native Git, OAuth and plugin release. Do not deploy this worktree independently. The current step is migration/drain planning and local validation; no isolated production canary is being created. No customer approval, payment or review verdict may be invented to clear a gate.
 
 ## Preserve existing work
 
@@ -21,6 +21,16 @@ Task `wf_c7e253751027433bac7923ac71ddc631` retains review `review_033b07fd4e714a
 
 Command `codecmd_4bb21dbc0c594ad1aeca5748ca957e58` has no matching admitted store operation. Its original session expired and allocation ended; the unit completed later under another session with durable head `4c2692c5fa1f7435efb8ed35c3dc40640028c375`. The original runner ledger was not recovered. Retirement records **unknown original execution outcome**, preserves command/evidence in an immutable event, and marks the abandoned protocol request failed. It creates no success receipt and changes no Git head. Guards require the closed session, later terminal revision, released allocation, closed unblocked workspace and exact completed upload receipt for the later head. A matching original operation or contradictory receipt refuses retirement.
 
+## Keep admission decisions through cutover
+
+The first protocol migration implementation reset the effective scheduling revision. Independent review found an existing five-failure `host_failed` hold on experiment `wf_0fce8cfc71dc4d428181efc834695ea8` at revision 12 that would have become eligible at revision 13. This is a release blocker until the continuity fix and dispatch tests are integrated.
+
+The corrected candidate retains original rows and interprets both sides of the immutable migration boundary as one scheduling revision, only while the workflow remains at that exact target version/revision. Holds and their counters, recent session failures, unanswered questions, unsettled compute waits, provider blocker ages, first work-start evidence and Fleet cooldown/retry windows remain effective. New failures append to the actual current revision's counter; reports combine the counters. The administrator releases a carried hold at the current revision, and replay of the migration cannot restore a released hold. Ordinary user revisions retain their existing behavior. Lease, action and credential authorization still requires the exact revision.
+
+Tasks without an explicit compute epoch retain the predecessor epoch for Sandboxes attempt identity and request idempotency. Explicit experiment epochs remain unchanged. Unfinished compute still belongs in the independent ownership census; preserving its identity does not establish that it is safe to cut over a live job.
+
+Before applying, inspect the new admission snapshot alongside the workflow inventory. Do not use a dispatch toggle to drain: it resets retry counters. Use the boot maintenance/release hold sequence below, allow in-flight work to finish, and separately account for pending captures, Pi turns/commands, provider resources and Code ownership. A changed answer, hold, failure, wait or retry grant after planning invalidates the plan; regenerate it only after reviewing the change. The immutable batch receipt retains the reviewed admission snapshot. Historical evidence and snapshots remain available for comparison after reopening.
+
 ## Offline entry points
 
 Run in the reviewed candidate image with the existing environment/database network. Planning is read-only and initializes no services or reconcilers:
@@ -31,7 +41,7 @@ node --import tsx deploy/git-cutover-migrate.mjs \
   --retire-command codecmd_4bb21dbc0c594ad1aeca5748ca957e58
 ```
 
-Inspect IDs, versions and blocker lists. The hash binds database/schema, candidate contracts, source workflow/command snapshots, dependencies and Code declarations. A changed snapshot requires a fresh plan. A preview while Main runs is not the final offline plan.
+Inspect IDs, versions and blocker lists. Format 2 binds database/schema, candidate contracts, source workflow/command snapshots, dependencies, Code declarations and the admission snapshot. The latter includes original holds, failure/backoff records, pending questions and compute waits, conversation-upload gates, workflow blockers/first-start facts and round-limit grants/history, Fleet retry grants and rental history, and project/shared budget gates and accounting, including work outside the migration cohort. Private text and session credentials are not emitted; sensitive rows contribute digests. Earlier format-1 previews must be regenerated. A changed snapshot requires a fresh plan. A preview while Main runs is not the final offline plan.
 
 After maintenance and a fresh verified backup:
 

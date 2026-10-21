@@ -1,5 +1,6 @@
 import { mapAsync, type Caller, type Transaction } from '@merv/contracts';
 import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import type {
   DispatchState,
   RunnerPresence,
@@ -12,10 +13,11 @@ import type {
 } from './types.js';
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
-import { COMPUTE_PROVIDER, HOLD_PROVIDER, isoNow, targetKey } from './common.js';
+import { COMPUTE_PROVIDER, HOLD_PROVIDER, isoNow, liveTargets, targetKey } from './common.js';
 import { STOPPED_WITHOUT_HANDOFF } from './rules.js';
 import { leaseLiveness } from './liveness.js';
-import type { DispatchContext, HoldRow, SessionDispatch } from './dispatch.js';
+import type { DispatchContext, SessionDispatch } from './dispatch.js';
+import { projectHolds, type HoldRow } from './dispatch-holds.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
 
 // Why admitted work does not move: one reading of dispatch, worded as session.stuck, the
@@ -201,12 +203,16 @@ async function readingOf(
   const fleet = ctx.hooks.managed.serves(projectId);
   const runners = await runnersOf(ctx, projectId, tx);
   const live = runners.filter((runner) => runner.live);
+  const continuity = await nativeRevisionContinuity(tx, projectId);
   // A held target is read at the record's current revision where no session holds it, so
   // every reader sees the same red.
-  const unheld = await tx.all<HoldRow>(
-    `SELECT h.* FROM session_dispatch_holds h WHERE h.project_id=? AND h.attempts>0
-      AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=h.project_id AND l.instance_id=h.instance_id AND l.revision=h.revision AND l.status IN ('offered','active') AND l.kind='work')`,
+  const failures = await tx.all<HoldRow>(
+    'SELECT * FROM session_dispatch_holds WHERE project_id=? AND attempts>0',
     projectId,
+  );
+  const active = admissible?.live ?? (await liveTargets(tx, projectId));
+  const unheld = projectHolds(failures, continuity).filter(
+    (row) => !active.has(`${row.instance_id}:${row.revision}`),
   );
   const at = await ctx.workflows.revisions(
     projectId,
@@ -233,18 +239,27 @@ async function readingOf(
   // quiet: where that work's history lives has been away, busy or full since then. The
   // closes are read from their usage rows; only a deferred one's lease is parsed, for why.
   const deferred = deferredRuns(
-    await tx.all<Close>(
-      `SELECT u.session_id AS id,u.instance_id AS "instanceId",u.revision AS "expectedRevision",u.outcome,u.closed_at AS "closedAt",
+    (
+      await tx.all<Close>(
+        `SELECT u.session_id AS id,u.instance_id AS "instanceId",u.revision AS "expectedRevision",u.outcome,u.closed_at AS "closedAt",
         CASE WHEN u.outcome='preparation_deferred' THEN s.session_json::jsonb #> '{deferral}' END AS deferral
         FROM session_usage u JOIN worker_sessions s ON s.id=u.session_id WHERE u.project_id=? AND u.kind='work' AND u.closed_at>?`,
-      projectId,
-      recent,
-    ),
+        projectId,
+        recent,
+      )
+    ).map((row) => ({
+      ...row,
+      expectedRevision: continuity.current(row.instanceId, Number(row.expectedRevision)),
+    })),
     waiting,
     failing,
     recent,
   );
   const quiet = all.flatMap((item) => {
+    item = {
+      ...item,
+      updatedAt: continuity.updatedAt(item.instanceId, item.expectedRevision, item.updatedAt),
+    };
     const key = targetKey(item),
       step = item.role === 'operator';
     // With dispatch off, one dispatch_disabled item says why all of them wait. Work whose agent

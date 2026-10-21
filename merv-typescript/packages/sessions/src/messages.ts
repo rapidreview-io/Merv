@@ -10,6 +10,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
+import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import { isoNow, ordinary, ownLive, text, threadIn, type Row } from './common.js';
 import { QuestionResponders } from './question-responder.js';
 import type { QuestionResponse } from './models.js';
@@ -478,11 +479,17 @@ export class SessionMessages {
       ? await this.host.work(projectId, items, tx)
       : new Map<string, { revision: number; ended: boolean }>();
     const ended = new Set([...work].filter(([, item]) => item.ended).map(([id]) => id));
-    // A question is about the revision it asked at, as its blocker is: work that ended, or moved
-    // on by any hand, no longer waits on it.
+    if (!open.length) return { questions: [], ended };
+    const continuity = await nativeRevisionContinuity(tx, projectId);
+    // A protocol migration keeps the question's original revision and meaning. A real move
+    // to another step, or the work ending, still makes the question obsolete.
     const stands = (row: QuestionRow) => {
       const item = work.get(row.instance_id);
-      return !!item && !item.ended && item.revision === Number(row.revision);
+      return (
+        !!item &&
+        !item.ended &&
+        item.revision === continuity.current(row.instance_id, Number(row.revision))
+      );
     };
     return { questions: open.filter(stands), ended };
   }

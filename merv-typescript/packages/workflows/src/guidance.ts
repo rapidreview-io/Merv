@@ -9,6 +9,7 @@ import type {
 } from './models.js';
 import { processGraph } from './process.js';
 import { readBlockers } from './blockers.js';
+import { retainedRevisionSql } from './native-continuity.js';
 import { decision, prepare, readContext, type Facts } from './evaluation.js';
 import { workStartsAt } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
@@ -109,7 +110,7 @@ export class WorkflowGuidance extends WorkflowEngine {
           ? `WITH d AS MATERIALIZED (SELECT name,version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions)
             SELECT i.* FROM wf_instances i JOIN d ON d.name=i.workflow AND d.version=i.version WHERE i.project_id=?
             AND (NOT d.terminal @> to_jsonb(i.state) OR EXISTS (SELECT 1 FROM wf_blockers b WHERE b.instance_id=i.id
-            AND b.project_id=i.project_id AND (b.revision IS NULL OR b.revision=i.revision))) ORDER BY i.created_at,i.id`
+            AND b.project_id=i.project_id AND ${retainedRevisionSql('i', 'b')})) ORDER BY i.created_at,i.id`
           : 'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
         caller.projectId,
       );

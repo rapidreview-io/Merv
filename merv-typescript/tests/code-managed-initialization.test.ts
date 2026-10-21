@@ -166,14 +166,20 @@ test('a failed initialization stays blocked and retries the same deterministic r
 
 test('recovery after Git succeeded but SQL rolled back keeps exactly one root', async (t) => {
   const f = await fixture(t);
-  const repositories = (
+  const store = (
     f.code as unknown as {
-      store: { repositories: import('@merv/code/store/repository').CodeRepositories };
+      store: {
+        repositories: import('@merv/code/store/repository').CodeRepositories;
+        maintain(): Promise<void>;
+      };
     }
-  ).store.repositories;
-  // Creating the project wakes Code's store, whose waker would initialize it on its own: this
-  // test's passes alone may run, or one could land between the crash and the checks after it.
-  t.mock.method((f.code as unknown as { store: { wake(): void } }).store, 'wake', () => {});
+  ).store;
+  const { repositories } = store;
+  // Stop new timer passes, including a wake already queued by fixture initialization, and
+  // drain any current pass before declaring the project whose crash boundary we control.
+  const maintain = store.maintain.bind(store);
+  t.mock.method(store, 'maintain', async () => {});
+  await maintain();
   const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://test.example',
     subject: 'crash',
@@ -183,11 +189,13 @@ test('recovery after Git succeeded but SQL rolled back keeps exactly one root', 
     name: 'Recover',
     requestId: 'recover',
   });
-  // Declare directly to keep the timer out of this controlled crash boundary.
   await f.state.transaction((tx) => declareManagedProject(tx, project.id));
+  let crashes = 0;
   await initializeManagedProjects(f.state, repositories, async () => {
+    crashes++;
     throw new Error('crash before SQL commit');
   });
+  assert.equal(crashes, 1, 'the injected failure must reach the SQL transaction after Git');
   const caller = await f.scope.caller(principal, project.id);
   assert.equal((await f.code.status(caller)).project?.main.stored, false);
   const path = repositories.paths(project.id).repository;

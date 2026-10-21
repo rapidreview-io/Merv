@@ -1,4 +1,5 @@
 import { canonical, check, now, visible } from '@merv/contracts';
+import { nativeRevisionContinuity, retainedRevisionSql } from './native-continuity.js';
 import type { Sql, Transaction } from '@merv/contracts';
 import type {
   WorkflowProvidedBlocker,
@@ -102,6 +103,7 @@ export async function replaceBlockers(
         row.blocker_key,
       );
   const at = now();
+  const continuity = await nativeRevisionContinuity(tx, input.projectId);
   for (const item of blockers) {
     const previous = existing.find((row) => row.blocker_key === item.key);
     const links = canonical(related(item.related));
@@ -109,7 +111,10 @@ export async function replaceBlockers(
     // unchanged one is not rewritten, so `updatedAt` stays the moment the opinion last moved.
     const same =
       previous?.code === item.code &&
-      (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null);
+      (previous.revision === null
+        ? null
+        : continuity.current(input.instanceId, Number(previous.revision))) ===
+        (item.revision === undefined ? null : continuity.current(input.instanceId, item.revision));
     if (
       same &&
       previous.message === item.message &&
@@ -154,8 +159,8 @@ export async function readBlockers(
   instanceIds?: readonly string[],
 ): Promise<WorkflowProvidedBlocker[]> {
   if (instanceIds && !instanceIds.length) return [];
-  const rows = await sql.all<BlockerRow>(
-    `SELECT b.* FROM wf_blockers b WHERE ${projectId === null ? 'TRUE' : 'b.project_id=?'}${instanceIds ? ` AND b.instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} AND (b.revision IS NULL OR b.revision=(SELECT i.revision FROM wf_instances i WHERE i.id=b.instance_id)) ORDER BY b.since,b.instance_id,b.provider,b.blocker_key`,
+  const rows = await sql.all<BlockerRow & { current_revision: number }>(
+    `SELECT b.*,i.revision AS current_revision FROM wf_blockers b JOIN wf_instances i ON i.id=b.instance_id AND i.project_id=b.project_id WHERE ${projectId === null ? 'TRUE' : 'b.project_id=?'}${instanceIds ? ` AND b.instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} AND ${retainedRevisionSql('i', 'b')} ORDER BY b.since,b.instance_id,b.provider,b.blocker_key`,
     ...(projectId === null ? [] : [projectId]),
     ...(instanceIds ?? []),
   );
@@ -170,7 +175,7 @@ export async function readBlockers(
     related: JSON.parse(row.related_json) as WorkflowReference[],
     ...(row.cause === null ? {} : { cause: row.cause }),
     ...(row.whose === null ? {} : { whose: row.whose as WorkflowWhose }),
-    ...(row.revision === null ? {} : { revision: Number(row.revision) }),
+    ...(row.revision === null ? {} : { revision: Number(row.current_revision) }),
     since: row.since,
     updatedAt: row.updated_at,
   }));

@@ -9,7 +9,7 @@ import { canonical, digest, type Sql } from '@merv/contracts';
 import { nativeMigrationSchema } from '@merv/workflows/native-migration';
 import { executionPolicy } from '@merv/customer-experiments/execution';
 import { SERVICE_EXPERIMENT } from '@merv/customer-experiments/program';
-import { migration as fleetSchema } from '@merv/fleet/schema';
+import { migration as fleetSchema, workflowRetryMigration } from '@merv/fleet/schema';
 import { createApp } from './fixtures/app.js';
 import { postgresUrl } from './fixtures/state.js';
 
@@ -255,6 +255,79 @@ test('offline apply refuses missing backup/offline evidence, corrupt plans and s
     await f.snapshot(),
     changed,
     'a stale final item cannot migrate an earlier item',
+  );
+});
+
+test('offline plans bind admission holds, dispatch gates, blocker opinions and retry grants before any writes', async (t) => {
+  const f = await fixture(t);
+  await f.seed();
+  await f.client.query(workflowRetryMigration.sql);
+  await f.sql.run(
+    "INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,first_at,last_at,held_at) VALUES(?,'a_experiment',1,5,'host_failed','original failure',?,?,?)",
+    f.projectId,
+    at,
+    at,
+    at,
+  );
+  await f.sql.run(
+    "INSERT INTO wf_blockers(project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,revision,since,updated_at) VALUES(?,'a_experiment','fixture','hold','launch_held','original failure',409,'Repair the host','[]',1,?,?)",
+    f.projectId,
+    at,
+    at,
+  );
+  const mutations = [
+    () =>
+      f.sql.run("UPDATE session_dispatch_holds SET attempts=6 WHERE instance_id='a_experiment'"),
+    () =>
+      f.sql.run(
+        'INSERT INTO project_session_dispatch(project_id,enabled,own_machines,updated_at,updated_by) VALUES(?,0,1,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=0,own_machines=1',
+        f.projectId,
+        at,
+        f.actorId,
+      ),
+    () =>
+      f.sql.run(
+        "UPDATE wf_blockers SET message='failure details changed' WHERE instance_id='a_experiment'",
+      ),
+    () =>
+      f.sql.run(
+        "INSERT INTO fleet_workflow_retry_grants(project_id,instance_id,expected_revision,prior_allocations,request_id,input_hash,reason,actor_id,created_at) VALUES(?,'a_experiment',1,2,'retry','hash','An explicit retry window',?,?)",
+        f.projectId,
+        f.actorId,
+        at,
+      ),
+    () =>
+      f.sql.run(
+        "INSERT INTO wf_limit_grants(project_id,request_id,instance_id,limit_name,additional,reason,actor_id,created_at) VALUES(?,'extend','a_experiment','plan_rounds',1,'Allow another reviewed round',?,?)",
+        f.projectId,
+        f.actorId,
+        at,
+      ),
+  ];
+  for (const mutate of mutations) {
+    const plan = await f.plan();
+    assert.equal(plan.ready, true);
+    await mutate();
+    const before = await f.snapshot();
+    await assert.rejects(f.apply(plan), { code: 'migration_plan_stale' });
+    assert.deepEqual(await f.snapshot(), before, 'stale admission cannot migrate any workflow');
+  }
+  const plan = await f.plan();
+  const receipt = await f.apply(plan);
+  assert.deepEqual(
+    receipt.admission,
+    plan.admission,
+    'receipt retains reviewed admission evidence',
+  );
+  await f.sql.run(
+    "UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE instance_id='a_experiment'",
+  );
+  const released = await f.snapshot();
+  assert.deepEqual(await f.apply(plan), receipt);
+  assert.deepEqual(
+    await f.snapshot(),
+    released,
+    'replay cannot restore an explicitly released hold',
   );
 });
 

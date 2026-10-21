@@ -9,6 +9,7 @@ import type {
 import type { WorkflowWorkStart } from './models.js';
 import { toolName } from './definition.js';
 import { workflowJson } from './json.js';
+import { nativeRevisionContinuity } from './native-continuity.js';
 
 const text = z.string().min(1);
 const tool = z.string().regex(toolName);
@@ -119,10 +120,15 @@ export async function workStartsAt(
   instances: readonly { id: string; revision: number }[],
 ): Promise<Map<string, WorkflowWorkStart>> {
   if (!instances.length) return new Map();
+  const continuity = await nativeRevisionContinuity(sql, projectId);
+  const revisions = instances.flatMap(({ id, revision }) => [
+    { id, revision },
+    { id, revision: continuity.source(id, revision) },
+  ]);
   const rows = await sql.all<WorkStartRow>(
-    `SELECT * FROM wf_work_starts WHERE project_id=? AND (instance_id,revision) IN (${instances.map(() => '(?,?)').join(',')})`,
+    `SELECT * FROM wf_work_starts WHERE project_id=? AND (instance_id,revision) IN (${revisions.map(() => '(?,?)').join(',')}) ORDER BY started_at DESC,revision DESC`,
     projectId,
-    ...instances.flatMap(({ id, revision }) => [id, revision]),
+    ...revisions.flatMap(({ id, revision }) => [id, revision]),
   );
   return new Map(rows.map((row) => [row.instance_id, workStart(row)]));
 }
