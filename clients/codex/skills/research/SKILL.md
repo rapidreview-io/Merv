@@ -29,10 +29,18 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
    action, blockers, references, revision, and `limits` (review rounds used and left at each
    gate). The guidance it returns is how the server says what it expects: follow it.
 4. Read more as needed: `project.read` (records) indexes every task and experiment, `experiment.read` (get)
-   reads one experiment whole, `task.read` (get) one task, `paper.read` (get) the paper, and
+   reads current experiment context with full-history references, `task.read` (get) one task, `paper.read` (get) the paper, and
    `project.read` (references) resolves ids to labels, states and revisions.
 
 Never guess an id, a name or a number you could read.
+
+To recover forgotten experiment context, call `experiment.read` with
+`{"action":"get","get":{"experimentId":"…"}}`. This returns intent, details, the current
+attempt, selected evidence and pinned submissions. Follow its references for artifact contents,
+reviews, or full history: add `history: "attempts"`, `"evidence"` or `"submissions"` inside
+`get`; follow `next` to page further. `list` returns `{items,total,next}` summaries.
+Use `workflow.read` (`assignment`) to refresh the assigned context. Leased workers use the
+same actions through their granted flat tools, `experiment.get_state` and `workflow.assignment`.
 
 ## The paper comes first
 
@@ -47,6 +55,10 @@ creating work that relies on the change.
 States: planned, design_review, running, experiment_review, then completed.
 
 1. **Create.** `experiment.write` (create) with an immutable name, intent and optional details.
+   Use `intent` for the question or objective. Use `details` for explicit requests and preferences:
+   reference papers or previous experiments (include links or IDs), parameters, constraints, or
+   approaches to follow. Leave `details` empty when the planner should choose the strategy from
+   `intent` within project constraints.
    `dependsOn` names tasks only: an order between two experiments is a task between them. At
    most seven experiments may be active at once.
 2. **Plan (planned).** Write a Markdown plan of about one screen, store it with
@@ -77,7 +89,7 @@ reason. It cannot be undone.
 `task.write` (create) pins a goal and numbered checks, with optional `dependsOn`. A Fleet worker
 produces the task and an independent reviewer passes it. Direct the goal and checks, then leave
 production to the worker: do not start work context, save checkpoints or submit deliveries
-yourself. `task.read` (get) returns Merv's guidance for a task.
+yourself. `task.read` (get) returns a compact reminder; pass `full:true` for Merv's guidance and complete history. Lists are paginated; follow `next`. Retrieval references preserve omitted context.
 
 ## Files
 

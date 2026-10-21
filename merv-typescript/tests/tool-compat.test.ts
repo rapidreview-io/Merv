@@ -126,6 +126,34 @@ const retired = {
     'customer_experiments.propose',
   ],
 };
+// Compact read contracts supersede the historical full-record shapes below.
+for (const name of ['experiment.list', 'task.list', 'experiment.get_state', 'task.get']) {
+  for (const role of ['owner', 'reader', 'worker'] as const) {
+    const outcome = captured.contracts[name]![role];
+    if (!outcome?.ok) continue;
+    if (name.endsWith('.list')) outcome.ok = ['items', 'next', 'total'];
+    else {
+      const omitted =
+        name === 'task.get'
+          ? [
+              'workStarts',
+              'dependencies',
+              'dependents',
+              'contextInputs',
+              'checks',
+              'deliveryConfirmations',
+              'guidance',
+            ]
+          : ['attempts'];
+      outcome.ok = [
+        ...(outcome.ok as string[]).filter((key) => !omitted.includes(key)),
+        'references',
+        ...(name === 'experiment.get_state' ? ['historyCounts'] : []),
+      ].sort();
+    }
+  }
+}
+
 /** Names a noun kept, which still take their old flat input (`name#case` for a second one). */
 const kept = ['board.read', 'board.read#get'];
 const all = Object.values(retired).flat();
@@ -267,7 +295,10 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   assert.equal(changed.body.error.code, 'request_conflict');
 
   // A task's guidance names the noun for the owner; mark_failed runs alike in both forms.
-  const read = await tool('task.read', boot.token, { action: 'get', get: { taskId: task.id } });
+  const read = await tool('task.read', boot.token, {
+    action: 'get',
+    get: { taskId: task.id, full: true },
+  });
   const marking = read.body.result.guidance.actions.find(
     (action: { action: string }) => action.action === 'mark_failed',
   );
@@ -536,7 +567,7 @@ test('a frozen Pi task.get returns executable task.mark_failed guidance with fla
   } as unknown as Context);
   const call = (name: string, input: object) =>
     f.pi.tool(bound.token, { ...bound.input, name, input });
-  const old = (await call('task.get', { taskId: args.taskId })) as any;
+  const old = (await call('task.get', { taskId: args.taskId, full: true })) as any;
   assert.deepEqual(old.guidance.nextAction, { tool: 'task.mark_failed', arguments: args });
   const input = {
     ...old.guidance.nextAction.arguments,
@@ -550,7 +581,7 @@ test('a frozen Pi task.get returns executable task.mark_failed guidance with fla
   });
   const noun = (await f.tools.call('task.read', f.operator, {
     action: 'get',
-    get: { taskId: args.taskId },
+    get: { taskId: args.taskId, full: true },
   })) as any;
   assert.deepEqual(noun.guidance.nextAction, {
     tool: 'task.write',
@@ -607,14 +638,14 @@ test('an operator MCP caller can still open reports by name and legacy task read
   const marking = (value: any) =>
     value.guidance.actions.find((step: any) => step.action === 'mark_failed');
   assert.equal(marking(task).tool, 'task.mark_failed');
-  const legacy = await tool('task.get', boot.token, { taskId: task.id });
+  const legacy = await tool('task.get', boot.token, { taskId: task.id, full: true });
   assert.deepEqual(marking(legacy.body.result).arguments, {
     taskId: task.id,
     expectedRevision: task.workflow.revision,
   });
   const modern = await client.callTool({
     name: 'task.read',
-    arguments: { action: 'get', get: { taskId: task.id } },
+    arguments: { action: 'get', get: { taskId: task.id, full: true } },
   });
   assert.ok(!modern.isError);
   const value = JSON.parse((modern.content as { text: string }[])[0]!.text);

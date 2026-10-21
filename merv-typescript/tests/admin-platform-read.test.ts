@@ -123,7 +123,7 @@ test('a platform admin reads a project it is not a member of through its pages, 
     assert.ok(JSON.stringify(page.body.result).includes(id));
   }
   assert.deepEqual(
-    (await f.tool('experiment.list', {})).body.result.map((e: { id: string }) => e.id),
+    (await f.tool('experiment.list', {})).body.result.items.map((e: { id: string }) => e.id),
     [experimentId],
   );
   // The listing offers read-only native tools alone.

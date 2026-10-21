@@ -892,7 +892,7 @@ test('recovery guidance names each action by its address and says it as its call
   // A task's guidance carries the blockers Code published on it, said the same way.
   const tasks = { get: async () => ({ guidance: { blockers: [said] } }) };
   taskToolsPlugin.apply({ tools, tasks, effect: (fn: () => unknown) => fn() } as never);
-  assert.deepEqual(await tools.call('task.get', owner, { taskId: 't' }), {
+  assert.deepEqual(await tools.call('task.get', owner, { taskId: 't', full: true }), {
     guidance: {
       blockers: [
         {
@@ -939,4 +939,35 @@ test('plugins contribute actions to one noun, which loses an action when its plu
     code: 'invalid_input',
   });
   assert.deepEqual(await tools.call('project.read', owner, { action: 'get' }), { action: 'get' });
+});
+
+test('task reminders and paginated lists retain executable recovery references', async () => {
+  const { tools } = registry();
+  const records = ['a', 'b'].map((id) => ({
+    id,
+    title: id,
+    goal: 'Original goal',
+    acceptanceChecks: [{ number: 1, text: 'Original check' }],
+    workflow: { state: 'in_progress', revision: 2, data: { old: 'history' } },
+    workStarts: [{ revision: 1 }],
+    dependencies: [],
+    dependents: [],
+    contextInputs: {},
+    checks: ['Original check'],
+    deliveryConfirmations: [],
+    guidance: { references: [] },
+  }));
+  const tasks = { get: async () => records[0], list: async () => records };
+  taskToolsPlugin.apply({ tools, tasks, effect: (fn: () => unknown) => fn() } as never);
+  const call = (tool: string, input: object) => tools.call(tool, owner, input) as Promise<any>;
+  const reminder = await call('task.read', { action: 'get', get: { taskId: 'a' } });
+  assert.equal(reminder.goal, 'Original goal');
+  assert.deepEqual(reminder.acceptanceChecks, records[0]!.acceptanceChecks);
+  assert.equal(reminder.workStarts, undefined);
+  const full = reminder.references[0];
+  assert.deepEqual(await call(full.tool, full.arguments), records[0]);
+  const first = await call('task.read', { action: 'list', list: { limit: 1 } });
+  const second = await call(first.next.tool, first.next.arguments);
+  assert.deepEqual([first.items[0].id, second.items[0].id], ['a', 'b']);
+  assert.equal(second.next, null);
 });

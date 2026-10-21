@@ -64,7 +64,7 @@ test('worker contexts present embedded guidance before rendering and saving', as
     const { worker, session } = await work.lease(task);
     const address = /\b[a-z_]+\.[a-z_]+:[a-z_]+\b/;
     assert.doesNotMatch(session.assignment.context!.prompt, address);
-    assert.match(session.assignment.context!.prompt, /task\.mark_failed/);
+    assert.match(session.assignment.context!.prompt, /task\.submit_delivery/);
 
     // All domains use this builder, including guidance serialized into frozen lease inputs.
     const guidance = [

@@ -1,10 +1,8 @@
-import { reviewHistory } from '@merv/reviews/rules';
 import { requireDependencies } from '@merv/workflows/rules';
 import { leaseReceipt } from '@merv/workflows/lease-rows';
 import {
   check,
   clip,
-  mapAsync,
   sha256Hex,
   type Caller,
   type ContextBuild,
@@ -42,47 +40,12 @@ import { reviewCommit } from './policy.js';
 // A task's work and review contexts, and the assignment each of its states offers. Each runs
 // on TaskService (index.ts) as its TasksContext.
 
-/**
- * What the earlier rounds may add to the optional feedback section. The section is dropped whole
- * when it does not fit, so they stay small beside the latest pinned assessment.
- */
-const REVIEW_HISTORY_CHARS = 4000;
-/**
- * The most the latest pinned assessment adds to the always-embedded feedback, which also holds
- * that round's notes (up to 16,000 characters) beside a brief of up to 32,000, so a task returned
- * with any valid review still has a work context.
- */
-const PINNED_ASSESSMENT_CHARS = 16_000;
-
-/** The latest assessment whole, or abbreviated to PINNED_ASSESSMENT_CHARS with review.get named. */
-function pinnedAssessment(review: ReviewRequest): string {
-  const { id: reviewId, snapshotHash, artifactIds, verdict, notes, criteria } = review;
-  const { synopsis, findings, evidence } = review;
-  const assessment = {
-    reviewId,
-    snapshotHash,
-    artifactIds,
-    verdict,
-    notes,
-    criteria,
-    synopsis,
-    findings,
-    evidence,
-  };
-  const whole = JSON.stringify(assessment);
-  if (whole.length <= PINNED_ASSESSMENT_CHARS) return whole;
-  // The notes are the feedback's own text and the criteria the brief's checks.
-  const short = JSON.stringify({ ...assessment, notes: undefined, criteria: undefined });
-  const more = `\n(Abbreviated for room: read review.get ${reviewId} for the whole assessment.)`;
-  return clip(short, PINNED_ASSESSMENT_CHARS - more.length) + more;
-}
-
 /** A context input before it becomes items: one text, or artifacts listed by ID. */
 type Source = { text: string } | { artifactIds: string[] } | ContextInput;
 /**
  * How each section's items are embedded. The task, its brief, revision feedback and the review
- * criteria are always embedded; the rest fit while they can, highest priority first. A custom
- * input section is fit at 500, like the task background.
+ * criteria are always embedded. Background and saved-progress evidence are references;
+ * other small evidence fits by priority. Each artifact above 8,000 bytes is a reference.
  */
 const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
   task: { embed: 'always' },
@@ -91,60 +54,30 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
   assessment: { embed: 'always' },
   evidence: { priority: 800 },
   recovery: { priority: 600 },
-  taskBackground: { priority: 500 },
+  taskBackground: { embed: 'never', priority: 500 },
   checkpoints: { priority: 400 },
-  checkpointEvidence: { priority: 300 },
+  checkpointEvidence: { embed: 'never', priority: 300 },
 };
 
-/**
- * How much of the shared paper a task context embeds. Every experiment's reviewers write into one
- * Methods and one Results section, which grew to 30,000-83,000 characters (2026-10-13); embedded
- * whole ahead of a task's saved progress, they cut that progress and its documents out.
- */
-const PAPER_SECTION_CHARS = 8000;
-const PAPER_CHARS = 16_000;
-/** Added to every paper item's priority, so each ranks below all of the task's own (300 and up). */
-const PAPER_RANK = -1000;
-
-/**
- * The paper as a task's context takes it: below the task's own items, in the paper's order. A
- * section is embedded only while it holds at most PAPER_SECTION_CHARS and the distinct sections
- * embedded hold at most PAPER_CHARS, highest priority first; every other one is listed by its
- * line, which gives its size and the paper.read that returns it. A conflict resolution embeds
- * none: its work is in the conflicting files. A copy of a section, such as its published
- * revision, costs only its line, which names the section it copies.
- */
+/** Embed at most 8,000 paper chars, 4,000 per section; resolution work uses references only. */
 export function taskPaper(paper: ContextInput, resolution: boolean): ContextInput {
-  let room = resolution ? 0 : PAPER_CHARS;
-  const texts = new Set<string>(),
-    embedded = new Set<ContextItem>(),
-    firsts = new Map<string, ContextItem>();
+  let room = resolution ? 0 : 8000;
+  const embedded = new Set<string>();
   for (const item of [...paper.items].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))) {
     if (!('text' in item.body)) continue;
-    const { text } = item.body;
-    if (!firsts.has(text)) firsts.set(text, item);
-    if (!texts.has(text)) {
-      if (text.length > Math.min(PAPER_SECTION_CHARS, room)) continue;
+    const text = item.body.text;
+    if (!embedded.has(text) && text.length <= Math.min(4000, room)) {
       room -= text.length;
-      texts.add(text);
+      embedded.add(text);
     }
-    embedded.add(item);
   }
   return {
     items: paper.items.map((item) => {
-      // The builder names whose an embedded copy is; a listed one says so in its note, first so
-      // the note's length limit cannot cut it.
-      const first = 'text' in item.body ? firsts.get(item.body.text) : undefined;
-      const copy = first && first !== item ? `same content as ${first.id}` : null;
+      const text = 'text' in item.body ? item.body.text : undefined;
       return {
         ...item,
-        priority: (item.priority ?? 0) + PAPER_RANK,
-        ...(embedded.has(item)
-          ? {}
-          : {
-              embed: 'never' as const,
-              ...(copy ? { note: item.note ? `${copy}; ${item.note}` : copy } : {}),
-            }),
+        priority: (item.priority ?? 0) - 1000,
+        embed: text !== undefined && embedded.has(text) ? item.embed : 'never',
       };
     }),
   };
@@ -216,31 +149,22 @@ export async function contextInputs(
   tx: Transaction,
 ): Promise<Record<string, ContextInput>> {
   const type = contextType(ctx, task, purpose);
-  // Reverse links change when downstream work is added, independently of this assignment. The
-  // checks reach a worker in the brief and a reviewer in the criteria, the goal in the brief,
-  // the last round's notes in the feedback, and the delivery's confirmations in its pinned
-  // sheet: each is embedded once, and task.get has all. A producer's own brief need not number
-  // the checks, so a worker is given them numbered unless Merv rendered the brief.
-  const {
-    dependents: _dependents,
-    checks: _checks,
-    settled: _settled,
-    failed: _failed,
-    composed: _composed,
-    acceptanceChecks,
-    ...record
-  } = task;
-  const { deliveryConfirmations: _confirmations, deliveryIds: _deliveryIds, ...rest } = record;
-  const { goal: _goal, workflow, ...work } = rest;
-  const { deliveryIds: _ids, ...reviewData } = workflow.data;
-  const { revisionContext: _feedback, ...data } = reviewData;
   const rendered =
     purpose === 'work' &&
     (await ctx.artifacts.get(caller, task.briefId, tx)).hash === sha256Hex(renderBrief(task, true));
-  const assignmentTask =
-    purpose === 'work'
-      ? { ...work, ...(rendered ? {} : { acceptanceChecks }), workflow: { ...workflow, data } }
-      : { ...rest, workflow: { ...workflow, data: reviewData } };
+  const assignmentTask = {
+    id: task.id,
+    title: task.title,
+    briefId: task.briefId,
+    producerId: task.producerId,
+    reviewId: task.reviewId,
+    expectedRevision: task.workflow.revision,
+    ...(purpose === 'review'
+      ? { goal: task.goal, deliveryCode: task.deliveryCode }
+      : rendered
+        ? {}
+        : { acceptanceChecks: task.acceptanceChecks }),
+  };
   // Worker contexts retain the offer's project and paper even if they later change; the
   // paper's items carry the Problem, which is the project's Introduction.
   const receipt = caller.session
@@ -262,7 +186,19 @@ export async function contextInputs(
     inputs = {
       task: { text: taskMetadata },
       projectPaper,
-      assessment: { text: JSON.stringify(review) },
+      assessment: {
+        text: JSON.stringify({
+          id: review.id,
+          subjectRevision: review.subjectRevision,
+          snapshotHash: review.snapshotHash,
+          claimId: review.claimId,
+          status: review.status,
+          artifactIds: review.artifactIds,
+          criteria: review.criteria,
+          requiredCriteria: review.requiredCriteria,
+          formatVersion: review.formatVersion,
+        }),
+      },
       evidence: { artifactIds: review.artifactIds },
       taskBackground: Object.values(task.contextInputs).flat().length
         ? { artifactIds: [...new Set(Object.values(task.contextInputs).flat())] }
@@ -278,39 +214,44 @@ export async function contextInputs(
       projectPaper,
       brief: { artifactIds: [task.briefId] },
     };
-    if (typeof task.workflow.data.revisionContext === 'string') {
-      const previous = task.reviewId ? await ctx.reviews.get(caller, task.reviewId, tx) : null;
-      const earlier = reviewHistory(
-        await mapAsync(
-          (Array.isArray(task.workflow.data.rejectedReviewIds)
-            ? (task.workflow.data.rejectedReviewIds as string[])
-            : []
-          ).filter((id) => id !== task.reviewId),
-          async (id) => {
-            const review = await ctx.reviews.get(caller, id, tx);
-            return { review, label: `Submitted evidence: ${review.artifactIds.join(', ')}` };
+    const notes = task.workflow.data.revisionContext;
+    const previous =
+      typeof notes === 'string' && task.reviewId
+        ? await ctx.reviews.get(caller, task.reviewId, tx)
+        : null;
+    const reviewIds = [
+      task.reviewId,
+      ...(Array.isArray(task.workflow.data.rejectedReviewIds)
+        ? task.workflow.data.rejectedReviewIds
+        : []),
+    ];
+    const items: ContextItem[] = [];
+    if (typeof notes === 'string') {
+      const findings = previous ? clip(JSON.stringify(previous.findings), 16_000) : '';
+      items.push(
+        textItem(
+          `feedback:${task.id}`,
+          'Latest corrections',
+          `${notes}\nLatest findings (read review.get for the complete assessment):\n${findings}`,
+          {
+            embed: 'always',
+            refs: [{ tool: 'task.get', input: { taskId: task.id, full: true } }],
           },
         ),
-        REVIEW_HISTORY_CHARS,
       );
-      inputs.feedback = {
-        text:
-          task.workflow.data.revisionContext +
-          (previous?.status === 'submitted' &&
-          (previous.notes ||
-            previous.synopsis ||
-            previous.findings.length ||
-            Object.keys(previous.evidence).length)
-            ? '\n\nPinned review assessment (verify cited evidence before revising):\n' +
-              pinnedAssessment(previous)
-            : '') +
-          (earlier.rounds.length
-            ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +
-              JSON.stringify(earlier)
-            : ''),
-      };
     }
+    for (const reviewId of new Set(reviewIds)) {
+      if (typeof reviewId !== 'string') continue;
+      items.push(
+        textItem(`review:${reviewId}`, 'Read findings before revising', '', {
+          embed: 'never',
+          refs: [{ tool: 'review.get', input: { reviewId } }],
+        }),
+      );
+    }
+    inputs.feedback = { items };
   }
+
   const checkpoints = await visibleCheckpoints(
     ctx,
     caller,
@@ -318,7 +259,7 @@ export async function contextInputs(
     tx,
   );
   if (checkpoints.length) {
-    // One item each, newest first to be embedded, and each read back alone by its ID.
+    // Only the newest body competes for space; every checkpoint keeps its retrieval link.
     inputs.checkpoints = {
       items: checkpoints.map((checkpoint, index) =>
         textItem(
@@ -326,6 +267,7 @@ export async function contextInputs(
           `Saved ${checkpoint.createdAt} at revision ${checkpoint.revision}`,
           JSON.stringify(checkpoint),
           {
+            embed: index === checkpoints.length - 1 ? 'fit' : 'never',
             priority: ITEM_RULES.checkpoints!.priority! + index,
             refs: [{ tool: 'task.get', input: { taskId: task.id, checkpointId: checkpoint.id } }],
           },
@@ -355,12 +297,20 @@ export async function contextInputs(
                 refs: [
                   key === 'assessment' || key === 'recovery'
                     ? { tool: 'review.get', input: { reviewId: task.reviewId } }
-                    : { tool: 'task.get', input: { taskId: task.id } },
+                    : { tool: 'task.get', input: { taskId: task.id, full: true } },
                 ],
               }),
             ]
           : (await ctx.artifacts.getAll(caller, input.artifactIds, tx)).map((artifact) =>
-              artifactItem(artifact, { id: `${key}:${artifact.id}`, ...rule }),
+              artifactItem(artifact, {
+                id: `${key}:${artifact.id}`,
+                ...rule,
+                ...(artifact.id === task.briefId
+                  ? { embed: 'always' as const }
+                  : artifact.size > 8000
+                    ? { embed: 'never' as const }
+                    : {}),
+              }),
             ),
     };
   }
@@ -425,14 +375,14 @@ export async function workflowAssignment(
     : needsClaim
       ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.' +
         ` ${GIT_CLAIM}`
-      : type.definition.recipe.outputInstructions +
+      : 'Follow context.prompt → Expected output.' +
         // A brief the caller supplied never carries these words, so the assignment always does.
         ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`;
   return {
     role: purpose === 'review' ? 'reviewer' : 'producer',
     label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
     name: task.title,
-    brief: `${type.definition.recipe.instructions}${serviceOwned(task.workflow.version) ? ` ${RESOLUTION_PAPER}` : ''}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}`,
+    brief: `${serviceOwned(task.workflow.version) ? `${RESOLUTION_PAPER}\n\n` : ''}${SOURCE_VERIFICATION}\n\nRecover this assignment with workflow.assignment; task.get returns current context; use full:true for history or checkpointId for a saved note. Open artifact references with artifact.read and review references with review.get.`,
     references: [
       { kind: 'task', id: task.id, label: task.title },
       ...task.guidance.references,

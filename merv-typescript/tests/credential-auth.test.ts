@@ -124,7 +124,7 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
     decode(await fresh.callTool({ name: 'actor.whoami', arguments: {} })).id,
     producer.actor.id,
   );
-  const read = await http(successor.token, 'task.get', { taskId: task.id });
+  const read = await http(successor.token, 'task.get', { taskId: task.id, full: true });
   assert.equal(read.status, 200);
   assert.equal(read.body.result.producerId, producer.actor.id);
   assert.equal(read.body.result.workStarts[0].actorId, producer.actor.id);

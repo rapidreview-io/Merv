@@ -1,3 +1,4 @@
+import { agentAssignment } from '@merv/contracts/agent-assignment';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
@@ -57,7 +58,8 @@ export const workflowToolsPlugin = {
               'Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. Reading an assignment claims nothing; its handoff names the command that does.',
             input: byInstance,
             was: ['workflow.assignment'],
-            handler: async (caller, input) => await workflows.assignment(caller, input.instanceId),
+            handler: async (caller, input) =>
+              agentAssignment(await workflows.assignment(caller, input.instanceId)),
           },
           process: {
             description:
@@ -91,7 +93,7 @@ export const workflowToolsPlugin = {
               expectedRevision: z.number().int().nonnegative(),
             }),
             was: ['workflow.begin'],
-            handler: async (caller, input) => await workflows.begin(caller, input),
+            handler: async (caller, input) => agentAssignment(await workflows.begin(caller, input)),
           },
           extend_limit: {
             summary:

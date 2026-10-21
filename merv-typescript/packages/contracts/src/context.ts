@@ -30,6 +30,8 @@ export interface ContextItem {
    * reading an artifact only when its media type is textual; `never` lists the item only.
    */
   embed?: 'always' | 'fit' | 'never';
+  /** Preserve user/source text rather than translating embedded tool names as guidance. */
+  verbatim?: boolean;
   /** Higher first when room runs out; default 0. */
   priority?: number;
   /** Printed on the item's line or its block's heading, folded to one line, clipped to 300. */

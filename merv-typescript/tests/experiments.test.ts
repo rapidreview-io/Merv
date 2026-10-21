@@ -244,6 +244,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     rmSync(dir, { recursive: true, force: true });
   });
   return {
+    work,
     directory: dir,
     state,
     scope,
@@ -626,3 +627,92 @@ test(
     assert.equal(e.conclusion, 'Yes: NER improves by 1.8 F1.');
   },
 );
+
+test('a leased planner recovers original request and paginated history through its granted read', async (t) => {
+  const { experimentReminder, experimentHistory } = await import('@merv/experiments/read-view');
+  const { experimentGetSchema } = await import('@merv/experiments/input');
+  const { agentAssignment } = await import('@merv/contracts/agent-assignment');
+  const f = await fixture(t);
+  const experiment = await f.create();
+  await f.attach(experiment, 'plan', plan + '\nOLD_PLAN');
+  await f.attach(experiment, 'plan', plan + '\nNEW_PLAN');
+  const lease = await f.work.lease(await f.experiments.get(f.producer, experiment.id));
+  const read = async (args: import('@merv/contracts').Data) =>
+    f.work.run(lease, 'experiment.get_state', args, async (caller, raw) => {
+      const input = experimentGetSchema.parse(raw);
+      const value = await f.experiments.get(caller, input.experimentId);
+      return input.history
+        ? experimentHistory(value, input.history, input.offset, input.limit)
+        : experimentReminder(value);
+    });
+  const reminder = (await read({ experimentId: experiment.id })) as ReturnType<
+    typeof experimentReminder
+  >;
+  assert.equal(reminder.intent, experiment.intent);
+  assert.equal(reminder.details, experiment.details);
+  assert.ok(!('attempts' in reminder));
+  assert.ok(reminder.references.some((r) => r.tool === 'workflow.assignment'));
+  const seen: string[] = [];
+  let args: import('@merv/contracts').Data | undefined = {
+    experimentId: experiment.id,
+    history: 'evidence',
+    limit: 1,
+  };
+  while (args) {
+    const page = (await read(args)) as ReturnType<typeof experimentHistory>;
+    seen.push(...page.items.map((item) => ('id' in item ? item.id : String(item.index))));
+    args = page.next?.arguments;
+  }
+  const full = await f.experiments.get(f.producer, experiment.id);
+  assert.deepEqual(
+    seen,
+    full.evidence.map((e) => e.id),
+  );
+  const assignment = await f.work.run(
+    lease,
+    'workflow.assignment',
+    { instanceId: experiment.id },
+    (caller) => f.workflows.assignment(caller, experiment.id),
+  );
+  const before = JSON.stringify(assignment);
+  const view = agentAssignment(assignment);
+  assert.equal(
+    JSON.stringify(assignment),
+    before,
+    'projection cannot mutate the frozen assignment',
+  );
+  assert.ok(JSON.stringify(view).length < before.length);
+  assert.ok(!('policy' in view.execution));
+  assert.deepEqual(
+    agentAssignment(view as typeof assignment),
+    view,
+    'continuation projection is stable',
+  );
+  assert.ok(view.references.some((r) => r.id === reminder.evidence[0]!.artifactId));
+  for (const tool of assignment.execution.tools)
+    assert.ok(view.execution.tools.some((t) => t.name === tool.name));
+  await f.work.release(lease);
+});
+
+test('planner and both reviewers receive the original request directly', async (t) => {
+  const f = await fixture(t);
+  let e = await f.create('original-request', {
+    intent: 'Compare embedding widths; use experiment.read:get literally.',
+    details: 'Use widths 64 and 128, seeds 1–3, and the retained baseline.',
+  });
+  const checkRequest = async (caller: Caller) => {
+    const prompt = (await f.workflows.assignment(caller, e.id)).context!.prompt;
+    assert.ok(prompt.includes(JSON.stringify({ intent: e.intent }).slice(1, -1)));
+    assert.ok(prompt.includes(JSON.stringify({ details: e.details }).slice(1, -1)));
+  };
+  await checkRequest(f.producer);
+  const planner = await f.work.lease(e);
+  await checkRequest(planner.worker);
+  await f.work.release(planner);
+  await f.attach(e, 'plan', plan);
+  e = await f.transition(e, 'submit_design');
+  await checkRequest(f.reviewer);
+  e = await f.submitReview(e);
+  e = await f.results(e);
+  await checkRequest(f.reviewer);
+});

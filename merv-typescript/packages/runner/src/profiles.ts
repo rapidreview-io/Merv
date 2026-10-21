@@ -1,3 +1,4 @@
+import { agentAssignment } from '@merv/contracts/agent-assignment';
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import type { NativeMcpConnection } from '@merv/sessions/types';
 import { computeGuidance, computeProfile } from '@merv/sessions/compute';
@@ -384,7 +385,7 @@ export function heldAssignment(prompts: readonly string[]): LaunchRequest['held'
 }
 /** An assignment as visits compare it: without the registration generation, an opaque fence
  *  each deploy renews that no worker reads. */
-const comparable = (assignment: WorkflowAssignment) =>
+const comparable = (assignment: ReturnType<typeof agentAssignment>) =>
   canonical({
     ...assignment,
     execution: { ...assignment.execution, registrationId: undefined },
@@ -400,13 +401,14 @@ const comparable = (assignment: WorkflowAssignment) =>
  * sent whole.
  */
 function frozen(
-  assignment: WorkflowAssignment,
+  original: WorkflowAssignment,
   held?: LaunchRequest['held'],
 ): { first: string; text: string[] } {
+  const assignment = agentAssignment(original);
   const whole = { first: continued, text: [FROZEN, JSON.stringify(assignment)] };
-  let earlier: WorkflowAssignment;
+  let earlier: ReturnType<typeof agentAssignment>;
   try {
-    earlier = JSON.parse(held?.copy ?? '') as WorkflowAssignment;
+    earlier = agentAssignment(JSON.parse(held?.copy ?? '') as WorkflowAssignment);
     if (!earlier || typeof earlier !== 'object' || Array.isArray(earlier)) return whole;
     if (!held!.changed && comparable(earlier) === comparable(assignment))
       return {

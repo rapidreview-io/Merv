@@ -37,9 +37,22 @@ export const experimentCreateSchema = z.strictObject({
   workspace: z.enum(['none', 'git']).optional(),
   requestId,
 });
-export const experimentListSchema = z.object({}).strict();
-export const experimentGetSchema = z.object({ experimentId: idSchema }).strict();
-export const experimentExhibitSchema = experimentGetSchema;
+const page = {
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().min(1).max(100).default(20),
+};
+export const experimentListSchema = z.object(page).strict();
+export const experimentGetSchema = z
+  .object({
+    experimentId: idSchema,
+    history: z
+      .enum(['attempts', 'evidence', 'submissions'])
+      .optional()
+      .describe('Omit for current context; select a collection for paginated full history.'),
+    ...page,
+  })
+  .strict();
+export const experimentExhibitSchema = z.object({ experimentId: idSchema }).strict();
 export const experimentAttachSchema = z
   .strictObject({
     experimentId: idSchema,

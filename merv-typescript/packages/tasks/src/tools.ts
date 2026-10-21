@@ -2,6 +2,7 @@ import { MAX_ARTIFACT_IDS, visible, type Caller } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type { ToolDefinition } from '@merv/api/types';
 import { z } from 'zod';
+import type { Task } from './models.js';
 
 const requestId = z.string().min(1).max(200);
 const id = z.string().min(1);
@@ -14,6 +15,30 @@ const claim = {
   expectedRevision: revision,
   claimId: id.optional(),
 };
+/** Compact reminder; the complete record remains available through its reference. */
+function reminder(task: Task) {
+  const {
+    workflow,
+    workStarts,
+    dependencies,
+    dependents,
+    contextInputs,
+    checks,
+    deliveryConfirmations,
+    guidance,
+    ...record
+  } = task;
+  return {
+    ...record,
+    workflow: { state: workflow.state, revision: workflow.revision },
+    references: [
+      { tool: 'task.get', arguments: { taskId: task.id, full: true } },
+      { tool: 'workflow.assignment', arguments: { instanceId: task.id } },
+      ...guidance.references,
+    ],
+  };
+}
+
 export const taskToolsPlugin = {
   name: 'merv-task-tools',
   inject: ['tools', 'tasks'],
@@ -82,19 +107,46 @@ export const taskToolsPlugin = {
         actions: {
           list: {
             description:
-              'List the tasks in the current project as records; task.get adds your guidance.',
-            input: z.object({}).strict(),
+              'List compact task summaries, 20 per page (maximum 100). Follow next and each task reference for complete context.',
+            input: z
+              .object({
+                offset: z.number().int().nonnegative().default(0),
+                limit: z.number().int().min(1).max(100).default(20),
+              })
+              .strict(),
             was: ['task.list'],
-            handler: (caller) => ctx.tasks.list(caller),
+            handler: async (caller, { offset, limit }) => {
+              const tasks = await ctx.tasks.list(caller);
+              return ctx.tools.guidance(caller, {
+                items: tasks.slice(offset, offset + limit).map(({ id, title, workflow }) => ({
+                  id,
+                  title,
+                  state: workflow.state,
+                  reference: { tool: 'task.get', arguments: { taskId: id } },
+                })),
+                total: tasks.length,
+                next:
+                  offset + limit < tasks.length
+                    ? { tool: 'task.list', arguments: { offset: offset + limit, limit } }
+                    : null,
+              });
+            },
           },
           get: {
             description:
-              'Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance. With checkpointId, read that one saved checkpoint instead, as a context names it.',
-            input: z.object({ taskId: id, checkpointId: id.optional() }).strict(),
+              'Recover the goal, numbered checks, current state and delivery references. Set full:true for the complete record, dependencies, work starts and workflow guidance. With checkpointId, read that saved checkpoint. workflow.assignment refreshes the assigned context.',
+            input: z
+              .object({ taskId: id, checkpointId: id.optional(), full: z.boolean().optional() })
+              .strict(),
             was: ['task.get'],
             handler: async (caller, input) =>
               input.checkpointId === undefined
-                ? await guided(caller, ctx.tasks.get(caller, input.taskId))
+                ? await guided(
+                    caller,
+                    ctx.tasks
+                      .get(caller, input.taskId)
+                      .then((task) => (input.full ? task : reminder(task))),
+                  )
                 : await ctx.tasks.savedCheckpoint(caller, input.taskId, input.checkpointId),
           },
         },
@@ -148,7 +200,7 @@ export const taskToolsPlugin = {
     // A main agent works with a person; a Fleet worker produces the tasks it directs.
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts, but never start work context, save work checkpoints, or submit a task delivery yourself. task.read get returns Merv's own guidance for a task: follow it.",
+        "When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts, but never start work context, save work checkpoints, or submit a task delivery yourself. task.read get with full:true returns Merv's own guidance for a task: follow it.",
       ),
     );
   },

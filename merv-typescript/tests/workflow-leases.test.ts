@@ -233,7 +233,7 @@ test('frozen checkpoint inputs remain readable; later source attachments cannot 
   const offered = await f.offer();
   const worker = await sessions.authenticate(offered.secret);
   assert.ok((offered.session.execution.references.artifacts as string[]).includes(predecessor.id));
-  assert.match(offered.session.assignment.context!.prompt, /PRE_OFFER_EVIDENCE_42/);
+  assert.ok(offered.session.assignment.context!.prompt.includes(predecessor.id));
   const late = await artifacts.create(f.source, {
     title: 'Late unrelated input',
     content: 'LATE_FOREIGN_BYTES_9981',
@@ -259,7 +259,14 @@ test('frozen checkpoint inputs remain readable; later source attachments cannot 
     { requestId: 'context' },
     async (caller, input) => await tasks.context(caller, input as unknown as TaskContext),
   );
-  assert.match(context.prompt, /PRE_OFFER_EVIDENCE_42/);
+  assert.ok(context.prompt.includes(predecessor.id));
+  const recovered = await f.run(
+    worker,
+    'artifact.read',
+    { artifactId: predecessor.id },
+    (caller, input) => artifacts.read(caller, String(input.artifactId)),
+  );
+  assert.equal(recovered.content, 'PRE_OFFER_EVIDENCE_42');
   assert.doesNotMatch(context.prompt, /LATE_FOREIGN_BYTES_9981|Late foreign checkpoint/);
   assert.doesNotMatch(
     (await workflows.assignment(worker, f.task.id)).context!.prompt,
@@ -290,11 +297,11 @@ test('frozen checkpoint inputs remain readable; later source attachments cannot 
     { requestId: 'fresh-context' },
     async (caller, input) => await tasks.context(caller, input as unknown as TaskContext),
   );
-  assert.match(fresh.prompt, /LEASE_OUTPUT_371/);
+  assert.ok(fresh.prompt.includes(output.id));
   await f.release(offered.session);
   const successor = await f.offer();
   assert.ok((successor.session.execution.references.artifacts as string[]).includes(output.id));
-  assert.match(successor.session.assignment.context!.prompt, /LEASE_OUTPUT_371/);
+  assert.ok(successor.session.assignment.context!.prompt.includes(output.id));
 });
 
 test('independent workers share one source while review snapshots retain input and actual output authorship', async (t) => {

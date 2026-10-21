@@ -142,7 +142,7 @@ test('assembled Cordis application preserves current MCP task closure across two
     );
     const guidance = await call(producer, 'workflow.status_and_next', { instanceId: task.id });
     // Both legacy endpoints keep flat guidance for callers already using those names.
-    const read = await call(producer, 'task.get', { taskId: task.id });
+    const read = await call(producer, 'task.get', { taskId: task.id, full: true });
     assert.deepEqual(guidance, read.guidance);
     assert.ok(guidance.nextAction);
     // The old name keeps its flat guidance; the noun read tells the noun, its arguments under
@@ -188,8 +188,9 @@ test('assembled Cordis application preserves current MCP task closure across two
       requestId: 'work-context',
     })) as { id: string; prompt: string; type: string };
     assert.match(workContext.prompt, /calculation remains/);
-    // Context and legacy reads give the worker the same flat guidance.
-    assert.ok(workContext.prompt.includes(JSON.stringify(workGuidance)));
+    // The compact context retains the output contract; full guidance remains separately readable.
+    assert.match(workContext.prompt, /task\.submit_delivery/);
+    assert.ok(!workContext.prompt.includes(JSON.stringify(workGuidance)));
     assert.doesNotMatch(workContext.prompt, /\b[a-z_]+\.[a-z_]+:[a-z_]+\b/);
     assert.deepEqual(await storedContext(app.ctx.state, workContext.id), workContext);
     assert.equal(workContext.type, 'task.work');
@@ -340,7 +341,6 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
       researchGuide,
       toolsGuide,
       'leave production to a Fleet worker',
-      'task.read get returns',
       'paper.write patch (kind problem)',
       'change the Problem to change it',
       'session.read find with',

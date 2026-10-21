@@ -349,3 +349,88 @@ test(
     );
   },
 );
+
+// Model projection must preserve continuation comparison and changed budgets.
+test('compact assignments resume unchanged but resend changed limits', async () => {
+  const { buildLaunch, heldAssignment } = await import('../packages/runner/src/profiles.js');
+  const offer = (name: string) => {
+    const common = {
+      instanceId: `instance_${name}`,
+      projectId: 'project_fixture',
+      actorId: 'actor_fixture',
+      revision: 0,
+    };
+    return {
+      ...common,
+      id: `session_${name}`,
+      expectedRevision: 0,
+      status: 'offered',
+      assignment: { ...common, label: 'Work', brief: 'Do the work.' },
+      execution: { ...common, policy: { readOnly: false, tools: [] } },
+    };
+  };
+  const id = '0199a0b2-1111-7222-8333-944445555666';
+  const bearer = `ms_${'A'.repeat(43)}`;
+  const codex = {
+    name: 'codex',
+    harness: 'codex' as const,
+    executable: '/usr/local/bin/codex',
+    enabled: true,
+    parallelism: 1,
+  };
+  const rendered = (feedback: string) => {
+    const block = (heading: string, body: string) => `\n### ${heading}\n~~~\n${body}\n~~~\n`;
+    return `Do the work.\n\nAssignment: {"id":"instance_argv"}\n\n## Paper${block('paper:methods — Methods (text, 600 characters)', 'M'.repeat(600))}${block('paper:empty — Empty (text, 0 characters)', '')}\n## Previous reviews${block('feedback:instance_argv — Previous reviews (text)', feedback)}\n## Expected output\nSay what changed.\n`;
+  };
+  const visit = (feedback: string, registrationId: string) => {
+    const base = offer('argv');
+    return {
+      ...base,
+      continuity: { key: 'key' },
+      assignment: {
+        ...base.assignment,
+        execution: { readOnly: false, registrationId, tools: [] },
+        context: { hash: 'h', prompt: rendered(feedback), sources: [], omitted: [] },
+      },
+    } as unknown as import('@merv/sessions/types').Session;
+  };
+  const sent = (
+    session: import('@merv/sessions/types').Session,
+    held?: import('../packages/runner/src/profiles.js').LaunchRequest['held'],
+    resume: string | null = id,
+  ) =>
+    buildLaunch(
+      codex,
+      {
+        session,
+        prompt: 'Worker prompt.',
+        secret: bearer,
+        mcpUrl: 'http://127.0.0.1:9/mcp',
+        cwd: '/tmp',
+        shellEnvFile: '/tmp/shell-env.sh',
+        ...(resume && { resume }),
+        ...(held !== undefined && { held }),
+      },
+      { PATH: '/usr/bin' },
+    ).stdin;
+
+  for (const workflow of ['experiment', 'task']) {
+    const session = visit('Check the original request.', 'registration');
+    session.assignment.references = [];
+    session.assignment.workflow = session.execution.workflow = workflow;
+    session.assignment.execution.policy = { ...session.execution.policy, maxModelTokens: 10000 };
+    const original = JSON.stringify(session.assignment);
+    const first = sent(session, undefined, null);
+    const held = heldAssignment([first])!;
+    const view = JSON.parse(held.copy);
+    assert.equal(view.execution.limits.maxModelTokens, 10000);
+    assert.ok(!('policy' in view.execution));
+    assert.ok(!('sources' in view.context));
+    assert.equal(JSON.stringify(session.assignment), original);
+    assert.match(sent(session, held), /Frozen assignment: unchanged since the copy/);
+    session.assignment.execution.policy.maxModelTokens = 5000;
+    const changed = sent(session, held);
+    assert.doesNotMatch(changed, /Frozen assignment: unchanged since the copy/);
+    assert.match(changed, /"maxModelTokens":5000/);
+  }
+});

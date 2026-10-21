@@ -27,7 +27,6 @@ import {
 import { readsOnly } from './execution-policy.js';
 import {
   recipeNames,
-  instructions,
   presentationAt,
   handoffAt,
   recipeKey,
@@ -58,7 +57,7 @@ const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
  */
 const REVIEW_HISTORY_CHARS = 8000;
 
-/** The newest interruption and revision notes a context embeds, each clipped; get_state has all. */
+/** The newest interruption and revision notes a context embeds, each clipped; get_state attempts history has all. */
 const FEEDBACK_KEPT = 5;
 
 /**
@@ -151,6 +150,7 @@ export async function inputsOf(
   return {
     experiment: own({
       intent: experiment.intent,
+      details: experiment.details,
       project: await ctx.scope.project(caller, tx),
       codeCapture: await reviewCapture(ctx, caller, experiment, tx),
       ...(state === 'planned'
@@ -411,9 +411,13 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
             project: inputs.experiment.project,
             attemptIndex: experiment.attempt.index,
             expectedRevision: experiment.workflow.revision,
+            ...(reviewing(state)
+              ? { intent: inputs.experiment.intent, details: inputs.experiment.details }
+              : {}),
             ...(state === 'planned'
               ? {
                   intent: inputs.experiment.intent,
+                  details: inputs.experiment.details,
                   feasibilityFormat: inputs.experiment.feasibilityFormat,
                   feasibilityRules: inputs.experiment.feasibilityRules,
                   computeAccess: inputs.experiment.computeAccess,
@@ -430,6 +434,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
           }),
           {
             embed: 'always',
+            verbatim: true,
             refs: [stateRef],
           },
         ),
@@ -569,20 +574,26 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
+    brief: `${speedGuidance.trimStart()}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
     references: [
-      { kind: 'experiment', id: experiment.id, label: experiment.name },
-      ...preview.sources.map((artifact) => ({
-        kind: 'artifact',
-        id: artifact.id,
-        label: artifact.title,
-      })),
-      ...(await ctx.artifacts.getAll(context.caller, inputs.historicalArtifacts, context.tx)).map(
-        (artifact) => ({ kind: 'artifact', id: artifact.id, label: artifact.title }),
-      ),
+      ...new Map(
+        [
+          { kind: 'experiment', id: experiment.id, label: experiment.name },
+          ...preview.sources.map((artifact) => ({
+            kind: 'artifact',
+            id: artifact.id,
+            label: artifact.title,
+          })),
+          ...(
+            await ctx.artifacts.getAll(context.caller, inputs.historicalArtifacts, context.tx)
+          ).map((artifact) => ({ kind: 'artifact', id: artifact.id, label: artifact.title })),
+        ].map((ref) => [`${ref.kind}:${ref.id}`, ref]),
+      ).values(),
     ],
     handoff: {
-      instruction,
+      instruction: needsClaim
+        ? instruction
+        : 'Follow context.prompt → Expected output. Recover this assignment with workflow.assignment; read the experiment with experiment.get_state.',
       tools: reviewing(state)
         ? needsClaim
           ? ['review.start', 'workflow.assignment']

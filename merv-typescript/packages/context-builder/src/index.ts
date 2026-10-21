@@ -55,6 +55,7 @@ const item = z
       z.object({ artifactId: z.string().min(1) }).strict(),
     ]),
     embed: z.enum(['always', 'fit', 'never']).optional(),
+    verbatim: z.boolean().optional(),
     priority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
     note: oneLine(300).optional(),
     refs: refs.max(8).optional(),
@@ -336,7 +337,8 @@ export class RecipeContextBuilder implements ContextBuilder {
           // this worker before rendering; artifact bytes and retrieval refs keep their contracts.
           for (const section of Object.values(parsed.data.inputs))
             for (const item of section.items) {
-              if ('text' in item.body) item.body.text = this.said(caller, item.body.text);
+              if ('text' in item.body && !item.verbatim)
+                item.body.text = this.said(caller, item.body.text);
               if (item.note) item.note = this.said(caller, item.note);
             }
           return {

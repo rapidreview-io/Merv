@@ -383,7 +383,11 @@ test('a real session survives restart and a released worker yields bounded conte
   const context = await f.call<ContextPackage>(next, 'task.context', {
     requestId: 'successor-context',
   });
-  assert.match(context.prompt, /PREDECESSOR_RESULT_7_BY_6_IS_42/);
+  assert.ok(context.prompt.includes(artifact.id));
+  assert.equal(
+    (await f.call<{ content: string }>(next, 'artifact.read', { artifactId: artifact.id })).content,
+    'PREDECESSOR_RESULT_7_BY_6_IS_42',
+  );
   assert.match(context.prompt, /verified the arithmetic/);
   assert.equal(
     (await f.app.ctx.workflows.workStarts(await f.source(), f.task.id)).length,

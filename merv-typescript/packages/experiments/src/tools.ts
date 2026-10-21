@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
+import { experimentReminder, experimentHistory, experimentListPage } from './read-view.js';
 import type { ExperimentExhibit } from './types.js';
 import {
   experimentAttachSchema,
@@ -64,23 +65,68 @@ export const experimentsToolsPlugin = {
         readOnly: true,
         summary: 'Read experiments and metrics exhibits.',
         description:
-          "Read experiments: list (the project's experiment records, terminal work included), get (one experiment's revision, attempt, approved plan, evidence and review rounds) and exhibit (the metrics exhibit the running attempt's results would pin). It changes nothing.",
+          "Read experiments: list (paged experiment summaries, terminal work included), get (current experiment context or paged history) and exhibit (the metrics exhibit the running attempt's results would pin). It changes nothing.",
         actions: {
           list: {
             description:
-              "Read the selected project's experiment records, including terminal work, attempt history and sealed submission metadata. Artifact bytes use artifact.read. Current gate and next-action guidance come from workflow.status_and_next.",
+              'List compact experiment summaries, 20 per page (maximum 100). Follow next for more and each reference for intent, details, current evidence and history. Includes terminal work.',
             input: experimentListSchema,
-            output: z.array(record),
+            output: z.object({
+              items: z.array(z.object({ id: z.string(), name: z.string() }).passthrough()),
+              total: z.number(),
+              next: z.unknown(),
+            }),
             was: ['experiment.list'],
-            handler: (caller) => experiments.list(caller),
+            handler: async (caller, input) => {
+              const page = experimentListPage(
+                await experiments.summaries(caller),
+                input.offset,
+                input.limit,
+              );
+              return {
+                ...page,
+                next: ctx.tools.guidance(caller, page.next),
+                items: page.items.map((item) => ({
+                  ...item,
+                  reference: ctx.tools.guidance(caller, item.reference),
+                })),
+              };
+            },
           },
           get: {
             description:
-              "Read one experiment's current workflow revision, attempt, approved-plan submission, evidence associations and immutable review rounds. This returns metadata only. Use the experiment ID with workflow.status_and_next and workflow.assignment for its current gate and assigned context.",
+              'Recover experiment context: intent, details, current attempt/evidence and pinned submissions. Feedback shows the latest five notes, up to 2,000 chars each. Follow references for full attempts, evidence or submissions with history and pagination (20 by default, maximum 100). workflow.assignment refreshes the assigned context; artifact.read opens document contents.',
             input: experimentGetSchema,
-            output: record,
+            output: z.union([
+              record,
+              z
+                .object({
+                  experimentId: z.string(),
+                  history: z.string(),
+                  items: z.array(z.unknown()),
+                  next: z.unknown(),
+                })
+                .passthrough(),
+            ]),
             was: ['experiment.get_state'],
-            handler: (caller, input) => experiments.get(caller, input.experimentId),
+            handler: async (caller, input) => {
+              const experiment = await experiments.get(caller, input.experimentId);
+              if (input.history) {
+                const page = experimentHistory(
+                  experiment,
+                  input.history,
+                  input.offset,
+                  input.limit,
+                );
+                return {
+                  ...page,
+                  next: ctx.tools.guidance(caller, page.next),
+                  current: ctx.tools.guidance(caller, page.current),
+                };
+              }
+              const reminder = experimentReminder(experiment);
+              return { ...reminder, references: ctx.tools.guidance(caller, reminder.references) };
+            },
           },
           exhibit: {
             summary:
@@ -112,9 +158,9 @@ export const experimentsToolsPlugin = {
         actions: {
           create: {
             summary:
-              'Create immutable name/intent/details; starts planning attempt 1, maximum seven active experiments. dependsOn contains same-project task IDs; order experiments via intervening tasks. Independent design approval precedes full training/evaluation; name missing data/compute/budget/prerequisites separately. Private managed Git uses accepted dependencies and main, pinned by the first planning/running lease. Conflicts await reviewed resolution; unavailable storage blocks execution, never scratch. Save code with code.commit, outputs as artifacts. Retry identical requestId/input.',
+              'Create immutable name/intent/details; starts planning attempt 1, maximum seven active experiments. Use intent for the question or objective. Use details for explicit requests and preferences: reference papers or previous experiments (include links or IDs), parameters, constraints, or approaches to follow. Leave details empty when the planner should choose the strategy from intent within project constraints. dependsOn contains same-project task IDs; order experiments via intervening tasks. Independent design approval precedes full training/evaluation; name missing data/compute/budget/prerequisites separately. Private managed Git uses accepted dependencies and main, pinned by the first planning/running lease. Conflicts await reviewed resolution; unavailable storage blocks execution, never scratch. Save code with code.commit, outputs as artifacts. Retry identical requestId/input.',
             description:
-              'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are task IDs in the same project; an order between two experiments is a task between them. Starts planning attempt 1; at most seven experiments may remain active. Full training and evaluations require independent design approval. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
+              'Create a research experiment in the selected project with an immutable name, intent and optional details. Use intent for the question or objective. Use details for explicit requests and preferences: reference papers or previous experiments (include links or IDs), parameters, constraints, or approaches to follow. Leave details empty when the planner should choose the strategy from intent within project constraints. Dependencies are task IDs in the same project; an order between two experiments is a task between them. Starts planning attempt 1; at most seven experiments may remain active. Full training and evaluations require independent design approval. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
             input: experimentCreateSchema.omit({ workspace: true }),
             was: ['experiment.create'],
             handler: (caller, input) => experiments.create(caller, input),

@@ -36,8 +36,8 @@ async function fixture(api = false) {
   const work = currentWork(app.ctx, { directory, source: producerSource });
   let commandId: string;
   let held: Awaited<ReturnType<typeof work.lease>>;
-  const create = async () => {
-    const task = await currentTask(app.ctx, producerSource, input());
+  const create = async (extra: Partial<TaskCreate> = {}) => {
+    const task = await currentTask(app.ctx, producerSource, { ...input(), ...extra });
     held = await work.lease(task);
     producer.caller = held.worker;
     Object.assign(
@@ -74,6 +74,8 @@ async function fixture(api = false) {
   });
   return {
     directory,
+    work,
+    release: () => work.release(held),
     app,
     operator,
     producer,
@@ -363,4 +365,33 @@ test('a delivered commit record says Code serves its checkout, never that one ma
   assert.match(record, /pinned to exactly this commit, which Code keeps on its server/);
   assert.match(record, /code\.files with this commit as ref/);
   assert.doesNotMatch(record, /runner repository/);
+});
+
+test('reviewer context preserves the complete original brief above the evidence cutoff', async () => {
+  const f = await fixture();
+  try {
+    const content = `Build an adder.\nAdds two numbers.\nHandles negative inputs.\nOriginal constraint: ${'x'.repeat(9000)}`;
+    const brief = await f.app.ctx.artifacts.create(f.producer.caller, {
+      title: 'Original request',
+      content,
+    });
+    const task = await f.create({ briefId: brief.id });
+    const submitted = await f.submit(f.delivery(task));
+    await f.release();
+    const runner = await f.app.ctx.scope.credentials.issueActor(f.operator, {
+      name: 'Independent runner',
+      role: 'operator',
+    });
+    const reviewLease = await f.work.lease(submitted, {
+      projectId: f.operator.projectId,
+      actorId: runner.actor.id,
+      credentialId: runner.credential.id,
+    });
+    const packet = await f.app.ctx.workflows.assignment(reviewLease.worker, task.id);
+    assert.ok(packet.context!.prompt.includes(content));
+    assert.ok(packet.references.some((reference) => reference.id === brief.id));
+    assert.doesNotMatch(packet.context!.prompt, /"workStarts"|"dependents"|"guidance"/);
+  } finally {
+    await f.close();
+  }
 });
