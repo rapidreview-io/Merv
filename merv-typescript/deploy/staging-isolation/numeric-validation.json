@@ -1,0 +1,59 @@
+{
+  "base": "cd6808b722a59b62d937009ab63dbbc87e95d5bd",
+  "issue": "to_jsonb row decoding rounded PostgreSQL BIGINT certificate keys and session references",
+  "encoding": {
+    "version": 2,
+    "name": "postgres-exact-text-v1",
+    "textColumns": [
+      "bigint",
+      "numeric/decimal",
+      "money",
+      "json/jsonb (raw database text)",
+      "arrays (database array text)"
+    ],
+    "import": "Individual native-column parameters, preserving the pinned schema; legacy bundle versions refuse before DB access."
+  },
+  "tests": {
+    "postgresPassed": 12,
+    "postgresSkipped": 0,
+    "pythonPassed": 12,
+    "pinnedCertificateSerials": 38,
+    "randomSerialsAbove2Pow53": 32,
+    "boundaries": ["INT64_MIN", "INT64_MAX", "INT64_MAX-1", "2^53", "2^53+1"],
+    "coverage": [
+      "All certificate PK/session FK strings survive exact export/import and repeated imports",
+      "Independent SQL representations verify original certificate rows and sourceSha256",
+      "Repeated export produces the same bundle digest",
+      "Actual NUMERIC(30,12) rate and nested JSON large integers/decimals survive",
+      "JSON whitespace, JSON null vs SQL NULL and BIGINT arrays survive",
+      "Conflict on INT64_MAX certificate refuses",
+      "Dump/restore comparisons use PostgreSQL JSON text, avoiding JS precision loss in the test itself",
+      "Existing sequence high-water does not rewind; INT64_MAX import succeeds and nextval reports exhaustion",
+      "Unsafe numeric selectors and legacy bundles refuse; descending/cycling sequences require explicit review",
+      "Pinned sandbox_events adjacent unsafe BIGINT PKs and INT64_MAX roundtrip without reset overflow",
+      "Microsecond timestamp equality via SQL text",
+      "JSONB 1e400 and nested arrays roundtrip without Infinity or precision loss",
+      "Adjacent unsafe JSON numeric values produce different original source hashes"
+    ]
+  },
+  "otherJsonAudit": {
+    "schemaMetadata": "Only type/name/key strings and booleans are JSON aggregated; database oid is text.",
+    "selectionWorkAndCaptures": "Retained published Main schema has text/boolean/int32 fields in these to_jsonb projections, not bigint certificate data.",
+    "selectionObjectSize": "float8 comparison is gated by a safe integer artifact size; archival row itself now retains bigint text.",
+    "migrationLedger": "refresh-readers returns SQL aggregate as text and hashes that text.",
+    "piAdmission": "to_jsonb is used only inside PostgreSQL to extract the owner string."
+  },
+  "scope": "Local disposable PostgreSQL only; parent must perform the fresh real read-only export and independent digest review. No live query or mutation by author.",
+  "log": {
+    "path": "/tmp/merv-numeric-suite.log",
+    "sha256": "3b3693864c9efe8aebfdf3a9310b89ced8af2c85045f01d79da2d1847772ebc1"
+  },
+  "reviewerFixtureReplay": {
+    "report": "/tmp/merv-launch-staging-review/precision-review/REVIEW-PENDING.md",
+    "fixture": "/tmp/merv-launch-staging-review/precision-review/adversarial.mts",
+    "adaptation": "Only local endpoint, owned DB/output names and create/drop cleanup changed; assertions and source data unchanged. Executed against author history module on disposable local port56108, not reviewer or live DBs.",
+    "result": "All nine exactness/hash/sequence assertions passed",
+    "log": "/tmp/merv-numeric-reviewer-replay.log",
+    "sha256": "fd7d1df9886a583fa171338c83d78e40a1a7b197e835b903e911a1aa1013c076"
+  }
+}

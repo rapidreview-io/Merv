@@ -78,12 +78,24 @@ export async function identity(db) {
   ).rows[0];
 }
 const keyOf = (meta, row) => Object.fromEntries(meta.pk.map((k) => [k, row[k]]));
-async function select(db, table, key) {
+const textTransport = (type) =>
+  /^(bigint|numeric|decimal|money)(\(|$)/.test(type) ||
+  ['json', 'jsonb'].includes(type) ||
+  type.endsWith('[]');
+export async function select(db, table, key, meta) {
   const columns = Object.keys(key);
   need(columns.length, 'empty row selector');
+  need(meta?.columns?.length, 'row schema required');
+  for (const value of Object.values(key))
+    need(typeof value !== 'number' || Number.isSafeInteger(value), 'unsafe numeric row selector');
+  // Convert exact scalars and JSON/arrays to database text BEFORE JSON parsing in pg.
+  // JSON text retains nested exact numbers and the distinct JSON null versus SQL NULL.
+  const fields = meta.columns.map(
+    (c) => `'${c.name}',${q(c.name)}${textTransport(c.type) ? '::text' : ''}`,
+  );
   return (
     await db.query(
-      `SELECT to_jsonb(t) AS row FROM public.${q(table)} t WHERE ${columns.map((k, i) => `${q(k)} IS NOT DISTINCT FROM $${i + 1}`).join(' AND ')}`,
+      `SELECT jsonb_build_object(${fields.join(',')}) AS row FROM public.${q(table)} t WHERE ${columns.map((k, i) => `${q(k)} IS NOT DISTINCT FROM $${i + 1}`).join(' AND ')}`,
       Object.values(key),
     )
   ).rows.map((r) => r.row);
@@ -187,7 +199,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
     while (queue.length) {
       const { table, key } = queue.shift();
       need(TABLES.has(table) && meta[table]?.pk, 'table outside history allowlist');
-      const found = await select(db, table, key);
+      const found = await select(db, table, key, meta[table]);
       need(found.length === 1, `missing or ambiguous ${table} reference`);
       const original = found[0],
         sourceSha256 = hash(original),
@@ -232,7 +244,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
             ]
           : []) {
         need(meta[child]?.pk, 'missing history table');
-        const children = await select(db, child, { [col]: original.id });
+        const children = await select(db, child, { [col]: original.id }, meta[child]);
         for (const row of children) queue.push({ table: child, key: keyOf(meta[child], row) });
       }
       if (table === 'storage_objects' && original.kind === 'manifest') {
@@ -244,9 +256,8 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
         ).rows;
         for (const ref of refs) queue.push({ table: 'storage_manifest_refs', key: ref });
         // entries_json can carry files whose missing refs would otherwise silently truncate closure.
-        const entries = Array.isArray(original.entries_json)
-          ? original.entries_json
-          : original.entries_json?.entries;
+        const manifest = JSON.parse(original.entries_json);
+        const entries = Array.isArray(manifest) ? manifest : manifest?.entries;
         need(Array.isArray(entries), 'unknown manifest entries format');
         for (const entry of entries) {
           const objectId = entry.object_id;
@@ -269,7 +280,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
         need(st.isFile() && !st.isSymbolicLink(), 'blob must be regular file');
         const bytes = readFileSync(path);
         need(
-          bytes.length === Number(o.size_bytes) && hash(bytes) === o.sha256,
+          bytes.length === count(o.size_bytes) && hash(bytes) === o.sha256,
           'missing or corrupt selected blob',
         );
         files.push({
@@ -293,7 +304,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
     const dataFiles = [];
     for (const { value: o } of Object.values(rows.job_outputs ?? {})) {
       need(o.file_state !== 'purge_pending', 'job output retention is in flight');
-      if (o.file_state !== 'present' || Number(o.total_length) === 0) continue;
+      if (o.file_state !== 'present' || count(o.total_length) === 0) continue;
       need(
         process.env.STAGING_HISTORY_DATA_DIR,
         'selected job output needs source private data directory',
@@ -307,7 +318,7 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
       const st = lstatSync(path);
       need(!st.isSymbolicLink(), 'symlink output refused');
       const names = st.isDirectory() ? readdirSync(path).sort() : null;
-      let end = Number(o.available_start);
+      let end = count(o.available_start);
       for (const name of names ?? ['']) {
         need(name === '' || name === 'start' || /^\d+$/.test(name), 'unknown output segment');
         const file = name ? join(path, name) : path,
@@ -316,8 +327,8 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
         const bytes = readFileSync(file),
           sha256 = hash(bytes);
         if (name === 'start')
-          need(Number(bytes.toString()) === Number(o.available_start), 'output start drift');
-        else end = Math.max(end, Number(name || 0) + bytes.length);
+          need(count(bytes.toString()) === count(o.available_start), 'output start drift');
+        else end = Math.max(end, count(name || 0) + bytes.length);
         const stored = join(blobDir, sha256);
         if (!existsSync(stored)) {
           const fd = openSync(stored, 'wx', 0o600);
@@ -330,9 +341,18 @@ export async function exportHistory(db, selection, blobDir, fetchBlob) {
         }
         dataFiles.push({ path: relative + (name ? '/' + name : ''), sha256, size: bytes.length });
       }
-      need(end === Number(o.total_length), 'output byte length drift');
+      need(end === count(o.total_length), 'output byte length drift');
     }
-    const body = { version: 1, source, selection, schema: meta, rows: exported, files, dataFiles };
+    const body = {
+      version: 2,
+      encoding: 'postgres-exact-text-v1',
+      source,
+      selection,
+      schema: meta,
+      rows: exported,
+      files,
+      dataFiles,
+    };
     validateOutputFiles(body, blobDir);
     await db.query('ROLLBACK');
     return { ...body, sha256: hash(body) };
@@ -354,10 +374,10 @@ function validateOutputFiles(bundle, blobDir) {
   const used = new Set();
   for (const { value: o } of bundle.rows.job_outputs ?? []) {
     need(o.file_state !== 'purge_pending', 'job output retention is in flight');
-    if (o.file_state !== 'present' || Number(o.total_length) === 0) continue;
+    if (o.file_state !== 'present' || count(o.total_length) === 0) continue;
     const base = `jobs/${o.job_id}/${o.stream}.log`,
-      start = Number(o.available_start),
-      end = Number(o.total_length);
+      start = count(o.available_start),
+      end = count(o.total_length);
     const selected = files.filter((f) => f.path === base || f.path.startsWith(base + '/'));
     need(selected.length > 0, 'retained output file manifest missing');
     selected.forEach((f) => used.add(f.path));
@@ -370,12 +390,12 @@ function validateOutputFiles(bundle, blobDir) {
     else {
       const marker = selected.find((f) => f.path === base + '/start');
       need(
-        marker && Number(readFileSync(join(blobDir, marker.sha256)).toString()) === start,
+        marker && count(readFileSync(join(blobDir, marker.sha256)).toString()) === start,
         'output start marker missing or changed',
       );
       const segments = selected
         .filter((f) => f !== marker)
-        .map((f) => ({ file: f, offset: Number(f.path.slice(base.length + 1)) }))
+        .map((f) => ({ file: f, offset: count(f.path.slice(base.length + 1)) }))
         .sort((a, b) => a.offset - b.offset);
       let cursor = start;
       for (const { file, offset } of segments) {
@@ -437,6 +457,39 @@ export function installDataFile(target, bytes, sha256) {
   }
 }
 
+/** Keep sequence arithmetic inside PostgreSQL; never max+1 (INT64_MAX overflows).
+ * Existing sequence high-water marks are retained, including on idempotent import.
+ */
+export async function resetSequence(db, table, column) {
+  const row = (
+    await db.query(
+      `SELECT s.seqrelid::regclass::text AS seq,n.nspname,c.relname,s.seqincrement::text AS increment,s.seqcycle AS cycle
+    FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE s.seqrelid=pg_get_serial_sequence($1,$2)::regclass`,
+      ['public.' + table, column],
+    )
+  ).rows[0];
+  if (!row) return;
+  need(
+    BigInt(row.increment) > 0n && !row.cycle,
+    'descending/cycling history sequence requires explicit review',
+  );
+  await db.query(
+    `WITH m AS (SELECT max(${q(column)}) AS maximum FROM public.${q(table)}),
+    last AS (SELECT last_value,is_called FROM ${q(row.nspname)}.${q(row.relname)}),
+    chosen AS (SELECT greatest(coalesce(m.maximum,s.seqmin),s.seqmin,last.last_value) AS value,
+      m.maximum,last.is_called FROM m,last,pg_sequence s WHERE s.seqrelid=$1::regclass)
+    SELECT setval($1::regclass,value,is_called OR coalesce(maximum>=value,false)) FROM chosen`,
+    [row.seq],
+  );
+}
+
+function count(value) {
+  const n = Number(value);
+  need(Number.isSafeInteger(n) && n >= 0, 'file offset/size exceeds exact supported range');
+  return n;
+}
+
 export async function importHistory(db, bundle, expectedIdentity, blobDir, expectedDigest) {
   const { sha256, ...body } = bundle;
   need(
@@ -447,6 +500,10 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
   );
   need(hash(body) === sha256, 'bundle hash mismatch');
   need(
+    bundle.version === 2 && bundle.encoding === 'postgres-exact-text-v1',
+    'lossless version 2 export required; re-export legacy bundles',
+  );
+  need(
     expectedIdentity.database === 'sandboxes_staging' &&
       canonical(await identity(db)) === canonical(expectedIdentity),
     'wrong destination database identity',
@@ -455,7 +512,7 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
   need(canonical(await schema(db)) === canonical(bundle.schema), 'schema drift');
   for (const f of bundle.files) {
     const b = readFileSync(join(blobDir, f.sha256));
-    need(hash(b) === f.sha256 && b.length === Number(f.size), 'blob verification failed');
+    need(hash(b) === f.sha256 && b.length === count(f.size), 'blob verification failed');
   }
   validateOutputFiles(bundle, blobDir);
   for (const file of bundle.dataFiles ?? []) {
@@ -483,34 +540,33 @@ export async function importHistory(db, bundle, expectedIdentity, blobDir, expec
       const [table] = pending.splice(index, 1);
       need(TABLES.has(table), 'unapproved import table');
       for (const r of bundle.rows[table]) {
+        for (const row of [r.original, r.value, r.key])
+          for (const c of bundle.schema[table].columns)
+            if (c.name in row && textTransport(c.type))
+              need(
+                row[c.name] === null || typeof row[c.name] === 'string',
+                'exact column requires database text encoding',
+              );
         need(
           canonical(r.value) === canonical(safeRow(table, r.original, bundle.selection.namespaces)),
           'unreviewed row transformation',
         );
-        const existing = await select(db, table, r.key);
+        const existing = await select(db, table, r.key, bundle.schema[table]);
         if (existing.length) {
           need(canonical(existing[0]) === canonical(r.value), 'same-ID destination conflict');
           continue;
         }
+        const columns = bundle.schema[table].columns.map((c) => c.name);
         await db.query(
-          `INSERT INTO public.${q(table)} SELECT * FROM jsonb_populate_record(NULL::public.${q(table)},$1::jsonb)`,
-          [canonical(r.value)],
+          `INSERT INTO public.${q(table)} (${columns.map(q).join(',')}) VALUES (${columns.map((_, i) => '$' + (i + 1)).join(',')})`,
+          columns.map((name) => r.value[name]),
         );
       }
       done.add(table);
     }
     for (const table of done)
-      for (const column of bundle.schema[table].columns) {
-        const result = await db.query('SELECT pg_get_serial_sequence($1,$2) AS seq', [
-          `public.${table}`,
-          column.name,
-        ]);
-        if (result.rows[0].seq)
-          await db.query(
-            `SELECT setval($1::regclass,greatest(coalesce((SELECT max(${q(column.name)}) FROM public.${q(table)}),0)+1,1),false)`,
-            [result.rows[0].seq],
-          );
-      }
+      for (const column of bundle.schema[table].columns)
+        await resetSequence(db, table, column.name);
     await db.query('COMMIT');
     return {
       bundle: sha256,

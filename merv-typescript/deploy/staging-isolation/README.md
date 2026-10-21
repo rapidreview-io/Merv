@@ -304,3 +304,27 @@ It requires an already-local `python:3.12-slim` image and creates/removes unique
 containers/networks. It restores the real missing-name/temporary-replacement state for Main and
 controller in four fixtures and runs the actual helper, Compose, rename and health checks.
 Only application rendering/migration preflights are adapted. It is not live handoff acceptance.
+
+## Lossless history bundle version 2
+
+A fresh export now emits `version:2, encoding:"postgres-exact-text-v1"`. Do not reuse a version 1
+bundle: its PostgreSQL BIGINT/numeric values may already have been rounded by JSON parsing.
+Re-export and independently review/bind the new digest before importing. Selection and handoff
+plan versions are unchanged; this version applies to the history transport only.
+
+The exporter uses each actual column's declared type to transport BIGINT, NUMERIC/DECIMAL,
+MONEY, arrays, JSON and JSONB as database text (SQL NULL stays null). Thus certificate keys and
+session FKs are decimal strings; JSON columns contain raw database JSON text, preserving nested
+large integers/decimals and JSON null separately from SQL NULL. Original-row hashes include this
+lossless representation. Logical/FK traversal and destination conflict reads use the same encoding.
+The importer supplies individual parameters to the original typed columns; no schema changes or
+certificate omissions are involved. Unsafe numeric row selectors and incorrectly encoded exact
+columns refuse. File lengths/offsets must be safe nonnegative integers before byte arithmetic;
+this constraint never converts certificate IDs or accounting numerics to JavaScript numbers.
+
+Sequence resetting is performed inside PostgreSQL without adding one to a maximum value. It
+retains the destination sequence high-water mark, including retries, and marks an imported
+INT64_MAX as used so PostgreSQL reports exhaustion rather than wrapping or reusing history IDs.
+Descending or cycling sequences require separate review. The pinned certificate serial is a BIGINT primary
+key without an owned serial sequence; this generic reset applies only where an owned sequence
+actually exists.

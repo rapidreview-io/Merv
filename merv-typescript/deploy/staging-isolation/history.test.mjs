@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
+import { randomBytes } from 'node:crypto';
 import {
   mkdtempSync,
   writeFileSync,
@@ -209,18 +210,44 @@ test(
         "INSERT INTO api_tokens(id,namespace,label,token_hash,created_at,revoked_at,account_id,member_id,kind) VALUES('revoked',$1,'archive','hash',now(),now(),'acct_zo40u4jf8tmbhjkh','member','cli')",
         [LEGACY],
       );
+      const serials = [
+        '42',
+        '-9223372036854775808',
+        '9223372036854775807',
+        '9223372036854775806',
+        '9007199254740992',
+        '9007199254740993',
+        ...Array.from({ length: 32 }, () =>
+          ((randomBytes(8).readBigUInt64BE() & ((1n << 63n) - 1n)) | (1n << 60n)).toString(),
+        ),
+      ];
+      assert.equal(new Set(serials).size, serials.length);
+      for (const [i, serial] of serials.entries()) {
+        await source.query(
+          "INSERT INTO certificates(serial,namespace,token_id,kind,key_id,key_fingerprint,principals_json,sandbox_id,issued_at,expires_at) VALUES($1,$2,'revoked','user','key','fingerprint','[]','stopped-one','2026-10-19 00:00:00.123456+00','2026-10-20 00:00:00.987654+00')",
+          [serial, LEGACY],
+        );
+        await source.query(
+          "INSERT INTO sessions(id,sandbox_id,namespace,certificate_serial,remote_addr,started_at,ended_at) VALUES($1,'stopped-one',$2,$3,'local','2026-10-19 00:00:00.123456+00','2026-10-20 00:00:00.987654+00')",
+          ['session-' + i, LEGACY, serial],
+        );
+      }
+      const rate = '123456789012345678.123456789012';
       await source.query(
-        "INSERT INTO certificates(serial,namespace,token_id,kind,key_id,key_fingerprint,principals_json,sandbox_id,issued_at,expires_at) VALUES(42,$1,'revoked','user','key','fingerprint','[]','stopped-one',now()-interval '2 days',now()-interval '1 day')",
-        [LEGACY],
+        "INSERT INTO infra_compute(sandbox_id,account_id,namespace,member_id,provider,source,rate) VALUES('stopped-one','acct_zo40u4jf8tmbhjkh',$1,'member','cloudflare-fleet-staging','host',$2)",
+        [LEGACY, rate],
       );
-      await source.query(
-        "INSERT INTO sessions(id,sandbox_id,namespace,certificate_serial,remote_addr,started_at,ended_at) VALUES('session','stopped-one',$1,42,'local',now()-interval '2 days',now()-interval '1 day')",
-        [LEGACY],
-      );
-      await source.query(
-        "INSERT INTO sandbox_events(id,sandbox_id,namespace,kind,at,data_json) VALUES('event','stopped-one',$1,'stopped',now(),'{}')",
-        [LEGACY],
-      );
+      const exactJson =
+        '{"serial":9007199254740993,"decimal":123456789012345678.123456789012,"nested":[9223372036854775807,-9223372036854775808,1e400,null,true,"9007199254740993"]}';
+      await source.query("UPDATE sandboxes SET request_json=$1::jsonb WHERE id='stopped-one'", [
+        exactJson,
+      ]);
+      const eventSeqs = ['9007199254740992', '9007199254740993', '9223372036854775807'];
+      for (const [i, seq] of eventSeqs.entries())
+        await source.query(
+          "INSERT INTO sandbox_events(seq,id,sandbox_id,namespace,kind,at,data_json) VALUES($1,$2,'stopped-one',$3,'stopped','2026-10-20 00:00:00.123456+00',$4)",
+          [seq, 'event-' + i, LEGACY, exactJson],
+        );
       await source.query(
         "INSERT INTO pipelines(id,namespace,name,idempotency_key,request_json,state,outputs_json,progress_json,deadline_at,capture_deadline_at,created_at,updated_at,grant_id) VALUES('completed-producer',$1,'producer','producer','{}','completed','{}','{}',now(),now(),now(),now(),'revoked')",
         [LEGACY],
@@ -303,8 +330,48 @@ test(
         binding = await identity(dest);
       assert.equal(bundle.rows.pipelines[0].value.state, 'completed');
       assert.equal(bundle.rows.storage_manifest_refs.length, 1);
-      assert.equal(bundle.rows.sessions.length, 1);
-      assert.equal(bundle.rows.certificates.length, 1);
+      assert.equal(bundle.rows.sessions.length, serials.length);
+      assert.equal(bundle.rows.certificates.length, serials.length);
+      assert.equal(bundle.version, 2);
+      assert.equal((await exportHistory(source, selection, dir)).sha256, bundle.sha256);
+      assert.deepEqual(
+        new Set(bundle.rows.certificates.map((r) => r.key.serial)),
+        new Set(serials),
+      );
+      assert.deepEqual(
+        new Set(bundle.rows.sessions.map((r) => r.value.certificate_serial)),
+        new Set(serials),
+      );
+      for (const r of bundle.rows.certificates) {
+        const independent = (
+          await source.query(
+            "SELECT (to_jsonb(c)||jsonb_build_object('serial',serial::text,'principals_json',principals_json::text)) AS row FROM certificates c WHERE serial=$1",
+            [r.key.serial],
+          )
+        ).rows[0].row;
+        assert.deepEqual(r.original, independent);
+        assert.equal(r.sourceSha256, hash(independent));
+      }
+      assert.equal(bundle.rows.infra_compute[0].value.rate, rate);
+      assert.deepEqual(
+        new Set(bundle.rows.sandbox_events.map((r) => r.value.seq)),
+        new Set(eventSeqs),
+      );
+      const originalHash = bundle.rows.sandboxes.find(
+        (r) => r.key.id === 'stopped-one',
+      ).sourceSha256;
+      await source.query(
+        "UPDATE sandboxes SET request_json=jsonb_set(request_json,'{serial}','9007199254740992') WHERE id='stopped-one'",
+      );
+      assert.notEqual(
+        (await exportHistory(source, selection, dir)).rows.sandboxes.find(
+          (r) => r.key.id === 'stopped-one',
+        ).sourceSha256,
+        originalHash,
+      );
+      await source.query("UPDATE sandboxes SET request_json=$1::jsonb WHERE id='stopped-one'", [
+        exactJson,
+      ]);
       assert.equal(bundle.rows.api_tokens[0].value.id, 'revoked');
       assert.equal(bundle.dataFiles.length, outputs.size);
       process.env.STAGING_HISTORY_DATA_DIR = targetData;
@@ -341,8 +408,41 @@ test(
         assert.equal(hash(readFileSync(join(targetData, path))), hash(bytes));
       }
       assert.equal((await dest.query('SELECT count(*) FROM job_outputs')).rows[0].count, '4');
+      assert.deepEqual(
+        (await dest.query('SELECT serial::text FROM certificates ORDER BY serial')).rows,
+        (await source.query('SELECT serial::text FROM certificates ORDER BY serial')).rows,
+      );
+      assert.deepEqual(
+        (await dest.query('SELECT certificate_serial::text FROM sessions ORDER BY id')).rows,
+        (await source.query('SELECT certificate_serial::text FROM sessions ORDER BY id')).rows,
+      );
+      assert.equal((await dest.query('SELECT rate::text FROM infra_compute')).rows[0].rate, rate);
+      assert.equal(
+        (
+          await dest.query(
+            "SELECT request_json::text AS data FROM sandboxes WHERE id='stopped-one'",
+          )
+        ).rows[0].data,
+        (
+          await source.query(
+            "SELECT request_json::text AS data FROM sandboxes WHERE id='stopped-one'",
+          )
+        ).rows[0].data,
+      );
+      await dest.query("UPDATE certificates SET key_id='drift' WHERE serial=9223372036854775807");
+      await assert.rejects(importHistory(dest, bundle, binding, dir, bundle.sha256), /same-ID/);
+      await dest.query("UPDATE certificates SET key_id='key' WHERE serial=9223372036854775807");
+      await importHistory(dest, bundle, binding, dir, bundle.sha256);
       assert.equal((await dest.query('SELECT count(*) FROM sandboxes')).rows[0].count, '1');
       assert.equal((await source.query('SELECT count(*) FROM sandboxes')).rows[0].count, '2');
+      for (const table of ['certificates', 'sessions', 'infra_compute', 'sandbox_events']) {
+        const sql = `SELECT to_jsonb(t)::text AS exact FROM ${table} t ORDER BY to_jsonb(t)::text`;
+        assert.deepEqual((await dest.query(sql)).rows, (await source.query(sql)).rows);
+      }
+      await assert.rejects(
+        dest.query("SELECT nextval(pg_get_serial_sequence('sandbox_events','seq'))"),
+        { code: '2200H' },
+      );
       await fenceSource(source, true);
       assert.equal((await fenceSource(source)).denied, true);
       assert.equal(
@@ -394,10 +494,10 @@ test(
       try {
         for (const table of Object.keys(bundle.rows)) {
           const a = await dest.query(
-              `SELECT to_jsonb(t) AS row FROM ${table} t ORDER BY to_jsonb(t)::text`,
+              `SELECT to_jsonb(t)::text AS row FROM ${table} t ORDER BY to_jsonb(t)::text`,
             ),
             b = await restored.query(
-              `SELECT to_jsonb(t) AS row FROM ${table} t ORDER BY to_jsonb(t)::text`,
+              `SELECT to_jsonb(t)::text AS row FROM ${table} t ORDER BY to_jsonb(t)::text`,
             );
           assert.deepEqual(b.rows, a.rows);
         }
@@ -437,3 +537,110 @@ test('private log publication survives SIGKILL mid-write and refuses unrelated f
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test(
+  'exact JSON, decimal and array transport plus non-rewinding INT64 sequence boundary',
+  { skip: !url },
+  async () => {
+    const admin = new pg.Client({ connectionString: url });
+    await admin.connect();
+    const created = [],
+      dir = mkdtempSync(join(tmpdir(), 'history-exact-'));
+    let source, dest;
+    try {
+      for (const name of ['isolation_source', 'sandboxes_staging']) {
+        await admin.query(`CREATE DATABASE ${name}`);
+        created.push(name);
+      }
+      source = new pg.Client({ connectionString: new URL('/isolation_source', url).href });
+      dest = new pg.Client({ connectionString: new URL('/sandboxes_staging', url).href });
+      await source.connect();
+      await dest.connect();
+      const ddl =
+        'CREATE TABLE certificates(serial BIGSERIAL PRIMARY KEY,amount NUMERIC,payload JSONB,raw_json JSON,peers BIGINT[])';
+      await source.query(ddl);
+      await dest.query(ddl);
+      const small = '9007199254740993',
+        max = '9223372036854775807',
+        decimal = '123456789012345678901234567890.12345678901234567890';
+      const raw = '{ "value": 9223372036854775807, "rate": 0.123456789012345678901234567890 }';
+      await source.query('INSERT INTO certificates VALUES($1,$2,$3,$4,$5)', [
+        small,
+        decimal,
+        raw,
+        raw,
+        '{9223372036854775807,NULL,-9223372036854775808}',
+      ]);
+      await source.query("INSERT INTO certificates VALUES($1,NULL,'null'::jsonb,NULL,NULL)", [max]);
+      const choose = (serials) => ({
+        version: 1,
+        namespaces: ['archive'],
+        roots: serials.map((serial) => ({ table: 'certificates', key: { serial } })),
+      });
+      const binding = await identity(dest),
+        one = await exportHistory(source, choose([small]), dir);
+      assert.equal(one.rows.certificates[0].original.amount, decimal);
+      assert.equal(one.rows.certificates[0].original.raw_json, raw);
+      assert.equal(
+        one.rows.certificates[0].original.peers,
+        '{9223372036854775807,NULL,-9223372036854775808}',
+      );
+      const { sha256: ignored, ...legacyBody } = { ...one, version: 1 };
+      const legacy = { ...legacyBody, sha256: hash(legacyBody) };
+      await assert.rejects(
+        importHistory(
+          {
+            query: () => {
+              throw Error('DB must not be reached');
+            },
+          },
+          legacy,
+          binding,
+          dir,
+          legacy.sha256,
+        ),
+        /version 2/,
+      );
+      await assert.rejects(
+        exportHistory(source, choose([Number(max)]), dir),
+        /unsafe numeric row selector/,
+      );
+      await dest.query("SELECT setval('certificates_serial_seq',9223372036854775805,true)");
+      await importHistory(dest, one, binding, dir, one.sha256);
+      assert.equal(
+        (await dest.query('SELECT last_value::text FROM certificates_serial_seq')).rows[0]
+          .last_value,
+        '9223372036854775805',
+      );
+      assert.equal(
+        (await dest.query("SELECT nextval('certificates_serial_seq')::text AS value")).rows[0]
+          .value,
+        '9223372036854775806',
+      );
+      const all = await exportHistory(source, choose([small, max]), dir);
+      await importHistory(dest, all, binding, dir, all.sha256);
+      await importHistory(dest, all, binding, dir, all.sha256);
+      const sql =
+        'SELECT serial::text,amount::text,payload::text,raw_json::text,peers::text FROM certificates ORDER BY serial';
+      assert.deepEqual((await dest.query(sql)).rows, (await source.query(sql)).rows);
+      assert.deepEqual(
+        (await dest.query('SELECT last_value::text,is_called FROM certificates_serial_seq')).rows,
+        [{ last_value: max, is_called: true }],
+      );
+      await assert.rejects(dest.query("SELECT nextval('certificates_serial_seq')"), {
+        code: '2200H',
+      });
+      await dest.query('ALTER SEQUENCE certificates_serial_seq CYCLE');
+      await assert.rejects(
+        importHistory(dest, all, binding, dir, all.sha256),
+        /cycling history sequence/,
+      );
+    } finally {
+      await source?.end();
+      await dest?.end();
+      for (const name of created) await admin.query(`DROP DATABASE ${name}`);
+      await admin.end();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
