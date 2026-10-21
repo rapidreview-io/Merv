@@ -117,9 +117,9 @@ const actors=await state.transaction((tx)=>tx.all("SELECT id,name,role,active FR
 const operator=actors.find((a)=>a.role==='operator'&&a.active);
 if(!operator)throw new Error('the project has no active operator actor');
 const caller={projectId,actorId:operator.id}, existing=actors.find((a)=>a.name===name&&a.role==='reader'&&a.active);
-const issued=existing?await scope.issueActorCredential(caller,{actorId:existing.id,expiresAt:null}):await scope.issueActor(caller,{name,role:'reader',expiresAt:null});
+const issued=existing?await scope.credentials.issueActorCredential(caller,{actorId:existing.id,expiresAt:null}):await scope.credentials.issueActor(caller,{name,role:'reader',expiresAt:null});
 // A lost file is replaced, never left beside a second live token.
-if(existing)for(const c of await scope.actorCredentials(caller,existing.id))if(c.id!==issued.credential.id&&!c.revokedAt)await scope.revokeCredential(caller,c.id);
+if(existing)for(const c of await scope.credentials.actorCredentials(caller,existing.id))if(c.id!==issued.credential.id&&!c.revokedAt)await scope.credentials.revokeCredential(caller,c.id);
 process.stdout.write(JSON.stringify({projectId,actorId:issued.actor.id,credentialId:issued.credential.id,token:issued.token}));
 }finally{await state.close()}'''
 
@@ -1359,6 +1359,7 @@ class Step:
         need(path.is_absolute() and not str(path).startswith('/var/lib/merv-ts'), 'keep the credential outside Main')
         if path.exists() or path.is_symlink():
             cred = credential(path)
+            need(cred['projectId'] == self.plan['canary']['projectId'], 'saved canary belongs to another project')
             whoami(cred)
             return {'existing': True, 'actorId': cred['actorId'], 'credentialId': cred['credentialId']}
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
