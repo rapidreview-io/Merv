@@ -64,7 +64,8 @@ async function confirm(email: string) {
       from: "Merv <support@rapidreview.io>",
       to: [email],
       subject: "You’re on the Merv early access list",
-      text: "Thank you for getting on the early access list for Merv. We’ll reach out as spots open.\n\n— The Merv team, RapidReview",
+      text: "Thank you for signing up for early access to Merv. We will reach out as more spots open.\n\n— rapidreview team\nhttps://rapidreview.io · https://runmerv.com",
+      html: '<p>Thank you for signing up for early access to Merv. We will reach out as more spots open.</p><p>— rapidreview team<br><a href="https://rapidreview.io">rapidreview.io</a> · <a href="https://runmerv.com">runmerv.com</a></p>',
     }),
   });
   if (!res.ok)
