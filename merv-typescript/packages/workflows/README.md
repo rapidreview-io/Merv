@@ -1,5 +1,9 @@
 # Workflows
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 A Cordis service for durable, project-scoped declarative state machines. It depends
 only on `state` and `scope`; it has no artifact, review, or task dependencies.
 
@@ -29,7 +33,7 @@ flowchart LR
   subgraph externalLayer["External"]
     postgres[("PostgreSQL")]
   end
-  workerAgent -- "calls workflow.begin" --> workflows
+  workerAgent -- "calls workflow.begin (worker alias)" --> workflows
   tasks -- "injects; draws dependency-rows, lease-rows" --> workflows
   experiments -- "injects; draws dependency-rows, lease-rows" --> workflows
   reflections -- "injects; draws lease-rows" --> workflows
@@ -51,10 +55,9 @@ flowchart LR
 Programs such as Tasks, Experiments, Reflections and Research register on Workflows and keep their own commands; Sessions leases the work they offer, and agents reach an instance only through the `workflow.*` tools. Every committed move is recorded as `workflow.transition`, which Sandboxes, Code work and Research follow.
 
 Install `workflowsPlugin` after (or before) its providers. Cordis activates it when
-both services are available. Its tool adapter exposes six tools:
-`workflow.status_and_next` (caller-specific gate guidance, or a project overview),
-`workflow.catalog`, `workflow.assignment`, `workflow.process`, `workflow.begin` and
-`workflow.extend_limit`. Programs such as Tasks register their checks and retain their
+both services are available. Its tool adapter exposes `workflow.read` (status,
+catalog, assignment, process) and `workflow.write` (begin, extend_limit). Status
+returns caller-specific gate guidance or a project overview. Programs such as Tasks register their checks and retain their
 own commands. `get` and `list` are in-process methods only; no tool exposes them.
 
 `await register(definition, policy)` registers awaited domain checks, action/tool
@@ -68,7 +71,7 @@ move even with nothing refused, with the sentence asking each, and those only a 
 makes), a decision read by that owner carries `yours`, the rule Needs you draws by: their
 input is wanted, a prerequisite ended without succeeding, or an ask of theirs is held open on a
 step nobody else began. Open work at a used-up limit, or suspended where a rule's tool is
-`workflow.extend_limit` (`extendsAt` in `@merv/workflows/rules`, the one statement of that rule),
+`workflow.write` (`extend_limit`) (`extendsAt` in `@merv/workflows/rules`, the one statement of that rule),
 is a project admin's move, and `yours.limit` says which (`exhausted` or `suspended`). `process` draws one instance's graph with the traversals its
 history records; a version whose program is not loaded is drawn from its pinned graph, with
 no status on any edge. A supplied policy must guard every graph edge.

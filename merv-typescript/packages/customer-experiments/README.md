@@ -1,5 +1,10 @@
 # Customer experiments
 
+The intake conversation uses `intake.read` (request, plan, files, file, file_link,
+compute) and `intake.write` (edit_plan, verify_plan, propose). Inputs use
+`{"action":"x","x":{...}}`; these tools belong to the scoped intake profile,
+not every personal agent. Stored profiles retain their alias bindings.
+
 An opt-in TypeScript mini-product on Merv's existing Pi, Workflows, Sessions, Fleet,
 Code, Artifacts, Sandboxes and Reviews services. Each request creates an isolated internal project.
 The customer and their coding agent receive request capabilities, never a project key.
@@ -157,7 +162,7 @@ are separate: `customer_experiment.get` and `customer_experiment.submit_results`
 the existing artifacts, Code and Reviews tools granted by the workflow. From
 `service_experiment@4` the running worker also posts status-page lines with
 `customer_experiment.progress`; a session calls only what its version's policy grants.
-Merv's own agents (the worker, its reviewer through `review.submit`, the interviewer and
+Merv's own agents (the worker, its reviewer through `review.write` (`submit`), the interviewer and
 the healer) read the request without the buyer's email and payment id; the customer page,
 the owner and the platform administrator keep them.
 

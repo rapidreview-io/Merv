@@ -1,65 +1,94 @@
 # Connecting after the TypeScript cutover
 
-Use the same Supabase account at https://experiments.rapidreview.io/ui/. Project memberships are preserved. Old research is in **Research → Research history**; unfinished work was excluded at the user's request. Create new work through the current tools.
+Your Merv account and project memberships are preserved. Old research is in
+**Research → Research history**; unfinished legacy work was not migrated. Create
+new work through the current tools.
 
-## Connecting an agent by email code
+## Connect a personal agent
 
-Where agent sign-in is on (`MERV_AGENT_LOGIN=true`, see [PROJECT_INVITATIONS.md](../docs/PROJECT_INVITATIONS.md#agent-sign-in)), tell Claude Code, Codex or Cursor: _Connect to Merv using https://experiments.rapidreview.io/connect_. The agent installs Merv's connector, the person gives it the email they use for Merv and then the 8-digit code Merv emails (only to an account in a project), and the client restarts once. The key never appears in tool results, transcripts or the connector's output. It is stored in `~/.merv/connect` on that machine, though, and the agent's own shell can read that directory: anything that runs commands as that person can use the key. So it expires after a fixed 90 days with no renewal, every new agent key sends a sign-in notice email linking the Keys page, and every agent key is labelled with its client and host and can be revoked there. The 0.4.0 client plugins carry skills only; the connector is the one Merv server. The key-based connection below stays for machines, CI and VMs, and wherever agent sign-in is off.
+1. Disable the old Python-backend Merv plugin and its skills (legacy bundle 0.1.5)
+   and any duplicate Merv MCP connection. Other plugins can stay enabled.
+2. Tell Claude Code, Codex or Cursor: _Connect to Merv using
+   https://experiments.rapidreview.io/connect_. The agent follows that page's installer,
+   which registers the local connector as `merv`. Restart the client when asked.
+3. Give the agent the email you use for Merv. It calls `connector.login` to start
+   sign-in. Check that the request words match the email, then read the emailed
+   **8-digit code** to the agent so it can finish. No browser sign-in or pasted key
+   is needed. Email codes are sent only to accounts belonging to a project.
+4. The agent calls `project.read` with `{"action":"list","list":{}}`, selects a
+   returned project, then passes its `projectId` on subsequent calls. Start with
+   `project.read` (`brief`) and `workflow.read` (`status`):
 
-## Existing Codex / Claude Code users
+   ```json
+   { "projectId": "<project id>", "action": "brief", "brief": {} }
+   ```
 
-Disable the old Merv plugin (the legacy bundle is version 0.1.5), including its skills. Its OAuth setup and tool instructions target the Python backend. Uninstall it only if the client cannot disable it. Do not keep both old and new Merv connections enabled. Other plugins, including Nisa, do not need to be removed.
+   ```json
+   { "projectId": "<project id>", "action": "status", "status": {} }
+   ```
 
-There is not yet a replacement published Merv plugin bundle. Use the direct HTTP MCP connection below. Merely reinstalling the old bundle will not update its contract. Existing runner installers and skill-download URLs are retained for rollback; that does not make them compatible with the new backend.
+The connector keeps one account key per machine and Merv server, shared by the
+clients and projects there. It never prints the key. The private store is
+`~/.merv/connect`; agents should not read it. Keys expire after at most 90 days
+without renewal, are labelled with client and host, send a sign-in notice, and
+can be revoked from Settings → Keys. An expired or revoked key needs a new email
+sign-in. See [agent sign-in configuration](../docs/PROJECT_INVITATIONS.md#agent-sign-in).
 
-1. Sign into the production UI and open the account menu → **Manage machine keys**.
-2. Create a **project-scoped** key for the project the agent will use. Give it a recognizable label. This avoids requiring project-selection headers. Account-scoped keys are available but require explicit project selection.
-3. Store the key privately as `MERV_TOKEN` in the environment of the process launching your client. Restart the client so it receives the variable. Do not put the literal key in source control, a chat, or a command saved to shell history. Keys created in the staging rehearsal are not production keys.
-4. Configure the new connection, then verify that `actor.whoami` reports the expected project and that `workflow.status_and_next` responds.
+## Tool approval and optional skills
 
-Your Supabase password/account does not change. Old OAuth sessions, agent sessions and bearer credentials are not migrated. Reconnection creates new native sessions when requested; it does not resume discarded work.
+The installer sets `default_tools_approval_mode = "approve"` on Codex's Merv MCP
+server entry and adds `mcp__merv` to Claude Code's `permissions.allow`. Merv tools
+then run without individual client approval prompts; server permissions still
+apply on every action. Staging uses `merv-staging` and `mcp__merv-staging`.
+`merv-connect uninstall` removes the connector's server registrations and the
+approval entries it added, preserving unrelated configuration and permissions.
 
-## Codex
+The [0.4.0 client bundles](../../clients/README.md) add skills only. They do not
+create another server connection. Personal agents use the noun tools and nested
+action inputs described in the [tool overview](../README.md#agent-tools), such as
+`{"action":"get","get":{"taskId":"<task id>"}}` for `task.read`.
+Retired names run as aliases for one release. Leased workers retain the aliases
+and inputs in their pinned workflows; those workflows are unchanged.
 
-With `MERV_TOKEN` available to the client process:
+## Machines, CI and servers without agent sign-in
+
+Use a key from Settings → Keys. A project key fixes the project; an account key
+can list projects with `project.read` (`list`) and requires a selected `projectId`
+on project calls. Store the key privately in the environment of the client
+process, for example as `MERV_TOKEN`, and restart that process. Never paste it in
+chat, source control or shell history.
+
+Codex can register a direct HTTP connection:
 
 ```sh
-codex mcp add merv-typescript --url https://experiments.rapidreview.io/mcp --bearer-token-env-var MERV_TOKEN
+codex mcp add merv --url https://experiments.rapidreview.io/mcp --bearer-token-env-var MERV_TOKEN
 ```
 
-Equivalent user configuration in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.merv-typescript]
-url = "https://experiments.rapidreview.io/mcp"
-bearer_token_env_var = "MERV_TOKEN"
-```
-
-This config refers to the environment variable; it does not contain the secret. A desktop app must also inherit that variable through its launch environment. See the official [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
-
-## Claude Code
-
-Merge this entry into the appropriate `.mcp.json`; preserve unrelated servers:
+For Claude Code, merge this into the appropriate `.mcp.json`, preserving other servers:
 
 ```json
 {
   "mcpServers": {
-    "merv-typescript": {
+    "merv": {
       "type": "http",
       "url": "https://experiments.rapidreview.io/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MERV_TOKEN}"
-      }
+      "headers": { "Authorization": "Bearer ${MERV_TOKEN}" }
     }
   }
 }
 ```
 
-Keep `${MERV_TOKEN}` literal in the file. Claude Code expands it from its environment. Restart the client, use `/mcp` to check the connection, and run the two read-only checks above. See [Claude Code's documented environment expansion](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson).
+Keep `${MERV_TOKEN}` literal. Use this direct connection only when the connector
+is not registered under that name. Manual setup does not run the installer's
+approval configuration. Verify with the same project reads above.
 
 ## If it fails
 
-- **401:** check that the process received the production key, with no surrounding whitespace, and that it has not expired or been revoked.
-- **Project selection required:** use a project-scoped key, or configure `X-Merv-Project-Id` for an account-scoped key.
-- **Old tool names / old login flow:** disable the legacy plugin and stale duplicate MCP connection, then restart the client.
-- **Project missing:** verify that the browser and key belong to the same Supabase account and that its project membership is active.
+- **Not signed in:** use `connector.login` with your email and the new emailed code.
+- **401 on a direct connection:** check that the client inherited the production
+  key and that it has not expired or been revoked.
+- **Project selection required:** list projects, then pass `projectId` on the call.
+- **Old tool list or login flow:** disable the legacy plugin and duplicate MCP
+  connections, then restart the client.
+- **Project missing:** check that the sign-in email belongs to the intended Merv
+  account and that its project membership is active.

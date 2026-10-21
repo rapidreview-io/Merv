@@ -1,5 +1,13 @@
 # @merv/api
 
+Tools use [noun action envelopes](../../README.md#agent-tools):
+`{"action":"x","x":{...}}`. `core` tools load up front; `deferred` tools are
+available through discovery; `worker` tools serve leased sessions or scoped
+profiles; `ui` tools serve pages. Discovery never replaces authorization.
+Retired names execute as one-release aliases and are hidden from personal-agent
+lists. Leased workers retain their pinned names and inputs; no published workflow,
+policy or recipe changes in this cutover.
+
 Merv's front door. The package holds two plugins: `@merv/api/tools-plugin` (config row `tools`) injects `scope` and provides `tools`, the registry every plugin registers its tools in; `@merv/api` (config row `api`) injects `scope`, `tools` and `identity` and provides `api`, the HTTP server. The server answers `/health`, `/auth/config`, `/tools` and `/mcp` itself, and other plugins mount their own routes on it. Read-only tools run in a State snapshot when State is loaded. Each tool call takes one Scope decision, right before its handler: a read's inside its snapshot, a mounted tool's as its grant check, a worker session's as its admission. An open-world read is also decided after its handler, so a revocation while it waited withholds its result. A listing (`GET /tools`, MCP `tools/list`) likewise takes its caller's one decision in the registry.
 
 ## Where it sits

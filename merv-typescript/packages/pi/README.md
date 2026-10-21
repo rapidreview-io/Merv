@@ -46,7 +46,7 @@ Pi sits between the person and a machine it rents from Fleet. A sent message bec
 ## Surface
 
 - `@merv/pi`: provides `pi`; injects `state`, `scope`, `fleet`, `tools` and `blobs`, and registers as Fleet's `pi-host` owner. When `sessions` is present, an optional injection registers Pi as its question responder.
-- `@merv/pi/tools`: `pi.create`, `pi.list`, `pi.snapshot`, `pi.prompt`, `pi.send`, `pi.voice`, `pi.screen`, `pi.warm`, `pi.stop`, `pi.model.set`, `pi.machine.set` and `pi.machine.stop`; and `screen.look` and `screen.show`, which only the agent calls: to see the person's screen (or, with `at`, a record or page they are not on, which their page draws out of sight in a hidden frame of the app), and to put a record or a page on it (their page navigates as a link would, and its back returns them).
+- `@merv/pi/tools`: `pi.create`, `pi.list`, `pi.snapshot`, `pi.prompt`, `pi.send`, `pi.voice`, `pi.screen`, `pi.warm`, `pi.stop`, `pi.model.set`, `pi.machine.set` and `pi.machine.stop`; and `screen.read` (`look`) and `screen.read` (`show`), which only the agent calls: to see the person's screen (or, with `at`, a record or page they are not on, which their page draws out of sight in a hidden frame of the app), and to put a record or a page on it (their page navigates as a link would, and its back returns them).
 - `@merv/pi/api`: `/pi`, the conversation event stream; `/pi-worker`, the worker's routes, which only its registered `piw_` credential reaches; and `/pi-model`, a public mount whose relay authenticates its `pir_` bearer itself.
 - `@merv/pi/ui`: the rail's Pi row at `/agent`, present wherever Pi is loaded.
 

@@ -8,6 +8,9 @@ description: Operate a Merv project. Read what is running and what stopped movin
 Merv dispatches ready work to agent sessions on machines. This skill is how to see that
 machinery and steer it. Read first; every control below changes what runs.
 
+Noun tools take `{"action":"x","x":{...}}`, with the selected `projectId` at the
+top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
+
 ## Read before acting
 
 - `project.read` (status): the first read for any operational question. Dispatch, Fleet allocations,
@@ -52,7 +55,10 @@ replacement work that refers to the earlier evidence.
 
 ## Machines
 
-On a Merv server that runs Fleet and Sandboxes:
+On a Merv server that runs Fleet and Sandboxes, the seven tools are
+`sandboxes.sandbox`, `sandboxes.job`, `sandboxes.snapshot`, `sandboxes.storage`,
+`sandboxes.workflow`, `sandboxes.access` and `sandboxes.spend`. Read their schemas
+for action inputs; these mixed read/write tools keep their own input shapes.
 
 - `fleet` with action `list` or `get` reads the Fleet allocations the project's workers run on.
   Action `drain` stops admission, keeps the current assignment's results, then releases the

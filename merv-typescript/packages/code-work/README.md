@@ -1,5 +1,11 @@
 # Code work integration
 
+Personal agents use `code.read` (files, log, status, unit, operation) and `code.write`
+(base controls, repository preparation/configuration/import, unit fencing, mirror
+retry and publication controls), with the [noun action envelope](../../README.md#agent-tools).
+`code.commit` and `code.merge` remain worker-only. Local bind and repository rebind
+were removed; `repository_prepare` reconciles a linked GitHub repository.
+
 This adapter connects research decisions to the [Code utility](../code/README.md).
 Research owners decide dependencies, accepted outcomes, review requirements and publication
 obligations. The adapter translates those decisions into exact code pins, retained evidence,
@@ -12,7 +18,7 @@ missing plugin never grants acceptance or erases an existing Git obligation.
 
 | Module                  | Dependencies    | Interface                                                                      |
 | ----------------------- | --------------- | ------------------------------------------------------------------------------ |
-| `@merv/code-work/tools` | CodeWork, Tools | `code.*` tools                                                                 |
+| `@merv/code-work/tools` | CodeWork, Tools | `code.read`, `code.write` and worker tools                                     |
 | `@merv/code-work/ui`    | CodeWork, UI    | Repository connection, selected base, retained operations, Home's person moves |
 | `@merv/code-work/api`   | CodeWork, API   | The `/code/*` machine and GitHub routes                                        |
 

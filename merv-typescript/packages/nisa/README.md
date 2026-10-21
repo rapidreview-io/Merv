@@ -1,5 +1,9 @@
 # Nisa
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Nisa gives every agent RapidReview's literature search: keyword and semantic
 search over Nisa's arXiv index, one paper's record, the passages inside its
 full text, and similar papers. It calls Nisa's public `/api/sdk` routes, the
@@ -8,10 +12,10 @@ research tool also calls the deployed `/api/research` service. It is optional an
 composes it only where the key is configured (see
 [Turning it on](#turning-it-on)).
 
-| Entrypoint         | Requires    | Provides                                 |
-| ------------------ | ----------- | ---------------------------------------- |
-| `@merv/nisa`       | Scope       | `nisa` service                           |
-| `@merv/nisa/tools` | Nisa, Tools | five retrieval reads and `nisa.research` |
+| Entrypoint         | Requires    | Provides                                                |
+| ------------------ | ----------- | ------------------------------------------------------- |
+| `@merv/nisa`       | Scope       | `nisa` service                                          |
+| `@merv/nisa/tools` | Nisa, Tools | `nisa.read`, `nisa.write`; worker alias `nisa.research` |
 
 ## Where it sits
 
@@ -50,26 +54,26 @@ the registry runs it without holding a PostgreSQL snapshot while Nisa answers,
 and checks the caller again before handing back the result. None names a
 `conversation` use, so:
 
-- **Pi** offers them to every turn, a reader's too, as `nisa_search`,
-  `nisa_semantic_search`, `nisa_paper`, `nisa_excerpts` and `nisa_related`, and
-  runs them as the person;
-- **leased workers** may call them as open reads their policy never names:
+- **Pi** offers the retrieval actions of `nisa.read` to every turn, a reader's too,
+  and runs them as the person;
+- **leased workers** keep the `nisa.search`, `nisa.semantic_search`, `nisa.paper`,
+  `nisa.excerpts` and `nisa.related` aliases as open reads:
   both harnesses see every read Main lists to their session (Claude through
   `mcp__merv`, Codex with no allowlist of its own), so every worker has them,
   sealed reviews included: a call reaches Nisa alone, never an address the worker chooses,
   though its query leaves Merv (see [Privacy](#privacy)). Every Codex and
   Claude launch's text sends the worker to its tools for outside sources rather
-  than its memory, and names `web.search` where that launch is given it; these
+  than its memory, and names the `web.search` alias where that launch is given it; these
   tools' own descriptions say they are for literature and what a paper carries;
 - **MCP clients** list them with `readOnlyHint` and `openWorldHint` set.
 
-| Tool                   | Nisa route                                 | Input                                                                                           |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `nisa.search`          | `POST /api/sdk/search`                     | `query` (1-8 phrasings), `max_results` 1-20, `offset` 0-500, `author`, `date_from`, `date_to`   |
-| `nisa.semantic_search` | `POST /api/sdk/semantic_search`            | `query` (1-4 paraphrases), `max_results` 1-20, `offset` 0-200, `author`, `year_min`, `year_max` |
-| `nisa.paper`           | `GET /api/sdk/paper/{id}`                  | `arxiv_id`                                                                                      |
-| `nisa.excerpts`        | `GET /api/sdk/paper/{id}/excerpts?q=&max=` | `arxiv_id`, `query`, `max_excerpts` 1-20                                                        |
-| `nisa.related`         | `GET /api/sdk/paper/{id}/related?n=`       | `arxiv_id`, `max_results` 1-20                                                                  |
+| Tool                            | Nisa route                                 | Input                                                                                           |
+| ------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `nisa.read` (`search`)          | `POST /api/sdk/search`                     | `query` (1-8 phrasings), `max_results` 1-20, `offset` 0-500, `author`, `date_from`, `date_to`   |
+| `nisa.read` (`semantic_search`) | `POST /api/sdk/semantic_search`            | `query` (1-4 paraphrases), `max_results` 1-20, `offset` 0-200, `author`, `year_min`, `year_max` |
+| `nisa.read` (`paper`)           | `GET /api/sdk/paper/{id}`                  | `arxiv_id`                                                                                      |
+| `nisa.read` (`excerpts`)        | `GET /api/sdk/paper/{id}/excerpts?q=&max=` | `arxiv_id`, `query`, `max_excerpts` 1-20                                                        |
+| `nisa.read` (`related`)         | `GET /api/sdk/paper/{id}/related?n=`       | `arxiv_id`, `max_results` 1-20                                                                  |
 
 Input is checked here, more strictly than Nisa checks it, since Nisa silently
 resets a bad `max_results` or `offset`: each phrasing is 1-1,000 characters,
@@ -104,14 +108,14 @@ Every paper, from any tool, has only these fields, whatever Nisa sent:
 
 Every paper carries `identifier`, `title`, `authors`, `year` and `url`. A list
 names at most 12 authors a paper, with `more_authors` saying how many are left
-out, and cuts a title at 300 characters; `nisa.paper` names up to 100, and the
+out, and cuts a title at 300 characters; `nisa.read` (`paper`) names up to 100, and the
 descriptions say to read the whole record there when a list entry is cut. A generational suffix Nisa writes after a comma
 (`Henry E. Kyburg, Jr.`) stays with its author. A year Nisa leaves out is read
 from the arXiv ID, as Nisa's own data loader reads it: its paper route gives
 none for an old-style ID. `score`
 is BM25 for keyword search, similarity for semantic and related search, and
 null for a record. Keyword results carry up to three snippets; semantic and
-related results carry the start of the abstract instead; `nisa.paper` adds the
+related results carry the start of the abstract instead; `nisa.read` (`paper`) adds the
 whole abstract (to 10,000 characters) and `categories`. A list answer adds
 `count`, `offset`, `truncated` and `next_offset` (where the next page starts),
 and `index_latest_pub_month` when Nisa reports how recent its keyword index is.
@@ -134,18 +138,18 @@ over headers and body (40 s for a search, 15 s otherwise), follows no redirect,
 reads at most 2 MiB of JSON, and refuses a success that carries an `error`.
 Errors say at most an HTTP status, never what Nisa wrote:
 
-| Code                                                                      | Status | Meaning                                                  |
-| ------------------------------------------------------------------------- | ------ | -------------------------------------------------------- |
-| `invalid_input`                                                           | 400    | Refused here, before any request                         |
-| `nisa_request_refused`                                                    | 422    | Nisa refused the request (HTTP 400)                      |
-| `nisa_not_found`                                                          | 404    | `nisa.paper`: no such paper; `nisa.excerpts`: no text    |
-| `nisa_no_related`                                                         | 404    | `nisa.related`: no similar-paper data for this paper     |
-| `nisa_key_refused`                                                        | 503    | Nisa refused the deployment's key (HTTP 401 or 403)      |
-| `nisa_rate_limited`, `nisa_busy`                                          | 429    | Nisa is limiting requests, or Merv's calls are all taken |
-| `nisa_index_unavailable`                                                  | 503    | `nisa.excerpts`: Nisa's passage index is down (503, 504) |
-| `nisa_timeout`                                                            | 504    | The deadline passed                                      |
-| `nisa_upstream_error`, `nisa_invalid_response`, `nisa_response_too_large` | 502    | Anything else Nisa did                                   |
-| `nisa_unavailable`, `nisa_stopped`                                        | 503    | No key, or the plugin is unloading                       |
+| Code                                                                      | Status | Meaning                                                                 |
+| ------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `invalid_input`                                                           | 400    | Refused here, before any request                                        |
+| `nisa_request_refused`                                                    | 422    | Nisa refused the request (HTTP 400)                                     |
+| `nisa_not_found`                                                          | 404    | `nisa.read` (`paper`): no such paper; `nisa.read` (`excerpts`): no text |
+| `nisa_no_related`                                                         | 404    | `nisa.read` (`related`): no similar-paper data for this paper           |
+| `nisa_key_refused`                                                        | 503    | Nisa refused the deployment's key (HTTP 401 or 403)                     |
+| `nisa_rate_limited`, `nisa_busy`                                          | 429    | Nisa is limiting requests, or Merv's calls are all taken                |
+| `nisa_index_unavailable`                                                  | 503    | `nisa.read` (`excerpts`): Nisa's passage index is down (503, 504)       |
+| `nisa_timeout`                                                            | 504    | The deadline passed                                                     |
+| `nisa_upstream_error`, `nisa_invalid_response`, `nisa_response_too_large` | 502    | Anything else Nisa did                                                  |
+| `nisa_unavailable`, `nisa_stopped`                                        | 503    | No key, or the plugin is unloading                                      |
 
 A refused key is never 401 or 403, which a transport would take for the
 caller's own. Only Nisa's passage route answers 503 or 504: when its keyword
@@ -189,11 +193,11 @@ is unset.
 ## Privacy
 
 Every call sends its input to Nisa, `https://api.rapidreview.io` by default:
-a search's query in the request body, and `nisa.excerpts`' terms in the URL,
+a search's query in the request body, and `nisa.read` (`excerpts`)' terms in the URL,
 so they land in Nisa's web server and search-service access logs as well.
 Nisa embeds a semantic search's query through DeepInfra's embeddings API, so
-that text also reaches DeepInfra. The descriptions of `nisa.search`,
-`nisa.semantic_search` and `nisa.excerpts` tell a model never to put
+that text also reaches DeepInfra. The descriptions of `nisa.read` (`search`),
+`nisa.read` (`semantic_search`) and `nisa.read` (`excerpts`) tell a model never to put
 unpublished project text, credentials or signed links in a query. Unlike
 `web.*`, the tools reach every worker, sealed reviews and workers whose shell
 has no network included: each call goes only to the configured Nisa origin,
@@ -260,7 +264,7 @@ staging first:
 
 4. Check that the ready line lists the plugins, and that the tools answer:
    `sudo docker logs merv-typescript-control-1 2>&1 | grep '"status":"ready"' | tail -n1`
-   should name `nisa` and `nisa-tools` as active; `nisa.search` should then
+   should name `nisa` and `nisa-tools` as active; `nisa.read` (`search`) should then
    appear in a project's MCP tool list and in a new Pi turn.
 
 To turn it off, remove the variable and recreate Main the same way. Codex
@@ -269,8 +273,10 @@ names them (hosted: `deploy/hosted-release.mjs`, run by `release.mjs`).
 
 ## Direct research
 
-`nisa.research` is one stateful, open-world tool with `start`, `follow_up`, `status`
-and `cancel` actions. It calls Nisa's `/api/research` endpoint, which runs research
+`nisa.write` has `start`, `follow_up` and `cancel` actions; `nisa.read` (`status`)
+reads their progress and reports. Use the matching nested argument object, for
+example `{"action":"status","status":{"operation_id":"<operation id>"}}`.
+Leased workers keep the flat `nisa.research` tool granted by their pinned contracts. It calls Nisa's `/api/research` endpoint, which runs research
 mode, its investigators and the reporter directly, without a general-chat turn.
 Use a full brief and stable request ID for starts and follow-ups. Retain the returned
 conversation and operation IDs. Status pages long reports in 12,000-character
@@ -296,4 +302,4 @@ The original retrieval release was tested against a loopback fake built from
 Nisa main 3489d7d (`project/backend/sdk_routes.py` and the tools it wraps).
 Whether production runs that code, and enforces its keys
 (`AUTH_REQUIRED=true`), is unverified. Before relying on it, run from Main one
-`nisa.search` and one `nisa.paper` (for example `2303.08774`) with the real key.
+`nisa.read` (`search`) and one `nisa.read` (`paper`) (for example `2303.08774`) with the real key.

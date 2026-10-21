@@ -2,8 +2,8 @@
 
 An agent connected from outside Merv (Claude Code, Codex, Cursor over MCP) writes one short
 JavaScript program that makes many reads, in parallel, and gets back only what the program
-returns. Reads only for now: the program can call no tool that writes, leaves Merv or shows a
-secret.
+returns. It can call permitted reads, including open-world reads such as web and Nisa,
+but cannot call writes or credential-returning tools.
 
 | Entrypoint            | Requires       | Provides                     |
 | --------------------- | -------------- | ---------------------------- |
@@ -13,7 +13,7 @@ secret.
 ## Tools
 
 `script.tools { query?, names?, limit? }` lists what this caller may use (as `tools/list` offers
-it), each with `scriptable` and a TypeScript `declaration` of its input. With `query`, a ranking
+it), each with `scriptable` and a TypeScript `declaration` with per-action input and output overloads. With `query`, a ranking
 over names and descriptions; with `names`, exactly those; with neither, each namespace with its
 count and scriptable tools.
 
@@ -24,15 +24,23 @@ and `console.log`. A refused or failed call rejects with an Error whose message 
 script's `error.code` is `script_syntax`, `script_error`, `script_timeout`, `script_memory` or
 `script_call_limit`. `script_busy` (429) and `script_unavailable` (503) refuse the call itself.
 
-A tool is scriptable when it is listed to this caller, registered `readOnly` (open-world reads
-included: they keep their own budgets) or with `reads` (then only a call whose input it says
-reads, such as `sandboxes.sandbox` or `fleet` with action=list), not kept from conversations (`never`), and not
-`script.*`; a mounted tool needs
-`readOnlyHint` and no destructive hint. Discovery only shapes `tools`: each call is
-`invoke(name, caller, input, true, admit)` with the script's own caller, and the registry runs
-`admit` on the registration that will run it, where caller rules admit it, so a tool re-registered since is judged as it is now. Every rule one call from this agent
-meets (role, Access grants, Scope) applies to each. A native tool's project is the script's: a
-`projectId` naming another is refused. A leased worker gets neither tool (`session_forbidden`).
+A tool is scriptable only in tier `core` or `deferred` and when registered as
+`readOnly` or when its `reads` predicate admits that action. Thus a script may use
+`sandboxes.sandbox` or `fleet` reads but cannot delete or halt through them.
+Open-world reads retain their own budgets. Discovery does not grant authority:
+every call is checked as the script's caller against the current registration.
+A native tool's project is the script's; another `projectId` is refused. Leased
+workers receive neither script tool (`session_forbidden`).
+
+For example, send this function body as `script.run`'s `code` after selecting a project:
+
+```js
+const [tasks, experiments] = await Promise.all([
+  tools.task.read({ action: 'list', list: {} }),
+  tools.experiment.read({ action: 'list', list: {} }),
+]);
+return { tasks, experiments };
+```
 
 ## The sandbox
 

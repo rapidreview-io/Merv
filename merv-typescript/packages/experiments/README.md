@@ -1,5 +1,9 @@
 # Experiments
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Experiments owns research questions, attempts, evidence selections and the two
 independent review gates. It registers three current contracts, `experiment@42` for new experiments (it adds `nisa.research`) and `experiment@41` and `@40` for those pinned to them, on which Sessions attaches Sandboxes compute. Each grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
@@ -53,15 +57,14 @@ Other stored versions remain read-only history. Their attempts, submissions, evi
 | Entrypoint                | Requires                                                                       | Provides                                                        |
 | ------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Paper, Code Work | `experiments` service and owned workflow/context/review routing |
-| `@merv/experiments/tools` | Experiments, Tools                                                             | Six experiment tools                                            |
+| `@merv/experiments/tools` | Experiments, Tools                                                             | `experiment.read`, `experiment.write`                           |
 | `@merv/experiments/ui`    | Experiments, UI                                                                | Experiment inventory and detail page                            |
 
-The tools are `experiment.create`, `experiment.list`, `experiment.get_state`,
-`experiment.attach`, `experiment.transition` and `experiment.exhibit`.
+The tools are `experiment.read` (list, get, exhibit) and `experiment.write` (create, attach, transition).
 Current gates and next actions come from
-`workflow.status_and_next`; assigned context comes from `workflow.assignment`.
-Independent reviewers claim and submit through the existing `review.start` and
-`review.submit` tools.
+`workflow.read` (`status`); assigned context comes from `workflow.read` (`assignment`).
+Independent reviewers claim and submit through the existing `review.write` (`start`) and
+`review.write` (`submit`) tools.
 
 Experiments owns no compute. It records `computeEpoch` (`attempt:state`) in the workflow data,
 and Sessions issues Sandboxes connections for eligible leased assignments. Compute profiles remain Merv policy:

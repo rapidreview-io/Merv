@@ -1,5 +1,9 @@
 # Feed
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 An independent Cordis service for immutable project messages and durable activity. `feedPlugin` requires only `state`, `scope`, and `artifacts`, and provides `feed`. It has no workflow, task, or review integration.
 
 ## Where it sits
@@ -22,7 +26,7 @@ flowchart LR
     postgres[PostgreSQL]
   end
   person -- "opens Feed page" --> ui
-  worker -- "calls feed.post" --> api
+  worker -- "calls feed.post (worker alias)" --> api
   feed -- "registers feed.* tools" --> api
   feed -- "registers Feed row" --> ui
   feed -- "injects" --> artifacts
@@ -43,6 +47,6 @@ Operators, producers, and reviewers can post. Readers can inspect posts and acti
 
 `list` returns posts in ascending sequence order, with an exclusive `after` cursor and a default page size of 50 (maximum 100). `activity` exposes project-scoped durable events using their separate event ID cursor. Actor and membership administration events (`actor.*`, `membership.*`) are visible only to project operators, matching the actor-directory access boundary, and other readers see who acted in an event's source but not the credential they held. For other actors, activity skips complete pages containing only hidden administration events so pagination can still reach subsequent visible events.
 
-The optional `feedToolsPlugin` contributes `feed.post`, `feed.get`, `feed.list`, and `feed.activity`. Unloading the service removes its runtime consumers and tools; stored posts and artifact content remain for a later reinstall.
+The optional `feedToolsPlugin` contributes `feed.read` (list, get, activity) and `feed.write` (post). Unloading the service removes its runtime consumers and tools; stored posts and artifact content remain for a later reinstall.
 
 Public interfaces and the Cordis `Context.feed` declaration are owned by `@merv/feed/types`. Consumers import this entry with `import type`; the core reexports the same public types for convenience. The shared contracts package has no dependency back to Feed.

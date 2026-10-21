@@ -1,5 +1,64 @@
 # Merv TypeScript
 
+## Connect an agent
+
+Tell Claude Code, Codex or Cursor: _Connect to Merv using
+https://experiments.rapidreview.io/connect_. The agent follows the installer, asks for
+your Merv email, and signs in with the 8-digit code you read back from the email.
+No browser login or pasted API key is needed. One account key on that machine serves
+your projects; `project.read` with `{"action":"list","list":{}}` lists them.
+Choose a project, then pass its `projectId` on subsequent calls.
+See [connection and approval settings](deploy/CLIENT_CUTOVER.md) and
+[optional client skills](../clients/README.md).
+
+## Agent tools
+
+Noun tools take `{"action":"x","x":{...}}`: only the selected action's argument
+object. For example, call `workflow.read` with
+`{"projectId":"<project id>","action":"status","status":{}}` for the work overview.
+The outer `projectId` selects the project; an inner `action`, where a schema has one,
+is part of that operation (for example, `status.action` preflights a workflow move).
+
+| Area        | Read tool and actions                                                                | Write tool and actions                                                                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code        | `code.read`: files, log, status, unit, operation                                     | `code.write`: base_retry, base_suspend, base_resume, base_cancel, base_quarantine, base_release, base_repair, unit_fence, mirror_retry, repository_import, repository_configure, repository_prepare, publication_sync, publication_merge, publication_control |
+| Experiments | `experiment.read`: list, get, exhibit                                                | `experiment.write`: create, attach, transition                                                                                                                                                                                                                |
+| Tasks       | `task.read`: list, get                                                               | `task.write`: create, mark_failed                                                                                                                                                                                                                             |
+| Reviews     | `review.read`: list, get                                                             | `review.write`: start, submit, release                                                                                                                                                                                                                        |
+| Research    | `research.read`: list, get, lineage                                                  | `research.write`: create, replan, advance, end                                                                                                                                                                                                                |
+| Reflections | `reflection.read`: list, get, lens                                                   | `reflection.write`: create, end                                                                                                                                                                                                                               |
+| Reports     | `report.read`: check, review_visual                                                  | Worker-only report editing tools, including `report.write` (flat input)                                                                                                                                                                                       |
+| Sessions    | `session.read`: find, threads, messages, calls, stuck                                | `session.write`: message, ask, dispatch, halt, release_hold, budget                                                                                                                                                                                           |
+| Workflows   | `workflow.read`: status, assignment, process, catalog                                | `workflow.write`: begin, extend_limit                                                                                                                                                                                                                         |
+| Projects    | `project.read`: list, brief, get, whoami, actors, status, usage, records, references | No project write tool                                                                                                                                                                                                                                         |
+| Paper       | `paper.read`: get, document, outline, history, section                               | `paper.write`: patch, cite                                                                                                                                                                                                                                    |
+| Artifacts   | `artifact.read`: list, get, content, download, storage                               | `artifact.write`: create, upload_begin, upload_resume, upload_complete                                                                                                                                                                                        |
+| Feed        | `feed.read`: list, get, activity                                                     | `feed.write`: post                                                                                                                                                                                                                                            |
+| Boards      | `board.read`: list, get, look                                                        | `board.write`: draw                                                                                                                                                                                                                                           |
+| Screen      | `screen.read`: look, show                                                            | Navigation is a read action                                                                                                                                                                                                                                   |
+| Web         | `web.read`: search, extract (when configured)                                        | No write tool                                                                                                                                                                                                                                                 |
+| Nisa        | `nisa.read`: search, semantic_search, paper, excerpts, related, status               | `nisa.write`: start, follow_up, cancel                                                                                                                                                                                                                        |
+| Intake      | `intake.read`: request, plan, files, file, file_link, compute                        | `intake.write`: edit_plan, verify_plan, propose (intake conversations only)                                                                                                                                                                                   |
+
+Tools have four tiers: `core` loads up front, `deferred` is discoverable as needed,
+`worker` is for leased workers or scoped profiles, and `ui` is for Merv's pages.
+Listing is not authorization: each action still checks the caller and project.
+Retired names execute as aliases for one release but are hidden from personal-agent
+lists. Leased workers keep the names and flat inputs granted by their pinned
+workflows; published definitions, policies and recipes are unchanged. Local bind
+and repository rebind were removed; prepare a linked repository with `code.write`
+(`repository_prepare`).
+
+`script.tools` discovers tools and per-action TypeScript declarations; `script.run`
+combines permitted reads and returns only the program's result. It cannot write.
+See [Scripts](packages/scripts/README.md).
+
+Compute uses seven action tools: `sandboxes.sandbox`, `sandboxes.job`,
+`sandboxes.snapshot`, `sandboxes.storage`, `sandboxes.workflow`, `sandboxes.access`
+and `sandboxes.spend`. Their schemas define their own action inputs. `fleet` manages
+worker allocations (list, get, drain, halt and workflow retry controls).
+See [Sandboxes](packages/sandboxes/README.md) and [Fleet](packages/fleet/README.md).
+
 A small, durable Merv built from real [Cordis](https://github.com/cordiverse/cordis) plugins. Create a task, pin its brief, submit immutable evidence, and have a different actor review the submission. Verdicts and task transitions commit together; work survives a server restart.
 
 Every new task and experiment uses managed Git, even without GitHub. Projects
@@ -25,7 +84,7 @@ retain their fixed project. See [configuration, request rules and local ownershi
 repair](docs/SHARED_IDENTITY.md). [User-owned machine keys](docs/USER_KEYS.md)
 support fixed project or explicit account grants, current membership roles,
 rotation and recursive revocation. Owners manage them through the UI and account
-HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce workflow tool policies and worker ownership. The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) adds automatic assignment, project pause/halt and a Sessions page; the optional [machine Runner](docs/MACHINE_RUNNER.md) executes scratch and Git assignments through scoped native agents. [Git workspaces](docs/WORKSPACES.md) preserve captured commits across handoffs and controller restarts. The independent [Code service](docs/CODE_OPERATIONS.md) queues `code.commit` requests from live workers and retains the Runner's immutable commit receipts; `code.operation` reads their progress. Its service API also seals immutable proposal artifacts inside an admitting domain command's transaction; this adds no agent tool or standalone workflow.
+HTTP routes. [Assignment-scoped sessions](docs/SESSION_LEASES.md) now enforce workflow tool policies and worker ownership. The [runner control plane](docs/RUNNER_CONTROL_PLANE.md) adds automatic assignment, project pause/halt and a Sessions page; the optional [machine Runner](docs/MACHINE_RUNNER.md) executes scratch and Git assignments through scoped native agents. [Git workspaces](docs/WORKSPACES.md) preserve captured commits across handoffs and controller restarts. The independent [Code service](docs/CODE_OPERATIONS.md) queues `code.commit` requests from live workers and retains the Runner's immutable commit receipts; `code.read` (`operation`) reads their progress. Its service API also seals immutable proposal artifacts inside an admitting domain command's transaction; this adds no agent tool or standalone workflow.
 
 The living paper holds the project’s hypotheses and conclusions, citing experiments by name with links to their plans, evidence and reviews. The separate research claims feature is retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, and its original events remain in the event log.
 

@@ -10,12 +10,17 @@ code, and the machines and agent sessions that do the work. Every call you make 
 person whose key connected you, with their role in the project, checked by the server on each
 call. Each tool's description is its contract; this skill is the order to use them in.
 
+Noun tools take `{"action":"x","x":{...}}`, with the selected `projectId` at the
+top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
+
 ## Orient first
 
-0. `project.list` when no project is chosen yet: the projects you can work in, with your role in
+0. Connect through the server’s `/connect` installer if Merv is not installed.
+   `project.read` (list) when no project is chosen yet: the projects you can work in, with your role in
    each. Pass the chosen project's id as `projectId` on every call. If any Merv tool says _not
    signed in_, ask the person for the email they use for Merv and call `connector.login` with
-   it, then call it again with the code they give you.
+   it, then call it again with the emailed 8-digit code they read back. Match the email’s
+   request words to this sign-in. Never request or read an API key.
 1. `project.read` (brief): your first read in a project, and again whenever you lose the thread. Who
    you are (actor, role), the project, today's date (UTC) and the paper as it is now.
 2. `workflow.read` (status) with no `instanceId`: every unfinished record, what it waits on
@@ -24,7 +29,7 @@ call. Each tool's description is its contract; this skill is the order to use th
    action, blockers, references, revision, and `limits` (review rounds used and left at each
    gate). The guidance it returns is how the server says what it expects: follow it.
 4. Read more as needed: `project.read` (records) indexes every task and experiment, `experiment.read` (get)
-   reads one experiment whole, `task.read` (get) one task, `paper.read` the paper, and
+   reads one experiment whole, `task.read` (get) one task, `paper.read` (get) the paper, and
    `project.read` (references) resolves ids to labels, states and revisions.
 
 Never guess an id, a name or a number you could read.
@@ -82,7 +87,8 @@ yourself. `task.read` (get) returns Merv's guidance for a task.
   the file to the signed URL it returns, then `artifact.write` (upload_complete). Do not base64 a
   large file into create.
 - `artifact.read` reads files: list, get (metadata), content and download.
-- `record.look` shows a JPEG, PNG or WebP image artifact as an image. `board.read` with action
+- `screen.read` with `{"action":"look","look":{"at":{"record":"<artifact id>"}}}`
+  shows a JPEG, PNG or WebP artifact as an image. `board.read` with action
   `get` says what a board's shapes say, and with `look` shows the board as an image.
 
 Artifacts are immutable: a corrected file is a new artifact.

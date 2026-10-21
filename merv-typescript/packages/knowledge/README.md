@@ -1,5 +1,9 @@
 # Knowledge
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Knowledge provides current project research records and scoped reference
 resolution. Tasks, Experiments, Artifacts, Reviews and Code continue to own their
 source records. Research claims were retired: each one was converted into a
@@ -30,8 +34,8 @@ flowchart LR
   subgraph external["External"]
     postgres[("PostgreSQL")]
   end
-  worker -- "calls project.records" --> knowledge
-  browser -- "calls project.references" --> knowledge
+  worker -- "calls project.records (worker alias)" --> knowledge
+  browser -- "calls project.read references" --> knowledge
   knowledge -- "registers two tools" --> api
   knowledge -- "reads task records" --> tasks
   knowledge -- "reads experiments" --> experiments
@@ -48,12 +52,12 @@ flowchart LR
 
 Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments, reflection waves and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references need neither Reflections nor Research. A request asks each owner once for every id it might hold (`find` on Workflows, Artifacts and Reviews, `captures` on Code Work), so its reads do not grow with the number of refs.
 
-| Entrypoint              | Requires                                                                   | Provides                                |
-| ----------------------- | -------------------------------------------------------------------------- | --------------------------------------- |
-| `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Workflows, Code Work | `knowledge` service                     |
-| `@merv/knowledge/tools` | Knowledge, Tools                                                           | `project.records`, `project.references` |
+| Entrypoint              | Requires                                                                   | Provides                                                  |
+| ----------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Workflows, Code Work | `knowledge` service                                       |
+| `@merv/knowledge/tools` | Knowledge, Tools                                                           | `project.read` (`records`), `project.read` (`references`) |
 
-`project.records` returns the current Scope project record (id, name and creation
+`project.read` (`records`) returns the current Scope project record (id, name and creation
 time; the Introduction is the paper's Problem, which `paper.read` returns) and an
 index of the project's work: one entry per task (title, type, state, revision,
 settled/failed, failure reason, review, deliveries, dependencies) and per experiment
@@ -65,7 +69,7 @@ returns those records whole and lists any id that is neither in `missing`.
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
-`project.references` resolves up to 200 input references in order. Supported
+`project.read` (`references`) resolves up to 200 input references in order. Supported
 explicit forms are `task:ID`, `experiment:ID`, `reflection:ID`, `research:ID`,
 `artifact:ID`, `review:ID`, `code-commit:ID` and
 `session-final:ID`. A bare ID is whichever record holds it: Knowledge asks Workflows,
@@ -106,7 +110,7 @@ packages/knowledge/
     └── tools.ts    # Two metadata-read tools
 ```
 
-The Paper page uses `project.references` for reference lookup. The former
+The Paper page uses `project.read` (`references`) for reference lookup. The former
 `/knowledge` address redirects to Paper in the browser; it needs no Knowledge UI
 registration.
 

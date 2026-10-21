@@ -60,7 +60,7 @@ Code sits at the bottom of the Git path: only Code work injects it, and research
 | ------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `@merv/code`       | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope, Domain Events                                     |
 | `@merv/code-work`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Reviews, Domain Events |
-| Code work adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeWork plus Tools, API or UI                                  |
+| Code work adapters | `code.read`, `code.write` and worker tools, `/code/*` controls and Code UI                         | CodeWork plus Tools, API or UI                                  |
 
 The utility owns repository locks and the GitHub client. The integration releases its own
 operations when unloaded. Technical changes to bindings and writers reach the integration

@@ -1,5 +1,9 @@
 # @merv/artifacts
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Artifacts stores a project's immutable files: a document or binary of up to 2 MB in one call, and a file of up to 512 MiB uploaded through a signed URL when the blob store supports it. Tasks, Reviews, Experiments, Paper, Context Builder and the other research plugins cite and read them by artifact id. The core injects `state`, `scope` and `blobs`, provides `artifacts`, and records an `artifact.created` event for each new file. A plugin may register a file provider for collection members that live elsewhere, as Sandboxes does for its legacy captures.
 
 ## Where it sits
@@ -48,12 +52,12 @@ flowchart LR
   class artifacts self
 ```
 
-Artifacts is the evidence layer under research work: the research plugins and Reviews hold only artifact ids, and Artifacts holds the bytes and checks the caller's project on every read. A worker stores a large file in two steps, `artifact.upload_begin` and a `PUT` to the signed URL, then `artifact.upload_complete` verifies the bytes and retains the artifact.
+Artifacts is the evidence layer under research work: the research plugins and Reviews hold only artifact ids, and Artifacts holds the bytes and checks the caller's project on every read. A personal agent begins a large upload with `artifact.write` (`upload_begin`), sends a `PUT` to the signed URL, then `artifact.write` (`upload_complete`) verifies the bytes and retains the artifact.
 
 ## Surface
 
 - Service `ctx.artifacts`: `create`, `get`, `getMany`, `getAll` (any number of ids), `list` (optionally by `sessions`), `executionOutputs` (what the calling session worker created), `read` (bytes in the row), `readStored` (also a collection member, fetched from its provider, and a range of a file above the inline limit up to 16 MiB, each verified against its SHA-256), `download`, `downloadFiles` (links to up to 100 members at once), `createCollection`, the `upload*` steps, `registerFileProvider`, and `registerReadRule`: an owner's rule over what a session worker may read (Reflections withholds the other lenses' reports from a lens's agent while its wave reflects).
-- Tools (`@merv/artifacts/tools`): `artifact.create`, `artifact.upload_begin`, `artifact.upload_resume`, `artifact.upload_complete`, `artifact.get`, `artifact.read`, `artifact.list` and `artifact.storage_status`.
+- Tools (`@merv/artifacts/tools`): `artifact.read` (list, get, content, download, storage) and `artifact.write` (create, upload_begin, upload_resume, upload_complete).
 - Row (`@merv/artifacts/ui`): Files, at `/artifacts`.
 - A unit's Artifacts tab (`@merv/artifacts/unit-files`, pure): `unitFiles` reads the files a record names and the newest its sessions made in two statements; `unitFileList` lists each once under the role its owner (Tasks, Experiments) names, at the stage the record stood in.
 - Client (`@merv/artifacts/upload-client`): the `artifact-upload` CLI command's uploader.

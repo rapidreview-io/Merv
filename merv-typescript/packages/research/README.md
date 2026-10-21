@@ -1,5 +1,9 @@
 # @merv/research
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Research coordinates the outer research cycle over work that other plugins own. A cycle pins the project definition from the paper's Problem, waits for its selected tasks and experiments to finish, and opens a reflection wave. Once the wave is approved, the cycle completes, or first injects one consolidation task that brings its accepted code to main. An approved plan can open the next wave of tasks and experiments and the cycle that waits on them. Research launches no workers. See [Research coordinator](../../docs/RESEARCH.md) and [continuous research](../../docs/CONTINUOUS_RESEARCH.md).
 
 ## Where it sits
@@ -28,7 +32,7 @@ flowchart LR
   subgraph external["External"]
     postgres[("PostgreSQL")]
   end
-  owner -- "calls research.advance" --> research
+  owner -- "calls research.write advance" --> research
   research -- "registers research workflow, publishes automation blockers" --> workflows
   research -- "reads Problem" --> paper
   research -- "waits on, creates tasks" --> tasks
@@ -51,5 +55,5 @@ Research drives the cycle of tasks, experiments and reflections, each of which k
 ## Surface
 
 - `@merv/research`: the `research` service. It registers `research@6` with Workflows and subscribes through Domain Events to workflow, code, paper and research events to advance automatic cycles.
-- `@merv/research/tools`: `research.create`, `research.list`, `research.get`, `research.lineage`, `research.replan`, `research.end` and `research.advance`.
+- `@merv/research/tools`: `research.read` (list, get, lineage) and `research.write` (create, replan, advance, end).
 - `@merv/research/ui`: the `/work` page, framed by its cycle, and the `/research` cycles page. Its part of `ui.home`, which Home and the rail poll, is `research.home`: the open cycles, the newest that ended, and any ended cycle whose published blocker still asks somebody to move, so the poll does not grow with every cycle run.

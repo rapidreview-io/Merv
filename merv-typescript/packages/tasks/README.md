@@ -1,5 +1,9 @@
 # Task program
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 A Cordis program implementing the durable task/delivery/review loop. Requires `state`, `scope`, `artifacts`, `workflows`, `reviews`, and `contextBuilder`; provides `tasks`. Core code has no dependency on transport or the tool registry.
 
 ## Where it sits
@@ -47,8 +51,8 @@ flowchart LR
 
 Tasks is the reviewed unit of work in the research cycle: it registers the `task` workflow with Workflows, routes every delivery through Reviews, and builds each assignment from its recipes in Context Builder. Research creates the tasks an approved reflection plan names, and the consolidation task that brings a cycle's accepted code to main; dotted arrows are optional bindings.
 
-Tasks registers its action checks and descriptions with Workflows. `task.get` and
-`task.list` include caller-specific `guidance`; `workflow.status_and_next` returns
+Tasks registers its action checks and descriptions with Workflows. `task.read` (`get`) and
+`task.read` (`list`) include caller-specific `guidance`; `workflow.read` (`status`) returns
 the same evaluated decision. The required task section carries it into every
 context recipe, and the task UI displays it. Delivery/verdict commands
 enforce those registered checks inside their transaction. See
@@ -60,14 +64,14 @@ Other stored versions remain read-only history: records, evidence, verdicts, con
 
 - **Create:** render and pin the goal and numbered checks as an immutable brief, or validate a compatible producer-supplied text brief; the record's `composed` says which. The current actor owns the task. Brief and goal fields are immutable.
 - **Submit delivery:** the producer supplies immutable artifacts and the current task revision. Every task requires a structured confirmation for every numbered check, with evidence references and verification notes. Merv pins a generated assessment alongside the evidence. The task enters `in_review` and a review request pins the brief plus delivery manifest in the same transaction.
-- **Release a claim:** `review.release` hands an unfinished interactive claim back without moving the task (a leased reviewer's claim goes with its lease); the old `reissue_review` command is retired, though its edge stays in every pinned graph.
+- **Release a claim:** `review.write` (`release`) hands an unfinished interactive claim back without moving the task (a leased reviewer's claim goes with its lease); the old `reissue_review` command is retired, though its edge stays in every pinned graph.
 - **Submit review:** the actor who independently claimed the current review supplies a verdict and the pinned task revision, with a synopsis and per-criterion findings. Passing outcomes prefer structured evidence.outcome, then synopsis, then legacy notes. `pass` routes to `done`, `needs_changes` returns to `in_progress`, and `fail` routes to `failed`. Verdict, workflow transition/history, task events, and request deduplication commit or roll back together.
 
 Confirmation coverage and evidence references are structural gates; the independent reviewer evaluates whether the submitted evidence actually meets the checks. Review notes become the workflow's outcome or revision context. A revised delivery receives a new review request; prior evidence and verdicts remain readable.
 
 Task command request IDs are scoped to actor and project. An identical retry returns its originally committed response; different input under the same ID is rejected. `expectedRevision` always means the task workflow revision.
 
-The optional `taskToolsPlugin` installs `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, and `task.mark_failed`. Reviews owns the generic `review.submit` tool. Tasks registers its submit-owner callback from the service lifecycle, identifies its subjects from durable Task records, and applies the existing Task command in the dispatcher's transaction. Historical submissions remain owned so successful retries retain their original response.
+The optional `taskToolsPlugin` installs `task.write` (`create`), `task.read` (`get`), `task.read` (`list`), `task.context`, `task.checkpoint`, `task.submit_delivery`, and `task.write` (`mark_failed`). Reviews owns the generic `review.write` (`submit`) tool. Tasks registers its submit-owner callback from the service lifecycle, identifies its subjects from durable Task records, and applies the existing Task command in the dispatcher's transaction. Historical submissions remain owned so successful retries retain their original response.
 
 Disposal withdraws the review owner before suspending Tasks and draining its dependent tools, then releases workflow and context registrations after that drain. The generic review tool refuses missing ownership during unload. Durable tasks, verdicts and versioned workflow definitions remain available after restoration.
 
@@ -75,7 +79,7 @@ Task types and context references are pinned at creation. Tasks registers its ve
 
 Creation and type registration copy their inputs before asynchronous work. A type registration cannot publish after Tasks is disposed; a recipe acquired during disposal is released so a replacement owner can register it.
 
-`task.mark_failed` gives the producer/operator an explicit terminal exit with a reason. It closes any unfinished review in the same transaction, preserves evidence and prior verdicts, and records `task.failed`. Guidance lists this action without recommending it as ordinary progress. See [task closure and task versions](../../docs/TASK_CLOSURE.md).
+`task.write` (`mark_failed`) gives the producer/operator an explicit terminal exit with a reason. It closes any unfinished review in the same transaction, preserves evidence and prior verdicts, and records `task.failed`. Guidance lists this action without recommending it as ordinary progress. See [task closure and task versions](../../docs/TASK_CLOSURE.md).
 
 ## Work prerequisites
 
@@ -84,7 +88,7 @@ scope before issuance. Conflict-resolution service work declares `computeProfile
 receive no connection. The runner adds compute guidance only when it receives the connection. Delivery reads
 verified capture collections from Artifacts' Merv-side receipt index, without querying Sandboxes inside its transaction.
 
-`task.create.dependsOn` accepts existing same-project work IDs (array, one ID, null
+`task.write` → `create.dependsOn` accepts existing same-project work IDs (array, one ID, null
 or omitted). Workflows owns the durable DAG and its completion checks. Tasks
 declares `done` as success and gates producer context/checkpoints and delivery.
 Creation, artifact retention, independent review and explicit withdrawal keep
@@ -93,7 +97,7 @@ failure. Task reads include `dependencies` and `dependents`; assignment context
 includes forward prerequisites, while reverse links remain live navigation data.
 See [dependency behavior and parity](../../docs/WORK_ITEM_DEPENDENCIES.md).
 
-Every new `task.create` uses the project's managed Git repository. The producer
+Every new `task.write` (`create`) uses the project's managed Git repository. The producer
 receives its own checkout and delivers a retained commit, with optional artifacts;
 the independent reviewer receives that exact commit read-only. An unchanged-source
 delivery may retain the existing commit. GitHub credentials are not needed.

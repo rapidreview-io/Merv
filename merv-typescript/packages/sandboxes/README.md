@@ -1,5 +1,12 @@
 # Sandboxes
 
+The agent surface has seven action tools: `sandboxes.sandbox`, `sandboxes.job`,
+`sandboxes.snapshot`, `sandboxes.storage`, `sandboxes.workflow`, `sandboxes.access`
+and `sandboxes.spend`. Each keeps its own schema and mixes reads and writes as
+applicable; inspect it before calling. `fleet` manages Merv's worker allocations.
+Personal agents discover these through MCP or `script.tools`; `script.run` may
+call only actions marked as reads, under the same project and caller checks.
+
 Merv loads the pinned Sandboxes packages in-process through `@merv/sandboxes/host`.
 The [host contract](../../vendor/merv-sandboxes/typescript/hosts/merv/README.md) defines
 the shared database, migration guard and service capabilities. Standalone owns workers,

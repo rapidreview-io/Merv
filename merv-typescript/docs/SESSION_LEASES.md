@@ -1,5 +1,9 @@
 # Assignment-scoped executions and agent sessions
 
+Personal agents use noun tools with `{"action":"x","x":{...}}` and a top-level
+`projectId` when selecting a project. Leased workers keep the alias names and flat
+inputs granted by their pinned workflows. See the [tool overview](../README.md#agent-tools).
+
 Each execution belongs to an agent, which a later execution of the same work may continue. See [Agents and assignment executions](AGENT_CONTINUITY.md). Existing `sessionId` references below identify assignment executions.
 
 Status: integrated locally. The original Sessions checkpoint passed all 410 tests, including actual HTTP/MCP session
@@ -79,7 +83,7 @@ admin clears. `preparation_deferred` is none of those: the machine was ready and
 the place that work's history lives was away, busy or full (its `deferral` names the cause —
 `code_unavailable`, `transport_unavailable`, `store_busy`, `base_pending` — and the refusal
 code beneath it). It counts against nobody, forms no hold, and only spaces the attempts out by
-the same thirty seconds a failure does; three such closes in a row are shown in `session.stuck`
+the same thirty seconds a failure does; three such closes in a row are shown in `session.read` (`stuck`)
 as `work_deferred`, with the cause. A `completed` outcome is still recorded only by the
 worker's own handoff, never by a release.
 
@@ -120,7 +124,7 @@ silence. Heartbeat is unchanged: it renews `expiresAt` and says nothing about pr
 
 Quiet is computed when it is read and never stored. `GET /sessions/status` carries
 `lastActivityAt` and `quietSince` on every session: `quietSince` is the moment the idle clock
-passed `idleNoticeSeconds`, and null again once a tool call moves it. `session.stuck` reports
+passed `idleNoticeSeconds`, and null again once a tool call moves it. `session.read` (`stuck`) reports
 a quiet session from the same clock at the moment of the read.
 
 **Nothing is closed for silence.** A tool call is the only activity the server can see, and
@@ -179,18 +183,18 @@ in its scope reported no usage; and `retries_exhausted`, when the only queued wo
 failed to launch `maxLaunchFailures` times on its current revision. All three only pause
 automatic offers.
 `GET /sessions/status` adds `budgets`, `retriesExhausted` and `stuck`, the counts of what
-`session.stuck` lists. See [loop limits, usage and budgets](BUDGETS_AND_LIMITS.md) and the
+`session.read` (`stuck`) lists. See [loop limits, usage and budgets](BUDGETS_AND_LIMITS.md) and the
 [runner control plane](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
 
 ## Steering an assigned agent
 
 Pi sends a message to a worker's thread, a stage's worker across its visits, with
-`session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
+`session.write({action: "message", message: {threadId, body, requestId}})`, or `POST /sessions/threads/:id/messages`
 with `{body, requestId}`. Project writers may send messages; project readers may read their
 history. Workers read and acknowledge only the messages to their own thread, those sent to its
 earlier visits included. A message to a
 reviewer does not grant its sender authority to decide the review verdict. Use
-`session.find({instanceId})` to find a work item's current and latest session and its
+`session.read({action: "find", find: {instanceId}})` to find a work item's current and latest session and its
 `threadId`. A thread that is retired, or whose work has ended, refuses a new message instead
 of claiming delivery, unless it answers a question. Repeating an identical request ID returns
 the retained message, while changing its contents is a conflict.
@@ -200,7 +204,7 @@ the ones awaiting its acknowledgement with `session.messages` (`{messages, ackno
 next}`: a visit that does not resume its thread's conversation also gets those earlier visits
 acknowledged, and `all: true` lists every acknowledged one, with their replies) and acknowledges
 each with `session.message.ack`, optionally including a reply. People, and Pi, read the thread's history with
-`session.thread_messages` to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
+`session.read` (`messages`) to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
 that the requested correction was incorporated or independently reviewed.
 
 Pending messages fence worker writes, including submission. The write's authority
@@ -211,7 +215,7 @@ further evidence lookups: its `session_message_pending` refusal says what it sto
 whole call before its handler runs, or the write a running call was about to commit) and
 carries the oldest waiting message (`details.message`, once a batch of parallel
 calls), so the worker acknowledges it and sends the call again. Sessions' tool description of
-`session.message` asks a sender for one message with everything rather than several. The worker
+`session.write` (`message`) asks a sender for one message with everything rather than several. The worker
 can acknowledge receipt with a reply such as
 “I will check the cited procedure,” then inspect the evidence; acknowledgment does
 not require agreeing with the correction. This does not inject text into a running
@@ -220,7 +224,7 @@ shell process or interrupt a long compute command.
 A message waits for the thread's live visit or, once its work comes back, its next one, and
 fences that visit's writes until it is acknowledged. A visit also reads the messages to other
 threads of its continuity key, so a message to a thread its key replaced still reaches the
-key's worker. `session.thread_messages({threadId})`, or
+key's worker. `session.read({action: "messages", messages: {threadId}})`, or
 `GET /sessions/threads/:id/messages`, reads a thread's messages (to it and to each of its
 visits) and its questions, for anyone who may read the work and never for a leased worker.
 
@@ -234,7 +238,7 @@ launch; its thread waits, dormant, with its conversation, and the dormant sweep 
 waiting however long the answer takes. Until a message to the thread answers it, dispatch
 withholds the revision it asked at (a hand offer still runs), and Sessions publishes a
 `session-question` blocker (`agent_question`) about that revision, whose move is the work's
-owner's (`whose: 'owner'`, which a project admin makes too). Its gate and `session.stuck` say
+owner's (`whose: 'owner'`, which a project admin makes too). Its gate and `session.read` (`stuck`) say
 what it waits for, and the gate names the blocker as the reader's move, which is how Needs you
 asks them to answer it. Work moved on by any other hand no longer waits on it. The answer
 releases the work once the asking visit has declared its conversation (or ten minutes after the
@@ -280,7 +284,7 @@ full sweep finds everything ended or one failed (a workflow once its captures ha
 `deadline` at its until, `woken` when a person messages the thread or offers the work by hand,
 and `moved` when the work ended or moved on by any hand. Until then the work carries a
 `session-compute` blocker that is nobody's move: its gate and the Running board say it waits for
-its compute, and `session.stuck` lists it as `work_waiting`, not counted in `total`. The next
+its compute, and `session.read` (`stuck`) lists it as `work_waiting`, not counted in `total`. The next
 visit resumes the same conversation, and its prompt begins with how the wait went and how each
 target stood. A wait uses no session wall time and no tokens, so it counts against no budget,
 nor against a customer run's allowance, whose admission gate counts both.
@@ -302,8 +306,8 @@ and [backend audit](BACKEND_PARITY_AUDIT.md).
 ## HTTP control and configuration
 
 The `sessions` provider depends on State, Scope, Workflows and Domain Events. Its `sessions-api` adapter mounts these routes and registers Sessions' credentials on the API; while it or Sessions is unloaded they answer 503.
-Neither exposes an agent tool; the optional `sessions-tools` adapter registers `usage.read`,
-`usage.set_budget`, `session.stuck` and `session.release_hold`. A normal source credential controls these routes;
+Neither exposes an agent tool; the optional `sessions-tools` adapter registers `project.read` (`usage`),
+`session.write` (`budget`), `session.read` (`stuck`) and `session.write` (`release_hold`). A normal source credential controls these routes;
 use `X-Merv-Project-Id` when project selection is required.
 
 | Route                             | Input / result                                                                                                                                                                  |
@@ -326,7 +330,7 @@ admission limit, not a transport upload limit.
 
 Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
 `dispatchByDefault` and `managedSecretEnv`. Any other key is refused at startup. A project runs
-one server execution at a time, across every provider. The thresholds `session.stuck` reports are fixed:
+one server execution at a time, across every provider. The thresholds `session.read` (`stuck`) reports are fixed:
 `maxLaunchFailures` 5, `idleNoticeSeconds` 1800 (see [alive is not progressing](#alive-quiet-and-what-silence-does-not-prove)),
 `quietReadySeconds` 21600 and `refusalSeconds` 300; only a test sets others.
 Offer commits expired-predecessor closure and drains durable cleanup before

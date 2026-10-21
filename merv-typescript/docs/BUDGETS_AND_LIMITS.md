@@ -1,5 +1,9 @@
 # Loop limits, usage and budgets
 
+Personal agents use noun tools with `{"action":"x","x":{...}}` and a top-level
+`projectId` when selecting a project. Leased workers keep the alias names and flat
+inputs granted by their pinned workflows. See the [tool overview](../README.md#agent-tools).
+
 Two things used to be unbounded: how often a review could send work back, and what a
 research cycle was allowed to cost. Both now have a bound that the server enforces, a
 visible reason when the bound is reached, and a human act that lifts it. Neither ever fails
@@ -31,7 +35,7 @@ that are already over it**, retroactively, the moment the new server starts.
 - The transition is refused inside the committing transaction with `loop_limit_reached`
   (409), before the owning rule's guard, so the distinct code is what the caller sees. The
   whole command rolls back, including the review that would have returned the work.
-- `workflow.status_and_next` reports `limits[]`, every limit of the work with the state it
+- `workflow.read` (`status`) reports `limits[]`, every limit of the work with the state it
   leaves (`from`, `base`, `granted`, `max`, `used`, `remaining`, `exhausted`). Where one
   leaving the current state is exhausted the gate and first blocker are `loop_limit_reached`. The uncapped actions stay available: a human reviewer
   can still accept or fail the work, and an experiment can still be abandoned.
@@ -60,14 +64,14 @@ that are already over it**, retroactively, the moment the new server starts.
 So a default of three review rounds means **three returns, after which the fourth
 delivery waits for a human**. That person either reviews it by hand, or grants one more
 round, which buys exactly one more automated review. Until then the review desk offers
-only the verdicts that do not return the work (`review.get` says so in `limit`), the work
+only the verdicts that do not return the work (`review.read` (`get`) says so in `limit`), the work
 stands in a project admin's Needs you, and its Running card carries **Allow another
-round**. `workflow.status_and_next` lists every limit of the work, with the rounds used
+round**. `workflow.read` (`status`) lists every limit of the work, with the rounds used
 and left at the state each one leaves, so a worker can see them too.
 
 ### Allowing more rounds
 
-`workflow.extend_limit { instanceId, limit, additional, reason, requestId }` is for a
+`workflow.write { action: "extend_limit", extend_limit: { instanceId, limit, additional, reason, requestId } }` is for a
 project admin who is not a leased worker; a session is refused with 403. It appends a row
 to `wf_limit_grants` (immutable on both backends) and records `workflow.limit_extended`.
 It changes neither the instance nor its revision, so pinned reviews and dispatch
@@ -132,7 +136,7 @@ then. A missing or malformed file sends nothing but what the profile read.
 
 ### Reading it
 
-`usage.read` is read-only and open to any project reader, **including a leased worker**,
+`project.read` (`usage`) is read-only and open to any project reader, **including a leased worker**,
 because a reflection lens has to be able to say what a cycle cost. With no input it rolls
 up the project. With `instanceId` it rolls up that instance, everything it transitively
 depends on, and the children their policies declare: a reflection names its lenses of
@@ -151,7 +155,7 @@ not in it, while the project figure is complete.
 
 ## Budgets
 
-`usage.set_budget { instanceId?, maxWallMinutes?, maxTokens? }` is for a
+`session.write { action: "budget", budget: { instanceId?, maxWallMinutes?, maxTokens? } }` is for a
 project admin who is not a leased worker. Without `instanceId` it sets the project budget;
 with it, a budget over that instance's closure, so a cycle budget is set on the cycle's
 id. `null` clears a dimension and an omitted one is kept. It is a state-set command like
@@ -176,14 +180,14 @@ even if its runner spent tokens before its first call to Merv. One that closed w
 total: the bound then withholds new automatic offers with `usage_unavailable` instead of
 `budget_exceeded`, and the budget's status names it under `unavailable` with
 `unreportedSessions`. It lifts when the report arrives (a release may carry it after the
-close) or when an admin clears that bound with `usage.set_budget`. A wall-clock bound never
+close) or when an admin clears that bound with `session.write` (`budget`). A wall-clock bound never
 waits on a report. Where sessions in scope ran and none has reported, `used.tokens` reads
 `null`: unknown is never shown as zero.
 
 Sessions has no cost budget: model spend is capped by Fleet's relay metering (tokens per
 person per UTC day), and a local runner uses its owner's own subscription.
 
-An inquiry visit (`session.ask_thread`) is not a worker session of the work and counts in none
+An inquiry visit (`session.write` (`ask`)) is not a worker session of the work and counts in none
 of these: its `session_usage` row is of `kind='inquiry'`, which no project or instance total
 counts. It has a budget of its own (`Session.tokenBudget`): 300 000 model tokens plus four
 resends of the conversation it resumes, charged to the person who asked in that project (its
@@ -222,10 +226,10 @@ tried remains. The status read reports `retriesExhausted`, the number of queued 
 withheld this way. A hold gates automatic dispatch only: a person may still offer the
 target by hand, and a failure of that session counts like any other.
 
-A held target waits for a human, and `session.stuck` lists it as `dispatch_held` with its
+A held target waits for a human, and `session.read` (`stuck`) lists it as `dispatch_held` with its
 last failure ([stuck work and dispatch holds](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds)).
 A project admin who is not a leased worker calls
-`session.release_hold` with the instance, its revision, a reason and a `requestId`; the count
+`session.write` (`release_hold`) with the instance, its revision, a reason and a `requestId`; the count
 restarts, `session.hold_released` is recorded, and the same request replays the same
 answer. Switching automatic dispatch off and on is the same go-ahead for **every
 instance in the project**. A new revision of the instance starts a fresh count, because a

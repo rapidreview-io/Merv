@@ -15,15 +15,20 @@ const skillsOf = (bundle: string) =>
       readFileSync(new URL(`${bundle}/skills/${name}/SKILL.md`, clients), 'utf8'),
     ]),
   );
-/** Named by a skill but absent from the committed composition: Pi registers record.look, and
+/** Named by a skill but absent from the committed composition: Pi registers screen.read, and
  *  production adds Fleet and Sandboxes (deploy/render-config.mjs). */
 const elsewhere = new Set([
-  // project.list is answered by the MCP route itself; connector.* by the local connector.
-  'project.list',
+  // connector.* is supplied by the local connector.
   'connector.login',
   'connector.status',
-  'record.look',
+  'screen.read',
   'sandboxes.sandbox',
+  'sandboxes.job',
+  'sandboxes.snapshot',
+  'sandboxes.storage',
+  'sandboxes.workflow',
+  'sandboxes.access',
+  'sandboxes.spend',
 ]);
 
 test('both client bundles say what the manifest says, with the same skills and no server', () => {
