@@ -655,7 +655,11 @@ function execFileStatus(file: string, args: string[], home: string) {
 
 /** Claude Code and Codex stand-ins on a PATH of their own: `mcp get` prints what a test left in
  *  `<state>/<client>-had`; every call is logged. */
-function fakeClients(t: TestContext, c: Awaited<ReturnType<typeof connector>>) {
+function fakeClients(
+  t: TestContext,
+  c: Awaited<ReturnType<typeof connector>>,
+  configEnv: Record<string, string> = {},
+) {
   const state = mkdtempSync(join(tmpdir(), 'merv-clients-'));
   t.after(() => rmSync(state, { recursive: true, force: true }));
   const bin = join(state, 'bin');
@@ -663,10 +667,35 @@ function fakeClients(t: TestContext, c: Awaited<ReturnType<typeof connector>>) {
   for (const client of ['claude', 'codex'])
     writeFileSync(
       join(bin, client),
-      `#!/bin/sh\necho "${client} $*" >> "${state}/log"\ncase "$1 $2" in\n  "mcp get") [ -f "${state}/${client}-had" ] && { cat "${state}/${client}-had"; exit 0; }; exit 1;;\nesac\nexit 0\n`,
+      `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const had = ${JSON.stringify(join(state, `${client}-had`))};
+fs.appendFileSync(${JSON.stringify(join(state, 'log'))}, '${client} ' + args.join(' ') + '\\n');
+if (args[0] === 'mcp' && args[1] === 'get') {
+  if (!fs.existsSync(had)) process.exit(1);
+  process.stdout.write(fs.readFileSync(had));
+}
+if (args[0] === 'mcp' && args[1] === 'add') {
+  const dir = process.env.CODEX_HOME || path.join(process.env.HOME, '.codex');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'config.toml');
+  if (!fs.existsSync(file)) fs.writeFileSync(file, '[mcp_servers.' + args[2] + ']\\n', { mode: 0o600 });
+  fs.writeFileSync(had, 'command: ' + args[4]);
+}
+if (args[0] === 'mcp' && args[1] === 'add-json')
+  fs.writeFileSync(had, 'Command: ' + JSON.parse(args[3]).command);
+// Leave config removal to the connector, so tests can check the precise approval edit.
+`,
       { mode: 0o700 },
     );
-  const env = { HOME: c.home, PATH: `${bin}:/usr/bin:/bin`, MERV_CONNECT_TIMEOUT_MS: '3000' };
+  const env = {
+    HOME: c.home,
+    PATH: `${bin}:/usr/bin:/bin`,
+    MERV_CONNECT_TIMEOUT_MS: '3000',
+    ...configEnv,
+  };
   return {
     had: (client: string, text: string) => writeFileSync(join(state, `${client}-had`), text),
     log: () => (existsSync(join(state, 'log')) ? readFileSync(join(state, 'log'), 'utf8') : ''),
@@ -678,6 +707,107 @@ function fakeClients(t: TestContext, c: Awaited<ReturnType<typeof connector>>) {
       ),
   };
 }
+
+test('install grants only this server approval, is idempotent, and uninstall removes the grants', async (t) => {
+  for (const [name, header] of [
+    ['merv', '[mcp_servers.merv]'],
+    ['merv-staging', '[mcp_servers."merv-staging"]'],
+    ['merv-staging', "[mcp_servers.'merv-staging']"],
+  ]) {
+    const f = await server(t, { serverName: name });
+    const c = await connector(t, f);
+    const custom = name === 'merv-staging';
+    const codexDir = join(c.home, custom ? 'codex-config' : '.codex');
+    const claudeDir = join(c.home, custom ? 'claude-config' : '.claude');
+    const clients = fakeClients(
+      t,
+      c,
+      custom ? { CODEX_HOME: codexDir, CLAUDE_CONFIG_DIR: claudeDir } : {},
+    );
+    mkdirSync(codexDir);
+    mkdirSync(claudeDir);
+    const config = join(codexDir, 'config.toml');
+    const settings = join(claudeDir, 'settings.json');
+    const otherName = name === 'merv' ? 'merv-staging' : 'merv';
+    const before = `# keep formatting\nmodel = "test"\n[mcp_servers.other]\ndefault_tools_approval_mode = "prompt"\n\n${header} # Merv\ncommand = "shim"\nargs = []\n\n[mcp_servers."${name}".env]\nKEEP = "yes"\n[mcp_servers.${otherName}]\ndefault_tools_approval_mode = "approve"\n`;
+    const initial = {
+      theme: 'dark',
+      permissions: {
+        deny: ['Read(.env)'],
+        allow: ['Bash(git status)', `mcp__${otherName}`, `mcp__${name}__project_list`],
+      },
+    };
+    writeFileSync(config, before, { mode: 0o640 });
+    writeFileSync(settings, JSON.stringify(initial), { mode: 0o640 });
+    let installed = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await clients.run('install');
+      assert.equal(result.code, 0, result.out);
+      assert.ok(
+        result.out.includes(
+          'Codex: Merv\'s tools run without asking (default_tools_approval_mode = "approve").',
+        ),
+        result.out,
+      );
+      assert.ok(
+        result.out.includes(
+          `Claude Code: Merv's tools are allowed without asking (permissions.allow mcp__${name}).`,
+        ),
+        result.out,
+      );
+      const after = readFileSync(config, 'utf8');
+      assert.equal(
+        after,
+        before.replace(
+          `${header} # Merv\n`,
+          `${header} # Merv\ndefault_tools_approval_mode = "approve"\n`,
+        ),
+      );
+      if (attempt) assert.equal(after, installed);
+      installed = after;
+      assert.equal(statSync(config).mode & 0o777, 0o640);
+      assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), {
+        ...initial,
+        permissions: {
+          ...initial.permissions,
+          allow: [...initial.permissions.allow, `mcp__${name}`],
+        },
+      });
+    }
+    const copies = readdirSync(claudeDir).filter((file) => file.startsWith('settings.json.bak-'));
+    assert.equal(copies.length, 1);
+    assert.deepEqual(JSON.parse(readFileSync(join(claudeDir, copies[0]!), 'utf8')), initial);
+    assert.equal(statSync(join(claudeDir, copies[0]!)).mode & 0o777, 0o600);
+    const removed = await clients.run('uninstall');
+    assert.equal(removed.code, 0, removed.out);
+    assert.equal(readFileSync(config, 'utf8'), before);
+    assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), initial);
+  }
+});
+
+test('install creates missing Claude settings and preserves an existing server allow entry', async (t) => {
+  for (const existing of [undefined, {}, { permissions: { allow: ['mcp__merv'] } }]) {
+    const f = await server(t);
+    const c = await connector(t, f);
+    const clients = fakeClients(t, c);
+    const dir = join(c.home, '.claude');
+    const file = join(dir, 'settings.json');
+    if (existing) {
+      mkdirSync(dir);
+      writeFileSync(file, JSON.stringify(existing), { mode: 0o600 });
+    }
+    const installed = await clients.run('install');
+    assert.equal(installed.code, 0, installed.out);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).permissions.allow, ['mcp__merv']);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    const removed = await clients.run('uninstall');
+    assert.equal(removed.code, 0, removed.out);
+    assert.deepEqual(
+      JSON.parse(readFileSync(file, 'utf8')).permissions.allow,
+      existing?.permissions?.allow ?? [],
+    );
+  }
+});
 
 test('install replaces an earlier key-based Merv without printing its settings, and keeps a copy', async (t) => {
   const f = await server(t);

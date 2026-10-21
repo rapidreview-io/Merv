@@ -125,6 +125,7 @@ function readJson(name) {
 function writeAtomic(dir, name, text, mode = 0o600) {
   const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
   fs.writeFileSync(temp, text, { flag: 'wx', mode });
+  fs.chmodSync(temp, mode); // Preserve the requested mode even under a restrictive umask.
   fs.renameSync(temp, join(dir, name));
 }
 const writeJson = (name, value) => {
@@ -434,6 +435,94 @@ function backup(file) {
   return copy;
 }
 
+/** Client settings may be readable by others; keep their mode and serialize our edits. */
+async function editClientConfig(client, dir, name, change, save = false) {
+  await withLock(
+    () => {
+      const file = join(dir, name);
+      const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+      if (stat) check(file, stat, 'file', 0o022);
+      const before = stat ? fs.readFileSync(file, 'utf8') : undefined;
+      const after = change(before);
+      if (after === undefined || after === before) return;
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (save) backup(file);
+      writeAtomic(dir, name, after, stat ? stat.mode & 0o777 : 0o600);
+    },
+    join(CONNECT, `${client}.lock`),
+  );
+}
+
+async function codexApproval(installing) {
+  const dir = process.env.CODEX_HOME || join(HOME, '.codex');
+  await editClientConfig('codex', dir, 'config.toml', (before) => {
+    const name = SERVER_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const header = new RegExp(
+      `^[ \\t]*\\[[ \\t]*(?:mcp_servers|"mcp_servers"|'mcp_servers')[ \\t]*\\.[ \\t]*(?:${name}|"${name}"|'${name}')[ \\t]*\\][ \\t]*(?:#[^\\r\\n]*)?(?:\\r?\\n|$)`,
+      'm',
+    ).exec(before ?? '');
+    if (!header) {
+      if (installing) throw new Refusal(`Codex: could not find the "${SERVER_NAME}" config table.`);
+      return;
+    }
+    const start = header.index + header[0].length;
+    const next = before.slice(start).search(/^[ \t]*\[/m);
+    const end = next < 0 ? before.length : start + next;
+    const body = before.slice(start, end);
+    const key =
+      /^[ \t]*(?:default_tools_approval_mode|"default_tools_approval_mode"|'default_tools_approval_mode')[ \t]*=[^\r\n]*(?:\r?\n|$)/m;
+    const line = `default_tools_approval_mode = "approve"${before.includes('\r\n') ? '\r\n' : '\n'}`;
+    const changed = installing
+      ? key.test(body)
+        ? body.replace(key, line)
+        : line + body
+      : body.replace(/^[ \t]*default_tools_approval_mode = "approve"\r?\n/m, '');
+    return (
+      before.slice(0, start) +
+      (installing && !header[0].endsWith('\n') ? '\n' : '') +
+      changed +
+      before.slice(end)
+    );
+  });
+}
+
+async function claudeApproval(installing) {
+  const dir = process.env.CLAUDE_CONFIG_DIR || join(HOME, '.claude');
+  const file = join(dir, 'settings.json');
+  const owned = 'claude-approval.json';
+  const permission = `mcp__${SERVER_NAME}`;
+  await editClientConfig(
+    'claude',
+    dir,
+    'settings.json',
+    (before) => {
+      if (!installing && readJson(owned)?.file !== file) return;
+      const config = before === undefined ? {} : JSON.parse(before);
+      const object = (value) => value && typeof value === 'object' && !Array.isArray(value);
+      if (
+        !object(config) ||
+        (config.permissions !== undefined && !object(config.permissions)) ||
+        (config.permissions?.allow !== undefined && !Array.isArray(config.permissions.allow))
+      )
+        throw new Refusal(`Claude Code: invalid permissions in ${file}; left alone.`);
+      const allow = config.permissions?.allow ?? [];
+      if (installing) {
+        if (allow.includes(permission)) return;
+        // Remember only entries we add; an existing user permission belongs to the user.
+        writeJson(owned, { file });
+        config.permissions ??= {};
+        config.permissions.allow = [...allow, permission];
+      } else {
+        if (!allow.includes(permission)) return;
+        config.permissions.allow = allow.filter((item) => item !== permission);
+      }
+      return `${JSON.stringify(config, null, 2)}\n`;
+    },
+    true,
+  );
+  if (!installing) remove(owned);
+}
+
 async function cursor(change) {
   const dir = join(HOME, '.cursor');
   if (!fs.lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
@@ -483,9 +572,10 @@ async function install(sha, node = process.execPath) {
         '-s',
         'user',
       ]);
+      if (added.status === 0) await claudeApproval(true);
       say(
         added.status === 0
-          ? `Claude Code: added "${SERVER_NAME}" for this user${process.env.CLAUDE_CONFIG_DIR ? ` (config ${process.env.CLAUDE_CONFIG_DIR})` : ''}.`
+          ? `Claude Code: Merv's tools are allowed without asking (permissions.allow mcp__${SERVER_NAME}).`
           : `Claude Code: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
       );
       if (/merv@/.test(run('claude', ['plugin', 'list']).stdout ?? ''))
@@ -502,9 +592,10 @@ async function install(sha, node = process.execPath) {
       replacing('Codex', had, had !== undefined && !connectorOf(had) ? backup(config) : undefined);
       run('codex', ['mcp', 'remove', SERVER_NAME]);
       const added = run('codex', ['mcp', 'add', SERVER_NAME, '--', SHIM]);
+      if (added.status === 0) await codexApproval(true);
       say(
         added.status === 0
-          ? `Codex: added "${SERVER_NAME}" (${config}).`
+          ? `Codex: Merv's tools run without asking (default_tools_approval_mode = "approve").`
           : `Codex: could not add "${SERVER_NAME}": ${(added.stderr || added.stdout).trim()}`,
       );
     }
@@ -527,8 +618,14 @@ async function install(sha, node = process.execPath) {
 async function uninstall() {
   // Only this origin's registration: never another server's, nor one a person made by hand.
   const ours = (client) => onPath(client) && connectorOf(registered(client)) === HOSTDIR;
-  if (ours('claude')) removeFromClaude();
-  if (ours('codex')) run('codex', ['mcp', 'remove', SERVER_NAME]);
+  if (ours('claude')) {
+    await claudeApproval(false);
+    removeFromClaude();
+  }
+  if (ours('codex')) {
+    await codexApproval(false);
+    run('codex', ['mcp', 'remove', SERVER_NAME]);
+  }
   await cursor((servers) => {
     if (servers[SERVER_NAME]?.command !== SHIM) return undefined;
     delete servers[SERVER_NAME];
@@ -748,7 +845,8 @@ function serve() {
 }
 
 const USAGE = `Usage: merv-connect [login <email> [--client <name>] | login --code <code> | status | logout | install | uninstall]
-With no arguments, merv-connect is the "${SERVER_NAME}" MCP server for ${ORIGIN}.`;
+With no arguments, merv-connect is the "${SERVER_NAME}" MCP server for ${ORIGIN}.
+Install allows Merv's tools without asking in Codex and Claude Code; uninstall removes the registrations and permissions it added.`;
 
 async function main(args) {
   const [command, ...rest] = args;

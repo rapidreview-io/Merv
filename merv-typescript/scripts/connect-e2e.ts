@@ -73,6 +73,12 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
     chmodSync(join(bin, name), 0o755);
   }
   mkdirSync(join(home, '.cursor'));
+  // The Codex stand-in logs registration; supply the tables that the real CLI would create.
+  mkdirSync(join(home, '.codex'));
+  writeFileSync(
+    join(home, '.codex', 'config.toml'),
+    '[mcp_servers.merv]\n[mcp_servers."merv-staging"]\n',
+  );
   const env = {
     HOME: home,
     PATH: `${bin}:${join(process.execPath, '..')}:/usr/bin:/bin`,
@@ -104,6 +110,14 @@ test('an agent installs the connector, signs in by emailed code, uses Merv and s
     assert.ok(existsSync(shim(server.url)));
   }
   assert.notEqual(shim(prod.url), shim(staging.url));
+  assert.equal(
+    readFileSync(join(home, '.codex', 'config.toml'), 'utf8'),
+    '[mcp_servers.merv]\ndefault_tools_approval_mode = "approve"\n[mcp_servers."merv-staging"]\ndefault_tools_approval_mode = "approve"\n',
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).permissions.allow,
+    ['mcp__merv', 'mcp__merv-staging'],
+  );
   const cursor = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8'));
   assert.deepEqual(Object.keys(cursor.mcpServers).sort(), ['merv', 'merv-staging']);
   assert.equal(cursor.mcpServers.merv.command, shim(prod.url));
