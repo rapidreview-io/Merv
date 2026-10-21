@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   check,
   clip,
@@ -192,7 +193,7 @@ export function retryUnavailable(
   row: AutomaticRow,
   since = Date.now(),
 ): void {
-  if (ctx.retrying.has(row.project_id)) return;
+  if (bootMaintenance.active || ctx.retrying.has(row.project_id)) return;
   ctx.retrying.add(row.project_id);
   const wake = async () => {
     ctx.retrying.delete(row.project_id);
@@ -226,6 +227,7 @@ export function retryUnavailable(
 
 /** Startup must also revisit events previously consumed while blocked. */
 export async function wakeAutomatic(ctx: ResearchContext): Promise<void> {
+    if (bootMaintenance.active) return;
   if (ctx.closed) return;
   await ctx.state.transaction(async (tx) => {
     // One resume per project: its consumer reconciles every open cycle there.
@@ -356,6 +358,7 @@ export function soon(
 ): void {
   if (ctx.closed) return;
   const run = async () => {
+    if (bootMaintenance.active) return;
     try {
       await ctx.advance(caller, input);
     } catch (error) {

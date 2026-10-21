@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { githubGitEnv, type GitResult } from '../git.js';
 import { OperationJournal } from '../request-journal.js';
@@ -199,6 +200,7 @@ export class CodeMirrorService {
 
   /** One pass over everything due. Refusals stay on their rows; nothing here throws. */
   async run(): Promise<void> {
+    if (bootMaintenance.active) return;
     if (this.closed) return;
     this.running ??= this.repositories.git.scoped(this.stop.signal, async () => {
       try {

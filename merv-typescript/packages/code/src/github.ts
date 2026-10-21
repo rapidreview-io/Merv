@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   check,
   MervError,
@@ -131,6 +132,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       { version: 1, sql: schema },
       { version: 2, sql: automation },
     ]);
+    if (bootMaintenance.active) return;
     await this.state.transaction((tx) =>
       tx.run('DELETE FROM code_github_flows WHERE expires_at<=?', timestamp()),
     );

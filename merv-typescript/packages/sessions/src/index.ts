@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
 import { visible, createService, freezeData, mapAsync } from '@merv/contracts';
@@ -551,7 +552,8 @@ export class LeasedSessions implements Sessions {
         }),
       );
       // Older than any client waits for a call: another live process's may be younger.
-      await this.observations.interrupt(isoNow(() => this.clock() - 180_000));
+      if (!bootMaintenance.active)
+        await this.observations.interrupt(isoNow(() => this.clock() - 180_000));
       this.timer = setInterval(() => {
         this.sweeping ??= this.alone('sweep', () =>
           this.pass(this.clock() - this.checkedAt >= 30_000),
@@ -1992,6 +1994,7 @@ export class LeasedSessions implements Sessions {
    * sessions whose deadline passed or whose record moved.
    */
   private async pass(full: boolean): Promise<void> {
+    if (bootMaintenance.active) return;
     if (full) {
       this.checkedAt = this.clock();
       this.failing.clear();

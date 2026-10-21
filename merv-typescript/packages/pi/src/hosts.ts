@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import {
   check,
   newId,
@@ -372,6 +373,7 @@ export class PiHosts implements FleetOwner {
   }
 
   tick(): Promise<void> {
+    if (bootMaintenance.active) return Promise.resolve();
     if (this.core.closed) return Promise.resolve();
     return (this.pending ??= this.reconcile().finally(() => {
       this.pending = undefined;

@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
 import type { SbxMerv } from '@sandboxes/merv-host';
@@ -417,6 +418,7 @@ export class FleetService implements Fleet {
     this.wake(0);
   }
   private wake(ms: number): void {
+    if (bootMaintenance.active) return;
     if (this.closed || Date.now() + ms >= this.due) return;
     clearTimeout(this.timer);
     this.due = Date.now() + ms;
@@ -796,6 +798,7 @@ export class FleetService implements Fleet {
   }
   /** Only a full pass reads offers and steady machines; true while anything is not steady. */
   private run(full: boolean): Promise<boolean> {
+    if (bootMaintenance.active) return Promise.resolve(false);
     if (this.closed) return Promise.resolve(false);
     return (this.pending ??= this.reconcile(full).finally(() => {
       this.pending = undefined;
@@ -1224,6 +1227,10 @@ export class FleetService implements Fleet {
     this.unlisten?.();
     this.closing = (async () => {
       await this.pending?.catch(() => undefined);
+      if (bootMaintenance.active) {
+        this.owners.clear();
+        return;
+      }
       await this.state.transaction(async (tx) => {
         for (const a of await this.all(tx)) {
           const keeps = this.kinds.get(a.owner.kind);

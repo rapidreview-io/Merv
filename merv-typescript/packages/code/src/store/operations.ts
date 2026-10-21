@@ -1,3 +1,4 @@
+import { bootMaintenance } from '@merv/contracts/maintenance';
 import { initializeManagedProjects } from './managed.js';
 import {
   canonical,
@@ -103,7 +104,7 @@ export class CodeStore {
     );
     this.timer.unref();
     this.waker = setInterval(() => {
-      if (!this.woken) return;
+      if (bootMaintenance.active || !this.woken) return;
       this.woken = false;
       void (async () => {
         await this.maintaining?.catch(() => {});
@@ -197,6 +198,7 @@ export class CodeStore {
    * keeps Code from starting.
    */
   async maintain(sweep = true): Promise<void> {
+    if (bootMaintenance.active) return;
     // A pass that does not sweep (a wake's) is no answer to one that must: it runs after it.
     while (sweep && this.maintaining && !this.sweeping) await this.maintaining.catch(() => {});
     if (this.core.closed) return;
