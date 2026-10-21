@@ -167,3 +167,99 @@ test('the people are the project members, never the actors an agent’s session 
   assert.equal(document.querySelectorAll('.hub-face').length, 2);
   assert.match(text(), /2 · you are the operator/);
 });
+
+// Reproduced against the real Home: terminal failure is an outcome, not pending work.
+test('failed terminal work is ended and visibly failed, even with an old live board node', async (t) => {
+  t.after(unmount);
+  boot([row('work', 'work', 'lead'), row('tasks', 'tasks')], {
+    tasks: [{ ...task('t2', 'failed', false), failed: true }],
+    experiments: [],
+  });
+  await open();
+  assert.equal(document.querySelector('.hub-count')?.textContent, '1');
+  assert.match(text(), /1 failed/);
+  assert.doesNotMatch(text(), /1 stuck|1 live|1 done/);
+  assert.ok(document.querySelector('.hub-seg--failed'));
+});
+
+for (const [stage, sentence] of [
+  ['design_review', 'Review this design'],
+  ['experiment_review', 'Review these results'],
+])
+  test(`Home keeps the ${stage} action visible before claiming`, async (t) => {
+    t.after(unmount);
+    const { styled } = await import('./ui-render.js');
+    t.after(styled());
+    boot(
+      [
+        row('work', 'work', 'lead'),
+        {
+          ...row('experiments', 'experiments'),
+          needs: { name: 'name', owner: 'ownerId', reads: { [stage!]: sentence } },
+        },
+        row('reviews', 'reviews'),
+      ],
+      {
+        tasks: [],
+        experiments: [{ id: 'exp1', name: 'Candidate', ownerId: 'other', workflow: flow(stage!) }],
+        reviews: [
+          {
+            id: 'review1',
+            subjectId: 'exp1',
+            open: true,
+            claimable: true,
+            createdAt: '2026-10-21T00:00:00Z',
+          },
+        ],
+        workflows: {
+          workflows: [{ instanceId: 'exp1', actions: [{ tool: 'review.start', status: 'ready' }] }],
+        },
+      },
+    );
+    await open();
+    const action = [...document.querySelectorAll('.hub-needs .ov-say')].find(
+      (n) => n.textContent === sentence,
+    );
+    assert.ok(action, text());
+    assert.notEqual(window.getComputedStyle(action).display, 'none');
+    assert.match(text(), /Claim review/);
+  });
+
+for (const [name, days, expected] of [
+  [
+    'unpriced',
+    [{ day: '2026-10-21', usd: 0, pricedHours: 0, unpricedHours: 2 }],
+    /Unavailable this month · Unavailable today · some machine prices missing/,
+  ],
+  [
+    'mixed',
+    [
+      { day: '2026-10-20', usd: 0, pricedHours: 0, unpricedHours: 2 },
+      { day: '2026-10-21', usd: 2, pricedHours: 2, unpricedHours: 0 },
+    ],
+    /\$2\.00 partial this month · \$2\.00 today · some machine prices missing/,
+  ],
+  [
+    'free',
+    [{ day: '2026-10-21', usd: 0, pricedHours: 2, unpricedHours: 0 }],
+    /\$0\.00 this month · \$0\.00 today/,
+  ],
+  [
+    'idle',
+    [{ day: '2026-10-21', usd: 0, pricedHours: 0, unpricedHours: 0 }],
+    /\$0\.00 this month · \$0\.00 today/,
+  ],
+] as const)
+  test(`Home labels ${name} compute coverage honestly`, async (t) => {
+    t.after(unmount);
+    boot([row('work', 'work', 'lead')], { tasks: [], experiments: [], fleet: days });
+    await open();
+    const card = document.querySelector('.hub-card--spend');
+    assert.ok(card);
+    assert.match(card.textContent ?? '', /Compute spend estimate/);
+    assert.match(card.querySelector('.hub-line')?.textContent ?? '', expected);
+    if (name === 'unpriced') {
+      assert.doesNotMatch(card.textContent ?? '', /\$0/);
+      assert.match(card.querySelector('title')?.textContent ?? '', /Unavailable · price missing/);
+    }
+  });

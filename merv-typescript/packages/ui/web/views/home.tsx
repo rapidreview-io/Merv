@@ -71,7 +71,7 @@ interface Unit {
   to: string;
   state: string;
   at: string;
-  standing: 'done' | 'live' | 'stuck' | 'open';
+  standing: 'done' | 'failed' | 'live' | 'stuck' | 'open';
 }
 const R = 130;
 const r = 120;
@@ -93,7 +93,7 @@ function Ring({ units }: { units: Unit[] }) {
   const cy0 = C + ((R + r) / 2) * Math.sin(chevron);
   const held = hover === null ? undefined : units[hover];
   const mid = hover === null ? 0 : at(hover, 0) + Math.PI / n;
-  const done = units.filter((u) => u.standing === 'done').length;
+  const done = units.filter((u) => u.standing === 'done' || u.standing === 'failed').length;
   return (
     <div className="hub-ring">
       <svg viewBox={`0 0 ${2 * C} ${2 * C}`} role="list" aria-label="Units of the cycle">
@@ -198,14 +198,15 @@ function Work({ shell, home }: { shell: ShellData; home: HomeData | undefined })
           to: u.to,
           state: u.flow.state,
           at: u.at,
-          standing:
-            (node && needs(node)) || u.end.failed
+          standing: over
+            ? u.end.failed
+              ? 'failed'
+              : 'done'
+            : node && needs(node)
               ? 'stuck'
               : !stale && (node?.dot === 'live' || node?.dot === 'moving')
                 ? 'live'
-                : over
-                  ? 'done'
-                  : 'open',
+                : 'open',
         };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -224,6 +225,11 @@ function Work({ shell, home }: { shell: ShellData; home: HomeData | undefined })
           <span>
             <i className="hub-dot hub-dot--done" /> {count('done')} done
           </span>
+          {count('failed') > 0 && (
+            <span>
+              <i className="hub-dot hub-dot--failed" /> {count('failed')} failed
+            </span>
+          )}
           <span>
             <i className="hub-dot hub-dot--live" /> {count('live')} live
           </span>
@@ -263,15 +269,28 @@ function Pi({ to }: { to: string }) {
 
 const usd = (n: number) => `$${n < 10 ? n.toFixed(2) : Math.round(n).toLocaleString()}`;
 
-function Spend({ days, to }: { days: { day: string; usd: number }[]; to: string }) {
-  const month = days.reduce((sum, d) => sum + d.usd, 0);
-  const today = days[days.length - 1]?.usd ?? 0;
+function Spend({ days, to }: { days: NonNullable<HomeData['fleet']>; to: string }) {
+  const total = days.reduce(
+    (sum, d) => ({
+      usd: sum.usd + d.usd,
+      pricedHours: sum.pricedHours + d.pricedHours,
+      unpricedHours: sum.unpricedHours + d.unpricedHours,
+    }),
+    { usd: 0, pricedHours: 0, unpricedHours: 0 },
+  );
+  const amount = (d: Omit<NonNullable<HomeData['fleet']>[number], 'day'>) =>
+    d.unpricedHours > 0
+      ? d.pricedHours > 0
+        ? `${usd(d.usd)} partial`
+        : 'Unavailable'
+      : usd(d.usd);
+  const today = days[days.length - 1] ?? total;
   const peak = Math.max(1e-9, ...days.map((d) => d.usd));
   const n = Math.max(days.length, 28);
   return (
     <Card
       kind="spend"
-      title="Compute spend"
+      title="Compute spend estimate"
       to={to}
       figure={
         <svg className="hub-bars" viewBox={`0 0 ${n * 10} 100`} preserveAspectRatio="none">
@@ -285,13 +304,19 @@ function Spend({ days, to }: { days: { day: string; usd: number }[]; to: string 
               height={Math.max(1, (100 * d.usd) / peak)}
             >
               <title>
-                {d.day} · {usd(d.usd)}
+                {d.day} · {amount(d)}
+                {d.unpricedHours > 0 ? ' · price missing' : ''}
               </title>
             </rect>
           ))}
         </svg>
       }
-      line={<Big n={usd(month)} says={`this month · ${usd(today)} today`} />}
+      line={
+        <Big
+          n={amount(total)}
+          says={`this month · ${amount(today)} today${total.unpricedHours > 0 ? ' · some machine prices missing' : ''}`}
+        />
+      }
     />
   );
 }

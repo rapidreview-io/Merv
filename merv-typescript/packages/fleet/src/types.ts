@@ -136,10 +136,13 @@ export interface PersonUse<Limit = number> {
   own: boolean;
 }
 export type ModelTokens = PersonUse;
-/** One day's machine dollars of a project. */
+/** One day's estimated machine dollars and price coverage for a project. */
 export interface FleetDaySpend {
   day: string;
+  /** Subtotal at recorded prices only; incomplete when unpricedHours is positive. */
   usd: number;
+  pricedHours: number;
+  unpricedHours: number;
 }
 /** A person's Fleet use over a window. */
 export interface FleetPersonUsage {

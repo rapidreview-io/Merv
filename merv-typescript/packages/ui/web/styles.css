@@ -3249,7 +3249,6 @@ pre.math--source {
 .hub-needs .ov-list > li:hover .ov-name {
   color: var(--active);
 }
-.hub-needs .ov-say,
 .hub-needs .ov-meta,
 .hub-needs .ov-said,
 .hub-needs .kind {
@@ -3421,6 +3420,7 @@ pre.math--source {
   fill: var(--stage-live);
   opacity: 0.95;
 }
+.hub-seg--failed,
 .hub-seg--stuck {
   fill: var(--refutes);
   opacity: 0.95;
@@ -3489,6 +3489,7 @@ pre.math--source {
 .hub-dot--live {
   background: var(--stage-live);
 }
+.hub-dot--failed,
 .hub-dot--stuck {
   background: var(--refutes);
 }

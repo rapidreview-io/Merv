@@ -799,3 +799,56 @@ test('normal completion also waits for the host shutdown receipt', async (t) => 
   await f.fleet.tick();
   assert.equal(f.runtimes.stopped.length, 1);
 });
+
+// Independent reproduction: uncapped historical rentals may lack a stamped offer price.
+test('projectSpend reports priced and unpriced hours without changing admission or state', async (t) => {
+  const f = await fixture(t, { globalLimit: 4, projectLimit: 4 });
+  const a = await f.fleet.request(f.caller, input('historical-unpriced'));
+  await f.fleet.tick();
+  const actual = await f.fleet.inspect(f.caller, a.id);
+  assert.ok(actual.runtime, 'uncapped unpriced provisioning still succeeds');
+  assert.equal(actual.usdPerHour, undefined);
+  f.advance(2 * 3_600_000);
+  const { countWrites } = await import('./fixtures/state.js');
+  const writes = countWrites(f.state);
+  const days = await f.fleet.projectSpend(f.caller);
+  assert.equal(writes(), 0);
+  assert.deepEqual(days.at(-1), { day: '2026-09-22', usd: 0, pricedHours: 0, unpricedHours: 2 });
+  assert.deepEqual(days[0], { day: '2026-09-01', usd: 0, pricedHours: 0, unpricedHours: 0 });
+  await assert.rejects(f.fleet.projectSpend({ ...f.caller, projectId: 'unrelated-project' }));
+  // A recorded zero is a known free price; it must not be classified as missing.
+  for (const price of [0, 1]) {
+    await f.state.transaction(async (tx) => {
+      const row = await tx.get<{ data_json: string }>(
+        'SELECT data_json FROM fleet_allocations WHERE id=?',
+        a.id,
+      );
+      const value = JSON.parse(row!.data_json);
+      value.usdPerHour = price;
+      await tx.run(
+        'UPDATE fleet_allocations SET data_json=? WHERE id=?',
+        JSON.stringify(value),
+        a.id,
+      );
+    });
+    assert.deepEqual((await f.fleet.projectSpend(f.caller)).at(-1), {
+      day: '2026-09-22',
+      usd: 2 * price,
+      pricedHours: 2,
+      unpricedHours: 0,
+    });
+  }
+  // A second unpriced rental makes coverage partial without losing the known subtotal.
+  await f.fleet.request(f.caller, {
+    requestId: 'second-unpriced',
+    owner: { kind: 'workflow', id: 'work_2' },
+  });
+  await f.fleet.tick();
+  f.advance(3_600_000);
+  assert.deepEqual((await f.fleet.projectSpend(f.caller)).at(-1), {
+    day: '2026-09-22',
+    usd: 3,
+    pricedHours: 3,
+    unpricedHours: 1,
+  });
+});

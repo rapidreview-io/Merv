@@ -401,15 +401,27 @@ export class FleetService implements Fleet {
       );
       const days: FleetDaySpend[] = [];
       for (let at = first; at <= now; at += DAY)
-        days.push({ day: new Date(at).toISOString().slice(0, 10), usd: 0 });
+        days.push({
+          day: new Date(at).toISOString().slice(0, 10),
+          usd: 0,
+          pricedHours: 0,
+          unpricedHours: 0,
+        });
       for (const a of rows.map(decode)) {
-        if (!a.runtime || !a.usdPerHour) continue;
+        if (!a.runtime) continue;
         const start = Math.max(first, Date.parse(a.createdAt));
         const end = Math.min(now, a.phase === 'released' ? Date.parse(a.updatedAt) : now);
         for (const day of days) {
           const open = Date.parse(`${day.day}T00:00:00.000Z`);
           const held = Math.min(end, open + DAY) - Math.max(start, open);
-          if (held > 0) day.usd += (held / 3_600_000) * a.usdPerHour;
+          if (held > 0) {
+            const hours = held / 3_600_000;
+            if (a.usdPerHour === undefined) day.unpricedHours += hours;
+            else {
+              day.pricedHours += hours;
+              day.usd += hours * a.usdPerHour;
+            }
+          }
         }
       }
       return days;
