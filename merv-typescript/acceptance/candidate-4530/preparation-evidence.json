@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "status": "preparation_only",
+  "candidateRevision": "4530bd6224b869ab8989814bf70d979f039d8428",
+  "production": "not_run",
+  "nativeModelCalls": 0,
+  "computeAllocated": false,
+  "syntheticBrowserConsent": false,
+  "localExtraction": {
+    "operatorListing": "tests/fixtures/tool-list-size.ts against loopback PostgreSQL test schemas; fixture cleanup completed",
+    "definitions": "82 actual registration definitions; no handler execution; no gaps",
+    "publishedActions": 142,
+    "matrixRows": 211,
+    "stages": 38,
+    "maintenanceCandidateCompared": "a5fe8936ca60276d5dfeb4427f943715597b7136",
+    "maintenanceRegistrationDefinitionsEqual": true
+  },
+  "validation": {
+    "testsPassed": 19,
+    "command": "python3 -m unittest discover -s acceptance -v",
+    "dryRuns": [
+      "codex 01-orientation",
+      "claude 31-compute-jobs"
+    ],
+    "fixtures": "actual deterministic seeded JSON and red/blue PNG; hashes in local manifest"
+  },
+  "files": {
+    "action-matrix.json": "834c5e0c4cce661c9ecd97d6fac53c550f43f1a17dc7816b22a306756bab1f86",
+    "registered-tools.json": "9ee421cadbd35f4fa4476b3ff72ccfd11d5d6aed5bf90c759c575fc86def2da7",
+    "operator-tools.json": "c57c3bca2b2f7e55e6e735f5ac284b53d2a89be9d47738a3a7686d38826a8ba3"
+  },
+  "remaining": "Every row needs live native discovery, actual action result, independent domain readback and cleanup; conditional/disabled/worker/UI lanes remain explicitly outstanding."
+}

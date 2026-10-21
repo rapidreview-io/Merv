@@ -1,0 +1,815 @@
+{
+  "project.read": {
+    "group": "01-orientation",
+    "fixture": "Signed-in synthetic project member; reader and admin identities separately; native plugin setup already proven.",
+    "verify": "A second fresh client reads the same identity/project/reference records; compare stable IDs and current role. Listing success is not authorization to mutate.",
+    "steps": {
+      "list": "List permitted projects, choose the run project, verify the deliberately inaccessible project is absent.",
+      "brief": "Read brief; compare project, actor role, date and paper IDs with the website.",
+      "get": "Read selected project identity and compare exact ID/name with website.",
+      "whoami": "Read caller actor and role; repeat under reader identity without changing memberships.",
+      "actors": "Admin lists only synthetic project's actors; reader must be denied if role policy requires it.",
+      "status": "Read dispatch, runner and blocker status; do not enable anything.",
+      "usage": "Read project and completed fixture task dependency-closure usage; preserve unknown/unreported accounting rather than asserting zero spend.",
+      "records": "List records with a small page, then recover fixture IDs, including terminal records and one nonexistent synthetic ID.",
+      "references": "Resolve the retained fixture artifact/task/experiment/review IDs plus one nonexistent ID; distinguish missing/unsupported."
+    }
+  },
+  "artifact.read": {
+    "group": "03-files",
+    "fixture": "One retained fixture JSON text artifact, tiny PNG and uploaded collection/file with measured hashes.",
+    "verify": "Fresh client re-reads metadata/content by immutable ID; independently hash the local original and retrieved bytes. Images require visual inspection.",
+    "steps": {
+      "list": "List a bounded page; use cursor to find the run's immutable artifacts.",
+      "get": "Read exact metadata and collection pagination; compare SHA-256 and size with measured fixture.",
+      "content": "Read fixture JSON in two bounded ranges; reassemble exact original and test one collection fileName.",
+      "download": "Request fixture download/manifest link through native tool; use documented ordinary download transport privately, hash bytes, never retain signed URL.",
+      "look": "View tiny PNG artifact as actual pixels, then a region; compare known colored marker.",
+      "storage": "Read upload/storage availability without allocating; missing provider is blocked."
+    }
+  },
+  "artifact.write": {
+    "group": "02-file-create",
+    "fixture": "Run seeded_mean.py locally once, retain JSON bytes; generate tiny PNG; <4 KiB upload file with actual SHA-256/size; stable run request IDs.",
+    "verify": "artifact.read get/content/look from a second client; hash bytes and retry same request ID to verify unchanged immutable ID.",
+    "steps": {
+      "create": "Create one JSON artifact from actual fixture output and one tiny PNG; retry identical requestId once; do not re-encode on-disk uploads into inline content.",
+      "upload_begin": "Begin upload of exact measured fixture bytes. Retain uploadId; use only documented PUT transport returned by tool, without logging URL/headers.",
+      "upload_resume": "Resume that pending upload before completion; obtain fresh transport privately and send unchanged bytes.",
+      "upload_complete": "Complete exact uploadId, then repeat same completion once; verify same artifact ID and measured checksum."
+    }
+  },
+  "board.read": {
+    "group": "05-board-read",
+    "fixture": "Board created by board.write draw, known note/link/shape IDs.",
+    "verify": "Fresh client board.read get plus actual board.read look image; compare retained shape IDs and artifact link.",
+    "steps": {
+      "list": "Find only the run board in a bounded project list.",
+      "get": "Read board scene summary and verify known note/link IDs and labels.",
+      "look": "Inspect actual rendered board, then focus on the note; do not count JSON scene as visual proof."
+    }
+  },
+  "board.write": {
+    "group": "04-board-create",
+    "fixture": "Run-specific title and retained artifact ID; no real user board.",
+    "verify": "board.read get and look in a second client, including atomicity after an intentionally invalid operation batch.",
+    "steps": {
+      "draw": "Create one note and artifact link, then edit/move it and add/delete a disposable shape; confirm one invalid batch changes nothing."
+    }
+  },
+  "paper.read": {
+    "group": "07-paper-read",
+    "fixture": "Synthetic project Problem plus one literature citation created in paper.write; retained previous revision.",
+    "verify": "Fresh client reads current and prior revisions, comparing exact section IDs/content and citation identity.",
+    "steps": {
+      "get": "Read all paper documents and current/published references.",
+      "document": "Read Problem current and retained prior revision.",
+      "outline": "Read Problem outline and compare section lengths with document read.",
+      "history": "Read Problem revision history; locate fixture edit and previous revision.",
+      "section": "Read Problem problem section in bounded ranges and at prior revision; compare exact text."
+    }
+  },
+  "paper.write": {
+    "group": "06-paper-write",
+    "fixture": "Owner/main agent on synthetic project; actual Nisa/public source metadata for citation, current paper revision, no experiment producer lease.",
+    "verify": "paper.read history/document/section by separate reader; citation matches source and immutable evidence. Verify stale conflicting edit rejection rather than forcing it.",
+    "steps": {
+      "patch": "Set Problem sections to the fixture question, same-sample limits and CPU constraints. Make one unique find/replace and verify stale conflict behavior; never edit reviewer-owned Methods/Results as producer.",
+      "cite": "Create one real reference with complete verified title/authors/identifier and attach fixture artifact reference; read back citation. Do not invent source metadata."
+    }
+  },
+  "experiment.read": {
+    "group": "12-workflow-observe",
+    "fixture": "Existing fixture experiment from experiment.write; completed attempt/report artifacts when testing exhibit.",
+    "verify": "Second fresh client reads workflow.read status and project.read records; compare attempt, revision, pinned submission/hash, not agent conclusions.",
+    "steps": {
+      "list": "List a bounded page and recover fixture experiment including terminal records.",
+      "get": "Read intent/details/current attempt, then paginate full history/evidence/submissions.",
+      "exhibit": "Read actual retained metrics exhibit and compare fixture output hashes and values; preserve omitted payload markers and no generated scientific success claim."
+    }
+  },
+  "experiment.write": {
+    "group": "10-experiment",
+    "fixture": "Dedicated synthetic project with <7 active experiments, CPU fixture and supported owner/producer/reviewer identities; actual hosted leases for execution handoffs.",
+    "verify": "experiment.read get/exhibit, workflow.read status and independent review.read get from a fresh observer; retained exact Git tree and artifact hashes.",
+    "steps": {
+      "create": "Create tiny seeded-mean experiment with immutable intent/details, explicit n=64 seed=1729 CPU limit and no population claim; stable requestId retry must reuse ID.",
+      "attach": "Attach worker-owned plan plus measured feasibility during planning; later attach real JSON result and report during running. Use current attempt/revision and exact artifact provenance; retain replaced selection history.",
+      "transition": "Follow actual workflow: submit_design, await independent review, execute approved fixture, running leased worker submit_results, independent result review. Separately exercise retry_running on a disposable interrupted execution; never manufacture approvals or execute before design approval."
+    }
+  },
+  "task.read": {
+    "group": "12-workflow-observe",
+    "fixture": "Fixture task plus checkpoint from actual leased worker.",
+    "verify": "workflow.read status/process and independent review record; compare goal/check numbering, immutable delivery and checkpoint.",
+    "steps": {
+      "list": "Read bounded task pages including terminal fixture task.",
+      "get": "Recover task compact/full and exact checkpointId; compare numbered checks and dependency state."
+    }
+  },
+  "task.write": {
+    "group": "09-task-create",
+    "fixture": "Two independent tiny tasks: success fixture and disposable terminal-failure fixture; second dependency task references first. No unrelated work.",
+    "verify": "task.read get and workflow.read status/process in a separate observer; prove dependency blocked then released only after genuine acceptance.",
+    "steps": {
+      "create": "Create task to retain actual seeded output and reproducibility/caveat README with three concrete checks; retry same requestId. Create dependent follow-up and observe dependency gate.",
+      "mark_failed": "Stop only separate disposable task with specific acceptance-cleanup reason at current revision; verify terminal state retains evidence, or documented service-owned suspension."
+    }
+  },
+  "workflow.read": {
+    "group": "08-workflow-orientation",
+    "fixture": "Synthetic task/experiment and supported role, later a live assigned worker for assignment.",
+    "verify": "Independent observer compares program graph/state with task/experiment/review receipts; read/preflight must not create work-start or change revision.",
+    "steps": {
+      "status": "Read overview then fixture instance; preflight one returned action/input without executing it; compare revision before/after.",
+      "assignment": "Read genuine authorized assignment without claiming/reassigning; verify declared tools/context/handoff and unchanged start state.",
+      "process": "Read fixture graph and compare actual taken edges with review/transition receipts; graph is not scientific evidence.",
+      "catalog": "Retain deployed program IDs/versions/states/actions as source for later permitted transitions."
+    }
+  },
+  "workflow.write": {
+    "group": "11-assigned-work",
+    "fixture": "Current authorized assignment; a separately prepared genuinely exhausted loop fixture for extend_limit.",
+    "verify": "workflow.read status/process and retained work-start/limit records; unchanged instance revision where specified.",
+    "steps": {
+      "begin": "Begin assigned interactive node at current revision, retry exact begin and verify one first-start timestamp. This must not mint a lease or claim a review.",
+      "extend_limit": "Admin adds exactly one return only to prepared exhausted loop with reason/requestId; read limit before/after, repeat requestId, verify no duplicate grant. Missing exhausted fixture is blocked."
+    }
+  },
+  "review.read": {
+    "group": "14-review-observe",
+    "fixture": "Actual queued/submitted design/result/task/reflection review with pinned evidence.",
+    "verify": "Compare pinned snapshot/revision/artifact IDs and final workflow transition; inspect evidence content independently.",
+    "steps": {
+      "list": "List reviews for fixture subject; compare claimable under producer and independent reviewer, without switching attribution through a new key.",
+      "get": "Read numbered criteria, formatVersion, snapshot/hash and pinned evidence; use domain-specific guidance for submission."
+    }
+  },
+  "review.write": {
+    "group": "13-independent-review",
+    "fixture": "Genuinely independent authorized reviewer/lease; another claimable disposable review for release. Never owner's override or producer identity.",
+    "verify": "review.read get plus workflow.read status and exact reviewed Git tree; separate observer checks reviewer provenance, each criterion evidence and return route.",
+    "steps": {
+      "start": "Independent reviewer claims actual review and reads evidence; producer claim must fail. Never set override to bypass independence.",
+      "submit": "Reviewer actually verifies fixture evidence and submits complete criterion findings at pinned revision. Cover a genuine missing-evidence needs_changes return then repaired independent pass; task pass requires its leased checkout.",
+      "release": "Release only independently claimed disposable review with reason/requestId before submission; next eligible reviewer can claim without changing work."
+    }
+  },
+  "session.read": {
+    "group": "16-session-observe",
+    "fixture": "Already allocated actual worker, instanceId/threadId and acknowledged messages; operator/owner, not worker caller.",
+    "verify": "Second observer compares thread/session IDs and durable message/call metadata with worker final/lease receipt; no heartbeat-as-progress claims.",
+    "steps": {
+      "find": "Read fixture current/latest session; distinguish no live worker from lost work.",
+      "threads": "Read stage/role lineage and visits, including resumed visit on same work.",
+      "messages": "Read sent owner note, worker acknowledgement/question and answer; verify inquiry status.",
+      "calls": "Retain actual worker Merv call metadata and statuses; do not infer argument correctness from metadata alone.",
+      "stuck": "Read blockers before/after prepared retry/compute wait; record exact code and permitted next step."
+    }
+  },
+  "session.write": {
+    "group": "15-session-controls",
+    "fixture": "Dedicated test project, already allocated worker, operator-approved dispatch state/budget and separately prepared held revision. No provisioning permission implied.",
+    "verify": "session.read messages/stuck/find, project.read status/usage and worker session receipt; admin observer verifies only targeted fixture changed.",
+    "steps": {
+      "message": "Send one consolidated run note/question answer to fixture thread with stable requestId; verify actual worker acknowledgement, not just queue receipt.",
+      "ask": "Ask one bounded factual status question of retained fixture conversation; verify reply and no work lease/state mutation. Separately metered model turn needs existing operator budget.",
+      "dispatch": "On isolated project only, inspect existing setting and test disabling dispatch; enabling is separately authorized release work. Preserve original state and verify no new rental.",
+      "halt": "Halt only exact disposable sessionId with reason; never omit sessionId (would halt entire project).",
+      "release_hold": "After actual hold cause is repaired, release only prepared held revision at its expectedRevision; retry requestId and verify count reset once.",
+      "budget": "Set tight limit on disposable fixture instance dependency closure, read project.read usage, restore original exact limits. Do not clear a project-wide safety budget."
+    }
+  },
+  "code.read": {
+    "group": "18-git-observe",
+    "fixture": "Normal authenticated Git setup proven separately, accepted fixture unit and historical operation receipt if available.",
+    "verify": "Ordinary git show/log/ref hashes plus independent workflow/review acceptance. No OAuth token for Git and no privileged injected key.",
+    "steps": {
+      "files": "Read root and tiny fixture README at exact accepted commit; compare ordinary Git bytes.",
+      "log": "Read bounded log for fixture path/commit and compare parents/OIDs with native Git.",
+      "status": "Read repository binding/main/blocked bases before and after integration.",
+      "unit": "Read accepted unit plus writer generation/canonicalHead/review checkout; compare immutable review tree and assigned branch.",
+      "operation": "Read a real retained historical operation receipt and verify exact head/tree/parent against Git. Fresh project without historical receipt is blocked, not invented."
+    }
+  },
+  "code.write": {
+    "group": "19-git-recovery",
+    "fixture": "Admin-only disposable synthetic repository and operator-prepared failed/suspended/quarantined/mismatched bases/writer. No fault injection or control of real project bases.",
+    "verify": "code.read status/unit/operation, native Git ref/OID and retained receipt from a separate admin observer. Every action targets recorded fixture key, never default/main blindly.",
+    "steps": {
+      "base_retry": "Retry prepared failed base once with reason/requestId; confirm attempts reset and same base identity.",
+      "base_suspend": "Suspend disposable unresolved base; verify retained work/history and no execution.",
+      "base_resume": "Resume the suspended fixture base and verify prior state/history.",
+      "base_cancel": "Permanently cancel separate disposable unresolved base and retain waiter blockers; never reuse success fixture.",
+      "base_quarantine": "Quarantine only separate disposable fixture base with known descendant; confirm both unavailable while immutable result retained.",
+      "base_release": "Release that verified false-alarm quarantine with specific verification reason; independently quarantined descendants must remain fenced.",
+      "base_repair": "On operator-prepared interrupted mismatched-ref fixture only, repair then retry; verify dropped OID receipt. Do not introduce a broken ref yourself.",
+      "unit_fence": "Fence prepared quarantined final-capture writer at last admitted commit; verify generation/provenance and retained unadmitted data. Healthy writer refusal alone is not positive coverage.",
+      "repository_configure": "Admin sets fixture denyGlobs without secret exemptions and check:null; verify admission policy then restore previous exact policy. Never rent a check machine.",
+      "repository_prepare": "After normal user-branch push, prepare exact source head/current main with stable requestId, await genuinely independent integration review; stale main must refuse.",
+      "publication_sync": "After accepted integration, sync and verify ancestry/main advanced to exact accepted tree; repeat is no-op, no external GitHub publishing."
+    }
+  },
+  "research.read": {
+    "group": "22-research-observe",
+    "fixture": "Tiny manual cycle with selected terminal fixture work and eventually completed predecessor/successor.",
+    "verify": "Fresh observer compares selected IDs, child reflection/consolidation and retained digest artifact contents.",
+    "steps": {
+      "list": "List fixture cycles and child references.",
+      "get": "Read definition/research/reflection/consolidation gates and exact selections.",
+      "lineage": "Read one successor chain and verify predecessor digest artifact, no duplicate successor."
+    }
+  },
+  "research.write": {
+    "group": "20-research",
+    "fixture": "Completed fixture task/experiment plus separate disposable cycle; five independent lens agents and independent reviewers available before advancing reflection. automatic:false, maxCycles:1.",
+    "verify": "research.read get/lineage, reflection.read get, workflow.read status and immutable digest/acceptance receipts from independent observer.",
+    "steps": {
+      "create": "Create one bounded manual research cycle selecting existing fixture work, no automatic next-wave creation.",
+      "replan": "While defining/researching, replace selection with explicit same-project fixture work and verify removed dependency no longer awaited.",
+      "advance": "Advance only when workflow allows; reflection requires real five-lens work/review and hosted consolidation where applicable. Choose nextWave:skip to prevent extra workloads; preserve every gate receipt.",
+      "end": "Abandon only separate disposable cycle with specific reason; inspect child reflection/consolidation and close separately if necessary."
+    }
+  },
+  "reflection.read": {
+    "group": "22-research-observe",
+    "fixture": "Actual synthetic reflection wave and independent lens IDs.",
+    "verify": "Second observer compares exact five lens outputs, synthesis artifacts and review snapshot; lens privacy stays enforced.",
+    "steps": {
+      "list": "List waves and current stage.",
+      "get": "Read exact wave/lens submissions/synthesis review.",
+      "lens": "Read authorized lens output and verify it does not expose other lens outputs to that lens worker."
+    }
+  },
+  "reflection.write": {
+    "group": "21-reflection",
+    "fixture": "No unfinished wave; small finished fixture corpus, five independent assigned lens authors and independent synthesis reviewer; separate abandoned wave after first completes.",
+    "verify": "reflection.read get and workflow.read status; independently inspect each pinned report, identity and review. No forced owner acceptance.",
+    "steps": {
+      "create": "Create one five-lens wave with stable requestId; verify new task/experiment creation pauses until approval, execute real lens/synthesis/consolidation workflow.",
+      "end": "End only separate disposable wave with documented inability-to-complete reason; verify open review withdrawn and child lenses ended, then research owner closes waiting cycle separately."
+    }
+  },
+  "report.read": {
+    "group": "12-workflow-observe",
+    "fixture": "Real report draft produced by leased worker from approved fixture plan and one simple chart; renderer available.",
+    "verify": "Independent reviewer opens actual rendered chart/page images, checks data against retained fixture output and records pixel proof/artifact hashes.",
+    "steps": {
+      "check": "Check fixture draft structure, references, data and chart approval status; preserve errors for correction, no synthetic clean result.",
+      "review_visual": "Render next unapproved tiny chart and full section image, visually inspect labels/data before worker approval."
+    }
+  },
+  "feed.read": {
+    "group": "24-optional-feed",
+    "fixture": "Feed explicitly enabled in deployed config and run-specific post from feed.write post; default config disables it.",
+    "verify": "Second client reads same immutable post/sequence and independent activity event cursor; absence is blocked/disabled, not pass.",
+    "steps": {
+      "list": "Read bounded page then exclusive sequence cursor.",
+      "get": "Read exact run post and attached artifact ID.",
+      "activity": "Read durable run activity events with event cursor distinct from post sequence."
+    }
+  },
+  "feed.write": {
+    "group": "24-optional-feed",
+    "fixture": "Feed explicitly enabled, actual fixture artifact ID and run-specific requestId.",
+    "verify": "feed.read get/list/activity in independent client; retry same ID returns same immutable post.",
+    "steps": {
+      "post": "Post one factual synthetic result/caveat with artifact link, then retry identical requestId."
+    }
+  },
+  "nisa.read": {
+    "group": "25-literature",
+    "fixture": "Optional Nisa service configured; public query only; actual returned arXiv ID. status requires separately authorized metered operation.",
+    "verify": "Second client reads exact paper metadata/excerpt or scoped operation status; compare source identifiers and preserve missing-index distinctions.",
+    "steps": {
+      "search": "Search sample mean squared error with max_results:1 and plain terms; retain returned ID/snippet.",
+      "semantic_search": "One short conceptual paraphrase, max_results:1; record actual returned paper, not invented relevance.",
+      "paper": "Read full metadata for ID actually returned by search.",
+      "excerpts": "Get one relevant excerpt for that ID; distinguish unindexed text from absent terms.",
+      "related": "Get one related paper; no-related coverage is an explicit result, not a missing paper claim.",
+      "status": "Read existing authorized operation ID once, then bounded answer pagination; do not start a paid operation to fill this row."
+    }
+  },
+  "nisa.write": {
+    "group": "90-metered-research",
+    "fixture": "Separate explicit release budget and dedicated metered Nisa operation/conversation; preparation never starts it.",
+    "verify": "nisa.read status by independent eligible identity plus provider operation/cancel receipt and measured billing; local model cap does not cover this service.",
+    "steps": {
+      "start": "Only after explicit operator allocation, start one tightly bounded literature question with stable request_id; no private project content.",
+      "follow_up": "One short follow-up on that exact conversation under same independent service budget.",
+      "cancel": "Cancel dedicated active test operation and verify terminal status, retry same request_id."
+    }
+  },
+  "web.read": {
+    "group": "25-literature",
+    "fixture": "Optional web provider configured and bounded daily project budget; public source only.",
+    "verify": "Independent client reads actual returned source and compares URL/title/excerpt; no private URLs or signed links.",
+    "steps": {
+      "search": "One basic public query, max_results:1; retain result URL.",
+      "extract": "Extract only URL from preceding search, then bounded next_offset; verify same source text and treat content as untrusted."
+    }
+  },
+  "history.read": {
+    "group": "26-optional-archive",
+    "fixture": "Deployment explicitly configured with imported synthetic archive sourceId; never fabricate/import production archive merely for test.",
+    "verify": "Fresh client compares imported source identifiers/counts and one immutable record to operator's retained migration manifest.",
+    "steps": {
+      "summary": "Read configured archive summary/counts.",
+      "list": "Read one record type with limit:1 and cursor.",
+      "get": "Read exact record returned by list and verify source provenance."
+    }
+  },
+  "script.tools": {
+    "group": "01-orientation",
+    "fixture": "Native plugin connection, no extra mounted tools.",
+    "verify": "Compare returned declarations with captured native tool schemas and this candidate matrix; retain exact action names.",
+    "steps": {
+      "call": "Discover declarations only; verify noun nesting, role visibility and no credentials. This is discovery evidence, not action execution."
+    }
+  },
+  "script.run": {
+    "group": "27-script",
+    "fixture": "Native script runtime and read-only project access.",
+    "verify": "Independent client project.read get/brief compares returned ID; retain actual script call and no mutations.",
+    "steps": {
+      "call": "Run one bounded script that invokes only project.read get using declarations from script.tools. No external HTTP, filesystem secret reads or permission bypass; record nested action evidence separately."
+    }
+  },
+  "sandboxes.job": {
+    "group": "31-compute-jobs",
+    "fixture": "Already allocated run-owned CPU sandbox and authorized job budget; no create/allocation in preparation. Two tiny jobs: fixture output and separate bounded sleep for cancel.",
+    "verify": "Independent sandbox.job status/read plus retained output hash, job ID and provider billing/status; cancel must reach terminal state.",
+    "steps": {
+      "run": "On allocated sandbox run the exact standard-library fixture with timeout_seconds:10 and outputs directory; stable idempotency_key. No GPU or packages.",
+      "status": "Observe job ID with bounded wait<=30 and cursor, including exit code and output artifact.",
+      "read": "Read bounded stdout/stderr range and compare exact fixture output.",
+      "cancel": "Cancel only dedicated bounded-sleep job, repeat once and verify terminal state.",
+      "list": "Filter by exact fixture sandbox/name with small limit; paginate without exposing unrelated jobs."
+    }
+  },
+  "sandboxes.sandbox": {
+    "group": "30-compute-inspect",
+    "fixture": "Run-owned sandbox; options/providers/spend reads first. Creation, renewal and deletion require release operator authorization and budget; never do them during preparation.",
+    "verify": "Independent sandbox get/events and provider deletion/lease receipts, not client process exit.",
+    "steps": {
+      "list": "List current test namespace sandboxes with bounded pagination.",
+      "get": "Read exact allocated test sandbox ID and owner/lease/state.",
+      "options": "Read lowest CPU offers without choosing/renting.",
+      "providers": "Read configured provider availability without topping up.",
+      "create": "RELEASE ONLY: explicitly approved cheapest CPU offer, shortest supported lease, stable idempotency key; preserve allocation/price receipt. Otherwise blocked.",
+      "renew": "RELEASE ONLY: minimally extend dedicated lease after approval, compare old/new expiry and receipt.",
+      "delete": "CLEANUP ONLY: delete exact run-owned sandbox after retained outputs and verify provider absence; never bulk delete.",
+      "events": "Read exact sandbox lifecycle events/cursor and compare creation/job/deletion receipts."
+    }
+  },
+  "sandboxes.snapshot": {
+    "group": "33-compute-snapshot",
+    "fixture": "Dedicated disposable sandbox containing only tiny fixture; explicit storage/restore compute budget. Never clone a real user snapshot.",
+    "verify": "Independent snapshot get/list and restored fixture checksum; provider state verifies cleanup.",
+    "steps": {
+      "list": "List dedicated test namespace snapshots with small limit.",
+      "get": "Read exact fixture snapshot ID and source metadata.",
+      "create": "RELEASE ONLY: snapshot tiny run-owned sandbox after outputs retained; save receipt and storage usage.",
+      "restore": "RELEASE ONLY: restore fixture snapshot using explicitly approved capacity; verify exact fixture hash, record new allocation.",
+      "delete": "CLEANUP ONLY: delete exact disposable snapshot after proof retained; verify absent while unrelated snapshots remain."
+    }
+  },
+  "sandboxes.spend": {
+    "group": "30-compute-inspect",
+    "fixture": "Existing allocated synthetic namespace; separate authorized observer.",
+    "verify": "Compare cumulative spend/operation receipts; unknown price is not zero. No top-up.",
+    "steps": {
+      "status": "Read available credit/usage/limits without changing budget.",
+      "report": "Read bounded test-window spend and reconcile job/sandbox IDs with receipts."
+    }
+  },
+  "sandboxes.storage": {
+    "group": "32-compute-storage",
+    "fixture": "Tiny measured fixture file in run-owned namespace; explicit storage allowance; use tool-provided signed transfer privately.",
+    "verify": "Independent manifest/get/download size and SHA-256, list/usage delta and delete absence; never retain signed URLs.",
+    "steps": {
+      "upload": "Begin tiny measured file upload with stable idempotency key and actual hash; ordinary documented byte transport only.",
+      "resume": "Resume exact pending upload without generating duplicate object.",
+      "complete": "Complete upload, retry same ID, verify object hash/size.",
+      "manifest": "Read file manifest and compare local measured bytes.",
+      "get": "Read exact object metadata and retained ownership.",
+      "list": "List run namespace/prefix with small page and cursor.",
+      "download": "Download exact fixture using ordinary documented transport, hash bytes privately.",
+      "delete": "CLEANUP ONLY: delete disposable exact object after evidence retained; verify absence, never namespace-wide delete.",
+      "usage": "Read namespace bytes before/after upload/delete, allowing documented accounting delay."
+    }
+  },
+  "sandboxes.workflow": {
+    "group": "34-compute-pipeline",
+    "fixture": "Explicitly approved bounded pipeline on existing/approved cheapest CPU capacity; separate disposable cancellation workflow.",
+    "verify": "Independent workflow get/list plus actual job outputs, terminal cancel and provider cleanup receipts.",
+    "steps": {
+      "submit": "RELEASE ONLY: submit one tiny fixture node under explicit pipeline budget and stable idempotency key; no automatic unbounded retries.",
+      "get": "Read exact submitted workflow state and referenced jobs/output IDs.",
+      "list": "Find run workflow with bounded pagination.",
+      "cancel": "Cancel separate disposable workflow and verify descendant jobs terminal; inspect any still-allocated machines."
+    }
+  },
+  "fleet": {
+    "group": "35-fleet",
+    "fixture": "Already allocated run-owned Fleet allocation, disposable task and operator-prepared exhausted retry fixture. No new rental permission implied.",
+    "verify": "Independent fleet get, project.read status, worker Git final-capture receipt and actual provider deletion. Shutdown requested is not deletion.",
+    "steps": {
+      "list": "Read bounded active/recent allocations and isolate exact run IDs.",
+      "get": "Read exact test allocation and distinguish shutdown requested from provider deleted.",
+      "drain": "RELEASE CLEANUP: drain only dedicated allocation; verify stopped admission, final Git capture receipt and eventual provider release.",
+      "halt": "RELEASE CLEANUP: halt separate disposable allocation only; verify fence and deletion outcome, preserve interrupted evidence.",
+      "project_limit": "Read existing project limit without machines. Only in separately authorized disposable project test a restrictive limit and restore exact prior setting; never raise to allocate.",
+      "workflow_retry_status": "Read exhausted unclaimed retry reason for prepared instance/revision.",
+      "workflow_retry": "RELEASE ONLY: after cause fixed, admin authorizes one new two-attempt window with reason/requestId; verify idempotency and budget. Missing fixture is blocked."
+    }
+  },
+  "task.checkpoint": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "task.read get with checkpointId",
+    "steps": {
+      "call": "Save actual halfway fixture command/output and next step as checkpoint; resume same assignment and verify checkpoint reference."
+    }
+  },
+  "task.context": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "workflow.read assignment and task.read get",
+    "steps": {
+      "call": "Read actual leased task context and check goal/check/dependency references before execution."
+    }
+  },
+  "task.submit_delivery": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "task.read get, review.read get and exact frozen Git tree",
+    "steps": {
+      "call": "Actually run fixture, retain output/README and submit evidence for each numbered check; frozen Git tree must be from stopped assigned producer."
+    }
+  },
+  "reflection.submit_lens": {
+    "group": "21-reflection",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "reflection.read lens/get and contributor provenance",
+    "steps": {
+      "call": "Each of five independently assigned lens workers reads the real tiny corpus and submits its own immutable report with Summary at current revision."
+    }
+  },
+  "reflection.submit": {
+    "group": "21-reflection",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "reflection.read get plus exact artifacts and review snapshot",
+    "steps": {
+      "call": "Assigned synthesizer reconciles five actual lens reports, submits immutable synthesis and structured change spec, then waits for independent review."
+    }
+  },
+  "report.open": {
+    "group": "12-workflow-observe",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "report.read check and retained draft metadata",
+    "steps": {
+      "call": "Cached-call compatibility only: open genuine approved experiment report; current discovery hides this name. Never claim new-client discoverability."
+    }
+  },
+  "report.write": {
+    "group": "12-workflow-observe",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "report.read check/review_visual and draft revision",
+    "steps": {
+      "call": "Leased report author writes actual fixture findings and one tiny chart/data file; test revision fence and invalidation of prior chart approval."
+    }
+  },
+  "report.clear": {
+    "group": "12-workflow-observe",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "report.read check and exact approved prefill",
+    "steps": {
+      "call": "On a separate disposable draft only, clear written sections/data/approvals back to approved plan prefill."
+    }
+  },
+  "report.approve_visual": {
+    "group": "12-workflow-observe",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "report.read check/review_visual and approval revision",
+    "steps": {
+      "call": "Actually inspect chart pixels and checks; approve only correct current chart revision. Never auto-approve from JSON."
+    }
+  },
+  "report.render": {
+    "group": "12-workflow-observe",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "artifact.read get/download and independent actual PDF/page inspection",
+    "steps": {
+      "call": "Render preview, inspect actual pages, then final:true with requestId only after valid chart approvals; retain source/PDF/page artifact IDs."
+    }
+  },
+  "session.messages": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "session.read messages from owner observer",
+    "steps": {
+      "call": "Leased worker reads queued consolidated owner note before other work; recover exact message ID."
+    }
+  },
+  "session.question.resolve": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "session.read messages and resumed wait state",
+    "steps": {
+      "call": "Authorized Pi conversation resolves actual owner question with answer; do not fake an external owner approval."
+    }
+  },
+  "session.ask_owner": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "session.read messages and question/answer IDs",
+    "steps": {
+      "call": "Actual worker asks one bounded clarification; owner responds through ordinary interface, worker records answer without replacing original task."
+    }
+  },
+  "session.await_compute": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "session.read stuck/find/messages and retained resume visit",
+    "steps": {
+      "call": "Worker with actual compute prerequisite enters documented wait, owner supplies allocated test resource/answer, same assignment resumes. Never claim allocated capacity from a mock."
+    }
+  },
+  "session.message.ack": {
+    "group": "11-assigned-work",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "session.read messages acknowledged state",
+    "steps": {
+      "call": "Actual worker acknowledges exact delivered message IDs once, retries safely, verifies note no longer blocks calls."
+    }
+  },
+  "customer_experiment.get": {
+    "group": "41-intake-worker",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "request website plus immutable contract version",
+    "steps": {
+      "call": "Bound worker reads its isolated synthetic request and frozen contract; no customer impersonation."
+    }
+  },
+  "customer_experiment.files": {
+    "group": "41-intake-worker",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "request file manifest and original local checksum",
+    "steps": {
+      "call": "Bound worker lists tiny customer fixture files frozen into contract, including hash/manifest."
+    }
+  },
+  "customer_experiment.file_download": {
+    "group": "41-intake-worker",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "local checksum versus frozen manifest",
+    "steps": {
+      "call": "Bound worker retrieves exact frozen fixture file through documented transport without logging signed URL."
+    }
+  },
+  "customer_experiment.progress": {
+    "group": "41-intake-worker",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "request website progress event",
+    "steps": {
+      "call": "Bound worker records one truthful bounded execution progress update and observes public owner view."
+    }
+  },
+  "customer_experiment.submit_results": {
+    "group": "41-intake-worker",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "request website result and independent result review receipt",
+    "steps": {
+      "call": "Bound running worker submits actual fixture metrics/report and evidence under frozen contract; do not pay or approve on customer behalf."
+    }
+  },
+  "nisa.research": {
+    "group": "90-metered-research",
+    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
+    "verify": "nisa.read status and exact service receipt",
+    "steps": {
+      "start": "Cached worker compatibility only; current discovery supersedes with nisa.write. Any actual invocation needs separate metered service authorization. Legacy action start.",
+      "follow_up": "Cached worker compatibility only; current discovery supersedes with nisa.write. Any actual invocation needs separate metered service authorization. Legacy action follow_up.",
+      "status": "Cached worker compatibility only; current discovery supersedes with nisa.write. Any actual invocation needs separate metered service authorization. Legacy action status.",
+      "cancel": "Cached worker compatibility only; current discovery supersedes with nisa.write. Any actual invocation needs separate metered service authorization. Legacy action cancel."
+    }
+  },
+  "screen.read": {
+    "group": "40-pi-ui",
+    "fixture": "Live internal Pi conversation with real browser page context; no external MCP substitute.",
+    "verify": "Actual browser screenshot/navigation plus Pi conversation snapshot; preserve user consent and no synthetic screen response.",
+    "steps": {
+      "look": "Ask Pi to inspect the tiny fixture board/artifact pixels with supported screen tool; compare real visible marker.",
+      "show": "Ask Pi to show exact fixture record, verify browser navigation and back behavior."
+    }
+  },
+  "pi.create": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Open one empty synthetic conversation; verify no machine allocation merely by opening."
+    }
+  },
+  "pi.list": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "List own conversations and verify another user conversation is invisible."
+    }
+  },
+  "pi.snapshot": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Read canonical fixture conversation and resumed transient tail."
+    }
+  },
+  "pi.prompt": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Inspect actual offered instructions/tools with secret-free capture, compare allowed profile."
+    }
+  },
+  "pi.send": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "RELEASE ONLY: send tiny task request using stable commandId and preallocated capacity; inspect actual worker evidence."
+    }
+  },
+  "pi.warm": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "RELEASE ONLY: explicit approved allocation required; verify capacity startup and receipt; otherwise blocked."
+    }
+  },
+  "pi.screen": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Browser answers genuine pending Pi screen request; verify real screenshot/navigation and matching request ID."
+    }
+  },
+  "pi.voice": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "RELEASE ONLY: genuine browser WebRTC/microphone permission and explicit model budget; short synthetic utterance, then stop. No fake SDP/consent."
+    }
+  },
+  "pi.stop": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Interrupt only dedicated conversation turn; verify other conversations remain unaffected."
+    }
+  },
+  "pi.machine.set": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "RELEASE ONLY: explicit approved machine migration budget required; verify old answer completes and successor serves. Otherwise blocked."
+    }
+  },
+  "pi.model.set": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "Select authorized existing model for next turn only; verify current turn keeps original model and next turn metadata changes."
+    }
+  },
+  "pi.machine.stop": {
+    "group": "40-pi-ui",
+    "fixture": "Internal Pi website with own synthetic conversation; UI-only route, not external MCP. Capacity/budget prepared separately where needed.",
+    "verify": "Pi snapshot/prompt plus actual session/Fleet/provider receipt or browser evidence from independent observer.",
+    "steps": {
+      "call": "CLEANUP ONLY: dedicated project machine, all test turns retained; stop through UI and verify actual provider state."
+    }
+  },
+  "intake.read": {
+    "group": "41-intake",
+    "fixture": "Actual synthetic public request and bound intake Pi profile; no customer payment or submission during preparation.",
+    "verify": "Website request/plan/file manifest versus actual profile tool response, compare revisions/IDs; external MCP must not expose profile-only actions.",
+    "steps": {
+      "request": "Read bound request intent, scope and immutable identity.",
+      "plan": "Read current draft/revision and compare customer page.",
+      "files": "List tiny uploaded request file and hash.",
+      "file": "Read bounded fixture file text and compare original.",
+      "file_link": "Request exact fixture transfer link privately and verify bytes; never retain signed URL.",
+      "compute": "Read current offered capacity/price without choosing or paying."
+    }
+  },
+  "intake.write": {
+    "group": "41-intake",
+    "fixture": "Bound intake Pi profile on disposable request, actual customer draft/revision. No production payment authorization.",
+    "verify": "Website plan revisions and retained contract/proposal; independent observer confirms no payment or unauthorized customer acceptance.",
+    "steps": {
+      "edit_plan": "Edit bounded seeded-fixture plan at expected revision; conflict against genuine stale revision must not overwrite customer edit.",
+      "verify_plan": "Verify actual customer-submitted tiny plan. Use genuine changes_requested if incomplete; accept only after real evidence and human release authorization because it freezes priced contract.",
+      "propose": "Prepare structured tiny offer only in authorized synthetic intake flow, verify scope/price/limits on website; do not purchase."
+    }
+  },
+  "board.scene": {
+    "group": "42-ui-only",
+    "fixture": "Synthetic board/integration record and ordinary website session; UI-only tool not exposed to external agent.",
+    "verify": "Fresh website view plus corresponding native agent readback and retained revision/IDs.",
+    "steps": {
+      "call": "Read synthetic board exact scene through website and compare agent get/look."
+    }
+  },
+  "board.save": {
+    "group": "42-ui-only",
+    "fixture": "Synthetic board/integration record and ordinary website session; UI-only tool not exposed to external agent.",
+    "verify": "Fresh website view plus corresponding native agent readback and retained revision/IDs.",
+    "steps": {
+      "call": "Save one ordinary UI edit on synthetic board at current revision and verify agent look."
+    }
+  },
+  "board.set": {
+    "group": "42-ui-only",
+    "fixture": "Synthetic board/integration record and ordinary website session; UI-only tool not exposed to external agent.",
+    "verify": "Fresh website view plus corresponding native agent readback and retained revision/IDs.",
+    "steps": {
+      "call": "Set only synthetic board state through supported UI and verify retained scene; no direct API substitute."
+    }
+  },
+  "code.publication.read": {
+    "group": "42-ui-only",
+    "fixture": "Synthetic board/integration record and ordinary website session; UI-only tool not exposed to external agent.",
+    "verify": "Fresh website view plus corresponding native agent readback and retained revision/IDs.",
+    "steps": {
+      "call": "Read retained integration publication through Code website and compare accepted commit/receipt."
+    }
+  },
+  "actor.create": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.create is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "actor.credentials": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.credentials is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "actor.issue_token": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.issue_token is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "actor.rotate_token": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.rotate_token is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "actor.revoke_token": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.revoke_token is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "actor.revoke": {
+    "group": "43-credential-boundary",
+    "fixture": "Credential administration is UI-tier and locked for agents; no issuance or credential-store reads in this preparation.",
+    "verify": "Live native discovery absence and genuine server refusal under external identity; website administration separately reviewed. Never retain token bytes.",
+    "steps": {
+      "call": "Verify actor.revoke is absent from external plugin discovery and inaccessible to external actor/key. Do not use a new actor/key to bypass reviewer independence. Mark positive administration coverage blocked/retired if deployed route refuses it."
+    }
+  },
+  "sandboxes.access": {
+    "group": "36-worker-ssh",
+    "fixture": "Genuinely assigned authorized worker and existing run-owned sandbox; one ephemeral SSH key pair generated privately. External agent discovery must exclude credential issuance.",
+    "verify": "Assigned worker connects through ordinary SSH and verifies fixture checksum; separate observer retains certificate expiry/sandbox scope metadata only, never private key/certificate/token bytes.",
+    "steps": {
+      "gateway": "Worker reads gateway/host-key metadata and compares pinned host identity; no disabled host-key verification.",
+      "certificate": "Authorized worker requests at most 300-second certificate for exact allocated test sandbox and its ephemeral public key; verify only scoped host access and expiry. External/Pi conversation must be denied; no owner-injected credential."
+    }
+  }
+}
