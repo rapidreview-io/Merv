@@ -1,10 +1,16 @@
+import { OAuthAdmission } from './oauth-admission.js';
 import { z } from 'zod';
 import type { MountHandler } from '@merv/api/types';
 import type { IdentityProvider } from '@merv/identity/types';
 import { OAuth, OAuthError } from './oauth.js';
 import { MervError } from '@merv/contracts';
 
-export function oauthRoutes(oauth: OAuth, identity: IdentityProvider): MountHandler {
+export function oauthRoutes(
+  oauth: OAuth,
+  identity: IdentityProvider,
+  trustedProxyIps: readonly string[] = ['127.0.0.1', '::1'],
+): MountHandler {
+  const admission = new OAuthAdmission(trustedProxyIps, oauth.clock);
   return async (req, res, r) => {
     res.setHeader('cache-control', 'no-store');
     res.setHeader('pragma', 'no-cache');
@@ -12,6 +18,23 @@ export function oauthRoutes(oauth: OAuth, identity: IdentityProvider): MountHand
     res.setHeader('x-content-type-options', 'nosniff');
     try {
       const path = r.url.pathname;
+      const kind =
+        req.method === 'POST' && path === '/oauth/register'
+          ? 'register'
+          : req.method === 'GET' && path === '/oauth/authorize'
+            ? 'authorize'
+            : null;
+      if (kind) {
+        const retry = admission.admit(req, kind);
+        if (retry !== null) {
+          res.setHeader('retry-after', String(retry));
+          throw new OAuthError(
+            'temporarily_unavailable',
+            'Too many OAuth requests; retry shortly',
+            429,
+          );
+        }
+      }
       if (req.method === 'GET' && path === '/.well-known/oauth-authorization-server')
         return oauth.metadata();
       if (

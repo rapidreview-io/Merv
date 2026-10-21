@@ -14,7 +14,17 @@ email configuration when invitations are enabled.
 Serve `/oauth/*`, `/.well-known/oauth-authorization-server`,
 `/.well-known/oauth-protected-resource[/mcp]`, `/connect/*`, `/mcp` and `/ui/*`
 through the same public HTTPS origin. Do not cache token, consent or discovery
-responses. Apply ingress abuse limits to public registration/authorization routes.
+responses. The application limits registration to 10 requests and authorization
+to 30 requests per source per 60 seconds, before allocating durable records.
+Limits are per process, group IPv6 sources by /64, cap memory at 10,000 counters,
+and return HTTP 429 with Retry-After. Multiple replicas multiply these limits.
+
+`MERV_OAUTH_TRUSTED_PROXY_IPS` optionally names comma-separated exact IP addresses
+of immediate proxies (default: `127.0.0.1,::1`). Verify the actual Caddy socket peer
+in the deployed container network before adding its bridge address. Only trusted
+peers may supply the rightmost X-Forwarded-For address; otherwise limits use the
+socket peer. Caddy must append the connecting address. Do not add arbitrary
+networks or assume an upstream CDN. Additional ingress limits are optional.
 Build the UI and run `npm run build:clients` before building the server. The
 published bundle contains remote configuration and skills only; no executable
 connector, proxy or daemon. Public plugin-directory publication is separate.

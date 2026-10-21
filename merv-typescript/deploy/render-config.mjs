@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { deploymentSchema, fleetRuntimes, piModels } from './schema.mjs';
 
@@ -130,7 +131,23 @@ if (projectInvitations) {
     publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
   };
 }
-if (mcpOAuth) scopeApi.oauth = { publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN') };
+if (
+  mcpOAuth &&
+  process.env.MERV_OAUTH_TRUSTED_PROXY_IPS &&
+  process.env.MERV_OAUTH_TRUSTED_PROXY_IPS.split(',').some((ip) => !isIP(ip.trim()))
+)
+  throw new Error('Invalid MERV_OAUTH_TRUSTED_PROXY_IPS: use exact IP addresses');
+if (mcpOAuth)
+  scopeApi.oauth = {
+    publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+    ...(process.env.MERV_OAUTH_TRUSTED_PROXY_IPS
+      ? {
+          trustedProxyIps: process.env.MERV_OAUTH_TRUSTED_PROXY_IPS.split(',').map((ip) =>
+            ip.trim(),
+          ),
+        }
+      : {}),
+  };
 if (projectInvitations || mcpOAuth) set('scope-api', scopeApi);
 set('identity', {
   supabaseUrl: origin('SUPABASE_URL'),

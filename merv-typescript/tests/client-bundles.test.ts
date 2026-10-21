@@ -17,7 +17,7 @@ test('published client bundle matches source and has one remote connection per c
   assert.deepEqual(Object.keys(clientBundle).sort(), names);
   for (const name of names)
     assert.equal(clientBundle[name], readFileSync(new URL(name, root), 'utf8'), name);
-  const codex = JSON.parse(clientBundle['codex/mcp.json']!);
+  const codex = JSON.parse(clientBundle['codex/.mcp.json']!);
   const claude = JSON.parse(clientBundle['claude-code/.mcp.json']!);
   for (const config of [codex, claude]) {
     assert.equal(Object.keys(config.mcpServers).length, 1);
@@ -25,7 +25,15 @@ test('published client bundle matches source and has one remote connection per c
     assert.equal(config.mcpServers.merv.command, undefined);
     assert.equal(config.mcpServers.merv.headers, undefined);
   }
-  assert.equal(codex.mcpServers.merv.extensions['com.openai'].auth.type, 'oauth');
+  assert.equal(
+    JSON.parse(clientBundle['codex/.codex-plugin/plugin.json']!).mcpServers,
+    './.mcp.json',
+  );
+  assert.equal(
+    clientBundle['codex/plugin.json'],
+    undefined,
+    'portable root must not shadow the supported Codex bundle',
+  );
   for (const name of ['research', 'operations', 'owners-agent'])
     assert.equal(
       clientBundle[`codex/skills/${name}/SKILL.md`],
@@ -45,10 +53,15 @@ test('downloadable tar contains only package files; staging uses distinct names 
     .sort();
   assert.deepEqual(names, Object.keys(files).sort());
   assert.notEqual(packageName(origin), 'merv');
-  assert.equal(JSON.parse(files['codex/plugin.json']!).name, packageName(origin));
-  assert.equal(JSON.parse(files['codex/mcp.json']!).mcpServers.merv.url, `${origin}/mcp`);
+  assert.equal(JSON.parse(files['codex/.codex-plugin/plugin.json']!).name, packageName(origin));
+  assert.equal(
+    JSON.parse(files['codex/.mcp.json']!).mcpServers[packageName(origin)].url,
+    `${origin}/mcp`,
+  );
   assert.ok(!JSON.stringify(files).includes('experiments.rapidreview.io'));
   assert.match(setupGuide(origin), /Git repository\nis required|No Git repository/);
   assert.match(setupGuide(origin), /bundle.tar.gz/);
+  assert.match(setupGuide(origin), /From the extraction directory \(MARKETPLACE\)/);
+  assert.ok(!setupGuide(origin).includes("bundle's clients directory"));
   assert.ok(!Object.keys(files).some((p) => /\.(sh|mjs)$/.test(p)));
 });

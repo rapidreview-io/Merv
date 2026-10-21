@@ -765,3 +765,21 @@ test('OAuth is explicit, requires no email sender or admin directory key, and re
   assert.equal(plugin('identity').config.directoryAdmin, undefined);
   assert.equal(plugin('identity').config.directoryKeyEnv, undefined);
 });
+
+test('OAuth trusts only explicitly configured proxy IP addresses', (t) => {
+  const { run, plugin } = renderer(t);
+  assert.equal(
+    run({ MERV_MCP_OAUTH: 'true', MERV_OAUTH_TRUSTED_PROXY_IPS: '127.0.0.1,::1,172.18.0.1' })
+      .status,
+    0,
+  );
+  assert.deepEqual(plugin('scope-api').config.oauth.trustedProxyIps, [
+    '127.0.0.1',
+    '::1',
+    '172.18.0.1',
+  ]);
+  assert.notEqual(
+    run({ MERV_MCP_OAUTH: 'true', MERV_OAUTH_TRUSTED_PROXY_IPS: '172.18.0.0/16' }).status,
+    0,
+  );
+});
