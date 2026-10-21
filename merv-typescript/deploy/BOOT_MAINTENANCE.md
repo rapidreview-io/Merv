@@ -135,16 +135,23 @@ ResearchSuite_Control --resume`. Plain resume stops at the checkpoint again;
    Main deployment, so do not use it for this recreation. In the existing root
    operator shell, after the deliberate env edit:
 
-   ```sh
-   exec 9>/run/lock/merv-maintenance.lock
-   flock -w 1200 9
-   test ! -e /var/lib/merv-recovery/resume.json || exit 1
-   MAIN_IMAGE_ID=$(docker inspect -f '{{.Image}}' merv-typescript-control-1)
-   MAIN_COMPOSE_DIR=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
-   (cd "$MAIN_COMPOSE_DIR" && MERV_TS_IMAGE="$MAIN_IMAGE_ID" docker compose -f compose.yml up -d --no-deps --force-recreate control)
-   flock -u 9
-   exec 9>&-
+   ```bash
+   (
+     exec 9>/run/lock/merv-maintenance.lock || exit 1
+     flock -w 1200 9 || exit 1
+     test ! -e /var/lib/merv-recovery/resume.json || exit 1
+     MAIN_IMAGE_ID=$(docker inspect -f '{{.Image}}' merv-typescript-control-1) || exit 1
+     MAIN_COMPOSE_DIR=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1) || exit 1
+     [[ "$MAIN_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+     [[ "$MAIN_COMPOSE_DIR" == /* && -d "$MAIN_COMPOSE_DIR" && -f "$MAIN_COMPOSE_DIR/compose.yml" ]] || exit 1
+     cd "$MAIN_COMPOSE_DIR" || exit 1
+     MERV_TS_IMAGE="$MAIN_IMAGE_ID" docker compose -f compose.yml up -d --no-deps --force-recreate control || exit 1
+   )
    ```
+
+   Run this as one Bash block. Every prerequisite failure aborts before Compose;
+   exiting the subshell releases its lock on success or failure. A nonzero result
+   means reopening did not complete: diagnose it before invoking acceptance.
 
    Verify normal health and allow the explicitly authorized callback routes. All
    normal background consumers now resume with their original saved decisions.
