@@ -1,8 +1,8 @@
+import { isBoardCollaborationTool } from '@merv/contracts/tool-policy';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
-  isBoardCollaborationTool,
   ellipsis,
   MervError,
   plain,

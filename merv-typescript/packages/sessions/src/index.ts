@@ -1,3 +1,4 @@
+import { isBoardCollaborationTool } from '@merv/contracts/tool-policy';
 import { bootMaintenance } from '@merv/contracts/maintenance';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
@@ -15,7 +16,6 @@ import type { ManagedBindingRow } from './managed-types.js';
 import {
   canonical,
   check,
-  isBoardCollaborationTool,
   digest,
   effectiveWorkspace,
   MAX_TRANSCRIPT_BYTES,

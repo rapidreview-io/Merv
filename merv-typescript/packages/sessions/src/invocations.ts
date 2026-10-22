@@ -1,7 +1,7 @@
+import { isBoardCollaborationTool } from '@merv/contracts/tool-policy';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   canonical,
-  isBoardCollaborationTool,
   check,
   MervError,
   newId,
