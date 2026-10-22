@@ -194,14 +194,14 @@ function connectPage(origin: string): string {
   const marketplace = production ? 'rapidreview-io/merv-plugins' : '<that folder>';
   const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
   /** Menu words in order, what the person types in mono, each step given room. */
-  const path = (steps: (string | ['type', string])[], lead = '') =>
-    `<p class="path">${lead ? `<em>${lead}</em> <i>›</i> ` : ''}${steps
+  const path = (steps: (string | ['type', string])[], lead: string) =>
+    `<p class="path"><em>${lead}</em><span class="steps">${steps
       .map((step) =>
         Array.isArray(step)
           ? `<code>${escapeHtml(step[1])}</code>`
           : `<span>${escapeHtml(step)}</span>`,
       )
-      .join(' <i>›</i> ')}</p>`;
+      .join(' <i>›</i> ')}</span></p>`;
   const archive = production
     ? ''
     : `<p class="note"><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
@@ -212,28 +212,29 @@ function connectPage(origin: string): string {
 main{width:min(760px,100%);margin:0 auto;padding:clamp(28px,8vh,80px) 20px 72px}
 h1{margin:0 0 48px;text-align:center;font-size:32px;line-height:1.2;font-weight:600;letter-spacing:-.01em}
 h2{margin:0 0 20px;font-size:20px;font-weight:600;line-height:1.3}
+h3{margin:0 0 8px;font-size:16px;font-weight:600;line-height:1.3}
 section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:first-of-type{padding-top:0}
+.client{padding:16px 0 16px 18px;border-left:2px solid var(--line)}.client+.client{margin-top:20px}
+.path{display:grid;grid-template-columns:72px minmax(0,1fr);gap:0 12px;margin:0;line-height:2}
+.path em{font-style:normal;color:var(--muted)}
+.steps span,.steps code{display:inline-block;white-space:nowrap}.steps i{padding:0 10px;color:var(--faint);font-style:normal}
+.steps code{font:500 14px var(--mono)}
 .row{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 16px;align-items:baseline}.row+.row{margin-top:24px}
-.row b{font-size:17px;font-weight:600}
-.path{margin:0;line-height:2.1}.path+.path{margin-top:4px}
-.path span,.path em,.path code{display:inline-block;white-space:nowrap}.path i{padding:0 10px;color:var(--faint);font-style:normal}.path em{color:var(--muted)}
-.path code{font:500 14px var(--mono);white-space:nowrap}
+.row b{font-size:16px;font-weight:600}
 pre{margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:14px/1.8 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
 .ask{margin:0;font:17px var(--mono)}
-.note{margin:14px 0 0;font-size:14px;color:var(--faint)}a{color:inherit}
-.look{display:inline-flex;align-items:center;gap:8px;font-size:17px;font-weight:500;text-decoration:underline;text-underline-offset:3px}
-.look:hover{color:var(--active)}.look::before{content:'';width:8px;height:8px;border-radius:50%;background:#2f9e44}
-@media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.row{grid-template-columns:minmax(0,1fr);gap:4px}.path i{padding:0 8px}}
+.note{margin:14px 0 0;font-size:14px;color:var(--faint)}
+.look{margin:0;font-size:16px}.look a{color:var(--text);text-decoration:underline;text-underline-offset:3px}.look a:hover{color:var(--active)}
+@media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.path{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);gap:4px}.steps i{padding:0 8px}}
 </style></head><body><main>
 <h1>Welcome to Merv</h1>
 <section><h2>Install the plugin</h2>${archive}
-<div class="row"><b>Claude</b><div>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Authenticate'], 'Sign in')}</div></div>
-<div class="row"><b>Codex</b><div>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Connect'], 'Sign in')}</div></div>
-<p class="note">Approve the connection in your browser; the client keeps it.</p></section>
+<div class="client"><h3>Claude</h3>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Authenticate'], 'Sign in')}</div>
+<div class="client"><h3>Codex</h3>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Connect'], 'Sign in')}</div></section>
 <section><h2>Terminal</h2>
 <div class="row"><b>Claude</b>${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user\n/mcp`)}</div>
 <div class="row"><b>Codex</b>${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}\ncodex mcp login ${name}`)}</div></section>
-<section><h2>Try it</h2><p class="ask">Use Merv. Show me my projects.</p><p class="note">No project yet? Create or join one, then ask again.</p></section>
-<section><h2>Look at it</h2><a class="look" href="/ui/">${escapeHtml(new URL(origin).host)}</a><p class="note">Your projects, boards and agents, live. The connection is listed under <a href="/ui/account/keys">Account keys</a>; sign in again after 30 days. Or ask your agent to read <a href="/connect/agent.md">/connect/agent.md</a>.</p></section>
+<section><h2>Try it</h2><p class="ask">Use Merv. Show me my projects.</p></section>
+<section><h2>Look at it</h2><p class="look">Your projects, whiteboards, experiments, and agents live here: <a href="/ui/">${escapeHtml(origin)}</a></p></section>
 </main></body></html>`;
 }
