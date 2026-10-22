@@ -1,6 +1,6 @@
-import { lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, normalize } from 'node:path';
+import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
 import { check } from '@merv/contracts';
 import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
 import { codexEvents, readLine } from '@merv/sessions/agent-stream';
@@ -149,6 +149,24 @@ export function launchCodexHome(
   return path;
 }
 
+/** The checkout's Git directories, which Codex's workspace-write keeps read-only inside its
+ *  workspace: a producer is told to commit, and `git add` fails creating .git/index.lock without
+ *  them. A linked worktree's `.git` file names its own directory, which names the common one. */
+function gitDirectories(cwd: string): string[] {
+  const dot = join(cwd, '.git');
+  const stat = lstatSync(dot, { throwIfNoEntry: false });
+  if (stat?.isDirectory()) return [dot];
+  if (!stat?.isFile()) return [];
+  const own = /^gitdir: (.+)$/m.exec(readFileSync(dot, 'utf8'))?.[1]?.trim();
+  if (!own) return [];
+  const dir = resolve(cwd, own);
+  let common: string | undefined;
+  try {
+    common = resolve(dir, readFileSync(join(dir, 'commondir'), 'utf8').trim());
+  } catch {}
+  return [...new Set([dir, ...(common ? [common] : [])])];
+}
+
 /** JSON string escaping is valid for these TOML basic strings; no shell evaluates the result. */
 const quote = (value: string): string => JSON.stringify(value);
 const table = (values: Record<string, string>): string =>
@@ -279,7 +297,10 @@ function codexArgs(
   // An isolated assignment's /tmp is its own machine's, emptied after every step; anywhere else it
   // is shared with the person's own programs.
   if (!reviewScratch) {
-    config('sandbox_workspace_write.writable_roots', '[]');
+    config(
+      'sandbox_workspace_write.writable_roots',
+      JSON.stringify(sealed ? [] : gitDirectories(request.cwd)),
+    );
     config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
     config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
     config(

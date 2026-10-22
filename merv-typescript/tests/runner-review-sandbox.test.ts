@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { parse } from 'smol-toml';
 import type { WorkflowExecutionPolicy } from '@merv/contracts';
@@ -8,7 +11,7 @@ import { programVersion } from '../packages/experiments/src/program.js';
 import { taskExecutionPolicy } from '../packages/tasks/src/execution-policy.js';
 import { buildLaunch, validateProfile } from '../packages/runner/src/profiles.js';
 
-function launch(policy: WorkflowExecutionPolicy) {
+function launch(policy: WorkflowExecutionPolicy, cwd = '/workspace/assignments/' + '1'.repeat(64)) {
   const common = {
     instanceId: 'wf_gate',
     projectId: 'project_gate',
@@ -37,7 +40,7 @@ function launch(policy: WorkflowExecutionPolicy) {
     }),
     {
       session,
-      cwd: '/workspace/assignments/' + '1'.repeat(64),
+      cwd,
       secret: 'ms_' + 'x'.repeat(43),
       prompt: 'Review the submitted code.',
       mcpUrl: 'https://example.invalid/mcp',
@@ -84,8 +87,46 @@ test('producer keeps its writable checkout and retained review remains sealed', 
     (config.shell_environment_policy as Record<string, any>).set.UV_CACHE_DIR,
     spec.cwd + '/.uv-cache',
   );
+  // No checkout at this path: nothing beyond the workspace is writable.
+  assert.deepEqual(
+    { ...(config.sandbox_workspace_write as object) },
+    {
+      writable_roots: [],
+      network_access: true,
+      exclude_tmpdir_env_var: true,
+      exclude_slash_tmp: false,
+    },
+  );
   const sealed = launch({ ...producer, readOnly: true });
   assert.equal(sealed.spec.env.MERV_REVIEW_CODE, '1');
   assert.equal(sealed.spec.args[sealed.spec.args.indexOf('--sandbox') + 1], 'read-only');
   assert.equal(sealed.config.default_permissions, undefined);
+});
+
+test("producer may write its checkout's Git directory, so it can commit", () => {
+  const root = mkdtempSync(join(tmpdir(), 'merv-git-'));
+  try {
+    const cwd = join(root, 'work');
+    mkdirSync(join(cwd, '.git'), { recursive: true });
+    const producer = taskExecutionPolicy('work', 'code', true, true);
+    const roots = (at: string, policy = producer) =>
+      (launch(policy, at).config.sandbox_workspace_write as Record<string, unknown> | undefined)
+        ?.writable_roots;
+    assert.deepEqual(roots(cwd), [join(cwd, '.git')]);
+    // A linked worktree: its .git file names its own directory, which names the common one.
+    const linked = join(root, 'linked');
+    const own = join(cwd, '.git', 'worktrees', 'linked');
+    mkdirSync(own, { recursive: true });
+    mkdirSync(linked);
+    writeFileSync(join(linked, '.git'), `gitdir: ${own}\n`);
+    writeFileSync(join(own, 'commondir'), '../..\n');
+    assert.deepEqual(roots(linked), [own, join(cwd, '.git')]);
+    // A sealed visit writes nothing.
+    assert.equal(
+      launch({ ...producer, readOnly: true }, cwd).spec.args.includes('read-only'),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
