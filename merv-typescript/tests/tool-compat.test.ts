@@ -272,7 +272,12 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
     await t.test(name, async () => {
       const contract = captured.contracts[name]!;
       assert.deepEqual(await page(name, boot.token), contract.owner, `${name} from a page`);
-      assert.deepEqual(await page(name, reader.token), contract.reader, `${name} for a reader`);
+      // Shared board editing is now available to every project role.
+      assert.deepEqual(
+        await page(name, reader.token),
+        name === 'board.draw' ? contract.owner : contract.reader,
+        `${name} for a reader`,
+      );
       if (retired.intake.includes(name)) {
         assert.equal(
           (await page(name, boot.token, { ...input(name), action: 'request' })).error,
@@ -466,7 +471,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   }
   assert.deepEqual(
     (await app.ctx.tools.describe(worker, true)).map(({ name }) => name),
-    captured.listings.worker,
+    [...captured.listings.worker, 'board.draw'].sort((a, b) => a.localeCompare(b)),
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
   const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];

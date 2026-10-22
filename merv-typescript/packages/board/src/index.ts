@@ -33,7 +33,9 @@ const newer = (shape: BoardElement, held?: BoardElement) =>
  * their agents through board.draw. A board is a living record, not a file: each shape is kept at
  * its newest version, so a person, a colleague and an agent drawing at once merge shape by shape.
  * Board reads nothing outside itself; a card that links to a record keeps only its id, which the
- * page names and opens through project.references.
+ * page names and opens through project.references. Every project member may edit a board,
+ * including reviewers and readers; read scope establishes membership, not a read-only effect.
+ * Session writes still re-check their live authority in this transaction.
  */
 export class BoardService implements Board {
   private closed = false;
@@ -104,8 +106,18 @@ export class BoardService implements Board {
       return whole ? { board, elements, whole } : { board, elements };
     });
   }
+  /** Collaboration is for project members, not platform inspection or runner control identities. */
+  private async editable(caller: Caller, tx: Transaction): Promise<void> {
+    check(
+      !caller.platform && !caller.managed,
+      'forbidden',
+      'Board edits require a project member',
+      403,
+    );
+    await this.scope.require(caller, 'read', tx);
+  }
   private async created(caller: Caller, name: string, tx: Transaction): Promise<BoardSummary> {
-    await this.scope.require(caller, 'write', tx);
+    await this.editable(caller, tx);
     const at = now();
     const board: BoardSummary = {
       id: newId('board'),
@@ -137,7 +149,7 @@ export class BoardService implements Board {
     // Parsed as plain data, which drops what is undefined: only the fields given are changed.
     const { id: _id, ...fields } = parse(setSchema, { id: boardId, ...change });
     return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      await this.editable(caller, tx);
       const [board] = await this.summary(caller, boardId, tx);
       const next = { ...board, ...fields, updatedBy: caller.actorId, updatedAt: now() };
       await this.write(next, tx);
@@ -219,7 +231,7 @@ export class BoardService implements Board {
     caller = this.open(caller);
     const elements = parse(elementSchema.array().min(1).max(500), shapes) as BoardElement[];
     return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      await this.editable(caller, tx);
       return await this.merge(caller, (await this.summary(caller, boardId, tx))[0], elements, tx);
     });
   }
@@ -232,7 +244,7 @@ export class BoardService implements Board {
       'Name a board, or a title for a new one',
     );
     return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      await this.editable(caller, tx);
       let board = input.board
         ? (await this.summary(caller, input.board, tx))[0]
         : await this.created(caller, input.title!, tx);

@@ -15,6 +15,7 @@ import type { ManagedBindingRow } from './managed-types.js';
 import {
   canonical,
   check,
+  isBoardCollaborationTool,
   digest,
   effectiveWorkspace,
   MAX_TRANSCRIPT_BYTES,
@@ -817,8 +818,15 @@ export class LeasedSessions implements Sessions {
       const result = { source: session.source, readsRetired: session.kind === 'inquiry' };
       // A read decision made in a write transaction gates a write all the same (session.ask_owner
       // and session.message.ack decide 'read'), so only one made on a snapshot is spared.
-      if (requiredPermission === 'read' && (this.state.readScope || session.kind === 'inquiry'))
+      if (requiredPermission === 'read' && this.state.readScope) return result;
+      if (session.kind === 'inquiry' && isBoardCollaborationTool(invocation.rule.as)) {
+        // Inquiries hold no workflow lease. Shared board edits require a still-live visit and
+        // source authority in the write transaction, even if preparation happened earlier.
+        const live = await this.ownSession(caller, tx, 'read');
+        await this.source(live, tx);
         return result;
+      }
+      if (requiredPermission === 'read' && session.kind === 'inquiry') return result;
       check(
         session.kind !== 'inquiry',
         'inquiry_read_only',

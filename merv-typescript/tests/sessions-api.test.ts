@@ -493,6 +493,7 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
   assert.deepEqual(
     listed.filter((tool) => !tool.annotations?.readOnlyHint).map((tool) => tool.name),
     [
+      'board.draw',
       'checked.default',
       'checked.echo',
       'checked.transform',
@@ -738,7 +739,7 @@ test('leased mounted calls require source grants and keep upstream project argum
     (await client.listTools()).tools
       .filter((tool) => !tool.annotations?.readOnlyHint)
       .map((tool) => tool.name),
-    ['session.ask_owner', 'session.message.ack'],
+    ['board.draw', 'session.ask_owner', 'session.message.ack'],
     'Lease manifest does not replace the exact source grant',
   );
   f.app.ctx.scope.toolPolicy.replace([
@@ -943,4 +944,106 @@ test('private native launch endpoint is owner-controlled, no-store and does not 
     409,
   );
   assert.ok(!JSON.stringify((await f.http(`/sessions/${id}`)).body).includes(native.bearer));
+});
+
+for (const role of ['producer', 'reviewer'] as const) {
+  test(`${role} with a frozen read-only policy can draw boards without gaining research writes`, async (t) => {
+    const policy = { readOnly: true, tools: [] };
+    const f = await fixture(t, policy, undefined, role);
+    const issued = await f.offer();
+    const worker = await f.app.ctx.sessions.authenticate(issued.secret);
+    const client = await f.connect(issued.secret);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    assert.ok(names.includes('board.draw'));
+    for (const name of ['board.draw', 'board.write']) {
+      const input = { title: `${role} shared sketch`, ops: [{ op: 'note', text: 'Shared idea' }] };
+      const result = await client.callTool({
+        name,
+        arguments: name === 'board.draw' ? input : { action: 'draw', draw: input },
+      });
+      assert.notEqual(result.isError, true, JSON.stringify(result));
+    }
+    const boards = await f.app.ctx.board.list(worker);
+    assert.equal(boards.length, 2);
+    assert.equal((await f.app.ctx.board.scene(worker, boards[0]!.id)).elements.length > 0, true);
+    assert.deepEqual(issued.session.execution.policy, policy);
+    assert.equal(
+      errorCode(
+        await client.callTool({
+          name: 'artifact.create',
+          arguments: { type: 'text', content: 'Not granted' },
+        }),
+      ),
+      'execution_tool_forbidden',
+    );
+    const other = await f.app.ctx.scope.credentials.bootstrap({
+      projectName: 'Other project',
+      actorName: 'Other',
+    });
+    const otherCaller = {
+      actorId: other.actor.id,
+      projectId: other.project.id,
+      credentialId: other.credential.id,
+    };
+    const foreign = await f.app.ctx.board.create(otherCaller, 'Foreign');
+    await assert.rejects(
+      f.app.ctx.tools.invoke('board.draw', worker, { board: foreign.id, ops: [] }),
+      { code: 'not_found' },
+    );
+    await f.app.ctx.sessions.release(f.source, {
+      sessionId: issued.session.id,
+      runnerId: 'runner',
+    });
+    await assert.rejects(f.app.ctx.tools.invoke('board.draw', worker, { title: 'Late', ops: [] }), {
+      code: 'session_closed',
+    });
+  });
+}
+
+test('every project role discovers and edits boards, while a revoked member cannot', async (t) => {
+  const f = await fixture(t);
+  for (const role of ['reader', 'reviewer', 'producer', 'operator'] as const) {
+    const issued = await f.app.ctx.scope.credentials.issueActor(f.source, { name: role, role });
+    const caller = {
+      actorId: issued.actor.id,
+      projectId: f.source.projectId,
+      credentialId: issued.credential.id,
+    };
+    const names = (await f.app.ctx.tools.describe(caller, true)).map((tool) => tool.name);
+    assert.ok(names.includes('board.write'), role);
+    const drawn = await f.app.ctx.board.draw(caller, {
+      title: role,
+      ops: [{ op: 'note', text: role }],
+    });
+    await f.app.ctx.board.set(caller, drawn.board.id, { title: `${role} renamed` });
+    const scene = await f.app.ctx.board.scene(caller, drawn.board.id);
+    await f.app.ctx.board.save(caller, drawn.board.id, scene.elements);
+    if (role === 'reader' || role === 'reviewer')
+      await assert.rejects(f.app.ctx.scope.require(caller, 'write'), { code: 'forbidden' });
+    await f.app.ctx.scope.credentials.revokeActor(f.source, issued.actor.id);
+    await assert.rejects(f.app.ctx.board.draw(caller, { board: drawn.board.id, ops: [] }));
+  }
+});
+
+test('a board edit rechecks a worker lease inside its transaction', async (t) => {
+  const f = await fixture(t, { readOnly: true, tools: [] }, undefined, 'reviewer');
+  const issued = await f.offer();
+  const worker = await f.app.ctx.sessions.authenticate(issued.secret);
+  const original = f.app.ctx.board.draw.bind(f.app.ctx.board);
+  t.mock.method(
+    f.app.ctx.board,
+    'draw',
+    async (caller: Caller, input: Parameters<typeof original>[1]) => {
+      await f.app.ctx.sessions.release(f.source, {
+        sessionId: issued.session.id,
+        runnerId: 'runner',
+      });
+      return original(caller, input);
+    },
+  );
+  await assert.rejects(
+    f.app.ctx.tools.invoke('board.draw', worker, { title: 'Must not commit', ops: [] }),
+    { code: 'session_closed' },
+  );
+  assert.deepEqual(await f.app.ctx.board.list(f.source), []);
 });

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   canonical,
+  isBoardCollaborationTool,
   check,
   MervError,
   newId,
@@ -37,7 +38,7 @@ const unbound = [
  * session reads whatever its project holds (founder, 2026-09-17: no read constraints). The
  * policy still fills in what it names, so a read called as declared is admitted as declared;
  * one it does not name, or names differently, is admitted as given, bounded by the project
- * alone. Every write holds as published.
+ * alone. Research writes hold as published; shared board edits are admitted separately.
  */
 function admitCall(
   execution: WorkflowExecution,
@@ -137,11 +138,12 @@ export interface InvocationHost {
  */
 const workerTools = new Set(['session.message.ack', 'session.ask_owner', 'session.await_compute']);
 /**
- * What an inquiry visit may call: the project's reads, and its one write, the reply to the
- * question it answers. Sessions' guard holds its credential to reads; this is the tool rule,
+ * What an inquiry visit may call: project reads, shared board edits and its reply to the
+ * question it answers. Sessions' guard holds its credential to read scope; this is the tool rule,
  * since a worker's own tools (`session.ask_owner`) need only read scope.
  */
-const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
+const inquiryCalls = (tool: string, read?: boolean) =>
+  !!read || tool === 'session.message.ack' || isBoardCollaborationTool(tool);
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionToolPolicy {
   /** The invocation whose handler runs, which Sessions' guard reads. */
@@ -194,7 +196,9 @@ export class SessionInvocations implements SessionToolPolicy {
     const current = await this.host.valid(
       session,
       tx,
-      session.kind === 'inquiry' || workerTools.has(tool) ? undefined : session.execution,
+      session.kind === 'inquiry' || workerTools.has(tool) || isBoardCollaborationTool(tool)
+        ? undefined
+        : session.execution,
     );
     if (current.error) return { error: current.error };
     return {
@@ -218,12 +222,12 @@ export class SessionInvocations implements SessionToolPolicy {
       check(
         inquiryCalls(tool, read),
         'inquiry_read_only',
-        'An inquiry visit only reads, and replies with session.message.ack',
+        'An inquiry visit may read, edit project boards, and reply with session.message.ack',
         403,
       );
       return { tool, input: structuredClone(input) };
     }
-    return workerTools.has(tool)
+    return workerTools.has(tool) || isBoardCollaborationTool(tool)
       ? { tool, input: structuredClone(input) }
       : admitCall({ ...session.execution, references: references! }, tool, input, read);
   }

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
+  isBoardCollaborationTool,
   ellipsis,
   MervError,
   plain,
@@ -692,7 +693,7 @@ export class ToolRegistry implements Tools {
       (!entry.alias &&
         (tool.tier === 'core' || tool.tier === 'deferred') &&
         tool.for !== 'conversations' &&
-        (!reader || reads))
+        (!reader || reads || isBoardCollaborationTool(entry.name)))
     );
   }
 

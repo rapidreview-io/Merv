@@ -48,3 +48,8 @@ export interface ToolPolicy {
   /** Trusted in-process administration. Invalid replacements leave the current policy intact. */
   replace(grants: ToolGrant[]): void;
 }
+
+/** Project whiteboards are shared collaboration, independent of frozen research grants.
+ * Exact local names only: this does not grant arbitrary writes or mounted tools. */
+export const isBoardCollaborationTool = (name: string): boolean =>
+  name === 'board.write' || name === 'board.draw';

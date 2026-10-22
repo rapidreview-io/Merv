@@ -1,3 +1,4 @@
+export { isBoardCollaborationTool } from './tool-policy.js';
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
 export { mapAsync, everyAsync, pooled, sleep } from './async.js';
 export type {

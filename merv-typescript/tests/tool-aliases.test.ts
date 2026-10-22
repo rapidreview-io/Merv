@@ -236,3 +236,32 @@ test('a worker and an inquiry visit with no grants read tools that also write, a
     assert.deepEqual(ran, [{ action: 'list' }]);
   }
 });
+
+test('inquiries can use both board drawing names without acquiring other write grants', async () => {
+  const { worker, tools } = leased([], 'inquiry');
+  tools.noun('board.write', {
+    tier: 'core',
+    description: 'Shared drawings',
+    actions: {
+      draw: {
+        description: 'Draw',
+        input: z.object({ title: z.string() }),
+        was: ['board.draw'],
+        handler: async (_caller, input) => input,
+      },
+    },
+  });
+  tools.register({
+    name: 'research.forbidden',
+    description: 'Not shared',
+    inputSchema: z.object({}),
+    handler: async () => ({}),
+  });
+  assert.ok((await tools.describe(worker, true)).some((tool) => tool.name === 'board.draw'));
+  for (const name of ['board.draw', 'board.write']) {
+    const input =
+      name === 'board.draw' ? { title: 'Idea' } : { action: 'draw', draw: { title: 'Idea' } };
+    assert.deepEqual(await tools.call(name, worker, input), { title: 'Idea' });
+  }
+  await assert.rejects(tools.call('research.forbidden', worker, {}), { code: 'inquiry_read_only' });
+});

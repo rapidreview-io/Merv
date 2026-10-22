@@ -143,7 +143,7 @@ export interface InquiryCandidate {
  * The visit an inquiry runs as: the thread's actor and conversation, a short deadline, and an
  * assignment and execution of its own that name the step the conversation is of. It holds no
  * lease and binds no registration. Its policy is read-only with no workspace and no tools: what
- * it may call is the project's reads and its one reply, which Sessions admits for inquiry visits
+ * it may call is the project's reads, shared board edits and its one reply, which Sessions admits for inquiry visits
  * alone.
  */
 export function inquirySession(input: {
