@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -311,7 +312,7 @@ const hasEnded = (shapes: WorkflowShape[] | undefined, unit: MapUnit) =>
 /**
  * A mark: a circle for an experiment, a square for a task, filled as far as the unit is along
  * its program; its name beside it, and what a person must do after that. Red is only the ring
- * of what needs a person, green only the dot of what is live. Folded, it is the mark alone.
+ * of what needs a person, green only the dot of what is live.
  */
 function Mark({
   unit,
@@ -354,7 +355,6 @@ function Mark({
         done && 'wmap-mark--done',
         node?.look === 'dashed' && 'wmap-mark--waiting',
         red && 'wmap-mark--attn',
-        place.folded && 'wmap-mark--folded',
         selected && 'on',
         // A mark that needs a person never steps back.
         dim && !red && 'dim',
@@ -379,17 +379,15 @@ function Mark({
         )}
         {live && <span className="live-dot live-dot--live" aria-hidden="true" />}
       </span>
-      {!place.folded && (
-        <span className="wmap-name">
-          {unit.name}
-          {!!line?.length && (
-            <span className="wmap-say running-attn">
-              {' · '}
-              <Phrase value={line} />
-            </span>
-          )}
-        </span>
-      )}
+      <span className="wmap-name">
+        {unit.name}
+        {!!line?.length && (
+          <span className="wmap-say running-attn">
+            {' · '}
+            <Phrase value={line} />
+          </span>
+        )}
+      </span>
     </button>
   );
 }
@@ -411,9 +409,10 @@ function lineage(key: RunningKey, edges: MapEdge[]): Set<string> {
 }
 
 /**
- * The drawing. One width, measured, is all it is laid out from: the sidebar opening narrows
- * it and the map lays itself out again rather than being covered. Narrower than the layout
- * can draw, nothing is drawn, and the list under it says each relation in words.
+ * The drawing, on a canvas that scrolls inside the page and never widens it. It opens at its
+ * right edge, where the newest work is, and stays there as work arrives unless the reader has
+ * moved off it; the canvas pans by its scrollbars, the wheel, the keys or a drag. Narrower
+ * than the layout can draw, nothing is drawn, and the list under it says each relation in words.
  */
 export function WorkMap({
   shapes,
@@ -428,13 +427,15 @@ export function WorkMap({
   const live = useContext(LiveContext);
   const { selected, onSelect } = useContext(Plane);
   const frame = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
+  const [view, setView] = useState({ width: 0, height: 0 });
+  const width = view.width;
   const [hover, setHover] = useState<RunningKey | null>(null);
-  const [unfold, setUnfold] = useState(false);
   useEffect(() => {
     const element = frame.current;
-    if (!element || typeof ResizeObserver === 'undefined') return setWidth(-1);
-    const observer = new ResizeObserver(([entry]) => setWidth(entry!.contentRect.width));
+    if (!element || typeof ResizeObserver === 'undefined') return setView({ width: -1, height: 0 });
+    const observer = new ResizeObserver(([entry]) =>
+      setView({ width: entry!.contentRect.width, height: entry!.contentRect.height }),
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -447,7 +448,7 @@ export function WorkMap({
       workMapLayout(
         units.map((unit) => unit.key),
         edges,
-        width,
+        view,
         {
           ended: new Set(units.filter((unit) => hasEnded(shapes, unit)).map((unit) => unit.key)),
           held: new Set(
@@ -455,7 +456,6 @@ export function WorkMap({
               .filter(({ node }) => isLive(node) || (!!node && needs(node)))
               .map((unit) => unit.key),
           ),
-          unfold,
           groups: wave.groups?.length
             ? wave.groups.map((group) =>
                 units.filter((unit) => unit.group === group).map((unit) => unit.key),
@@ -463,8 +463,16 @@ export function WorkMap({
             : undefined,
         },
       ),
-    [units, edges, width, shapes, unfold, wave.groups],
+    [units, edges, view, shapes, wave.groups],
   );
+  // Held at the right edge until the reader scrolls off it; back there, held again.
+  const pinned = useRef(true);
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (element && pinned.current) element.scrollLeft = element.scrollWidth;
+  }, [layout?.width]);
+  // A drag on the canvas, off any mark, pans it.
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const drawn = !!layout;
   // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
   useEffect(() => void (width && onDrawn?.(drawn)), [drawn, width, onDrawn]);
@@ -517,64 +525,77 @@ export function WorkMap({
       role="group"
       aria-label="Map of work"
       onKeyDown={onKeyDown}
-      style={layout ? { height: layout.height } : undefined}
+      onScroll={({ currentTarget: at }) => {
+        pinned.current = at.scrollLeft + at.clientWidth >= at.scrollWidth - 4;
+      }}
+      onPointerDown={(event) => {
+        if (event.button || (event.target as HTMLElement).closest('button')) return;
+        const at = event.currentTarget;
+        drag.current = {
+          x: event.clientX,
+          y: event.clientY,
+          left: at.scrollLeft,
+          top: at.scrollTop,
+        };
+        at.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const from = drag.current;
+        if (!from) return;
+        event.currentTarget.scrollLeft = from.left - (event.clientX - from.x);
+        event.currentTarget.scrollTop = from.top - (event.clientY - from.y);
+      }}
+      onPointerUp={() => (drag.current = null)}
+      onPointerCancel={() => (drag.current = null)}
+      // Too narrow to draw, the canvas takes no room and the list stands in its place.
+      style={!layout && width ? { height: 0 } : undefined}
     >
       {layout && (
-        <svg
-          className="wmap-wires"
-          width={layout.width}
-          height={layout.height}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
-          aria-hidden="true"
-        >
-          {layout.wires.map((wire) => {
-            const on = !!lit && lit.has(wire.from) && lit.has(wire.to);
-            return (
-              <path
-                key={`${wire.from}>${wire.to}`}
-                className={cx(
-                  'wmap-wire',
-                  wire.waiting && 'wmap-wire--waiting',
-                  on && 'on',
-                  !!lit && !on && 'dim',
-                )}
-                d={wire.d}
-              />
-            );
-          })}
-        </svg>
+        <div className="wmap-surface" style={{ width: layout.width, height: layout.height }}>
+          <svg
+            className="wmap-wires"
+            width={layout.width}
+            height={layout.height}
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+            aria-hidden="true"
+          >
+            {layout.wires.map((wire) => {
+              const on = !!lit && lit.has(wire.from) && lit.has(wire.to);
+              return (
+                <path
+                  key={`${wire.from}>${wire.to}`}
+                  className={cx(
+                    'wmap-wire',
+                    wire.waiting && 'wmap-wire--waiting',
+                    on && 'on',
+                    !!lit && !on && 'dim',
+                  )}
+                  d={wire.d}
+                />
+              );
+            })}
+          </svg>
+          {layout.rules.map((y) => (
+            <hr key={y} className="wmap-rule" style={{ top: y }} />
+          ))}
+          {units.map((unit) => (
+            <Mark
+              key={unit.key}
+              unit={unit}
+              place={layout.at.get(unit.key)!}
+              shapes={shapes}
+              red={red(unit)}
+              relations={edges
+                .filter((edge) => edge.to === unit.key && edge.waiting)
+                .map((edge) => `Waits on ${names.get(edge.from)}`)}
+              selected={unit.key === inHand}
+              dim={!!lit && !lit.has(unit.key)}
+              onSelect={onSelect}
+              onHover={(key) => setHover((old) => key ?? (old === unit.key ? null : old))}
+            />
+          ))}
+        </div>
       )}
-      {layout?.rules.map((y) => (
-        <hr key={y} className="wmap-rule" style={{ top: y }} />
-      ))}
-      {layout?.folds.map((fold) => (
-        <button
-          type="button"
-          key={fold.y}
-          className="wmap-fold"
-          style={{ left: fold.x - 8, top: fold.y + 9 }}
-          onClick={() => setUnfold(true)}
-        >
-          {fold.count} done
-        </button>
-      ))}
-      {layout &&
-        units.map((unit) => (
-          <Mark
-            key={unit.key}
-            unit={unit}
-            place={layout.at.get(unit.key)!}
-            shapes={shapes}
-            red={red(unit)}
-            relations={edges
-              .filter((edge) => edge.to === unit.key && edge.waiting)
-              .map((edge) => `Waits on ${names.get(edge.from)}`)}
-            selected={unit.key === inHand}
-            dim={!!lit && !lit.has(unit.key)}
-            onSelect={onSelect}
-            onHover={(key) => setHover((old) => key ?? (old === unit.key ? null : old))}
-          />
-        ))}
     </div>
   );
 }

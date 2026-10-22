@@ -6256,19 +6256,34 @@ html:has(.pi-page) body {
    the left of what waits on them, one quiet curve between them with no head. The mark is the
    stage's own glyph — a circle for an experiment, a square for a task — red only as the ring
    of what needs a person, green only as the dot of what is live. Ended work keeps its place
-   and steps back; a long chain's finished head folds to its marks alone. */
+   and steps back. */
 .wmap-stage {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
+/* The canvas: it scrolls inside the page, which it never widens, and fills the view under the
+   page's line. A faint grid of dots scrolls with the drawing. */
 .wmap {
   position: relative;
-  min-height: 24px;
+  height: max(320px, calc(100dvh - 190px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: grab;
+}
+.wmap:active {
+  cursor: grabbing;
 }
 .wmap:focus-visible {
   outline: 2px solid var(--line-strong);
-  outline-offset: 6px;
+  outline-offset: 2px;
+}
+.wmap-surface {
+  position: relative;
+  background-image: radial-gradient(circle, var(--line) 1px, transparent 1.25px);
+  background-size: 24px 24px;
 }
 .wmap-wires {
   position: absolute;
@@ -6363,17 +6378,6 @@ html:has(.pi-page) body {
 .wmap-mark.dim {
   opacity: 0.3;
 }
-/* Folded, a unit is a small mark without its name; the run says how many, and unfolds. */
-.wmap-mark--folded {
-  width: 16px;
-  padding: 0;
-  justify-content: center;
-}
-.wmap-mark--folded .wmap-glyph,
-.wmap-mark--folded .stage-glyph {
-  width: 10px;
-  height: 10px;
-}
 /* Between two cycles' work: one hairline across the map, and space. */
 .wmap-rule {
   position: absolute;
@@ -6382,19 +6386,6 @@ html:has(.pi-page) body {
   margin: 0;
   border: 0;
   border-top: 1px solid var(--line);
-}
-.wmap-fold {
-  position: absolute;
-  padding: 0 4px;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: var(--text-xs);
-  color: var(--faint);
-  cursor: pointer;
-}
-.wmap-fold:hover {
-  color: var(--muted);
 }
 /* The page's one line (WorkBar): the counts, each a filter; dispatch; the shapes; Key. */
 .wbar {
