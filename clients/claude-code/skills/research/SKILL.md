@@ -10,6 +10,9 @@ code, and the machines and agent sessions that do the work. Every call you make 
 person whose key connected you, with their role in the project, checked by the server on each
 call. Each tool's description is its contract; this skill is the order to use them in.
 
+Merv's UI is at https://experiments.rapidreview.io/ui/. When the person needs to see the UI, open that
+address for them in their browser.
+
 Noun tools take `{"action":"x","x":{...}}`, with the selected `projectId` at the
 top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
 

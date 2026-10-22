@@ -1,4 +1,5 @@
 import { personName } from '@merv/contracts/text';
+import { startTour } from '../tour';
 import { permits } from '@merv/scope/rules';
 import type { UiRowDescription } from '@merv/ui/rows';
 import { useState, type ReactNode } from 'react';
@@ -316,7 +317,10 @@ function SessionSection() {
         ]}
       />
       {account.kind === 'user' && <HuggingFaceSettings />}
-      <div>
+      <div className="cluster">
+        <button type="button" className="btn" onClick={startTour}>
+          Take the tour
+        </button>
         <button type="button" className="btn" onClick={signOut}>
           Sign out
         </button>

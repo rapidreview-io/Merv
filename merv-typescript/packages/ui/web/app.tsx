@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { ConnectConsent } from './connect';
 import { KeysPanel } from './views/keys';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
-import { readOnly } from './api';
+import { readOnly, whoOf } from './api';
 import { SessionProvider, useSession, useAccount } from './session';
 import { Sidebar, ShellFrame, PageLede, useRailOpen, useShell } from './shell';
 import type { ShellData } from './shell-types';
@@ -14,6 +14,7 @@ import { HomeView } from './views/home';
 import { AdminApp } from './admin/app';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
+import { Tour } from './tour';
 
 /**
  * An address nothing answers. A mistyped one is only that: a few words and the way
@@ -64,7 +65,7 @@ function Workspace() {
     [read.data],
   );
   const shell = { ...read, data };
-  const { project } = useSession();
+  const { project, account } = useSession();
   const { pathname, search } = useLocation();
   const [open, setOpen] = useRailOpen();
   const rows = shell.data?.rows ?? [];
@@ -122,6 +123,8 @@ function Workspace() {
         </PageLede>
       </ShellFrame>
       {!readOnly() && <PiDock rows={rows} />}
+      {/* Once the rail is drawn, the first visit is shown around it. */}
+      {shell.data && !readOnly() && <Tour who={whoOf(account)} />}
     </PiProvider>
   );
 }

@@ -370,6 +370,85 @@ time,
 .rail-icon {
   flex: none;
 }
+/* A row that leaves the app keeps its word short and ends in the arrow, in the link colour. */
+.rail-row--out .rail-row-label {
+  flex: 0 1 auto;
+}
+.rail-out {
+  flex: none;
+  margin-left: -4px;
+  color: var(--active);
+}
+/* The first-run tour: the page dimmed, the rows it names lit, one short card beside them. */
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+}
+.tour-scrim {
+  position: absolute;
+  inset: 0;
+}
+.tour-veil {
+  fill: var(--scrim);
+}
+.tour-ring {
+  fill: none;
+  stroke: var(--active);
+  stroke-width: 2;
+}
+.tour-card {
+  position: absolute;
+  width: 280px;
+  display: grid;
+  gap: var(--space-2);
+  padding: 14px 16px 12px;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
+}
+.tour-card--center {
+  left: 50%;
+  top: 50%;
+  width: 320px;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  padding: 22px 22px 16px;
+}
+.tour-card h2 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.tour-card p {
+  margin: 0;
+  color: var(--muted);
+}
+.tour-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.tour-card--center .tour-foot {
+  justify-content: center;
+}
+.tour-count {
+  margin-right: auto;
+  color: var(--faint);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .tour-card:not(.tour-card--center) {
+    left: 12px !important;
+    right: 12px;
+    top: auto !important;
+    bottom: 12px;
+    width: auto;
+  }
+}
 .rail-row-label,
 .finder-name,
 .chooser-name {

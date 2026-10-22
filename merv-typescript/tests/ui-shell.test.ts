@@ -114,6 +114,40 @@ test('the only operator is offered no control that would leave the project witho
   }
 });
 
+test('Discord stands just above the account and opens the community channel in a tab of its own', async (t) => {
+  t.after(unmount);
+  boot('Operator');
+  await open('/');
+  const discord = [...document.querySelectorAll<HTMLAnchorElement>('.sidebar a')].find(
+    (link) => link.textContent === 'Discord',
+  );
+  assert.ok(discord, text().slice(0, 300));
+  assert.equal(discord.getAttribute('href'), 'https://discord.gg/p8h6MwpNv');
+  assert.equal(discord.target, '_blank');
+  assert.ok(discord.nextElementSibling?.classList.contains('account-foot'));
+});
+
+test('the tour shows once, Skip ends it for good, and Settings › Session replays it', async (t) => {
+  t.after(async () => {
+    await unmount();
+    localStorage.clear();
+  });
+  localStorage.clear();
+  boot('Operator');
+  await open('/');
+  assert.ok(text().includes('Welcome to Merv'), text().slice(0, 300));
+  await click('Skip');
+  assert.ok(!text().includes('Welcome to Merv'));
+  await unmount();
+  boot('Operator');
+  await open('/settings/session');
+  assert.ok(!text().includes('Welcome to Merv'), 'a second visit is not toured');
+  await click('Take the tour');
+  // Only the rows this project registers get a step: no Pi, Board, Compute or Git here.
+  assert.ok(text().includes('Project switcher'), text().slice(0, 300));
+  assert.ok(text().includes('1 of 6'), text().slice(0, 300));
+});
+
 test('a server that cannot answer is asked again later each time, never in a loop, and the sign-in is kept', async (t) => {
   t.after(async () => {
     await unmount();
