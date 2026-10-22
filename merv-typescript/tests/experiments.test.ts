@@ -810,4 +810,11 @@ test('plan approval commits the exact frozen working tree and gates execution un
     null,
     'plan approval does not accept experiment results',
   );
+  // Results returned to a new design: its writer attaches at the pinned base with the approved
+  // commit on it, not at a base the write manifest never reports.
+  experiment = await f.results(experiment);
+  experiment = await f.submitReview(experiment, 'needs_changes', 'planned');
+  assert.equal(experiment.workflow.state, 'planned');
+  await f.attach(experiment, 'plan', plan);
+  assert.equal(git(f.held(experiment)!.workspace.path, ['rev-parse', 'HEAD']), head);
 });

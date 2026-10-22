@@ -23,6 +23,7 @@ import {
   approvedSubmission,
   designCheckout,
   continuousProducer,
+  approvalCommits,
 } from './program.js';
 import { readsOnly } from './execution-policy.js';
 import {
@@ -269,11 +270,13 @@ export async function references(
   const review = experiment.reviewId
     ? await ctx.reviews.get(caller, experiment.reviewId, tx)
     : null;
-  // Execution works on its pinned base, once a lease pinned one (an interactive producer has no
-  // checkout). From experiment@41 the design and its review read the code execution will start
-  // from: that base, with an earlier attempt's commits on it.
+  // A writer (execution, and from experiment@45 a design) works on its pinned base, once a lease
+  // pinned one (an interactive producer has no checkout): that is the base its write manifest
+  // attaches with, its earlier commits on top. From experiment@41 a read-only design and its
+  // review read the code execution will start from: that base, with those commits on it.
   const base =
-    snapshot.state === 'running'
+    snapshot.state === 'running' ||
+    (snapshot.state === 'planned' && approvalCommits(snapshot.version))
       ? (await ctx.code.basePin(caller, snapshot.id, tx))?.reference
       : ['planned', 'design_review'].includes(snapshot.state) && designCheckout(snapshot.version)
         ? await ctx.code.resumesFrom(caller, snapshot.id, tx)
