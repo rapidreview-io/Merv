@@ -1,6 +1,7 @@
 import { packageArchive, packageFiles, packageName } from './client-package.js';
 import type { MountHandler } from '@merv/api/types';
 import { escapeHtml } from '@merv/contracts/text';
+import { randomBytes } from 'node:crypto';
 
 export function setupGuide(origin: string) {
   const name = packageName(origin);
@@ -165,12 +166,12 @@ export function setupRoutes(origin: string): MountHandler {
       return;
     }
     if (req.method === 'GET' && r.url.pathname === '/connect') {
+      const nonce = randomBytes(16).toString('base64');
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
-        'content-security-policy':
-          "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+        'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; frame-ancestors 'none'`,
       });
-      res.end(connectPage(origin));
+      res.end(connectPage(origin, nonce));
       return;
     }
     res.writeHead(410, { 'content-type': 'application/json' });
@@ -188,11 +189,20 @@ export function setupRoutes(origin: string): MountHandler {
 
 /** The set-up page, in the layout of the project's Welcome board: Install the plugin with a
  *  Claude and a Codex line, a rule, Terminal, a rule, Try it, Look at it. Typed, spaced, no script. */
-function connectPage(origin: string): string {
+function connectPage(origin: string, nonce: string): string {
   const name = packageName(origin);
   const production = name === 'merv';
   const marketplace = production ? 'rapidreview-io/merv-plugins' : '<that folder>';
-  const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
+  const copyIcon =
+    '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>';
+  /** One command per line, each with its own copy button. */
+  const commands = (lines: string[]) =>
+    `<div class="cmds">${lines
+      .map(
+        (line) =>
+          `<div class="cmd"><code>${escapeHtml(line)}</code><button type="button" class="copy" data-copy="${escapeHtml(line)}" aria-label="Copy">${copyIcon}</button></div>`,
+      )
+      .join('')}</div>`;
   /** Menu words in order, what the person types in mono, each step given room. */
   const path = (steps: (string | ['type', string])[], lead: string) =>
     `<p class="path"><em>${lead}</em><span class="steps">${steps
@@ -221,10 +231,12 @@ section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:
 .steps code{font:500 14px var(--mono)}
 .row{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 16px;align-items:baseline}.row+.row{margin-top:24px}
 .row b{font-size:16px;font-weight:600}
-pre{margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:14px/1.8 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-.ask{margin:0;font:17px var(--mono)}
+.cmds{display:grid;gap:8px}.cmd{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.cmd code{flex:1;min-width:0;font:14px/1.6 var(--mono);overflow-wrap:anywhere;color:var(--text)}
+.copy{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:6px;background:none;color:var(--faint);cursor:pointer}.copy:hover{background:var(--card);color:var(--text)}.copy[data-done]{color:#2f9e44}
+.ask{margin:0;font-size:18px;font-style:italic;color:var(--muted)}.caret{display:inline-block;width:2px;height:1.1em;margin-left:3px;vertical-align:-2px;background:var(--text);animation:blink 1.1s steps(1) infinite}@keyframes blink{50%{opacity:0}}
 .note{margin:14px 0 0;font-size:14px;color:var(--faint)}
-.look{margin:0;font-size:16px}.look a{color:var(--text);text-decoration:underline;text-underline-offset:3px}.look a:hover{color:var(--active)}
+.look{margin:0;font-size:16px}.look a{color:var(--active);text-decoration:underline;text-underline-offset:3px}
 @media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.path{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);gap:4px}.steps i{padding:0 8px}}
 </style></head><body><main>
 <h1>Welcome to Merv</h1>
@@ -232,9 +244,9 @@ pre{margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;ba
 <div class="client"><h3>Claude</h3>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Authenticate'], 'Sign in')}</div>
 <div class="client"><h3>Codex</h3>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Connect'], 'Sign in')}</div></section>
 <section><h2>Terminal</h2>
-<div class="row"><b>Claude</b>${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user\n/mcp`)}</div>
-<div class="row"><b>Codex</b>${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}\ncodex mcp login ${name}`)}</div></section>
-<section><h2>Try it</h2><p class="ask">Use Merv. Show me my projects.</p></section>
+<div class="row"><b>Claude</b>${commands([`claude plugin marketplace add ${marketplace}`, `claude plugin install ${name}@${name} --scope user`, '/mcp'])}</div>
+<div class="row"><b>Codex</b>${commands([`codex plugin marketplace add ${marketplace}`, `codex plugin add ${name}@${name}`, `codex mcp login ${name}`])}</div></section>
+<section><h2>Try it</h2><p class="ask">“Use Merv. Show me my projects.”<span class="caret"></span></p></section>
 <section><h2>Look at it</h2><p class="look">Your projects, whiteboards, experiments, and agents live here: <a href="/ui/">${escapeHtml(origin)}</a></p></section>
-</main></body></html>`;
+</main><script nonce="${nonce}">for(const b of document.querySelectorAll('.copy'))b.addEventListener('click',()=>navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.dataset.done='1';b.setAttribute('aria-label','Copied');setTimeout(()=>{delete b.dataset.done;b.setAttribute('aria-label','Copy')},1500)}));</script></body></html>`;
 }
