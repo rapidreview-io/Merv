@@ -203,15 +203,14 @@ function connectPage(origin: string, nonce: string): string {
           `<div class="cmd"><code>${escapeHtml(line)}</code><button type="button" class="copy" data-copy="${escapeHtml(line)}" aria-label="Copy">${copyIcon}</button></div>`,
       )
       .join('')}</div>`;
-  /** Menu words in order, what the person types in mono, each step given room. */
-  const path = (steps: (string | ['type', string])[], lead: string) =>
-    `<p class="path"><em>${lead}</em><span class="steps">${steps
-      .map((step) =>
-        Array.isArray(step)
-          ? `<code>${escapeHtml(step[1])}</code>`
-          : `<span>${escapeHtml(step)}</span>`,
+  /** A labelled, numbered list of menu steps; what the person types is mono. */
+  const steps = (label: string, items: (string | ['type', string])[]) =>
+    `<div class="steps"><h4>${label}</h4><ol>${items
+      .map(
+        (step) =>
+          `<li>${Array.isArray(step) ? `<code>${escapeHtml(step[1])}</code>` : escapeHtml(step)}</li>`,
       )
-      .join(' <i>›</i> ')}</span></p>`;
+      .join('')}</ol></div>`;
   const archive = production
     ? ''
     : `<p class="note"><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
@@ -224,11 +223,15 @@ h1{margin:0 0 48px;text-align:center;font-size:32px;line-height:1.2;font-weight:
 h2{margin:0 0 20px;font-size:20px;font-weight:600;line-height:1.3}
 h3{margin:0 0 8px;font-size:16px;font-weight:600;line-height:1.3}
 section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:first-of-type{padding-top:0}
-.client{padding:16px 0 16px 18px;border-left:2px solid var(--line)}.client+.client{margin-top:20px}
-.path{display:grid;grid-template-columns:72px minmax(0,1fr);gap:0 12px;margin:0;line-height:2}
-.path em{font-style:normal;color:var(--muted)}
-.steps span,.steps code{display:inline-block;white-space:nowrap}.steps i{padding:0 10px;color:var(--faint);font-style:normal}
-.steps code{font:500 14px var(--mono)}
+.clients{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.client{padding:18px 20px 20px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.client h3{margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:17px}
+.steps+.steps{margin-top:14px}
+h4{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.steps ol{margin:0;padding:0;list-style:none;counter-reset:n}
+.steps li{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:baseline;line-height:1.95;counter-increment:n}
+.steps li::before{content:counter(n);font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.steps code{font:500 14px var(--mono);overflow-wrap:anywhere}
 .row{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 16px;align-items:baseline}.row+.row{margin-top:24px}
 .row b{font-size:16px;font-weight:600}
 .cmds{display:grid;gap:8px}.cmd{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
@@ -237,12 +240,14 @@ section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:
 .ask{margin:0;font-size:18px;font-style:italic;color:var(--muted)}.caret{display:inline-block;width:2px;height:1.1em;margin-left:3px;vertical-align:-2px;background:var(--text);animation:blink 1.1s steps(1) infinite}@keyframes blink{50%{opacity:0}}
 .note{margin:14px 0 0;font-size:14px;color:var(--faint)}
 .look{margin:0;font-size:16px}.look a{color:var(--active);text-decoration:underline;text-underline-offset:3px}
-@media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.path{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);gap:4px}.steps i{padding:0 8px}}
+@media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.clients{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);gap:4px}}
 </style></head><body><main>
 <h1>Welcome to Merv</h1>
 <section><h2>Install the plugin</h2>${archive}
-<div class="client"><h3>Claude</h3>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Authenticate'], 'Sign in')}</div>
-<div class="client"><h3>Codex</h3>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'], 'Install')}${path(['Plugins', 'Merv', 'Connect'], 'Sign in')}</div></section>
+<div class="clients">
+<div class="client"><h3>Claude</h3>${steps('Install', ['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Authenticate'])}</div>
+<div class="client"><h3>Codex</h3>${steps('Install', ['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Connect'])}</div>
+</div></section>
 <section><h2>Terminal</h2>
 <div class="row"><b>Claude</b>${commands([`claude plugin marketplace add ${marketplace}`, `claude plugin install ${name}@${name} --scope user`, '/mcp'])}</div>
 <div class="row"><b>Codex</b>${commands([`codex plugin marketplace add ${marketplace}`, `codex plugin add ${name}@${name}`, `codex mcp login ${name}`])}</div></section>
