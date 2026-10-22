@@ -215,8 +215,8 @@ function connectPage(origin: string, nonce: string): string {
     ? ''
     : `<p class="note"><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome to Merv</title><style>
-:root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
+:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
+
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
 main{width:min(760px,100%);margin:0 auto;padding:clamp(28px,8vh,80px) 20px 72px}
 h1{margin:0 0 48px;text-align:center;font-size:32px;line-height:1.2;font-weight:600;letter-spacing:-.01em}
@@ -224,7 +224,7 @@ h2{margin:0 0 20px;font-size:20px;font-weight:600;line-height:1.3}
 h3{margin:0 0 8px;font-size:16px;font-weight:600;line-height:1.3}
 section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:first-of-type{padding-top:0}
 .clients{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-.client{padding:18px 20px 20px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.client{padding:18px 20px 20px;background:var(--card);border:1px solid var(--line);border-radius:10px}
 .client h3{margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:17px}
 .steps+.steps{margin-top:14px}
 h4{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
