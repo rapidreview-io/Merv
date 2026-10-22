@@ -186,46 +186,68 @@ export function setupRoutes(origin: string): MountHandler {
   };
 }
 
-/** The first run, as a ladder: install, sign in, ask; one command per client, the client chosen
- *  by a CSS-only switch since the page ships no script. In the app's own tokens, both themes. */
+/** The first run, as a ladder: install, sign in, ask. Two switches choose the client and the
+ *  route (the app's menus as a strip of steps, or the terminal's commands); everything else is
+ *  labels. CSS-only, since the page ships no script. In the app's own tokens, both themes. */
 function connectPage(origin: string): string {
   const name = packageName(origin);
   const production = name === 'merv';
-  const marketplace = production ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
+  const marketplace = production ? 'rapidreview-io/merv-plugins' : '<that folder>';
   const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
-  const install = production
-    ? `<p>Add the marketplace, then install the plugin for your account.</p>`
-    : `<p>This deployment has its own plugin: <a href="/connect/bundle.tar.gz">download it</a>, extract it to a permanent folder, and use that folder as <code>MARKETPLACE</code>.</p>`;
+  /** Menu words as quiet chips, what the person types as a mono chip, in order. */
+  const path = (steps: (string | ['type', string])[]) =>
+    `<p class="path">${steps
+      .map((step) =>
+        Array.isArray(step)
+          ? `<code>${escapeHtml(step[1])}</code>`
+          : `<span>${escapeHtml(step)}</span>`,
+      )
+      .join('<i>›</i>')}</p>`;
+  const only = (client: 'claude' | 'codex', route: 'app' | 'term', html: string) =>
+    `<div data-c="${client}" data-r="${route}">${html}</div>`;
+  const archive = production
+    ? ''
+    : `<p><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
+  const switcher = (id: string, legend: string, a: [string, string], b: [string, string]) =>
+    `<fieldset class="switch"><legend>${legend}</legend><input type="radio" name="${id}" id="${a[0]}" checked><label for="${a[0]}">${a[1]}</label><input type="radio" name="${id}" id="${b[0]}"><label for="${b[0]}">${b[1]}</label></fieldset>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Merv</title><style>
 :root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-main{width:min(600px,100%);margin:0 auto;padding:clamp(28px,10vh,96px) 16px 64px}
-.mark{font:600 15px var(--mono)}h1{margin:4px 0 0;font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.01em}.lede{margin:6px 0 0;font-size:15px;color:var(--muted)}
-.switch{display:inline-flex;gap:2px;margin:28px 0 0;padding:2px;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+main{width:min(640px,100%);margin:0 auto;padding:clamp(28px,10vh,96px) 16px 64px}
+.mark{font:600 15px var(--mono)}h1{margin:4px 0 0;font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.01em}
+.switches{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+fieldset{border:0;margin:0;padding:0}legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.switch{display:inline-flex;gap:2px;padding:2px;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
 .switch label{padding:4px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer}
 input[type=radio]{position:absolute;opacity:0;width:0;height:0}
-#claude:checked+label,#codex:checked+label{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.08)}
-input:focus-visible+label{outline:2px solid var(--active);outline-offset:1px}legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-.for-claude,.for-codex{display:none}main:has(#claude:checked) .for-claude,main:has(#codex:checked) .for-codex{display:block}
-fieldset{border:0}ol{list-style:none;margin:20px 0 0;padding:0;counter-reset:step}
+input:checked+label{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.08)}
+input:focus-visible+label{outline:2px solid var(--active);outline-offset:1px}
+[data-c]{display:none}
+main:has(#claude:checked):has(#app:checked) [data-c=claude][data-r=app],main:has(#claude:checked):has(#term:checked) [data-c=claude][data-r=term],main:has(#codex:checked):has(#app:checked) [data-c=codex][data-r=app],main:has(#codex:checked):has(#term:checked) [data-c=codex][data-r=term]{display:block}
+ol{list-style:none;margin:20px 0 0;padding:0;counter-reset:step}
 li{position:relative;padding:20px 0 20px 44px;border-top:1px solid var(--line);counter-increment:step}
 li::before{content:counter(step);position:absolute;left:0;top:19px;width:26px;height:26px;border:1px solid var(--line);border-radius:50%;background:var(--card);font:600 12px/24px var(--mono);text-align:center;color:var(--muted)}
-h2{margin:0;font-size:15px;font-weight:600;line-height:1.35}p{margin:4px 0 0;color:var(--muted)}
+h2{margin:0;font-size:15px;font-weight:600;line-height:1.35}p{margin:8px 0 0;color:var(--muted)}
+.path{display:flex;flex-wrap:wrap;align-items:center;gap:6px 2px;margin-top:10px;line-height:1.3}
+.path span,.path code{display:inline-block;padding:4px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.path span{background:var(--card);color:var(--text)}
+.path code{background:var(--soft);border-color:var(--active);font:500 13px var(--mono);color:var(--text);overflow-wrap:anywhere}
+.path i{padding:0 4px;color:var(--faint);font-style:normal}
 pre{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:13px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-code{font:.92em var(--mono);overflow-wrap:anywhere}a{color:inherit;text-decoration:underline;text-underline-offset:2px}a:hover{color:var(--active)}
-.after{padding-left:44px}.after h2::before{content:'';display:inline-block;width:8px;height:8px;margin:0 8px 1px -22px;border-radius:50%;background:#2f9e44}
-.foot{margin:28px 0 0;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}.foot a{color:var(--muted)}
+a{color:inherit;text-decoration:underline;text-underline-offset:2px}a:hover{color:var(--active)}
+.after{padding:20px 0 0 44px;border-top:1px solid var(--line)}.after h2::before{content:'';display:inline-block;width:8px;height:8px;margin:0 8px 1px -22px;border-radius:50%;background:#2f9e44}
+.foot{margin:36px 0 0;font-size:12px;color:var(--faint)}.foot a{color:var(--muted)}
 @media(max-width:480px){h1{font-size:24px}li,.after{padding-left:38px}li::before{width:24px;height:24px;line-height:22px}}
 </style></head><body><main>
-<div class="mark">merv</div><h1>Merv, in your agent.</h1><p class="lede">Install the plugin, sign in once, work across your projects.</p>
-<fieldset class="switch"><legend>Client</legend><input type="radio" name="client" id="claude" checked><label for="claude">Claude Code</label><input type="radio" name="client" id="codex"><label for="codex">Codex</label></fieldset>
+<div class="mark">merv</div><h1>Merv, in your agent.</h1>
+<div class="switches">${switcher('client', 'Client', ['claude', 'Claude Code'], ['codex', 'Codex'])}${switcher('route', 'Route', ['app', 'App'], ['term', 'Terminal'])}</div>
 <ol>
-<li><h2>Install Merv</h2>${install}<div class="for-claude">${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user`)}</div><div class="for-codex">${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}`)}</div>${production ? `<p>Or in your client's Plugins view: Add marketplace → <code>rapidreview-io/merv-plugins</code>, then install Merv. <a href="https://github.com/rapidreview-io/merv-plugins">Plugin repository</a>.</p>` : ''}</li>
-<li><h2>Sign in</h2><div class="for-claude">${code(`/mcp`)}<p>Select Merv, choose Authenticate, and approve the connection in your browser.</p></div><div class="for-codex">${code(`codex mcp login ${name}`)}<p>Approve the connection in your browser.</p></div><p>No key to copy: the client keeps the connection. It may ask once for permission to use Merv's tools and local Git.</p></li>
-<li><h2>Ask</h2>${code('Use Merv. Show me my projects.')}<p>Switch projects without signing in again. None yet? Create or join one on the website, then ask again. Code work syncs to a separate Merv remote; your own stays as it is.</p></li>
+<li><h2>Install</h2>${archive}${only('claude', 'app', path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install']))}${only('codex', 'app', path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install']))}${only('claude', 'term', code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user`))}${only('codex', 'term', code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}`))}</li>
+<li><h2>Sign in</h2>${only('claude', 'app', path(['Plugins', 'Merv', 'Authenticate']))}${only('codex', 'app', path(['Plugins', 'Merv', 'Connect']))}${only('claude', 'term', code('/mcp'))}${only('codex', 'term', code(`codex mcp login ${name}`))}<p>Approve in your browser.</p></li>
+<li><h2>Ask</h2>${code('Use Merv. Show me my projects.')}</li>
 </ol>
-<div class="after"><h2>Connected</h2><p>The connection appears under <a href="/ui/account/keys">Account keys</a> as “OAuth: <i>client</i>”, where it can be revoked; it signs in again after 30 days.</p></div>
-<p class="foot">Let your agent do it: ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>. Already connected elsewhere? That guide covers reuse and migration. <a href="/connect/bundle.tar.gz">Archive fallback</a>.</p>
+<div class="after"><h2>Connected</h2><p>Listed under <a href="/ui/account/keys">Account keys</a>. Sign in again after 30 days.</p></div>
+<p class="foot">Or ask your agent to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>.</p>
 </main></body></html>`;
 }
