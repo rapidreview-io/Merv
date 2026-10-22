@@ -245,8 +245,8 @@ h4{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-trans
 <h1>Welcome to Merv</h1>
 <section><h2>Install the plugin</h2>${archive}
 <div class="clients">
-<div class="client"><h3>Claude</h3>${steps('Install', ['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Authenticate'])}</div>
-<div class="client"><h3>Codex</h3>${steps('Install', ['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Connect'])}</div>
+<div class="client"><h3>Claude App</h3>${steps('Install', ['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Authenticate'])}</div>
+<div class="client"><h3>Codex App</h3>${steps('Install', ['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Connect'])}</div>
 </div></section>
 <section><h2>Terminal</h2>
 <div class="row"><b>Claude</b>${commands([`claude plugin marketplace add ${marketplace}`, `claude plugin install ${name}@${name} --scope user`, '/mcp'])}</div>
