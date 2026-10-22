@@ -170,19 +170,7 @@ export function setupRoutes(origin: string): MountHandler {
         'content-security-policy':
           "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
       });
-      const name = packageName(origin);
-      const production = name === 'merv';
-      const marketplace = production ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
-      res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect to Merv</title><style>body{max-width:760px;margin:4rem auto;padding:0 1.5rem;font:17px/1.65 system-ui;color:#18212b;background:#faf9f6}h1{font-size:2.6rem;line-height:1.15}h2{margin-top:2rem}code{font-size:.9em;overflow-wrap:anywhere}pre{padding:1rem;background:#eeece7;white-space:pre-wrap}a{color:#174e69}li{margin:.6rem 0}.card{padding:1.2rem 1.5rem;margin:1rem 0;background:white;border:1px solid #ddd9d0;border-radius:14px}.card h2{margin-top:0}summary{cursor:pointer}small{color:#53606b}</style></head><body>
-<h1>Merv, in your agent.</h1><p>Install the plugin. Sign in once. Work across your projects.</p>
-<section class="card"><h2>1. Install Merv</h2>${production ? `<p>In your client's <strong>Plugins</strong> view, choose <strong>Add marketplace</strong> and paste:</p><pre>rapidreview-io/merv-plugins</pre><p>Then install <strong>Merv</strong> for your user account. <a href="https://github.com/rapidreview-io/merv-plugins">View the plugin repository</a>.</p><small>A small package of skills and connection settings. No local Merv server or application source.</small>` : `<p>This deployment has its own plugin. <a href="/connect/bundle.tar.gz">Download the package</a>, extract it to a permanent folder, and use that folder as <code>MARKETPLACE</code>.</p>`}
-<details><summary>Terminal installation</summary><h3>Claude Code</h3><pre>claude plugin marketplace add ${marketplace}
-claude plugin install ${name}@${name} --scope user</pre><h3>Codex</h3><pre>codex plugin marketplace add ${marketplace}
-codex plugin add ${name}@${name}</pre></details></section>
-<section class="card"><h2>2. Sign in</h2><p><strong>Claude Code:</strong> open <code>/mcp</code>, select Merv, and choose Authenticate.</p><p><strong>Codex:</strong> connect Merv from Plugins, or run <code>codex mcp login ${name}</code>.</p><p>Complete browser sign-in and authorize your account. No API key to copy. Your client saves the connection.</p></section>
-<section class="card"><h2>Start a conversation</h2><pre>Use Merv. Show me my projects.</pre><p>Choose a project or switch between projects without signing in again. If you have none yet, create or join one on the website, then ask again.</p><p>For code work, your agent uses the same connection to sync committed changes to a separate Merv Git remote. Your existing remote stays intact.</p></section>
-<details><summary>Permissions, existing installations and help</summary><p>Your client may ask permission to use tools or run local Git commands. Save a Merv-specific tool permission if you want fewer prompts; account sign-in and local permissions are separate.</p><p>If Merv is already connected, reuse it. See the <a href="/connect/agent.md">setup and migration guide</a> before replacing a legacy plugin. To disconnect, revoke its OAuth connection in <a href="/ui/account/keys">Account keys and connections</a>.</p><p><a href="/connect/bundle.tar.gz">Archive fallback</a> · <a href="/connect/agent.md">Full agent instructions</a></p></details>
-<p><small>Let your agent handle setup: ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>.</small></p></body></html>`);
+      res.end(connectPage(origin));
       return;
     }
     res.writeHead(410, { 'content-type': 'application/json' });
@@ -196,4 +184,48 @@ codex plugin add ${name}@${name}</pre></details></section>
       }),
     );
   };
+}
+
+/** The first run, as a ladder: install, sign in, ask; one command per client, the client chosen
+ *  by a CSS-only switch since the page ships no script. In the app's own tokens, both themes. */
+function connectPage(origin: string): string {
+  const name = packageName(origin);
+  const production = name === 'merv';
+  const marketplace = production ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
+  const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
+  const install = production
+    ? `<p>Add the marketplace, then install the plugin for your account.</p>`
+    : `<p>This deployment has its own plugin: <a href="/connect/bundle.tar.gz">download it</a>, extract it to a permanent folder, and use that folder as <code>MARKETPLACE</code>.</p>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Merv</title><style>
+:root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+main{width:min(600px,100%);margin:0 auto;padding:clamp(28px,10vh,96px) 16px 64px}
+.mark{font:600 15px var(--mono)}h1{margin:4px 0 0;font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.01em}.lede{margin:6px 0 0;font-size:15px;color:var(--muted)}
+.switch{display:inline-flex;gap:2px;margin:28px 0 0;padding:2px;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.switch label{padding:4px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer}
+input[type=radio]{position:absolute;opacity:0;width:0;height:0}
+#claude:checked+label,#codex:checked+label{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.08)}
+input:focus-visible+label{outline:2px solid var(--active);outline-offset:1px}legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.for-claude,.for-codex{display:none}main:has(#claude:checked) .for-claude,main:has(#codex:checked) .for-codex{display:block}
+fieldset{border:0}ol{list-style:none;margin:20px 0 0;padding:0;counter-reset:step}
+li{position:relative;padding:20px 0 20px 44px;border-top:1px solid var(--line);counter-increment:step}
+li::before{content:counter(step);position:absolute;left:0;top:19px;width:26px;height:26px;border:1px solid var(--line);border-radius:50%;background:var(--card);font:600 12px/24px var(--mono);text-align:center;color:var(--muted)}
+h2{margin:0;font-size:15px;font-weight:600;line-height:1.35}p{margin:4px 0 0;color:var(--muted)}
+pre{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:13px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+code{font:.92em var(--mono);overflow-wrap:anywhere}a{color:inherit;text-decoration:underline;text-underline-offset:2px}a:hover{color:var(--active)}
+.after{padding-left:44px}.after h2::before{content:'';display:inline-block;width:8px;height:8px;margin:0 8px 1px -22px;border-radius:50%;background:#2f9e44}
+.foot{margin:28px 0 0;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}.foot a{color:var(--muted)}
+@media(max-width:480px){h1{font-size:24px}li,.after{padding-left:38px}li::before{width:24px;height:24px;line-height:22px}}
+</style></head><body><main>
+<div class="mark">merv</div><h1>Merv, in your agent.</h1><p class="lede">Install the plugin, sign in once, work across your projects.</p>
+<fieldset class="switch"><legend>Client</legend><input type="radio" name="client" id="claude" checked><label for="claude">Claude Code</label><input type="radio" name="client" id="codex"><label for="codex">Codex</label></fieldset>
+<ol>
+<li><h2>Install Merv</h2>${install}<div class="for-claude">${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user`)}</div><div class="for-codex">${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}`)}</div>${production ? `<p>Or in your client's Plugins view: Add marketplace → <code>rapidreview-io/merv-plugins</code>, then install Merv. <a href="https://github.com/rapidreview-io/merv-plugins">Plugin repository</a>.</p>` : ''}</li>
+<li><h2>Sign in</h2><div class="for-claude">${code(`/mcp`)}<p>Select Merv, choose Authenticate, and approve the connection in your browser.</p></div><div class="for-codex">${code(`codex mcp login ${name}`)}<p>Approve the connection in your browser.</p></div><p>No key to copy: the client keeps the connection. It may ask once for permission to use Merv's tools and local Git.</p></li>
+<li><h2>Ask</h2>${code('Use Merv. Show me my projects.')}<p>Switch projects without signing in again. None yet? Create or join one on the website, then ask again. Code work syncs to a separate Merv remote; your own stays as it is.</p></li>
+</ol>
+<div class="after"><h2>Connected</h2><p>The connection appears under <a href="/ui/account/keys">Account keys</a> as “OAuth: <i>client</i>”, where it can be revoked; it signs in again after 30 days.</p></div>
+<p class="foot">Let your agent do it: ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>. Already connected elsewhere? That guide covers reuse and migration. <a href="/connect/bundle.tar.gz">Archive fallback</a>.</p>
+</main></body></html>`;
 }
