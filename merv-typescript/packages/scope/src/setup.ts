@@ -1,6 +1,7 @@
 import { packageArchive, packageFiles, packageName } from './client-package.js';
 import type { MountHandler } from '@merv/api/types';
 import { escapeHtml } from '@merv/contracts/text';
+import { randomBytes } from 'node:crypto';
 
 export function setupGuide(origin: string) {
   const name = packageName(origin);
@@ -165,12 +166,12 @@ export function setupRoutes(origin: string): MountHandler {
       return;
     }
     if (req.method === 'GET' && r.url.pathname === '/connect') {
+      const nonce = randomBytes(16).toString('base64');
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
-        'content-security-policy':
-          "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+        'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; frame-ancestors 'none'`,
       });
-      res.end(connectPage(origin));
+      res.end(connectPage(origin, nonce));
       return;
     }
     res.writeHead(410, { 'content-type': 'application/json' });
@@ -186,46 +187,71 @@ export function setupRoutes(origin: string): MountHandler {
   };
 }
 
-/** The first run, as a ladder: install, sign in, ask; one command per client, the client chosen
- *  by a CSS-only switch since the page ships no script. In the app's own tokens, both themes. */
-function connectPage(origin: string): string {
+/** The set-up page, in the layout of the project's Welcome board: Install the plugin with a
+ *  Claude and a Codex line, a rule, Terminal, a rule, Try it, Look at it. Typed, spaced, no script. */
+function connectPage(origin: string, nonce: string): string {
   const name = packageName(origin);
   const production = name === 'merv';
-  const marketplace = production ? 'rapidreview-io/merv-plugins' : 'MARKETPLACE';
-  const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
-  const install = production
-    ? `<p>Add the marketplace, then install the plugin for your account.</p>`
-    : `<p>This deployment has its own plugin: <a href="/connect/bundle.tar.gz">download it</a>, extract it to a permanent folder, and use that folder as <code>MARKETPLACE</code>.</p>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Merv</title><style>
+  const marketplace = production ? 'rapidreview-io/merv-plugins' : '<that folder>';
+  const copyIcon =
+    '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>';
+  /** One command per line, each with its own copy button. */
+  const commands = (lines: string[]) =>
+    `<div class="cmds">${lines
+      .map(
+        (line) =>
+          `<div class="cmd"><code>${escapeHtml(line)}</code><button type="button" class="copy" data-copy="${escapeHtml(line)}" aria-label="Copy">${copyIcon}</button></div>`,
+      )
+      .join('')}</div>`;
+  /** A labelled, numbered list of menu steps; what the person types is mono. */
+  const steps = (label: string, items: (string | ['type', string])[]) =>
+    `<div class="steps"><h4>${label}</h4><ol>${items
+      .map(
+        (step) =>
+          `<li>${Array.isArray(step) ? `<code>${escapeHtml(step[1])}</code>` : escapeHtml(step)}</li>`,
+      )
+      .join('')}</ol></div>`;
+  const archive = production
+    ? ''
+    : `<p class="note"><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome to Merv</title><style>
 :root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-main{width:min(600px,100%);margin:0 auto;padding:clamp(28px,10vh,96px) 16px 64px}
-.mark{font:600 15px var(--mono)}h1{margin:4px 0 0;font-size:28px;line-height:1.2;font-weight:600;letter-spacing:-.01em}.lede{margin:6px 0 0;font-size:15px;color:var(--muted)}
-.switch{display:inline-flex;gap:2px;margin:28px 0 0;padding:2px;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
-.switch label{padding:4px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer}
-input[type=radio]{position:absolute;opacity:0;width:0;height:0}
-#claude:checked+label,#codex:checked+label{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.08)}
-input:focus-visible+label{outline:2px solid var(--active);outline-offset:1px}legend{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-.for-claude,.for-codex{display:none}main:has(#claude:checked) .for-claude,main:has(#codex:checked) .for-codex{display:block}
-fieldset{border:0}ol{list-style:none;margin:20px 0 0;padding:0;counter-reset:step}
-li{position:relative;padding:20px 0 20px 44px;border-top:1px solid var(--line);counter-increment:step}
-li::before{content:counter(step);position:absolute;left:0;top:19px;width:26px;height:26px;border:1px solid var(--line);border-radius:50%;background:var(--card);font:600 12px/24px var(--mono);text-align:center;color:var(--muted)}
-h2{margin:0;font-size:15px;font-weight:600;line-height:1.35}p{margin:4px 0 0;color:var(--muted)}
-pre{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:13px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-code{font:.92em var(--mono);overflow-wrap:anywhere}a{color:inherit;text-decoration:underline;text-underline-offset:2px}a:hover{color:var(--active)}
-.after{padding-left:44px}.after h2::before{content:'';display:inline-block;width:8px;height:8px;margin:0 8px 1px -22px;border-radius:50%;background:#2f9e44}
-.foot{margin:28px 0 0;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}.foot a{color:var(--muted)}
-@media(max-width:480px){h1{font-size:24px}li,.after{padding-left:38px}li::before{width:24px;height:24px;line-height:22px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+main{width:min(760px,100%);margin:0 auto;padding:clamp(28px,8vh,80px) 20px 72px}
+h1{margin:0 0 48px;text-align:center;font-size:32px;line-height:1.2;font-weight:600;letter-spacing:-.01em}
+h2{margin:0 0 20px;font-size:20px;font-weight:600;line-height:1.3}
+h3{margin:0 0 8px;font-size:16px;font-weight:600;line-height:1.3}
+section{padding:32px 0}section+section{border-top:1px solid var(--line)}section:first-of-type{padding-top:0}
+.clients{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.client{padding:18px 20px 20px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.client h3{margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:17px}
+.steps+.steps{margin-top:14px}
+h4{margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.steps ol{margin:0;padding:0;list-style:none;counter-reset:n}
+.steps li{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:baseline;line-height:1.95;counter-increment:n}
+.steps li::before{content:counter(n);font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.steps code{font:500 14px var(--mono);overflow-wrap:anywhere}
+.row{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 16px;align-items:baseline}.row+.row{margin-top:24px}
+.row b{font-size:16px;font-weight:600}
+.cmds{display:grid;gap:8px}.cmd{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.cmd code{flex:1;min-width:0;font:14px/1.6 var(--mono);overflow-wrap:anywhere;color:var(--text)}
+.copy{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:0;border-radius:6px;background:none;color:var(--faint);cursor:pointer}.copy:hover{background:var(--card);color:var(--text)}.copy[data-done]{color:#2f9e44}
+.ask{margin:0;font-size:18px;font-style:italic;color:var(--muted)}.caret{display:inline-block;width:2px;height:1.1em;margin-left:3px;vertical-align:-2px;background:var(--text);animation:blink 1.1s steps(1) infinite}@keyframes blink{50%{opacity:0}}
+.note{margin:14px 0 0;font-size:14px;color:var(--faint)}
+.look{margin:0;font-size:16px}.look a{color:var(--active);text-decoration:underline;text-underline-offset:3px}
+@media(max-width:560px){h1{font-size:26px;margin-bottom:36px}.clients{grid-template-columns:minmax(0,1fr)}.row{grid-template-columns:minmax(0,1fr);gap:4px}}
 </style></head><body><main>
-<div class="mark">merv</div><h1>Merv, in your agent.</h1><p class="lede">Install the plugin, sign in once, work across your projects.</p>
-<fieldset class="switch"><legend>Client</legend><input type="radio" name="client" id="claude" checked><label for="claude">Claude Code</label><input type="radio" name="client" id="codex"><label for="codex">Codex</label></fieldset>
-<ol>
-<li><h2>Install Merv</h2>${install}<div class="for-claude">${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user`)}</div><div class="for-codex">${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}`)}</div>${production ? `<p>Or in your client's Plugins view: Add marketplace → <code>rapidreview-io/merv-plugins</code>, then install Merv. <a href="https://github.com/rapidreview-io/merv-plugins">Plugin repository</a>.</p>` : ''}</li>
-<li><h2>Sign in</h2><div class="for-claude">${code(`/mcp`)}<p>Select Merv, choose Authenticate, and approve the connection in your browser.</p></div><div class="for-codex">${code(`codex mcp login ${name}`)}<p>Approve the connection in your browser.</p></div><p>No key to copy: the client keeps the connection. It may ask once for permission to use Merv's tools and local Git.</p></li>
-<li><h2>Ask</h2>${code('Use Merv. Show me my projects.')}<p>Switch projects without signing in again. None yet? Create or join one on the website, then ask again. Code work syncs to a separate Merv remote; your own stays as it is.</p></li>
-</ol>
-<div class="after"><h2>Connected</h2><p>The connection appears under <a href="/ui/account/keys">Account keys</a> as “OAuth: <i>client</i>”, where it can be revoked; it signs in again after 30 days.</p></div>
-<p class="foot">Let your agent do it: ask it to read <a href="/connect/agent.md">${escapeHtml(origin)}/connect/agent.md</a>. Already connected elsewhere? That guide covers reuse and migration. <a href="/connect/bundle.tar.gz">Archive fallback</a>.</p>
-</main></body></html>`;
+<h1>Welcome to Merv</h1>
+<section><h2>Install the plugin</h2>${archive}
+<div class="clients">
+<div class="client"><h3>Claude App</h3>${steps('Install', ['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Authenticate'])}</div>
+<div class="client"><h3>Codex App</h3>${steps('Install', ['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${steps('Sign in', ['Plugins', 'Merv', 'Connect'])}</div>
+</div></section>
+<section><h2>Terminal</h2>
+<div class="row"><b>Claude</b>${commands([`claude plugin marketplace add ${marketplace}`, `claude plugin install ${name}@${name} --scope user`, '/mcp'])}</div>
+<div class="row"><b>Codex</b>${commands([`codex plugin marketplace add ${marketplace}`, `codex plugin add ${name}@${name}`, `codex mcp login ${name}`])}</div></section>
+<section><h2>Try it</h2><p class="ask">“Use Merv. Show me my projects.”<span class="caret"></span></p></section>
+<section><h2>Look at it</h2><p class="look">Your projects, whiteboards, experiments, and agents live here: <a href="/ui/">${escapeHtml(origin)}</a></p></section>
+</main><script nonce="${nonce}">for(const b of document.querySelectorAll('.copy'))b.addEventListener('click',()=>navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.dataset.done='1';b.setAttribute('aria-label','Copied');setTimeout(()=>{delete b.dataset.done;b.setAttribute('aria-label','Copy')},1500)}));</script></body></html>`;
 }
