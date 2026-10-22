@@ -1,6 +1,7 @@
 import { packageArchive, packageFiles, packageName } from './client-package.js';
 import type { MountHandler } from '@merv/api/types';
 import { escapeHtml } from '@merv/contracts/text';
+import { handwriting as hw } from './connect-handwriting.js';
 
 export function setupGuide(origin: string) {
   const name = packageName(origin);
@@ -186,16 +187,17 @@ export function setupRoutes(origin: string): MountHandler {
   };
 }
 
-/** The set-up page, laid out as the founder's Welcome board (2026-10-22): Install the plugin
- *  with a Claude and a Codex line, a rule, Terminal, a rule, Try it, Look at it. No script. */
+/** The set-up page is the project's Welcome board: the founder's handwriting (connect-handwriting.ts,
+ *  generated from the board) for the title, the labels and the rules, typed text for what a person
+ *  copies or follows. No script. */
 function connectPage(origin: string): string {
   const name = packageName(origin);
   const production = name === 'merv';
   const marketplace = production ? 'rapidreview-io/merv-plugins' : '<that folder>';
   const code = (text: string) => `<pre>${escapeHtml(text)}</pre>`;
   /** Menu words as quiet chips, what the person types as a mono chip, in order. */
-  const path = (steps: (string | ['type', string])[]) =>
-    `<span class="path">${steps
+  const path = (steps: (string | ['type', string])[], lead = '') =>
+    `<span class="path">${lead ? `<em>${lead}</em><i>›</i>` : ''}${steps
       .map((step) =>
         Array.isArray(step)
           ? `<code>${escapeHtml(step[1])}</code>`
@@ -205,42 +207,41 @@ function connectPage(origin: string): string {
   const archive = production
     ? ''
     : `<p class="note"><a href="/connect/bundle.tar.gz">Download the plugin</a> and extract it to a permanent folder.</p>`;
+  const hand = (piece: keyof typeof hw, label: string, cls: string) =>
+    `<span class="hand ${cls}" role="img" aria-label="${label}">${hw[piece]}</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome to Merv</title><style>
-:root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
+:root{color-scheme:light;--bg:#f7f8fa;--card:#fff;--soft:#f1f3f6;--text:#111827;--ink:#1e1e1e;--muted:#4b5563;--faint:#666d7b;--line:#e5e7eb;--active:#2563eb;--mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#111214;--card:#1a1b1e;--soft:#232428;--text:#e5e7eb;--ink:#e5e7eb;--muted:#adadb6;--faint:#8e8e98;--line:#2a2b30;--active:#60a5fa}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-main{width:min(720px,100%);margin:0 auto;padding:clamp(28px,9vh,88px) 16px 64px}
-h1{margin:0 0 36px;text-align:center;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.01em}
-h2{margin:0 0 14px;font-size:17px;font-weight:600;line-height:1.3}
-section{padding:26px 0}section+section{border-top:1px solid var(--line)}
-.row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px 12px;align-items:start;margin-top:12px}
-.row b{font-weight:600;padding-top:5px}
-.path{display:flex;flex-wrap:wrap;align-items:center;gap:6px 2px;line-height:1.3}
-.path+.path{margin-top:8px}
+main{width:min(760px,100%);margin:0 auto;padding:clamp(28px,8vh,80px) 20px 64px}
+.hand{display:block;color:var(--ink)}.hand svg{display:block;height:100%;width:auto;max-width:100%}
+.title{height:68px;margin:0 auto 44px;width:fit-content}
+.h2{height:48px;margin-bottom:18px}.label{height:38px;padding-top:2px}.rule{height:12px;width:100%;margin:30px 0 26px}.rule svg{width:100%;height:100%}.rule svg{preserveAspectRatio:none}
+.row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px 16px;align-items:start}.row+.row{margin-top:14px}
+.path{display:flex;flex-wrap:wrap;align-items:center;gap:6px 2px;line-height:1.3}.path+.path{margin-top:8px}
 .path span,.path code{display:inline-block;padding:4px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
 .path span{background:var(--card);color:var(--text)}
 .path code{background:var(--soft);border-color:var(--active);font:500 13px var(--mono);color:var(--text);overflow-wrap:anywhere}
-.path i{padding:0 4px;color:var(--faint);font-style:normal}
-.path em{font-style:normal;color:var(--muted);padding:4px 0}
+.path i{padding:0 4px;color:var(--faint);font-style:normal}.path em{font-style:normal;color:var(--muted)}
 pre{margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:13px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-pre b{display:block;margin-bottom:2px;font:600 11px/1.6 -apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
-.row pre{margin:0}.row+.row{margin-top:12px}
 .ask{display:inline-block;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);font:15px var(--mono)}
-.note{margin:10px 0 0;font-size:13px;color:var(--faint)}
-.look{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-weight:500;text-decoration:none;color:var(--text)}
+.note{margin:10px 0 0;font-size:13px;color:var(--faint)}a{color:inherit}
+.look{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-weight:500;text-decoration:none}
 .look:hover{border-color:var(--active);color:var(--active)}.look::before{content:'';width:8px;height:8px;border-radius:50%;background:#2f9e44}
-a{color:inherit}
-@media(max-width:480px){h1{font-size:24px}.row{grid-template-columns:minmax(0,1fr)}}
+.typed{font-size:13px;font-weight:600;color:var(--muted);padding-top:6px}
+@media(max-width:560px){.title{height:48px;margin-bottom:32px}.row{grid-template-columns:minmax(0,1fr)}.label{padding-top:0}}
 </style></head><body><main>
-<h1>Welcome to Merv</h1>
-<section><h2>Install the plugin</h2>${archive}
-<div class="row"><b>Claude</b><div>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Authenticate']).replace('<span class="path">', '<span class="path"><em>Sign in</em><i>›</i>')}</div></div>
-<div class="row"><b>Codex</b><div>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Connect']).replace('<span class="path">', '<span class="path"><em>Sign in</em><i>›</i>')}</div></div>
-<p class="note">Approve the connection in your browser; the client keeps it.</p></section>
-<section><h2>Terminal</h2>
-<div class="row"><b>Claude</b>${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user\n/mcp`)}</div>
-<div class="row"><b>Codex</b>${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}\ncodex mcp login ${name}`)}</div></section>
-<section><h2>Try it</h2><span class="ask">Use Merv. Show me my projects.</span><p class="note">No project yet? Create or join one, then ask again.</p></section>
-<section><h2>Look at it</h2><a class="look" href="/ui/">${escapeHtml(new URL(origin).host)}</a><p class="note">Your projects, boards and agents, live. The connection is listed under <a href="/ui/account/keys">Account keys</a>; sign in again after 30 days. Or ask your agent to read <a href="/connect/agent.md">/connect/agent.md</a>.</p></section>
+${hand('title', 'Welcome to Merv', 'title')}
+${hand('install', 'Install the plugin', 'h2')}${archive}
+<div class="row">${hand('claude', 'Claude', 'label')}<div>${path(['Plugins', 'Add', 'Add marketplace', ['type', marketplace], 'Sync', 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Authenticate'], 'Sign in')}</div></div>
+<div class="row">${hand('codex', 'Codex', 'label')}<div>${path(['Plugins', 'Add marketplace', ['type', marketplace], 'Discover', 'Merv', 'Install'])}${path(['Plugins', 'Merv', 'Connect'], 'Sign in')}</div></div>
+<p class="note">Approve the connection in your browser; the client keeps it.</p>
+${hand('rule1', '', 'rule')}
+${hand('terminal', 'Terminal', 'h2')}
+<div class="row"><span class="typed">Claude</span>${code(`claude plugin marketplace add ${marketplace}\nclaude plugin install ${name}@${name} --scope user\n/mcp`)}</div>
+<div class="row"><span class="typed">Codex</span>${code(`codex plugin marketplace add ${marketplace}\ncodex plugin add ${name}@${name}\ncodex mcp login ${name}`)}</div>
+${hand('rule2', '', 'rule')}
+<div class="row">${hand('tryit', 'Try it', 'label')}<div><span class="ask">Use Merv. Show me my projects.</span><p class="note">No project yet? Create or join one, then ask again.</p></div></div>
+<div class="row" style="margin-top:36px">${hand('lookatit', 'Look at it', 'label')}<div><a class="look" href="/ui/">${escapeHtml(new URL(origin).host)}</a><p class="note">Your projects, boards and agents, live. The connection is listed under <a href="/ui/account/keys">Account keys</a>; sign in again after 30 days. Or ask your agent to read <a href="/connect/agent.md">/connect/agent.md</a>.</p></div></div>
 </main></body></html>`;
 }
