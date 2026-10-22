@@ -218,16 +218,13 @@ main{width:min(760px,100%);margin:0 auto;padding:clamp(28px,8vh,80px) 20px 64px}
 .title{height:68px;margin:0 auto 44px;width:fit-content}
 .h2{height:48px;margin-bottom:18px}.label{height:38px;padding-top:2px}.rule{height:12px;width:100%;margin:30px 0 26px}.rule svg{width:100%;height:100%}.rule svg{preserveAspectRatio:none}
 .row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px 16px;align-items:start}.row+.row{margin-top:14px}
-.path{display:flex;flex-wrap:wrap;align-items:center;gap:6px 2px;line-height:1.3}.path+.path{margin-top:8px}
-.path span,.path code{display:inline-block;padding:4px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
-.path span{background:var(--card);color:var(--text)}
-.path code{background:var(--soft);border-color:var(--active);font:500 13px var(--mono);color:var(--text);overflow-wrap:anywhere}
-.path i{padding:0 4px;color:var(--faint);font-style:normal}.path em{font-style:normal;color:var(--muted)}
+.path{display:block;font-size:15px;line-height:1.7}.path+.path{margin-top:2px}
+.path code{font:500 14px var(--mono);white-space:nowrap}.path i{padding:0 6px;color:var(--faint);font-style:normal}.path em{font-style:normal;color:var(--muted)}
 pre{margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font:13px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
-.ask{display:inline-block;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);font:15px var(--mono)}
+.ask{display:block;font:16px var(--mono)}
 .note{margin:10px 0 0;font-size:13px;color:var(--faint)}a{color:inherit}
-.look{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-weight:500;text-decoration:none}
-.look:hover{border-color:var(--active);color:var(--active)}.look::before{content:'';width:8px;height:8px;border-radius:50%;background:#2f9e44}
+.look{display:inline-flex;align-items:center;gap:8px;font-size:16px;font-weight:500;text-decoration:underline;text-underline-offset:3px}
+.look:hover{color:var(--active)}.look::before{content:'';width:8px;height:8px;border-radius:50%;background:#2f9e44}
 .typed{font-size:13px;font-weight:600;color:var(--muted);padding-top:6px}
 @media(max-width:560px){.title{height:48px;margin-bottom:32px}.row{grid-template-columns:minmax(0,1fr)}.label{padding-top:0}}
 </style></head><body><main>
