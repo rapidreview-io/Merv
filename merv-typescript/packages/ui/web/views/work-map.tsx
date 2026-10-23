@@ -467,10 +467,6 @@ export function WorkMap({
   );
   // Held at the right edge until the reader scrolls off it; back there, held again.
   const pinned = useRef(true);
-  useLayoutEffect(() => {
-    const element = frame.current;
-    if (element && pinned.current) element.scrollLeft = element.scrollWidth;
-  }, [layout?.width]);
   // A drag on the canvas, off any mark, pans it.
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const drawn = !!layout;
@@ -482,6 +478,16 @@ export function WorkMap({
   const held = selected && board ? absorberOf(board, selected) : undefined;
   const served = held && board!.edges.find((edge) => edge.from === held.key && names.has(edge.to));
   const inHand = [selected, held?.key, served?.to].find((key) => key && names.has(key)) ?? null;
+  // As the drawing or the view changes, the canvas keeps to its right edge where it was held
+  // there, and otherwise keeps the mark in hand in view: opening the sidebar narrows the view.
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (element && pinned.current) element.scrollLeft = element.scrollWidth;
+    else if (inHand)
+      [...(element?.querySelectorAll<HTMLElement>('[data-key]') ?? [])]
+        .find((mark) => mark.dataset.key === inHand)
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [layout?.width, width, inHand]);
   const lit = inHand
     ? lineage(inHand, edges)
     : hover

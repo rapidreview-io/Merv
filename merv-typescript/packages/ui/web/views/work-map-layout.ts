@@ -3,7 +3,7 @@
  * a mark and a name; a prerequisite stands in the column left of what waits on it, so every
  * line runs left to right and position says the order before any line does. Work joined by
  * prerequisites is one chain; each chain has its own rows, and chains stack down the canvas in
- * the order their work was given. Within a chain a unit stands level with what it waits on
+ * the order their work was given, a little apart. Within a chain a unit stands level with what it waits on
  * where that row is free, else in the nearest free row under it, so lines are short and never
  * cross a mark; a column holding one unit stands at the chain's middle, so a run of steps
  * reads as one line through the chain rather than hanging from its top.
@@ -18,7 +18,8 @@
  * a unit many things wait on reads as one trunk with a stub to each, never a fan of curves;
  * lines that arrive at one unit meet the same way. No line crosses a name. Within a column,
  * what needs a person stands first, then what is live, then the rest, the ended last. Work
- * joined to nothing is set in a grid of its own after the chains, filled from the right.
+ * joined to nothing is set in a grid of its own after the chains, as wide as the view, filled
+ * from the right.
  * Groups (the cycles) stack down the canvas, each laid out alone, a gap between them. It is
  * pure, so the drawing is the same wherever it is asked, and it is tested without a browser.
  * Below MAP_MIN the page draws no map: the list under it says the same relations in words.
@@ -37,8 +38,9 @@ const PAD = 40;
 const END = 96;
 /** Between a name's end and the next column: where a line runs. */
 export const GUTTER = 28;
-/** Between two groups. */
+/** Between two groups, and between two chains or a chain and the grid in one. */
 const GROUP_GAP = 36;
+const CHAIN_GAP = 18;
 
 export interface MapEdge {
   from: string;
@@ -181,7 +183,9 @@ export function workMapLayout(
       top += GROUP_GAP;
       rules.push(row * ROW_H + top - GROUP_GAP / 2);
     }
+    const start = row;
     for (const chain of joined) {
+      if (row > start) top += CHAIN_GAP;
       const shift = cols - columnsOf(chain);
       // Rows within the chain: column by column, each unit level with the first thing it waits
       // on where that row is still free in its column, else the nearest free row below.
@@ -207,7 +211,8 @@ export function workMapLayout(
       row += deepest + 1;
     }
     // What waits on nothing and holds nothing up: a grid, filled from the right.
-    const across = Math.min(cols, Math.max(1, alone.length));
+    if (joined.length && alone.length) top += CHAIN_GAP;
+    const across = Math.min(cols, viewCols, Math.max(1, alone.length));
     alone.forEach((key, n) =>
       place(key, cols - 1 - (n % across), row + Math.floor(n / across) + top / ROW_H),
     );
