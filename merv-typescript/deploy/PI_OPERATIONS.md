@@ -373,3 +373,25 @@ WHERE phase IN ('uncertain', 'releasing') AND data_json::json->>'runtime' IS NUL
 SELECT id, state FROM sandboxes WHERE idempotency_key = 'runtime:' ||
   encode(sha256(convert_to('["<project_id>","<id>:create"]', 'UTF8')), 'hex');
 ```
+
+## Fleet token allowances and admin upgrades
+
+Fleet workflow agents default to 100,000,000 tokens per person per UTC day
+(`MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON`). This is separate from Pi's
+Agent token allowance and Fleet's machine-dollar allowance.
+
+On `/ui/admin`, Credits → person → Fleet agent tokens → Set limit writes the
+admin allowance immediately. Enter raw tokens, e.g. `100000000`, not `100`.
+Clear removes the per-person admin override and restores the deployment default.
+A user's own lower Fleet limit in Settings still applies: the effective allowance
+is the smaller of the admin cap and the personal setting. The credit detail API
+and UI distinguish the admin cap from that effective limit. Raising the cap does
+not automatically change the user's personal setting. Both are read live; no
+restart is needed for individual upgrades. Daily usage resets at midnight UTC.
+
+Production update, 2026-10-23 UTC: raised all 13 active members' Fleet allowances
+to at least 100M, preserving the existing 1B allowance; raised the one 20M personal
+limit to 100M under the owner's explicit request. Each change is in `admin_audit`.
+Set the deployment env default to 100M and recreated Main with its existing image.
+Main restarts preserve Fleet allocations, but relay requests in flight may be
+interrupted. This configuration operation did not deploy the admin UI clarification.

@@ -134,6 +134,8 @@ export interface PersonUse<Limit = number> {
   used: number;
   limit: Limit;
   own: boolean;
+  /** Admin allowance before a user’s own lower limit, when available. */
+  cap?: number;
 }
 export type ModelTokens = PersonUse;
 /** One day's estimated machine dollars and price coverage for a project. */

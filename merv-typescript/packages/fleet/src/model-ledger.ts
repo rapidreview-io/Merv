@@ -63,8 +63,8 @@ export const dailyTokens = (table: string, capsTable: string, ownTable?: string)
       ledger.charge(sql, [person, day], tokens, (await limit(sql, person, fallback)).limit),
     settle: (sql: Sql, person: string, day: string, delta: number) =>
       ledger.settle(sql, [person, day], delta),
-    /** Each of `persons`' tokens over the UTC days [from, to), the daily limit that holds, and
-     *  whether the admin set theirs. */
+    /** Each of `persons`' tokens over the UTC days [from, to), the daily limit that holds,
+     *  whether the admin set theirs and, where people may lower their own, the admin's cap. */
     used: async (
       sql: Sql,
       persons: readonly string[],
@@ -83,6 +83,7 @@ export const dailyTokens = (table: string, capsTable: string, ownTable?: string)
       return persons.map((person, i) => ({
         used: used.get(person) ?? 0,
         limit: held[i]!.limit,
+        ...(own ? { cap: held[i]!.cap } : {}),
         own: held[i]!.set,
       }));
     },

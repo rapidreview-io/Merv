@@ -345,7 +345,7 @@ if (fleetEnabled) {
         maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 10, 1, 64),
         dailyTokensPerPerson: integer(
           'MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON',
-          20_000_000,
+          100_000_000,
           1,
           1_000_000_000,
         ),

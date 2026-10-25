@@ -60,7 +60,7 @@ const workflowConfig = z
       .describe('Fleet agent model calls · OpenAI API key'),
     baseUrl: z.string().url().max(2048),
     maxAgents: z.number().int().min(1).max(64).default(10),
-    dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
+    dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
     /** Requires the hosted image that accepts an exact Astra/medium bootstrap. */
     astraMediumEnabled: z.boolean().default(false),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),

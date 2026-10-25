@@ -373,7 +373,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
     maxAgents: 10,
-    dailyTokensPerPerson: 20_000_000,
+    dailyTokensPerPerson: 100_000_000,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
   // The retired single-project source is ignored if an old environment still names it.

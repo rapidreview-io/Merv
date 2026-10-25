@@ -133,11 +133,22 @@ async function uses(
     left?: number,
   ): CreditUse[] => {
     if (!reads) return [];
-    const { limit, own, used } = reads[0]!;
+    const { limit, cap, own, used } = reads[0]!;
     // Only the windows asked for: the list asks for today alone.
     const by = Object.fromEntries(windows.map(([w], n) => [w, reads[n]!.used]));
     const rest = limit === null ? null : Math.max(0, limit - used);
-    return [{ kind, label, unit, limit, own, used: by as CreditUse['used'], left: left ?? rest }];
+    return [
+      {
+        kind,
+        label,
+        unit,
+        limit,
+        ...(cap === undefined ? {} : { cap }),
+        own,
+        used: by as CreditUse['used'],
+        left: left ?? rest,
+      },
+    ];
   };
   return await pooled(people, 8, async (person, i) => {
     const own = await sbx.people.accountOf(person);

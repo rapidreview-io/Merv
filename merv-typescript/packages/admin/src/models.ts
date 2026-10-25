@@ -107,6 +107,8 @@ export interface CreditUse {
   limit: number | null;
   /** The person's own limit, where it overrides the platform default. */
   own: boolean;
+  /** Admin allowance; limit remains the effective limit after personal settings. */
+  cap?: number;
   used: Record<'day' | 'week' | 'month' | 'total', number>;
   /** What is left now: of today's limit, or of a provider's granted credit. */
   left: number | null;

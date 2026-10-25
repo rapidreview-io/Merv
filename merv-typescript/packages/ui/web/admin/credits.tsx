@@ -85,7 +85,8 @@ function Guard({ act, close, done }: { act: Act; close(): void; done(): void }) 
 /** A platform kind's own daily limit for this person, or the default again (`Clear`). */
 function LimitForm(props: { use: CreditUse; person: string; close(): void; done(): void }) {
   const { use, close } = props;
-  const [value, setValue] = useState(use.own && use.limit !== null ? String(use.limit) : '');
+  const allowance = use.cap ?? use.limit;
+  const [value, setValue] = useState(use.own && allowance !== null ? String(allowance) : '');
   // Any answer the route confirms is the change: it names no record of its own.
   const command = usePost(
     () => (close(), props.done()),
@@ -130,6 +131,12 @@ function LimitForm(props: { use: CreditUse; person: string; close(): void; done(
           </button>
         )}
       </div>
+      {use.cap !== undefined && (
+        <p className="faint">
+          This sets the admin allowance. A lower personal limit in Settings still applies. Clear
+          restores the deployment default. Changes apply immediately.
+        </p>
+      )}
       <Failure message={command.error} />
     </OpenedForm>
   );
@@ -250,7 +257,7 @@ function Use(props: { use: CreditUse; span: Span; of: PersonCredits; done(): voi
           <span className="admin-credit-name">{use.label}</span>
           {!!use.limit && (
             <span className="faint tabular">
-              {shown(use.limit)} {provider ? 'granted' : 'a day'}
+              {shown(use.cap ?? use.limit)} {provider ? 'granted' : 'a day'}
             </span>
           )}
           {use.own && <Word tone="neutral" value="own" />}
@@ -264,6 +271,12 @@ function Use(props: { use: CreditUse; span: Span; of: PersonCredits; done(): voi
           {open ? 'Cancel' : provider ? 'Give credit' : 'Set limit'}
         </button>
       </div>
+      {use.cap !== undefined && use.limit !== null && use.limit < use.cap && (
+        <p className="faint">
+          Personal limit: {shown(use.limit)} a day. The user can raise it in Settings up to the
+          admin allowance above.
+        </p>
+      )}
       <div className="cluster--between tabular">
         <span>
           {shown(use.used[props.span])} <span className="faint">used</span>
