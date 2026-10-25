@@ -583,6 +583,9 @@ export interface EventFilter {
 }
 export interface State {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
+  /** Run outside database scope after the current writer commits; discard on rollback.
+   * Without a writer, schedule outside the current scope immediately. Best-effort wakeup only. */
+  afterCommit(listener: () => void): void;
   /**
    * Reads on the current scope, or on a connection of its own outside one. While a transaction
    * or snapshot the read started is open, it owns the connection, and a query on the read's own

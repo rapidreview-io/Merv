@@ -190,3 +190,86 @@ test('shutdown receipts support both native Git object formats', () => {
       length,
     );
 });
+
+for (const previousAttachment of [false, true])
+  test(`shutdown after failed preparation ${previousAttachment ? 'retains a prior attached writer obligation' : 'accepts an empty receipt for a never-attached writer'}`, async (t) => {
+    const f = await twoStepWorkflow(t, 'unattachedshutdown');
+    const unit = await f.start();
+    const platform = { name: 'test', harness: 'codex' as const, enabled: true, parallelism: 1 };
+    const capabilities = ['workflow.workhost.1'];
+    f.sessions.managed.registerValidator({
+      current: async () => true,
+      admits: async () => true,
+      serves: () => false,
+      retired: async () => false,
+      assignmentSources: async (binding) => [binding.source],
+    });
+    const allocationId = 'allocation_unattached';
+    const source = await f.app.ctx.scope.delegationSource(f.owner);
+    const { enrollmentToken } = await f.sessions.managed.ensure({
+      allocationId,
+      epoch: 1,
+      source,
+      runtimeProfileId: 'test',
+      platform,
+      capabilities,
+      workInstanceId: unit.id,
+      stepSeconds: 600,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    const { controlToken } = await f.sessions.managed.enroll(enrollmentToken, {
+      workerNonce: randomBytes(32).toString('hex'),
+    });
+    const runner = await f.sessions.managed.authenticate(controlToken);
+    const runnerId = 'unattached-runner';
+    await f.sessions.dispatch.heartbeatRunner(runner, {
+      runnerId,
+      machine: { hostname: 'test', system: 'test', architecture: 'test' },
+      platforms: [platform],
+      capabilities,
+      capacity: 1,
+    });
+    await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+    let lastSessionId = '';
+    for (let i = 0; i < (previousAttachment ? 2 : 1); i++) {
+      const { session } = await f.sessions.dispatch.lease(runner, {
+        runnerId,
+        platform: { name: 'test', harness: 'codex' as const },
+        requestId: `unattached-${i}`,
+        secret: secret(),
+      });
+      assert.ok(session, 'the work host receives its next visit');
+      lastSessionId = session.id;
+      await f.ok('POST', `/sessions/${session.id}/attach`, controlToken, {
+        runnerId,
+        hostRef: `unattached-host-${i}`,
+      });
+      if (previousAttachment && i === 0)
+        await f.app.ctx.state.transaction((tx) =>
+          tx.run(
+            'INSERT INTO session_workspaces(session_id,attachment_json,result_json) VALUES(?,?,?)',
+            session.id,
+            '{}',
+            '{}',
+          ),
+        );
+      await f.ok('POST', `/sessions/${session.id}/release`, controlToken, { runnerId });
+    }
+    await f.app.ctx.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO code_workspaces(project_id,unit_id,declared_at,generation,writer_state,writer_session_id,writer_lease_id)
+       VALUES(?,?,?,2,'closed',?,?)`,
+        f.owner.projectId,
+        unit.id,
+        new Date().toISOString(),
+        lastSessionId,
+        lastSessionId,
+      ),
+    );
+    assert.equal(await f.sessions.managed.requestShutdown(allocationId, 1), false);
+    const reply = await f.http('POST', '/sessions/runners/shutdown', controlToken, {
+      receipt: { captures: [], empty: true },
+    });
+    assert.equal(reply.status, previousAttachment ? 409 : 200, reply.text);
+    assert.equal(await f.sessions.managed.requestShutdown(allocationId, 1), !previousAttachment);
+  });

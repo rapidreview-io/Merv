@@ -125,6 +125,7 @@ interface Context {
   sql: Sql;
   transaction?: Transaction;
   eventWritten: boolean;
+  afterCommit?: (() => void)[];
   childTransaction?: Promise<unknown>;
   /** A read scope: nested "transactions" read on the same snapshot and refuse writes. */
   readOnly?: boolean;
@@ -412,6 +413,7 @@ END $merv$;`);
     scope.live = true;
     const tx: Transaction = { ...scope.sql, transactionId: Symbol('transaction') };
     scope.transaction = tx;
+    scope.afterCommit = [];
     scope.memo = new Map();
     const value = await this.within(
       connection,
@@ -420,7 +422,28 @@ END $merv$;`);
       async () => await this.context.run(scope, () => fn(tx)),
     );
     if (scope.eventWritten) this.wake();
+    for (const listener of scope.afterCommit) this.scheduleAfterCommit(listener);
     return value;
+  }
+
+  afterCommit(listener: () => void): void {
+    const current = this.context.getStore();
+    if (current) this.active(current);
+    if (current?.transaction && !current.readOnly) current.afterCommit!.push(listener);
+    else this.scheduleAfterCommit(listener);
+  }
+
+  private scheduleAfterCommit(listener: () => void): void {
+    this.context.exit(() =>
+      queueMicrotask(() => {
+        if (this.closed) return;
+        try {
+          listener();
+        } catch {
+          /* A best-effort wakeup cannot undo a committed transaction. */
+        }
+      }),
+    );
   }
 
   /** Tells event listeners about a commit, outside any database scope. */

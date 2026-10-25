@@ -42,6 +42,8 @@ interface Grant extends GitGrantInput {
   actorId: string;
   audience: 'runner' | 'agent' | 'shutdown' | 'capture';
   cleanup?: { allocationId: string; epoch: number; credentialHash: string };
+  /** Original runner generation, accepted only for this recovered shutdown's final receipt. */
+  recoveryGeneration?: number;
 }
 interface AccountGitGrant {
   audience: 'account';
@@ -404,9 +406,10 @@ $merv$;
         : {}),
     };
     await this.state.transaction(async (tx) => {
-      if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup)
+      if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
         await this.cleanup(tx, grant);
-      else await this.scope.require(caller, 'read', tx);
+        await this.recoverShutdownWriter(tx, grant);
+      } else await this.scope.require(caller, 'read', tx);
       await this.live(tx, grant, true);
       await tx.run(
         'INSERT INTO code_git_credentials(token_hash,project_id,caller_json,grant_json,created_at) VALUES(?,?,?,?,?)',
@@ -418,6 +421,120 @@ $merv$;
       );
     });
     return { url: `/git/${encodeURIComponent(caller.projectId)}.git`, token };
+  }
+
+  /** Preserve a host's last attached checkout after subsequent preparations failed. This
+   * grants no ordinary work authority and never rewinds a generation or changes Git refs. */
+  private async recoverShutdownWriter(tx: Transaction, grant: Grant): Promise<void> {
+    if (!grant.cleanup || grant.audience !== 'shutdown') return;
+    const row = await this.writers.row(tx, grant.projectId, grant.unitId);
+    if (!row) return;
+    if (row.writer_session_id !== grant.sessionId) {
+      const original = await tx.get<{
+        ordinal: number;
+        session_rowid: number;
+        attachment_json: string;
+        result_json: string | null;
+      }>(
+        `SELECT a.ordinal,s._merv_rowid AS session_rowid,w.attachment_json,w.result_json
+         FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
+         JOIN session_workspaces w ON w.session_id=s.id
+         WHERE a.allocation_id=? AND s.id=? AND s.project_id=? AND s.instance_id=?
+           AND s.status IN ('released','expired') AND a.release_ack_at IS NOT NULL`,
+        grant.cleanup.allocationId,
+        grant.sessionId,
+        grant.projectId,
+        grant.unitId,
+      );
+      const previousGrant = await tx.get<{ grant_json: string }>(
+        `SELECT grant_json FROM code_git_credentials WHERE project_id=?
+         AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb ->> 'unitId'=?
+         AND grant_json::jsonb ->> 'audience'='runner' ORDER BY created_at LIMIT 1`,
+        grant.projectId,
+        grant.sessionId,
+        grant.unitId,
+      );
+      const previous = previousGrant && (JSON.parse(previousGrant.grant_json) as Grant);
+      const successor = await tx.get<{ ordinal: number }>(
+        `SELECT ordinal FROM session_managed_assignments WHERE allocation_id=? AND session_id=?`,
+        grant.cleanup.allocationId,
+        row.writer_session_id,
+      );
+      check(
+        original &&
+          original.result_json &&
+          previous &&
+          successor &&
+          Number(successor.ordinal) > Number(original.ordinal) &&
+          row.writer_state === 'closed' &&
+          !row.final_owed &&
+          row.head_oid === null &&
+          !row.blocked_by &&
+          !row.quarantine_operation_id &&
+          Number.isSafeInteger(previous.generation) &&
+          Number(previous.generation) < Number(row.generation) &&
+          JSON.parse(original.attachment_json).headOid === this.writers.base(row) &&
+          JSON.parse(original.result_json).headOid === this.writers.base(row),
+        'code_generation_stale',
+        'The historical checkout cannot safely resume shutdown capture',
+        409,
+      );
+      const unsafe = await tx.get(
+        `SELECT s.id FROM worker_sessions s
+         LEFT JOIN session_managed_assignments a ON a.session_id=s.id
+         LEFT JOIN session_workspaces w ON w.session_id=s.id
+         WHERE s.project_id=? AND s.instance_id=? AND
+           (s.status IN ('offered','active') OR
+            (s._merv_rowid>? AND (w.session_id IS NOT NULL OR a.allocation_id IS DISTINCT FROM ?)))
+         LIMIT 1`,
+        grant.projectId,
+        grant.unitId,
+        original.session_rowid,
+        grant.cleanup.allocationId,
+      );
+      const pending = await tx.get(
+        `SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND status='prepared'
+         UNION ALL SELECT id FROM code_git_pushes WHERE project_id=? AND status IN ('prepared','conflict')
+           AND payload_json::jsonb #>> '{fence,unitId}'=? LIMIT 1`,
+        grant.projectId,
+        grant.unitId,
+        grant.projectId,
+        grant.unitId,
+      );
+      check(
+        !unsafe && !pending,
+        'code_generation_stale',
+        'A successor or pending write prevents shutdown recovery',
+        409,
+      );
+      grant.recoveryGeneration = Number(previous.generation);
+      grant.generation = Number(row.generation) + 1;
+      await tx.run(
+        `UPDATE code_workspaces SET generation=?,writer_session_id=?,writer_lease_id=?,writer_changed_at=?
+         WHERE project_id=? AND unit_id=?`,
+        grant.generation,
+        grant.sessionId,
+        grant.leaseId,
+        now(),
+        grant.projectId,
+        grant.unitId,
+      );
+    } else {
+      // Lost replies retry the exact recovery authority, with the generation already advanced.
+      const prior = await tx.get<{ grant_json: string }>(
+        `SELECT grant_json FROM code_git_credentials WHERE project_id=?
+         AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb ->> 'audience'='shutdown'
+         AND grant_json::jsonb ->> 'generation'=? AND jsonb_exists(grant_json::jsonb,'recoveryGeneration')
+         ORDER BY created_at DESC LIMIT 1`,
+        grant.projectId,
+        grant.sessionId,
+        String(row.generation),
+      );
+      const recovered = prior && (JSON.parse(prior.grant_json) as Grant);
+      if (recovered && canonical(recovered.cleanup) === canonical(grant.cleanup))
+        grant.recoveryGeneration = recovered.recoveryGeneration;
+      grant.generation = Number(row.generation);
+    }
   }
 
   private async cleanup(sql: Sql, grant: Grant): Promise<void> {
@@ -1277,6 +1394,35 @@ $merv$;
             hostRef: JSON.parse(assignment.session_json).hostRef,
             cleanup: caller.managed!,
           });
+          // Already-running hosts still report their immutable local generation. Translate
+          // only the exact old generation recorded by a guarded shutdown recovery grant.
+          const writer = await this.writers.row(tx, projectId, input.unitId);
+          if (writer && Number(writer.generation) !== input.generation) {
+            const recovered = await tx.get<{ grant_json: string }>(
+              `SELECT grant_json FROM code_git_credentials WHERE project_id=?
+               AND grant_json::jsonb ->> 'audience'='shutdown'
+               AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb ->> 'unitId'=?
+               AND grant_json::jsonb ->> 'generation'=?
+               AND grant_json::jsonb ->> 'recoveryGeneration'=? ORDER BY created_at DESC LIMIT 1`,
+              projectId,
+              input.sessionId,
+              input.unitId,
+              String(writer.generation),
+              String(input.generation),
+            );
+            const grant = recovered && (JSON.parse(recovered.grant_json) as Grant);
+            if (
+              grant &&
+              grant.leaseId === input.leaseId &&
+              grant.cleanup?.allocationId === caller.managed!.allocationId &&
+              grant.cleanup?.epoch === caller.managed!.epoch &&
+              grant.cleanup?.credentialHash === caller.managed!.credentialHash
+            ) {
+              await this.cleanup(tx, grant);
+              await this.live(tx, grant, true);
+              input = { ...input, generation: Number(writer.generation) };
+            }
+          }
         } else await this.scope.require(caller, 'read', tx);
         const existing = await tx.get<{ id: string; result_json: string }>(
           'SELECT id,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',

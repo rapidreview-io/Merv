@@ -896,6 +896,9 @@ export class ManagedRunnerBindings {
       const code = await tx.get<{ present: boolean }>(
         "SELECT to_regclass('code_workspaces') IS NOT NULL AS present",
       );
+      // A failed preparation can reserve and close a writer before any checkout is attached.
+      // It has no local writer to capture. A previous attached visit on this host still keeps
+      // the obligation: a later failed preparation must never erase its uncommitted files.
       const writers = code?.present
         ? await tx.all<{
             unit_id: string;
@@ -908,7 +911,15 @@ export class ManagedRunnerBindings {
             `
         SELECT w.unit_id,w.writer_session_id,w.head_oid,w.writer_state,w.generation,w.final_owed FROM code_workspaces w
         JOIN session_managed_assignments a ON a.session_id=w.writer_session_id
-        WHERE a.allocation_id=? AND w.project_id=?`,
+        WHERE a.allocation_id=? AND w.project_id=?
+          AND NOT (w.writer_state='closed' AND NOT w.final_owed AND w.head_oid IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM session_managed_assignments prior
+              JOIN worker_sessions s ON s.id=prior.session_id
+              JOIN session_workspaces attached ON attached.session_id=s.id
+              WHERE prior.allocation_id=a.allocation_id AND s.project_id=w.project_id
+                AND s.instance_id=w.unit_id
+            ))`,
             row.allocation_id,
             row.project_id,
           )

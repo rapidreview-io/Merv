@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createReadStream, lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { oidPattern, sha256Hex, type SessionWorkspace } from '@merv/contracts';
@@ -90,6 +90,34 @@ const options = [
   'gc.auto=0',
 ].flatMap((setting) => ['-c', setting]);
 
+/** Stop Git's transport and pack helpers as well as the direct child. */
+function terminate(child: ChildProcess): void {
+  if (child.pid !== undefined && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch {
+      // The group may already have exited, or group signals may be unavailable.
+    }
+  }
+  child.kill('SIGKILL');
+}
+
+/** Report only the subcommand, never paths, remote URLs or configuration values. */
+function commandName(args: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const argument = args[i]!;
+    if (
+      ['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--config-env'].includes(argument)
+    ) {
+      i++;
+      continue;
+    }
+    if (!argument.startsWith('-')) return /^[a-z][a-z-]*$/.test(argument) ? argument : 'command';
+  }
+  return 'command';
+}
+
 /**
  * Git as the driver runs it on a machine: nothing of the machine's or the user's
  * configuration reaches it. Native fetch and push explicitly enable their transport;
@@ -129,14 +157,14 @@ export class DriverGit {
         (checkout.gid !== user!.gid || dot?.uid !== user!.uid || dot.gid !== user!.gid)
       )
         throw new WorkspaceError('workspace_foreign_checkout');
-      const child = execFile(
+      let timedOut = false;
+      let failed = false;
+      const child = spawn(
         assignmentOwned ? user!.git : 'git',
         [...(assignmentOwned ? ['--git'] : []), ...options, ...args],
         {
           cwd: input.cwd,
-          timeout: input.timeoutMs ?? 120_000,
-          maxBuffer: 32 * 1024 * 1024,
-          encoding: 'utf8',
+          detached: process.platform !== 'win32',
           env: {
             PATH: '/usr/bin:/bin',
             HOME: this.home,
@@ -152,17 +180,44 @@ export class DriverGit {
             ...input.env,
           },
         },
-        (error, stdout, stderr) =>
-          resolve({
-            code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
-            stdout,
-            stderr,
-            timedOut: !!error?.killed,
-          }),
       );
+      const stdout: Buffer[] = [],
+        stderr: Buffer[] = [];
+      const collect = (stream: NodeJS.ReadableStream, chunks: Buffer[]) => {
+        let bytes = 0;
+        stream.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > 32 * 1024 * 1024) {
+            failed = true;
+            terminate(child);
+          } else chunks.push(chunk);
+        });
+      };
+      collect(child.stdout, stdout);
+      collect(child.stderr, stderr);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        terminate(child);
+      }, input.timeoutMs ?? 120_000);
+      child.once('error', () => {
+        failed = true;
+      });
+      child.once('close', (code) => {
+        clearTimeout(timer);
+        resolve({
+          code: failed || timedOut ? code || 1 : (code ?? 1),
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+          timedOut,
+        });
+      });
+      child.stdin.on('error', () => {});
       if (input.stdinFile) {
         const stream = createReadStream(input.stdinFile);
-        stream.on('error', () => child.kill());
+        stream.on('error', () => {
+          failed = true;
+          terminate(child);
+        });
         child.on('close', () => stream.destroy());
         child.stdin?.on('error', () => stream.destroy());
         stream.pipe(child.stdin!);
@@ -176,7 +231,7 @@ export class DriverGit {
     if (result.code !== 0)
       throw new WorkspaceError(
         result.timedOut ? 'workspace_git_timeout' : 'workspace_git_failed',
-        `git ${args[0]}: ${result.stderr.trim().slice(0, 400)}`,
+        `git ${commandName(args)}: ${result.stderr.trim().slice(0, 400)}`,
       );
     return result.stdout;
   }

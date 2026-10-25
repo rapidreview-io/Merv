@@ -27,10 +27,9 @@ import { s3Blobs } from './fixtures/s3-blobs.js';
  * Fleet provisioning and report rendering are outside this test (the ordinary app fixture
  * supplies its documented report adapter). This is not deployed hosted-image acceptance.
  */
-test(
-  'managed HTTP lifecycle freezes dirty planning and results, approves exact commits, and acknowledges teardown',
-  { timeout: 90_000 },
-  async (t) => {
+type Scenario = 'lifecycle' | 'failed-preparation' | 'newer-attachment' | 'other-allocation';
+function lifecycle(scenario: Scenario) {
+  return async (t: test.TestContext) => {
     const root = mkdtempSync(join(tmpdir(), 'merv-http-lifecycle-'));
     const managedEnv = `MERV_LIFECYCLE_${randomBytes(8).toString('hex').toUpperCase()}`;
     process.env[managedEnv] = randomBytes(48).toString('hex');
@@ -101,7 +100,10 @@ test(
         );
         clients.set(token, client);
       }
-      const response = await client.callTool({ name, arguments: input as Record<string, unknown> });
+      const response = await client.callTool({
+        name,
+        arguments: input as Record<string, unknown>,
+      });
       const content = response.content as { type: string; text?: string }[];
       const result = JSON.parse(content.find((item) => item.type === 'text')!.text!);
       assert.equal(response.isError ?? false, false, `${name}: ${JSON.stringify(result)}`);
@@ -215,7 +217,11 @@ test(
       assert.ok(answer.session, `expected ${host.runnerId} lease, got ${answer.reason}`);
       const session = answer.session;
       assert.equal(session.instanceId, experiment.id);
-      const launch = { id: request(), sessionId: session.id, runDirectory: join(root, request()) };
+      const launch = {
+        id: request(),
+        sessionId: session.id,
+        runDirectory: join(root, request()),
+      };
       mkdirSync(launch.runDirectory);
       const workspace = await host.driver.prepare(launch, session);
       const control = { runnerId: host.runnerId, hostRef: launch.id };
@@ -392,6 +398,98 @@ test(
     const planner = await lease(writer);
     assert.equal(planner.workspace.readOnly, false);
     writeFileSync(join(planner.workspace.path, 'plan.py'), planCode);
+    if (scenario !== 'lifecycle') {
+      // Ordinary close leaves uncommitted work on this machine. Later failed preparation
+      // reserves another writer generation without replacing this attached checkout.
+      await keepConversation(planner);
+      await settle(planner);
+      if (scenario === 'newer-attachment') {
+        const newer = await lease(writer);
+        await keepConversation(newer);
+        await settle(newer);
+      } else {
+        const host = scenario === 'other-allocation' ? await machine('replacement', owner) : writer;
+        const offered = await http<{ session: WorkSession | null; reason: string }>(
+          '/sessions/lease',
+          host.controlToken,
+          {
+            runnerId: host.runnerId,
+            platform: { name: platform.name, harness: platform.harness },
+            requestId: request(),
+            secret: `ms_${randomBytes(32).toString('base64url')}`,
+          },
+        );
+        assert.ok(offered.session, offered.reason);
+        await http('/code/v2/workspace', host.controlToken, {
+          sessionId: offered.session.id,
+          runnerId: host.runnerId,
+          hostRef: request(),
+        });
+        await http(`/sessions/${offered.session.id}/release`, host.controlToken, {
+          runnerId: host.runnerId,
+          outcome: 'workspace_failed',
+          reason: 'workspace_git_timeout',
+        });
+        await app.ctx.domainEvents.drain();
+      }
+      await http('/sessions/runners/shutdown', writer.controlToken, { request: true });
+      current.delete(writer.allocationId);
+      if (scenario !== 'failed-preparation') {
+        await assert.rejects(
+          http('/code/v2/shutdown-credential', writer.controlToken, {
+            sessionId: planner.session.id,
+            ...planner.control,
+          }),
+          /code_generation_stale/,
+        );
+        assert.equal(readFileSync(join(planner.workspace.path, 'plan.py'), 'utf8'), planCode);
+        return;
+      }
+      // The recovery grant may be issued even when its reply is lost. An unchanged runner
+      // must be able to request it again using the original session and local generation.
+      const generation = async () =>
+        Number(
+          (await app.ctx.state.read((sql) =>
+            sql.get<{ generation: number }>(
+              'SELECT generation FROM code_workspaces WHERE project_id=? AND unit_id=?',
+              owner.projectId,
+              experiment.id,
+            ),
+          ))!.generation,
+        );
+      const beforeRecovery = await generation();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await http('/code/v2/shutdown-credential', writer.controlToken, {
+          sessionId: planner.session.id,
+          ...planner.control,
+        });
+        assert.equal(
+          await generation(),
+          beforeRecovery + 1,
+          'lost grant retries do not advance the writer again',
+        );
+      }
+      const captures = await writer.driver.shutdownCapture();
+      assert.equal(captures.length, 1);
+      assert.equal(captures[0]!.sessionId, planner.session.id);
+      assert.equal(git(repository, ['show', `${captures[0]!.headOid}:plan.py`]), planCode.trim());
+      assert.equal(readFileSync(join(planner.workspace.path, 'plan.py'), 'utf8'), planCode);
+      const receipt = { captures, empty: false };
+      assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
+        requested: true,
+        acknowledged: true,
+      });
+      assert.deepEqual(
+        await writer.driver.shutdownCapture(),
+        captures,
+        'capture retries reuse the receipt',
+      );
+      assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
+        requested: true,
+        acknowledged: true,
+      });
+      return;
+    }
     await attach(
       planner,
       'plan',
@@ -469,5 +567,16 @@ test(
       t.diagnostic(
         'Linux mount gate not run; set MERV_LINUX_REVIEW_IMAGE to an image with Python, Git, mount and identities 1000/12001.',
       );
-  },
-);
+  };
+}
+for (const scenario of [
+  'lifecycle',
+  'failed-preparation',
+  'newer-attachment',
+  'other-allocation',
+] as const)
+  test(
+    `managed HTTP lifecycle and retained shutdown: ${scenario}`,
+    { timeout: 90_000 },
+    lifecycle(scenario),
+  );

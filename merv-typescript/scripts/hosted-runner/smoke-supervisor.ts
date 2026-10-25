@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { hostedAstraPlatform, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { MachineRunner } from '@merv/runner';
 import { codeWorkspaceDriver } from '@merv/code/driver/index';
+import { shutdownDiagnostic } from './shutdown-diagnostic.js';
 
 const schema = z
   .object({
@@ -51,10 +52,15 @@ const resetAssignment = async () => {
     });
   }
 };
+let shutdownFailure: { stage: 'capture' | 'acknowledge'; code: string; at: string } | undefined;
 const status = (state: string) =>
   writeFileSync(
     `${directory}/status.json`,
-    JSON.stringify({ state, at: new Date().toISOString() }),
+    JSON.stringify({
+      state,
+      at: new Date().toISOString(),
+      ...(shutdownFailure && { shutdownFailure }),
+    }),
     { mode: 0o600 },
   );
 
@@ -155,14 +161,23 @@ async function main() {
       const control = await shutdown(stopping ? { request: true } : {}).catch(() => null);
       if (control?.requested) {
         status('capturing');
+        let stage: 'capture' | 'acknowledge' = receipt ? 'acknowledge' : 'capture';
         try {
           receipt ??= await runner.prepareShutdown();
+          stage = 'acknowledge';
           const ack = await shutdown({ receipt });
           if (ack.acknowledged) {
+            shutdownFailure = undefined;
             status('captured');
             break;
           }
-        } catch {
+        } catch (error) {
+          // Retain the last failure during the next attempt, which can take minutes.
+          shutdownFailure = {
+            stage,
+            code: shutdownDiagnostic(error),
+            at: new Date().toISOString(),
+          };
           status('capture-pending');
         }
         await delay(1000);

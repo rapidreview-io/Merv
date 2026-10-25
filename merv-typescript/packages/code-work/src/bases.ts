@@ -262,7 +262,9 @@ export class CodeBaseService {
   soon(projectId: string): void {
     if (bootMaintenance.active) return;
     if (this.closed) return;
-    setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
+    this.state.afterCommit(() => {
+      setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
+    });
   }
 
   private record(row: BaseRow): CodeBaseRecord {

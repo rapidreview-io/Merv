@@ -168,7 +168,9 @@ export class MainLanding {
   soon(projectId: string): void {
     if (bootMaintenance.active) return;
     if (!this.enabled || this.closed) return;
-    setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
+    this.state.afterCommit(() => {
+      setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
+    });
   }
 
   /** Every project with accepted work: at start, and on Code Work's 30 s timer. */

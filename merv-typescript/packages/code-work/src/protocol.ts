@@ -118,6 +118,15 @@ export class CodeWorkspaceProtocol {
       const row = await this.state.read((sql) =>
         this.writers.row(sql, caller.projectId, session.instanceId),
       );
+      // Shutdown alone may recover a retained checkout superseded by preparations that
+      // never attached. The Git service verifies that history under the writer lock.
+      if (route === 'shutdown-credential' && row)
+        return await this.git.issueShutdown(caller, {
+          ...input,
+          unitId: session.instanceId,
+          generation: Number(row.generation),
+          leaseId: session.id,
+        });
       check(
         row && row.writer_session_id === session.id,
         'code_generation_stale',
@@ -134,13 +143,6 @@ export class CodeWorkspaceProtocol {
           writerClosed: row.writer_state === 'closed',
           frozen: requested && (await this.submissions.frozen(caller.projectId, session.id)),
         };
-      if (route === 'shutdown-credential')
-        return await this.git.issueShutdown(caller, {
-          ...input,
-          unitId: session.instanceId,
-          generation: Number(row.generation),
-          leaseId: session.id,
-        });
       check(
         !requested,
         'code_submission_required',
