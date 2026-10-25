@@ -80,8 +80,8 @@ function priced(source: string, node: Nodes): boolean {
  * Inline mdast to the tree the page draws. Agents write one fact per line, so a single newline
  * is a line break here and not a space. A link holds no link: inside a label (`linked`) an
  * address stays the text it was written as, and a link or an image is only its words, so a
- * badge opens what its link names, not its picture. An image loads nothing: it is a link that
- * reads as its alt text.
+ * badge opens what its link names, not its picture. Only retained artifact images render;
+ * other image addresses remain links that read as their alt text.
  */
 function inlinesOf(
   nodes: PhrasingContent[],
@@ -127,6 +127,15 @@ function inlinesOf(
         break;
       case 'link':
       case 'image': {
+        if (node.type === 'image' && !linked && /^art_[0-9a-f]{32}$/.test(node.url)) {
+          add(out, {
+            type: 'image',
+            artifactId: node.url,
+            alt: node.alt ?? '',
+            title: node.title ?? undefined,
+          });
+          break;
+        }
         const safe = !linked && safeHref(node.url);
         const raw = written(source, node);
         // An address written bare or in angle brackets reads as itself.

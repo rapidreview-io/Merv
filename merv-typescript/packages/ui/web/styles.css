@@ -8691,3 +8691,13 @@ html.modal-open {
     display: none;
   }
 }
+
+/* Retained figures stay inside the report column and expand without widening the page. */
+.md-figure {
+  display: block;
+  max-width: 100%;
+  margin: 1em 0;
+}
+.md-figure > a {
+  font-size: 0.85em;
+}

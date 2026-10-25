@@ -16,6 +16,7 @@ import { call, scopeVersion, useTool } from './api';
 import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
+import { ArtifactFigure } from './artifact-figure';
 import { pathOf, Records, rowOf, useRows } from './navigation';
 import { offThread } from './off-thread';
 import { codeFile, safeHref, splitIds } from './markdown-links';
@@ -31,7 +32,7 @@ export { safeHref, splitIds };
  * throws and never sees the DOM), the names of the records a text mentions
  * (`recordNames`, `RecordLink`), and one component that draws the tree as React
  * elements. Nothing is ever handed to the browser as
- * HTML: a tag an author wrote is text, an image is a link that loads nothing, and
+ * HTML: a tag an author wrote is text, retained images use scoped artifact reads, and
  * an address the app would not open itself never becomes an href. Code, diagrams
  * and formulas are drawn by components of their own (`CodeBlock`, `Mermaid`, `TeX`),
  * each of which loads what it needs the first time it is shown.
@@ -44,6 +45,7 @@ export type Inline =
   | { type: 'math'; value: string }
   | { type: 'strong' | 'em' | 'del'; children: Inline[] }
   | { type: 'link'; href: string; external: boolean; title?: string; children: Inline[] }
+  | { type: 'image'; artifactId: string; alt: string; title?: string }
   | { type: 'break' }
   | { type: 'id'; id: string };
 export interface ListItem {
@@ -419,6 +421,15 @@ function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false
         return <br key={key} />;
       case 'id':
         return <RecordLink key={key} id={node.id} names={names} plain={linked} />;
+      case 'image':
+        return (
+          <ArtifactFigure
+            key={key}
+            artifactId={node.artifactId}
+            alt={node.alt}
+            title={node.title}
+          />
+        );
       case 'link': {
         if (node.href.startsWith('code-file:'))
           return (

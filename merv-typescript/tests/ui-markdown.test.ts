@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { mount, rawView, serve, settle, text, unmount } from './ui-render.js';
 
-const { Profiler, createElement, useState } = await import('react');
+const { Profiler, StrictMode, createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router-dom');
@@ -283,7 +283,7 @@ test('no code a member can post holds the page: it is coloured off its thread, i
   assert.equal(long.textContent, slow);
 });
 
-test('a document renders as elements: no markup characters, no images, no unsafe address', async (t) => {
+test('a document renders as elements: no markup characters, no remote images, no unsafe address', async (t) => {
   t.after(async () => await unmount());
   const names = recordNames([{ id: ART, title: 'Delivery: grokking curve, seed 7' }]);
   await mount(
@@ -387,4 +387,143 @@ test('an HTML file is drawn as its page in a sandbox, and its source is behind r
   assert.equal(await rawView(), 'on');
   assert.equal(document.querySelector('.file-html'), null);
   assert.match(document.querySelector('.code-block pre')?.textContent ?? '', /^<h1>Report<\/h1>/);
+});
+
+test('only standalone retained artifact image targets become figure nodes', () => {
+  assert.deepEqual(parseInline(`![Loss by seed](${ART} "Training")`), [
+    { type: 'image', artifactId: ART, alt: 'Loss by seed', title: 'Training' },
+  ]);
+  for (const target of [
+    'https://example.org/x.png',
+    '/artifacts/' + ART,
+    'data:image/png;base64,AAAA',
+    '../x.png',
+    ART + '/x',
+  ]) {
+    assert.ok(!parseInline(`![Loss](${target})`).some((node) => node.type === 'image'));
+  }
+  assert.ok(
+    !JSON.stringify(parseInline(`[![Loss](${ART})](https://example.org)`)).includes(
+      '"type":"image"',
+    ),
+  );
+});
+
+test('retained figures load scoped bytes, expand, and release their blob on unmount', async (t) => {
+  t.after(async () => await unmount());
+  const content =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/YQAAAAASUVORK5CYII=';
+  const artifact = {
+    id: ART,
+    title: 'loss.png',
+    mediaType: 'image/png',
+    size: Buffer.from(content, 'base64').length,
+  };
+  serve('/tools/artifact.get', { body: { result: artifact } });
+  serve('/tools/artifact.read:content', (_call, input) => {
+    assert.equal(input.artifactId, ART);
+    assert.equal(input.length, Math.ceil(artifact.size / 3) * 4);
+    return {
+      body: { result: { artifact, content, encoding: 'base64', offset: 0, total: content.length } },
+    };
+  });
+  const [created, revoked]: string[][] = [[], []];
+  const [create, revoke] = [URL.createObjectURL, URL.revokeObjectURL];
+  URL.createObjectURL = (blob) => {
+    const url = create(blob);
+    created.push(url);
+    return url;
+  };
+  URL.revokeObjectURL = (url) => {
+    revoked.push(url);
+    revoke(url);
+  };
+  t.after(() => {
+    [URL.createObjectURL, URL.revokeObjectURL] = [create, revoke];
+  });
+  // StrictMode renders twice and discards one: no object URL may outlive the figure.
+  await mount(
+    createElement(
+      StrictMode,
+      null,
+      page(`## Results\n\n![Loss by seed](${ART})\n\n*Trailing mean; training loss.*`),
+    ),
+  );
+  await settle(30);
+  const image = document.querySelector('.md-figure img') as HTMLImageElement;
+  assert.ok(image);
+  assert.equal(image.alt, 'Loss by seed');
+  assert.match(image.src, /^blob:/);
+  const src = image.src;
+  const button = document.querySelector('.md-figure button') as HTMLButtonElement;
+  assert.equal(button.getAttribute('aria-pressed'), 'false');
+  await act(async () => button.click());
+  assert.equal(button.getAttribute('aria-pressed'), 'true');
+  assert.equal(document.querySelector('.md-figure a')?.getAttribute('href'), `/artifacts/${ART}`);
+  assert.match(text(), /Trailing mean/);
+  await unmount();
+  assert.ok(revoked.includes(src));
+  assert.deepEqual(
+    created.filter((url) => !revoked.includes(url)),
+    [],
+  );
+});
+
+test('missing, non-image, oversized and corrupt figures leave a usable artifact link', async (t) => {
+  t.after(async () => await unmount());
+  const cases = [
+    { mediaType: 'text/html', size: 10, message: 'Not a supported image' },
+    { mediaType: 'image/png', size: 17 * 1024 * 1024, message: 'Figure too large to preview' },
+    { mediaType: 'image/png', size: 10, message: 'Figure unavailable', missing: true },
+    { mediaType: 'image/png', size: 10, message: 'Figure unavailable', corrupt: true },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const id = `art_${String(index + 1).repeat(32)}`;
+    const artifact = { id, title: 'figure', ...entry };
+    serve(
+      '/tools/artifact.get',
+      entry.missing
+        ? { status: 403, body: { error: { code: 'forbidden', message: 'Unavailable' } } }
+        : { body: { result: artifact } },
+    );
+    let reads = 0;
+    serve('/tools/artifact.read:content', () => {
+      reads++;
+      return { body: { result: { artifact, content: 'invalid!', encoding: 'base64' } } };
+    });
+    await mount(page(`![Figure](${id})`));
+    await settle(30);
+    assert.match(text(), new RegExp(entry.message));
+    assert.equal(document.querySelector('.md-figure img'), null);
+    assert.equal(document.querySelector('.md-figure a')?.getAttribute('href'), `/artifacts/${id}`);
+    assert.equal(reads, entry.corrupt ? 1 : 0);
+    await unmount();
+  }
+});
+
+test('changing project removes the previous project’s figure before the new read completes', async (t) => {
+  const { setProject, projectSelection } = await import('../packages/ui/web/api.js');
+  const previous = projectSelection();
+  t.after(async () => {
+    await unmount();
+    setProject(previous);
+  });
+  setProject('figure-project-a');
+  const id = `art_${'f'.repeat(32)}`;
+  const artifact = { id, mediaType: 'image/png', size: 3, title: 'Private figure' };
+  serve('/tools/artifact.get', { body: { result: artifact } });
+  serve('/tools/artifact.read:content', {
+    body: { result: { artifact, encoding: 'base64', content: 'AAAA' } },
+  });
+  await mount(page(`![Private figure](${id})`));
+  await settle(30);
+  assert.ok(document.querySelector('.md-figure img'));
+  serve('/tools/artifact.get', {
+    status: 403,
+    body: { error: { code: 'forbidden', message: 'Unavailable' } },
+  });
+  await act(async () => setProject('figure-project-b'));
+  assert.equal(document.querySelector('.md-figure img'), null);
+  await settle(30);
+  assert.match(text(), /Figure unavailable/);
 });

@@ -18,6 +18,7 @@ import {
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import { renderBrief } from './evidence.js';
+import { deliveryVisuals } from './definitions.js';
 import type { Task, TaskContext } from './types.js';
 import type { TaskRow, TasksContext } from './index.js';
 import {
@@ -398,7 +399,7 @@ export async function workflowAssignment(
     role: purpose === 'review' ? 'reviewer' : 'producer',
     label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
     name: task.title,
-    brief: `${serviceOwned(task.workflow.version) ? `${RESOLUTION_PAPER}\n\n` : ''}${SOURCE_VERIFICATION}\n\nRecover this assignment with workflow.assignment; task.get returns current context; use full:true for history or checkpointId for a saved note. Open artifact references with artifact.read and review references with review.get.`,
+    brief: `${serviceOwned(task.workflow.version) ? `${RESOLUTION_PAPER}\n\n` : ''}${SOURCE_VERIFICATION}${purpose === 'work' ? `\n\n${deliveryVisuals}` : ''}\n\nRecover this assignment with workflow.assignment; task.get returns current context; use full:true for history or checkpointId for a saved note. Open artifact references with artifact.read and review references with review.get.`,
     references: [
       { kind: 'task', id: task.id, label: task.title },
       ...task.guidance.references,

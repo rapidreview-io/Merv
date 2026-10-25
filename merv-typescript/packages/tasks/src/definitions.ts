@@ -47,6 +47,10 @@ const reportedOutput =
   'Save evidence as immutable artifacts. Also write a delivery report: a UTF-8 Markdown artifact (text/markdown), brief and without padding, in this shape:\n\n' +
   DELIVERY_TEMPLATE +
   '\n\nList the report first in artifactIds, in a Git task too. Submit the delivery with task.submit_delivery using the current task revision and a stable request ID. Do not review your own delivery.';
+/** Current assignment guidance, outside the immutable published context recipes. */
+export const deliveryVisuals =
+  'When a visual helps explain the work, create informative figures such as system diagrams, loss curves, comparisons or distributions using suitable tools. Save each visual as a PNG image artifact (JPEG or WebP is also supported) with the artifact tools, include it in the delivery artifactIds, and embed it beside the relevant discussion in the Markdown report as ![descriptive alt text](art_ID), using the returned artifact ID. Plot measured values from retained evidence; retain the plotting source and data needed to reproduce quantitative figures. Add a short caption explaining the takeaway, units and any smoothing or uncertainty. Inspect images for readable labels and clipping before delivery. Use Mermaid for simple flows when useful; choose visuals for what they explain, without a required figure count.';
+
 /** The task.work version from which a delivery has a report, and its review a format criterion. */
 export const REPORTED_WORK = 5;
 /** The review criterion a reported delivery adds after the task's own checks. */
