@@ -226,8 +226,10 @@ export async function baseResolutionFixture(
     work: WorkflowSnapshot,
     commit: string,
     reviewRef = `review-${work.id}`,
+    submissionSession?: string,
   ) => {
     const commandId = `accepted-${work.id}`;
+    const submittedTree = submissionSession ? source.git('rev-parse', `${commit}^{tree}`) : null;
     captures.set(commandId, {
       ref: { kind: 'code-commit', commandId },
       status: 'ready',
@@ -272,24 +274,45 @@ export async function baseResolutionFixture(
           JSON.stringify({ head: commit }),
           work.id,
         );
-      await code.acceptUnit(
-        f.admin,
-        {
-          unitId: work.id,
-          terminalRevision: work.revision,
-          submissionRef:
-            (
-              await tx.get<{ snapshot_hash: string }>(
-                'SELECT snapshot_hash FROM reviews WHERE id=?',
-                reviewRef,
-              )
-            )?.snapshot_hash ?? commandId,
-          reviewRef,
-          codeRef: { kind: 'code-commit', commandId },
-          reviewSessionId: null,
-        },
-        tx,
-      );
+      const input = {
+        unitId: work.id,
+        terminalRevision: work.revision,
+        submissionRef:
+          (
+            await tx.get<{ snapshot_hash: string }>(
+              'SELECT snapshot_hash FROM reviews WHERE id=?',
+              reviewRef,
+            )
+          )?.snapshot_hash ?? commandId,
+        reviewRef,
+        codeRef: { kind: 'code-commit' as const, commandId },
+        reviewSessionId: null,
+      };
+      if (submissionSession) {
+        const tree = submittedTree!;
+        const capture = structuredClone(captures.get(commandId)!);
+        capture.ref = { kind: 'submission', sessionId: submissionSession };
+        capture.workspace!.submission = {
+          sessionId: submissionSession,
+          parentOid: commit,
+          treeOid: tree,
+        };
+        await tx.run(
+          'UPDATE code_workspaces SET writer_session_id=?,writer_lease_id=?,head_oid=? WHERE project_id=? AND unit_id=?',
+          submissionSession,
+          submissionSession,
+          commit,
+          f.admin.projectId,
+          work.id,
+        );
+        await units.acceptFrozen(tx, f.admin.projectId, {
+          approval: { ...input, kind: 'task', codeRef: capture.ref },
+          capture,
+          commit: { head: commit, tree, ref: `refs/heads/approved-${work.id}` },
+          acceptedBy: f.admin.actorId,
+          review: await f.reviews.get(f.admin, reviewRef, tx),
+        });
+      } else await code.acceptUnit(f.admin, input, tx);
     });
   };
   const input = async (name: string, commit: string, producer = inputAuthor) => {
@@ -357,7 +380,11 @@ export async function baseResolutionFixture(
       requestId: `resolution-${taskId}`,
     });
   };
-  const acceptResolution = async (commit: string, members?: string[]) => {
+  const acceptResolution = async (
+    commit: string,
+    members?: string[],
+    options: { native?: boolean; reconcile?: boolean } = {},
+  ) => {
     const taskId = (await record(members))!.resolutionTaskId!;
     // The owner-review protocol is tested in task-git-workspace; here its committed terminal
     // state is the boundary and acceptUnit still checks and records the capture itself.
@@ -367,7 +394,7 @@ export async function baseResolutionFixture(
         .then(() => undefined),
     );
     await admission(taskId, commit, `admitted-${taskId}`);
-    await producingSession(taskId);
+    const producer = await producingSession(taskId);
     const request = await requestReview(taskId, 0);
     const claim = await f.reviews.start(f.admin, request.id);
     await f.reviews.submit(f.admin, {
@@ -378,9 +405,17 @@ export async function baseResolutionFixture(
       ...reviewAssessment(claim),
       requestId: `pass-${taskId}`,
     });
-    await accept(await f.workflows.get(f.admin, taskId), commit, request.id);
-    await code.reconcileAll();
-    await bases.work(f.admin.projectId);
+    if (options.reconcile === false) await f.events.drain();
+    await accept(
+      await f.workflows.get(f.admin, taskId),
+      commit,
+      request.id,
+      options.native ? producer : undefined,
+    );
+    if (options.reconcile !== false) {
+      await code.reconcileAll();
+      await bases.work(f.admin.projectId);
+    }
   };
   f.beforeClose.push(async () => {
     await unsubscribe();

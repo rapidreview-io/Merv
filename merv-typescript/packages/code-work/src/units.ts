@@ -361,6 +361,9 @@ export class CodeUnitService {
     const stored = await this.records.retainUnitAcceptance(caller, body, tx);
     if (!existing?.acceptance_hash && stored.publishes_at)
       await this.sealPublication(caller, relations.instance.name, stored, body, digest(body), tx);
+    // Acceptance can arrive after the terminal workflow event was already consumed.
+    // Re-derive dependents and retain any resolution result in this same transaction.
+    await this.reconcileProject(tx, caller.projectId);
     this.bases.soon(caller.projectId);
     this.landing?.soon(caller.projectId);
     return acceptance(stored)!;
@@ -475,6 +478,9 @@ export class CodeUnitService {
         value.review,
       );
     await this.writers.changed(tx, projectId, input.unitId);
+    // Native approval materializes asynchronously after review. Its terminal event may
+    // already have seen no acceptance, so waking base execution alone cannot unblock it.
+    await this.reconcileProject(tx, projectId);
     this.bases.soon(projectId);
     this.landing?.soon(projectId);
   }
