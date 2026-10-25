@@ -82,7 +82,8 @@ jobs:
   # one shard, and each shard has its own PostgreSQL.
   test:
     name: test (${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    # Pinned: Playwright installs no Chromium on ubuntu-latest's 26.04 image yet.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
