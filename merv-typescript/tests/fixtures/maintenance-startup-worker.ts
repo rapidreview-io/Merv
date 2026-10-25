@@ -70,7 +70,7 @@ test('people backfill and sign-in notifications pause; normal startup and explic
       },
       billing: {
         credits: {
-          report: async () => ({ grants: [] }),
+          report: async () => ({ grants: [], schedules: [] }),
           grant: async () => {
             calls.push('credits');
           },
