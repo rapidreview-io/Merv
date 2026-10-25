@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Merv">
-  <rect width="512" height="512" rx="96" fill="#131311"/>
-  <circle cx="256" cy="256" r="150" fill="none" stroke="#82a9f5" stroke-width="20"/>
-  <circle cx="256" cy="256" r="44" fill="#82a9f5"/>
-  <circle cx="256" cy="106" r="20" fill="#74bf7c"/>
-  <circle cx="406" cy="256" r="20" fill="#d4a045"/>
-  <circle cx="256" cy="406" r="20" fill="#e07a70"/>
-</svg>

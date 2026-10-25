@@ -1,43 +1,22 @@
 .DS_Store
 *.sqlite
 **/__pycache__/
-merv/.venv/
-merv/.merv/
-merv/.research_plugin/
-merv/.versioning_real_user_project/
-merv/deprecated/
-merv/dist/
-merv/graphify-out/
-merv/serving.txt
 
 # Secrets — never commit env files (Modal tokens etc.)
 .env
 .env.*
 **/.env
 **/.env.*
-!merv/.env.example
 
 logs/
 
-# Root-local development and agent workspace files.
-# Publish the Codex marketplace manifest; keep every other root-local agent
-# artifact ignored.
-/.agents/*
-!/.agents/plugins/
-/.agents/plugins/*
-!/.agents/plugins/marketplace.json
 /.claude/
-# Publish the marketplace manifest (needed for `claude plugin marketplace add`);
-# ignore any other local artifacts the plugin CLI drops in this dir.
-/.claude-plugin/*
-!/.claude-plugin/marketplace.json
 /.codex/
 /tmp/
 /dev_docs/
 
 /outputs/
 /architecture_companion/
-merv/src/*.egg-info/
 cache/
 
 # Local deployment evidence, release copies, and generated browser dependencies.

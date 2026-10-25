@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "merv": {
-      "type": "http",
-      "url": "https://experiments.rapidreview.io/mcp",
-      "default_tools_approval_mode": "approve"
-    }
-  }
-}
