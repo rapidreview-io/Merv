@@ -4,13 +4,14 @@ import { digest, MervError, type Scope } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import { linkProject, type SbxAuth } from '@sandboxes/auth';
 import type { CreditGrantInput, CreditScheduleInput, SbxBilling } from '@sandboxes/billing';
-import { Decimal, type Clock, type Database } from '@sandboxes/kernel';
+import { Decimal, Instant, type Clock, type Database } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
 import type { SbxProviders } from '@sandboxes/providers';
 import type { SandboxesPeople as People } from './types.js';
 
-/** USD per provider that every person's own account is granted once, as decimal text. */
-export type NewPersonCredits = Record<string, string>;
+/** USD per provider, as decimal text, that every person's own account is granted once, or
+ *  `{ monthly }` on the 1st of every UTC month from the month they joined, each until the next. */
+export type NewPersonCredits = Record<string, string | { monthly: string }>;
 type Person = Parameters<People['ensure']>[0];
 
 const refusals = mervRefusals(MervError);
@@ -51,11 +52,15 @@ export class SandboxesPeople implements People {
       const offered = Object.entries(this.credits);
       if (!offered.length) return own;
       const { credits } = this.sbx.billing;
-      const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
+      const held = await credits.report(accountId);
+      // A schedule held already stays as it is: one an operator paused is not resumed here.
+      const granted = new Set([...held.grants, ...held.schedules].map((credit) => credit.id));
       const connected = new Set(await this.fundable());
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
-        const id = `welcome:${provider}:${key}`;
+        const [kind, amount] =
+          typeof usd === 'string' ? ['welcome', usd] : ['monthly', usd.monthly];
+        const id = `${kind}:${provider}:${key}`;
         // CreditService refuses credits no operator connection can spend.
         if (!connected.has(provider)) {
           if (!this.#unconnected.has(provider))
@@ -67,15 +72,30 @@ export class SandboxesPeople implements People {
         // before, its access is given again, where giving it failed then.
         await this.#credit(accountId, provider, true, async () => {
           if (granted.has(id)) return;
-          await credits.grant({
-            id,
-            accountId,
-            provider,
-            amount: Decimal.parse(usd),
-            validFrom: person.created_at,
-            expiresAt: null,
-            reason: 'Welcome credits',
-          });
+          if (kind === 'monthly')
+            await credits.setSchedule({
+              id,
+              accountId,
+              provider,
+              amount: Decimal.parse(amount),
+              // The 1st of the UTC month they joined, so every grant runs a calendar month.
+              startsAt: Instant.parseIso(
+                `${person.created_at.toIsoMicrosZ().slice(0, 7)}-01T00:00:00Z`,
+              ),
+              cadence: 'monthly',
+              validityPeriods: 1,
+              enabled: true,
+            });
+          else
+            await credits.grant({
+              id,
+              accountId,
+              provider,
+              amount: Decimal.parse(amount),
+              validFrom: person.created_at,
+              expiresAt: null,
+              reason: 'Welcome credits',
+            });
         });
       }
       return own;

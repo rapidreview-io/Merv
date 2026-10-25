@@ -7,14 +7,16 @@ import { historicalEvidenceDownloads } from './historical-evidence.js';
 import { sandboxesPeoplePlugin } from './people.js';
 import { sandboxesCreditsPlugin } from './credits.js';
 
+const usd = z.string().regex(/^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/);
 const Config = z
   .object({
     legacyCaptures: z.object({ namespace: z.string() }).optional(),
-    // Positive USD, to 6 places, each person's own account is granted once per provider.
+    // Positive USD, to 6 places, each person's own account is granted once per provider, or
+    // { monthly } on the 1st of every month.
     newPersonCredits: z
       .record(
         z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-        z.string().regex(/^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/),
+        z.union([usd, z.object({ monthly: usd }).strict()]),
       )
       .default({}),
   })

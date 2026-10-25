@@ -133,7 +133,16 @@ test('welcome credits render from MERV_NEW_PERSON_CREDITS: providers to positive
     fake: '2.123456',
   });
   assert.deepEqual(credits('{}'), {});
+  assert.deepEqual(credits('{"lambda":"100","modal":{"monthly":"100"}}'), {
+    lambda: '100',
+    modal: { monthly: '100' },
+  });
   for (const broken of [
+    '{"modal":{"monthly":100}}',
+    '{"modal":{"monthly":"0"}}',
+    '{"modal":{"weekly":"100"}}',
+    '{"modal":{"monthly":"100","once":"5"}}',
+    '{"modal":["100"]}',
     '',
     'lambda=10',
     '[]',

@@ -189,17 +189,24 @@ set('code-work', landing === 'on' ? { mainLanding: true } : {});
 // Code's HTTP routes: without them a deployment that runs Code serves no /code at all.
 set('code-work-api', {});
 // Positive USD, to 6 places, each verified person's own Sandboxes account is granted once per
-// provider; none if unset.
+// provider, or { "monthly": USD } on the 1st of every month; none if unset.
 const newPersonCredits =
   process.env.MERV_NEW_PERSON_CREDITS === undefined ? {} : json('MERV_NEW_PERSON_CREDITS');
+const usd = (value) =>
+  /^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/.test(typeof value === 'string' ? value : '');
 if (
   typeof newPersonCredits !== 'object' ||
   !newPersonCredits ||
   Array.isArray(newPersonCredits) ||
   Object.entries(newPersonCredits).some(
-    ([provider, usd]) =>
+    ([provider, credit]) =>
       !/^[a-z][a-z0-9_-]{0,63}$/.test(provider) ||
-      !/^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/.test(typeof usd === 'string' ? usd : ''),
+      !(
+        usd(credit) ||
+        (credit?.constructor === Object &&
+          Object.keys(credit).join() === 'monthly' &&
+          usd(credit.monthly))
+      ),
   )
 )
   throw new Error('Invalid MERV_NEW_PERSON_CREDITS');
