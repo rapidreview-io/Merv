@@ -102,8 +102,9 @@ function buildsOnMain(records: Map<string, CodeBaseRecord>, root: CodeBaseRecord
 }
 
 /**
- * The commits of `commits` that `main` does not contain. `rev-list --not main` walks only the
- * history beyond main, so the reading costs what is unpublished, not the project's past.
+ * The candidate commits that main does not contain. Server merges have a fixed timestamp
+ * older than their parents, so a date-pruned `rev-list --not main` can report reachable
+ * ancestors as missing. Ask the ancestry predicate for each distinct candidate instead.
  */
 export async function beyondMain(
   repositories: CodeRepositories,
@@ -112,17 +113,19 @@ export async function beyondMain(
   commits: string[],
 ): Promise<Set<string>> {
   const beyond = new Set<string>();
-  if (!commits.length) return beyond;
-  const walk = await repositories.git.run(['rev-list', ...new Set(commits), '--not', main], {
-    env: repositories.environment(projectId),
-  });
-  check(
-    walk.code === 0,
-    'code_candidate_unavailable',
-    'Code must hold main and every accepted commit; import the missing history',
-    409,
-  );
-  for (const line of walk.stdout.toString('utf8').split('\n')) if (line) beyond.add(line.trim());
+  const env = repositories.environment(projectId);
+  for (const commit of new Set(commits)) {
+    const ancestry = await repositories.git.run(['merge-base', '--is-ancestor', commit, main], {
+      env,
+    });
+    check(
+      ancestry.code === 0 || ancestry.code === 1,
+      'code_candidate_unavailable',
+      'Code must hold main and every accepted commit; import the missing history',
+      409,
+    );
+    if (ancestry.code === 1) beyond.add(commit);
+  }
   return beyond;
 }
 

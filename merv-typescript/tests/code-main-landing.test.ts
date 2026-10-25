@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { MainLanding } from '../packages/code-work/src/landing.js';
+import { beyondMain, MainLanding } from '../packages/code-work/src/landing.js';
 import type { CodeUnitService } from '../packages/code-work/src/units.js';
 import { baseResolutionFixture } from './fixtures/base-resolution.js';
 import { codePublishFixture } from './fixtures/code-publish.js';
@@ -45,6 +45,52 @@ async function fixture(t: TestContext, connected = false, enabled = true) {
 }
 const outcomes = (status: { landed: { unitId: string; outcome: string }[] }) =>
   status.landed.map((item) => [item.unitId, item.outcome]);
+
+test('old-dated merge chains do not offer already-landed ancestry again', async (t) => {
+  const f = await fixture(t);
+  t.mock.method(f.landing, 'soon', () => {});
+  const first = await f.declare('Already landed');
+  await f.accept(first, f.feature);
+  await f.drive();
+  const tree = git(f.bare, ['rev-parse', `${f.feature}^{tree}`]);
+  let main = f.feature;
+  // Server merges use 2023 timestamps, while accepted parent commits are from 2026.
+  // Enough older merge commits make rev-list's date pruning lose the excluded ancestor.
+  for (let i = 0; i < 12; i++) {
+    main = (
+      await f.repositories.git.ok(
+        ['commit-tree', tree, '-p', main, '-p', f.root0, '-m', `Old merge ${i}`],
+        {
+          env: {
+            ...f.repositories.environment(f.project),
+            GIT_AUTHOR_NAME: 'Merv',
+            GIT_AUTHOR_EMAIL: 'merv@localhost',
+            GIT_COMMITTER_NAME: 'Merv',
+            GIT_COMMITTER_EMAIL: 'merv@localhost',
+            GIT_AUTHOR_DATE: '1700000000 +0000',
+            GIT_COMMITTER_DATE: '1700000000 +0000',
+          },
+        },
+      )
+    )
+      .toString()
+      .trim();
+  }
+  await f.setMain(main);
+  assert.deepEqual(await beyondMain(f.repositories, f.project, main, [f.feature]), new Set());
+  const before = outcomes(await f.status());
+  assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, []);
+  for (let i = 0; i < 3; i++) await f.landing.work(f.project);
+  assert.deepEqual(outcomes(await f.status()), before, 'no duplicate landing receipts');
+  // A genuinely new acceptance is still offered and landed, regardless of previous receipts.
+  const fresh = await f.declare('New accepted code');
+  const commit = f.commitOn(main, { 'new.txt': 'new acceptance\n' }, 'new-acceptance');
+  await f.accept(fresh, commit);
+  assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, [fresh.id]);
+  await f.drive();
+  assert.equal(await f.main(), commit);
+  assert.equal((await f.status()).landed.filter((row) => row.unitId === first.id).length, 1);
+});
 
 test('racing acceptances land in acceptance order, one open landing at a time', async (t) => {
   const f = await fixture(t);
