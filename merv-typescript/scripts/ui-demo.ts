@@ -2,13 +2,13 @@ import type { TaskDelivery } from '@merv/tasks/types';
 import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { waitForManagedCode } from '../tests/fixtures/managed-code.js';
 import type { ReviewApplication } from '@merv/contracts';
-import { mkdtempSync } from 'node:fs';
+import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { createApp } from '../src/app.js';
-import { defaultConfigFile } from '../src/config.js';
+import { type ApplicationConfig, defaultConfigFile } from '../src/config.js';
 import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, seedGit } from './ui-demo-git.js';
@@ -43,9 +43,29 @@ async function main() {
   const seedsGit = process.argv.includes('--git');
   const directory = process.env.MERV_DEMO_DIR ?? mkdtempSync(join(tmpdir(), 'merv-ui-demo-'));
   const schema = useRunSchema(directory);
+  const configFile = process.env.MERV_DEMO_CONFIG ?? defaultConfigFile;
+  const config = JSON.parse(readFileSync(configFile, 'utf8')) as ApplicationConfig;
+  if (process.env.MERV_METRICS_UPSTREAM) {
+    config.plugins.push(
+      {
+        id: 'metrics',
+        name: '@merv/metrics',
+        config: {
+          upstream: process.env.MERV_METRICS_UPSTREAM,
+          secret: process.env.MERV_METRICS_SECRET,
+          writeToken: process.env.MERV_METRICS_WRITE_TOKEN,
+          ...(process.env.MERV_METRICS_MEDIA_DIR && {
+            mediaDir: process.env.MERV_METRICS_MEDIA_DIR,
+          }),
+        },
+      },
+      { id: 'metrics-tools', name: '@merv/metrics/tools' },
+      { id: 'metrics-ui', name: '@merv/metrics/ui', required: false },
+    );
+  }
   const app = await createApp({
     directory,
-    configFile: process.env.MERV_DEMO_CONFIG ?? defaultConfigFile,
+    ...(process.env.MERV_METRICS_UPSTREAM ? { config } : { configFile }),
     port: Number(process.env.PORT ?? 3081),
   });
   const url = app.ctx.api.url!;

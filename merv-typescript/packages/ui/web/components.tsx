@@ -387,11 +387,15 @@ export function RecordPage({
   state?: ReactNode;
   title?: string;
 } & Partial<
-  Record<'act' | 'description' | 'content' | 'history' | 'code' | 'related' | 'details', ReactNode>
+  Record<
+    'act' | 'description' | 'content' | 'metrics' | 'history' | 'code' | 'related' | 'details',
+    ReactNode
+  >
 >) {
   const order: [string, ReactNode][] = [
     ['Description', slots.description],
     [title, slots.content],
+    ['Metrics', slots.metrics],
     ['History', slots.history],
     // What Git holds for this record is a section of it, never a second record page.
     ['Code', slots.code],

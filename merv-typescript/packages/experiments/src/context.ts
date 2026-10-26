@@ -31,6 +31,7 @@ import {
   presentationAt,
   handoffAt,
   recipeKey,
+  metricsInstruction,
   feasibilityFormat,
   feasibilityRules,
   workflowGates,
@@ -595,7 +596,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${speedGuidance.trimStart()}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
+    brief: `${(speedGuidance + metricsInstruction(state, context.snapshot.version)).trimStart()}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
     references: [
       ...new Map(
         [

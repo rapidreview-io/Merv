@@ -198,6 +198,7 @@ export interface ApiCredential {
 
 export interface Api {
   readonly url?: string;
+  readonly publicOrigin?: string;
   /** Remote MCP OAuth only; never grants browser/account administration. */
   oauth(provider: {
     metadataUrl: string;

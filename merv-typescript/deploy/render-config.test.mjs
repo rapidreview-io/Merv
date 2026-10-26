@@ -821,3 +821,33 @@ test('isolated staging requires an explicit standalone HTTPS origin', (t) => {
     assert.notEqual(run({ MERV_SANDBOXES_PUBLIC_ORIGIN: origin }).status, 0);
   }
 });
+
+test('metrics is optional and requires a token and signing secret', (t) => {
+  const { run, plugin } = renderer(t);
+  assert.equal(run().status, 0);
+  assert.equal(plugin('metrics'), undefined);
+  const metrics = {
+    MERV_METRICS_TRACKIO_URL: 'http://trackio:7860',
+    MERV_METRICS_WRITE_TOKEN: 'upstream-token',
+    MERV_METRICS_SECRET: 's'.repeat(32),
+  };
+  assert.equal(run(metrics).status, 0);
+  assert.deepEqual(plugin('metrics'), {
+    id: 'metrics',
+    name: '@merv/metrics',
+    config: {
+      upstream: 'http://trackio:7860',
+      writeToken: 'upstream-token',
+      secret: 's'.repeat(32),
+      publicOrigin: 'https://merv.example',
+    },
+  });
+  assert.deepEqual(plugin('metrics-tools'), { id: 'metrics-tools', name: '@merv/metrics/tools' });
+  assert.deepEqual(plugin('metrics-ui'), {
+    id: 'metrics-ui',
+    name: '@merv/metrics/ui',
+    required: false,
+  });
+  assert.notEqual(run({ ...metrics, MERV_METRICS_SECRET: 'short' }).status, 0);
+  assert.notEqual(run({ ...metrics, MERV_METRICS_WRITE_TOKEN: '' }).status, 0);
+});

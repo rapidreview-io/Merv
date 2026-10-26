@@ -561,7 +561,7 @@ Risks:
 - One vocabulary size`;
 
 test(
-  'experiment@45 submits its rendered report: drafted from the plan, final PDF, pages as figures',
+  'experiment@46 submits its rendered report: drafted from the plan, final PDF, pages as figures',
   { skip: !reportBrowser() && 'no Chromium for rendering' },
   async (t) => {
     const f = await fixture(t);
@@ -571,7 +571,7 @@ test(
     t.after(async () => await reports.close());
     f.experiments.bindReports(reports);
     let e = await f.create();
-    assert.equal(e.workflow.version, 45);
+    assert.equal(e.workflow.version, 46);
     await f.attach(e, 'plan', REPORTED_PLAN);
     e = await f.transition(e, 'submit_design');
     e = await f.execute(await f.submitReview(e));

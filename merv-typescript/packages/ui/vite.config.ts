@@ -31,6 +31,8 @@ const proxy = Object.fromEntries(
     '/customer-experiments',
     '/admin',
     '/compute',
+    '/metrics',
+    '/trackio',
   ].map((path) => [path, { target: api, ...remote, ...(path === '/sbx' ? { ws: true } : {}) }]),
 );
 

@@ -7,7 +7,8 @@ import type { RunningUnitEntry } from '@merv/contracts/running';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
 import { recordRoutes } from '../list-filters';
-import { homeOf } from '../navigation';
+import { homeOf, useRows } from '../navigation';
+import { MetricsCharts, useMetricsSession } from './metrics';
 import {
   Evidence,
   KV,
@@ -116,6 +117,8 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   }, [evidence, reload]);
   const nameOf = useActorNames();
   const back = homeOf(shell.rows);
+  const metricsPage = useRows().find((each) => each.id === 'metrics');
+  const metrics = useMetricsSession(!!metricsPage, id);
   if (!record.data)
     return (
       <PageLoad
@@ -170,6 +173,16 @@ function ExperimentDetail({ row, shell }: ViewProps) {
               </figure>
             )}
           </>
+        ) : undefined
+      }
+      metrics={
+        metrics?.runs ? (
+          <MetricsCharts
+            key={e.id}
+            experimentId={e.id}
+            trackio={metrics.url}
+            more={metricsPage?.path}
+          />
         ) : undefined
       }
       history={thread.length ? <Thread entries={thread} /> : undefined}
