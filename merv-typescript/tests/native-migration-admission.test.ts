@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { NATIVE_CODE_DRIVER, type WorkflowPolicy } from '@merv/contracts';
 import { ExperimentService } from '@merv/experiments';
-import { EXPERIMENT_WORKFLOW } from '@merv/experiments/program';
+import { EXPERIMENT_WORKFLOW, programVersion } from '@merv/experiments/program';
 import { LeasedSessions } from '@merv/sessions';
 import type { HoldRow } from '@merv/sessions/dispatch';
 import { migrateNativeWorkflow } from '@merv/workflows/native-migration';
@@ -58,8 +58,8 @@ async function fixture(t: TestContext) {
     });
   const legacyExperiment = async () => {
     const owner = app.ctx.experiments as ExperimentService;
-    const current = owner.handles.get(45)!;
-    owner.handles.set(45, owner.handles.get(40)!);
+    const current = owner.handles.get(programVersion)!;
+    owner.handles.set(programVersion, owner.handles.get(40)!);
     let experiment;
     try {
       experiment = await owner.create(source, {
@@ -68,7 +68,7 @@ async function fixture(t: TestContext) {
         requestId: randomUUID(),
       });
     } finally {
-      owner.handles.set(45, current);
+      owner.handles.set(programVersion, current);
     }
     // Historical revision12 is part of the regression. Owner records and immutable Code
     // declaration came from the published version40 creation path above.

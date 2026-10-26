@@ -16,6 +16,7 @@ import { insert as insertArtifact } from '@merv/artifacts/content';
 import { CodeService as CoreCode } from '@merv/code/service';
 import { workRef } from '@merv/code/store/refs';
 import { ExperimentService } from '@merv/experiments';
+import { programVersion } from '@merv/experiments/program';
 import { resumedOutputs } from '@merv/experiments/lease';
 import type { ExperimentEvidence } from '@merv/experiments/types';
 import { ProjectScope } from '@merv/scope';
@@ -61,8 +62,8 @@ async function fixture(t: TestContext) {
   // code_units provenance or enable any legacy producer runtime in the fixture.
   const experiment = async (version = 41) => {
     const owner = app.ctx.experiments as ExperimentService;
-    const current = owner.handles.get(45)!;
-    owner.handles.set(45, owner.handles.get(version)!);
+    const current = owner.handles.get(programVersion)!;
+    owner.handles.set(programVersion, owner.handles.get(version)!);
     try {
       return await owner.create(source, {
         name: request(),
@@ -70,7 +71,7 @@ async function fixture(t: TestContext) {
         requestId: request(),
       });
     } finally {
-      owner.handles.set(45, current);
+      owner.handles.set(programVersion, current);
     }
   };
   const task = async () => {
