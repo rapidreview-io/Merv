@@ -742,10 +742,7 @@ test('stage assignments preserve original requests and distinguish dispatch from
         /shared dollar cap does not require an empty namespace or a dispatcher slot/,
       );
       assert.match(assignment.brief, /Missing GPU spending authority.*remains a blocker/);
-      assert.match(
-        assignment.brief,
-        /independent experiments may rent GPUs concurrently/,
-      );
+      assert.match(assignment.brief, /independent experiments may rent GPUs concurrently/);
     }
     if (['planned', 'design_review'].includes(e.workflow.state))
       assert.match(assignment.brief, /additional scientific approval/);
