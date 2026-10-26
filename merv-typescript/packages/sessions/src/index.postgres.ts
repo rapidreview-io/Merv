@@ -857,4 +857,14 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
     GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,state}') STORED;`,
   // (unpublished) Workers' waits for their compute; see `computeWaitsMigration`.
   25: computeWaitsMigration,
+  // Sessions owns which attached writer checkout an allocation must retain.
+  26: `CREATE VIEW session_shutdown_checkouts AS
+    SELECT DISTINCT ON (a.allocation_id,s.instance_id)
+      a.allocation_id,s.instance_id AS unit_id,s.project_id,s.id AS session_id,
+      a.runner_id,a.ordinal,a.release_ack_at,s.status,s._merv_rowid AS session_rowid,
+      w.attachment_json,w.result_json
+    FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
+    JOIN session_workspaces w ON w.session_id=s.id
+    WHERE COALESCE((s.session_json::jsonb #>> '{execution,policy,readOnly}')::boolean,false)=false
+    ORDER BY a.allocation_id,s.instance_id,a.ordinal DESC;`,
 };

@@ -17,8 +17,51 @@ import { ProjectScope } from '@merv/scope';
 import { TaskService } from '@merv/tasks';
 import { WorkflowsService } from '@merv/workflows';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
+import { resolutionBrief } from '../packages/tasks/src/resolution-brief.js';
+import type { ResolutionWork } from '@merv/code-work/types';
 import { ownReviews } from './fixtures/review-verdict.js';
 import { openState } from './fixtures/state.js';
+
+test('resolution briefs retain exact merge parents but submit through runner capture without Git auth', () => {
+  const left = 'a'.repeat(40);
+  const right = 'b'.repeat(40);
+  const work: Extract<ResolutionWork, { kind: 'base' }> = {
+    kind: 'base',
+    left: { commit: left, inputs: [] },
+    right: { commit: right, inputs: [] },
+    conflict: { paths: ['model.py'], messages: 'content conflict' },
+    check: null,
+  };
+  for (const input of [
+    work,
+    {
+      ...work,
+      conflict: { paths: [], messages: '' },
+      check: {
+        command: 'npm test',
+        machine: 'worker',
+        exitCode: 1,
+        timedOut: false,
+        timeoutSeconds: 60,
+        output: 'failed',
+      },
+    },
+  ]) {
+    const brief = resolutionBrief(input);
+    assert.match(brief.goal, /ordinary git merge --no-ff/);
+    assert.match(brief.goal, /complete the merge with ordinary git commit\./);
+    assert.match(brief.goal, /task\.submit_delivery and stop/);
+    assert.match(brief.goal, /runner captures the committed merge and freezes the working tree/);
+    assert.match(brief.goal, /Manual Git push or interactive Git authentication is not required/);
+    assert.doesNotMatch(brief.goal, /push it to origin/);
+    assert.match(brief.goal, /Independent approval commits that exact reviewed tree/);
+    assert.equal(
+      brief.checks[0],
+      `The first completed merge on the task branch must have exactly two parents: the current checkpoint descending from ${left}, and frozen right input ${right}, in that order. Later rounds add ordinary corrective commits.`,
+    );
+    if (input.check) assert.match(brief.checks[2], /Make it pass on the merged tree/);
+  }
+});
 
 async function fixture(limits?: { reviewRounds: number }) {
   const path = mkdtempSync(join(tmpdir(), 'merv-task-test-'));

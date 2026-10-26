@@ -168,3 +168,29 @@ This reviewer gate substitutes only ancestry attestation; the workflow gate chec
 that separately through the supervisor and guardian. Neither is provider acceptance.
 The provider must supply that capability to the supervisor, never the reviewer.
 Local Docker gate evidence does not replace a live hosted-runtime acceptance run.
+
+### Historical shutdown archives
+
+Shutdown first recovers the working branch when later same-host preparations never
+attached a checkout. Otherwise updated runners retain the stopped checkout under
+an immutable `refs/merv/shutdown/<allocation>/<session>` ref, without changing the
+current writer. Sessions owns checkout selection; Code consumes its
+`session_shutdown_checkouts` view. The receipt binds allocation, epoch, session,
+commit and tree before release.
+
+To inspect an archive with existing authorized Git access, use the exact ref from
+the retained receipt (allocation/session segments may be encoded):
+
+```sh
+git fetch merv refs/merv/shutdown/<allocation>/<session>
+git show --stat FETCH_HEAD
+git switch --detach FETCH_HEAD
+```
+
+Inspect in a separate clean checkout. Archive refs do not automatically advance
+research work; any integration needs explicit reconciliation with its current
+writer and review. Existing transfer journals retain their exact commit/tree.
+Ignored files or changed trees block archival: preserve research evidence through
+supported artifact export; never upload ignored secrets or force-delete the host.
+Old running drivers require a separate supported recovery/upgrade; updating the
+server does not replace them or authorize deletion of retained hosts.

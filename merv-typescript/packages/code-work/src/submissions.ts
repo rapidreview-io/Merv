@@ -300,6 +300,28 @@ export class CodeSubmissionService {
     };
     return tx ? read(tx) : this.state.read(read);
   }
+  /** Recover only an already requested, unfrozen submission in its original writer generation. */
+  async recoveryParent(projectId: string, sessionId: string, generation: number): Promise<string> {
+    return this.state.read(async (sql) => {
+      const row = await this.row(sql, projectId, sessionId);
+      check(
+        row && row.generation == generation && row.lease_id === sessionId && !row.frozen_json,
+        'code_submission_required',
+        'An exact unfrozen submission is required',
+        409,
+      );
+      const source = JSON.parse(row.source_json) as CodeCapture;
+      const parent = source.workspace?.headOid;
+      check(
+        parent && oidSchema.safeParse(parent).success,
+        'code_submission_required',
+        'The requested submission has no retained parent',
+        409,
+      );
+      return parent;
+    });
+  }
+
   /** Runner-authenticated stop receipt, after ordinary Git durably retained both immutable refs. */
   async freeze(caller: Caller, value: unknown): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Submission service is unavailable', 503);

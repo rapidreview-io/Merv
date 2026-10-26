@@ -1054,3 +1054,139 @@ for (const submission of [false, true])
       await f.remote.verifySubmission(f.admin.projectId, { sessionId, parentOid: f.root, treeOid });
     assert.equal((await f.lease('ses_after_projection')).generation, 2);
   });
+test('historical shutdown archives survive a cross-allocation generation race without touching the current writer', async (t) => {
+  const f = await fixture(t);
+  const sessionId = 'ses_managed_shutdown';
+  await f.session(sessionId);
+  const allocationId = 'allocation_git_shutdown';
+  const credentialHash = 'c'.repeat(64);
+  const at = new Date().toISOString();
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at) VALUES(?,?,?,?,'managed-control',?)",
+      'ic_shutdown',
+      credentialHash,
+      'sessions',
+      allocationId,
+      at,
+    );
+    await tx.run(
+      `INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,runner_id,created_at)
+      VALUES(?,1,?,?,?,'test','{}','[]',?,?,?,?,?,?)`,
+      allocationId,
+      f.admin.projectId,
+      JSON.stringify({ actorId: f.admin.actorId, projectId: f.admin.projectId }),
+      'source',
+      'e'.repeat(64),
+      at,
+      credentialHash,
+      at,
+      'runner-1',
+      at,
+    );
+    await tx.run(
+      'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at,release_ack_at,settled_at) VALUES(?,?,?,?,?,?,?)',
+      sessionId,
+      allocationId,
+      'runner-1',
+      '{}',
+      at,
+      at,
+      at,
+    );
+    await tx.run(
+      'INSERT INTO session_managed_shutdowns(allocation_id,epoch,requested_at) VALUES(?,1,?)',
+      allocationId,
+      at,
+    );
+  });
+  const cleanup: Caller = {
+    actorId: f.admin.actorId,
+    projectId: f.admin.projectId,
+    managed: { allocationId, epoch: 1, credentialHash, cleanup: true },
+  };
+  const input = {
+    sessionId,
+    runnerId: 'runner-1',
+    hostRef: `launch-${sessionId}`,
+    unitId: f.unitId,
+    generation: 1,
+    leaseId: sessionId,
+  };
+
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO session_workspaces(session_id,attachment_json) VALUES(?,?)',
+      sessionId,
+      JSON.stringify({ headOid: f.root }),
+    );
+    await f.core.writers.settle(tx, {
+      projectId: f.admin.projectId,
+      ...input,
+      expectedHead: f.root,
+      moves: false,
+    });
+  });
+  await f.end(sessionId);
+  await f.session('replacement_writer');
+  const first = await f.remote.issueShutdown(cleanup, { ...input, archive: true });
+  assert.ok(first.archive);
+  const current = await f.unit();
+  const currentHead = await f.core.repositories.resolve(
+    f.admin.projectId,
+    `refs/heads/merv/work/${f.unitId}`,
+  );
+  const retry = await f.remote.issueShutdown(cleanup, { ...input, archive: true });
+  assert.deepEqual(retry.archive, first.archive);
+  f.source.commit({ 'preserved.txt': 'old host evidence\n' });
+  const head = f.source.git('rev-parse', 'HEAD');
+  const tree = f.source.git('rev-parse', 'HEAD^{tree}');
+  await assert.rejects(
+    f.git(
+      f.source.repository,
+      ['push', f.url, `HEAD:refs/heads/merv/work/${f.unitId}`],
+      first.token,
+    ),
+    /immutable|only|403/,
+  );
+  await f.git(f.source.repository, ['push', f.url, `HEAD:${first.archive.ref}`], first.token);
+  const ack = {
+    ...input,
+    kind: 'final' as const,
+    expectedHead: f.root,
+    proposedHead: head,
+    treeOid: tree,
+    archiveRef: first.archive.ref,
+  };
+  await assert.rejects(f.remote.acknowledge(cleanup, { ...ack, treeOid: f.root }), /tree differs/);
+  await assert.rejects(
+    f.remote.acknowledge(
+      { ...cleanup, managed: { ...cleanup.managed!, allocationId: 'other' } },
+      ack,
+    ),
+    /capability/,
+  );
+  for (const altered of [
+    { runnerId: 'foreign-runner' },
+    { hostRef: 'foreign-host' },
+    { sessionId: 'foreign-session' },
+  ])
+    await assert.rejects(f.remote.acknowledge(cleanup, { ...ack, ...altered }), /capability/);
+  const receipt = await f.remote.acknowledge(cleanup, ack);
+  assert.equal((await f.remote.acknowledge(cleanup, ack)).id, receipt.id);
+  assert.equal(receipt.head, head);
+  assert.deepEqual(await f.unit(), current);
+  assert.equal(
+    await f.core.repositories.resolve(f.admin.projectId, `refs/heads/merv/work/${f.unitId}`),
+    currentHead,
+  );
+  f.source.commit({ 'second.txt': 'must not overwrite archive\n' });
+  await assert.rejects(
+    f.git(f.source.repository, ['push', f.url, `HEAD:${first.archive.ref}`], retry.token),
+    /immutable/,
+  );
+  await assert.rejects(
+    f.git(f.source.repository, ['push', f.url, `:${first.archive.ref}`], retry.token),
+    /deletion/,
+  );
+});

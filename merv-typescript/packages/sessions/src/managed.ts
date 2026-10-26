@@ -907,21 +907,21 @@ export class ManagedRunnerBindings {
             writer_state: string;
             generation: number;
             final_owed: boolean;
+            historical: boolean;
           }>(
             `
-        SELECT w.unit_id,w.writer_session_id,w.head_oid,w.writer_state,w.generation,w.final_owed FROM code_workspaces w
-        JOIN session_managed_assignments a ON a.session_id=w.writer_session_id
-        WHERE a.allocation_id=? AND w.project_id=?
-          AND NOT (w.writer_state='closed' AND NOT w.final_owed AND w.head_oid IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM session_managed_assignments prior
-              JOIN worker_sessions s ON s.id=prior.session_id
-              JOIN session_workspaces attached ON attached.session_id=s.id
-              WHERE prior.allocation_id=a.allocation_id AND s.project_id=w.project_id
-                AND s.instance_id=w.unit_id
-            ))`,
+          SELECT w.unit_id,COALESCE(h.session_id,w.writer_session_id) AS writer_session_id,
+            w.head_oid,w.writer_state,w.generation,w.final_owed,
+            (h.session_id IS NOT NULL AND h.session_id IS DISTINCT FROM w.writer_session_id) AS historical
+          FROM code_workspaces w LEFT JOIN session_shutdown_checkouts h
+            ON h.unit_id=w.unit_id AND h.allocation_id=? AND h.project_id=?
+          WHERE w.project_id=? AND (h.session_id IS NOT NULL OR
+            (EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.session_id=w.writer_session_id AND a.allocation_id=?)
+             AND NOT (w.writer_state='closed' AND NOT w.final_owed AND w.head_oid IS NULL)))`,
             row.allocation_id,
             row.project_id,
+            row.project_id,
+            row.allocation_id,
           )
         : [];
       check(
@@ -936,31 +936,47 @@ export class ManagedRunnerBindings {
           (c) => c.unitId === writer.unit_id && c.sessionId === writer.writer_session_id,
         );
         check(
-          capture &&
-            capture.headOid === writer.head_oid &&
-            writer.writer_state === 'closed' &&
-            !writer.final_owed,
+          capture,
           'managed_shutdown_pending',
-          'Shutdown capture differs from the retained writer',
+          'Shutdown capture differs from the historical writer',
           409,
         );
-        const operation = await tx.get<{ payload_json: string; result_json: string | null }>(
-          `SELECT payload_json,result_json FROM code_operations
-          WHERE id=? AND project_id=? AND unit_id=? AND principal_scope=? AND generation=? AND kind='upload' AND status='completed'`,
+        const operation = await tx.get<{
+          payload_json: string;
+          result_json: string | null;
+          generation: number;
+        }>(
+          `SELECT payload_json,result_json,generation FROM code_operations
+          WHERE id=? AND project_id=? AND unit_id=? AND principal_scope=? AND kind='upload' AND status='completed'`,
           capture.operationId,
           row.project_id,
           writer.unit_id,
           `session:${capture.sessionId}`,
-          Number(writer.generation),
         );
+        const payload = operation && JSON.parse(operation.payload_json);
         const result = operation?.result_json ? JSON.parse(operation.result_json) : null;
+        const archived = payload?.archive;
         check(
           operation &&
-            JSON.parse(operation.payload_json).kind === 'final' &&
+            payload.kind === 'final' &&
             result?.head === capture.headOid &&
-            result?.tree === capture.treeOid,
+            result?.tree === capture.treeOid &&
+            (archived
+              ? archived.allocationId === row.allocation_id &&
+                Number(archived.epoch) === Number(row.epoch) &&
+                payload.sessionId === capture.sessionId &&
+                payload.unitId === capture.unitId &&
+                payload.proposedHead === capture.headOid &&
+                payload.treeOid === capture.treeOid &&
+                payload.archiveRef === archived.ref &&
+                payload.expectedHead === archived.baseHead
+              : !writer.historical &&
+                Number(operation.generation) === Number(writer.generation) &&
+                capture.headOid === writer.head_oid &&
+                writer.writer_state === 'closed' &&
+                !writer.final_owed),
           'managed_shutdown_pending',
-          'A durable final Git capture is required',
+          'A durable final Git capture bound to this allocation is required',
           409,
         );
       }
