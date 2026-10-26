@@ -949,54 +949,152 @@ test('idle completion is fenced against a compute-wake visit admitted after obse
   assert.equal(f.runtimes.stopped.length, 1);
 });
 
-async function preservationFixture(t:TestContext){
- const f=await fixture(t);await f.fleet.request(f.caller,input('preservation'));
- for(let i=0;i<4;i++)await f.fleet.tick();const a=(await f.fleet.list(f.caller))[0]!;
- // Fleet unit fixture supplies the managed-assignment read model; real session authority
- // and native process identity remain separately required before any signal operation.
- await f.state.transaction(async tx=>{
-  await tx.run('CREATE TABLE session_managed_runners(allocation_id TEXT PRIMARY KEY,epoch BIGINT)');
-  await tx.run('CREATE TABLE session_managed_assignments(allocation_id TEXT,session_id TEXT,runner_id TEXT)');
-  await tx.run('INSERT INTO session_managed_runners VALUES(?,?)',a.id,a.epoch);
-  await tx.run('INSERT INTO session_managed_assignments VALUES(?,?,?)',a.id,'original-session','original-runner');
- });
- const request={operationId:'preservation-op',sourceBindingSha256:'a'.repeat(64),expiresAt:new Date(f.now()+120000).toISOString(),identity:{projectId:f.caller.projectId,allocationId:a.id,epoch:a.epoch,runnerId:'original-runner',sessionId:'original-session',hostRef:'original-host',generation:1,leaseId:'original-session',unitId:'original-unit',nativeId:'native-one',nativeUuid:'uuid-one',nativeCreatedAt:'created',image:'pinned-image',appVersion:1,sandboxId:a.runtime!.sandboxId,startedAt:'started',launchId:a.runtime!.launch!.launchId,jobId:a.runtime!.launch!.jobId}};
- return {...f,a,request};
+async function preservationFixture(t: TestContext) {
+  const f = await fixture(t);
+  await f.fleet.request(f.caller, input('preservation'));
+  for (let i = 0; i < 4; i++) await f.fleet.tick();
+  const a = (await f.fleet.list(f.caller))[0]!;
+  // Fleet unit fixture supplies the managed-assignment read model; real session authority
+  // and native process identity remain separately required before any signal operation.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'CREATE TABLE session_managed_runners(allocation_id TEXT PRIMARY KEY,epoch BIGINT)',
+    );
+    await tx.run(
+      'CREATE TABLE session_managed_assignments(allocation_id TEXT,session_id TEXT,runner_id TEXT)',
+    );
+    await tx.run('INSERT INTO session_managed_runners VALUES(?,?)', a.id, a.epoch);
+    await tx.run(
+      'INSERT INTO session_managed_assignments VALUES(?,?,?)',
+      a.id,
+      'original-session',
+      'original-runner',
+    );
+  });
+  const request = {
+    operationId: 'preservation-op',
+    sourceBindingSha256: 'a'.repeat(64),
+    expiresAt: new Date(f.now() + 120000).toISOString(),
+    identity: {
+      projectId: f.caller.projectId,
+      allocationId: a.id,
+      epoch: a.epoch,
+      runnerId: 'original-runner',
+      sessionId: 'original-session',
+      hostRef: 'original-host',
+      generation: 1,
+      leaseId: 'original-session',
+      unitId: 'original-unit',
+      nativeId: 'native-one',
+      nativeUuid: 'uuid-one',
+      nativeCreatedAt: 'created',
+      image: 'pinned-image',
+      appVersion: 1,
+      sandboxId: a.runtime!.sandboxId,
+      startedAt: 'started',
+      launchId: a.runtime!.launch!.launchId,
+      jobId: a.runtime!.launch!.jobId,
+    },
+  };
+  return { ...f, a, request };
 }
-test('preservation fence blocks admission/cleanup through drain, expiry and restart',async t=>{
- const f=await preservationFixture(t);let cleanups=0;f.owner.prepareStop=async()=>{cleanups++;return true;};
- const receipt=await f.fleet.reservePreservation(f.caller,f.request);assert.equal(receipt.quiesced,false);
- assert.deepEqual(await f.fleet.reservePreservation(f.caller,f.request),receipt);
- assert.equal(await f.state.transaction(tx=>f.fleet.admits(f.a.id,f.a.epoch,tx)),false);
- await f.fleet.drain(f.caller,f.a.id);f.setObservation('finished');await f.fleet.tick();f.advance(121000);await f.fleet.tick();await assert.rejects(f.fleet.reservePreservation(f.caller,f.request));
- assert.equal(cleanups,0);assert.equal(f.runtimes.stopped.length,0);
- const next=await createService(new FleetService(f.state,f.scope,f.runtimes,{profiles},f.now));next.registerOwner('workflow',f.owner);await next.tick();assert.equal(cleanups,0);assert.equal(f.runtimes.stopped.length,0);await next.close();
+test('preservation fence blocks admission/cleanup through drain, expiry and restart', async (t) => {
+  const f = await preservationFixture(t);
+  let cleanups = 0;
+  f.owner.prepareStop = async () => {
+    cleanups++;
+    return true;
+  };
+  const receipt = await f.fleet.reservePreservation(f.caller, f.request);
+  assert.equal(receipt.quiesced, false);
+  assert.deepEqual(await f.fleet.reservePreservation(f.caller, f.request), receipt);
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(f.a.id, f.a.epoch, tx)), false);
+  await f.fleet.drain(f.caller, f.a.id);
+  f.setObservation('finished');
+  await f.fleet.tick();
+  f.advance(121000);
+  await f.fleet.tick();
+  await assert.rejects(f.fleet.reservePreservation(f.caller, f.request));
+  assert.equal(cleanups, 0);
+  assert.equal(f.runtimes.stopped.length, 0);
+  const next = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { profiles }, f.now),
+  );
+  next.registerOwner('workflow', f.owner);
+  await next.tick();
+  assert.equal(cleanups, 0);
+  assert.equal(f.runtimes.stopped.length, 0);
+  await next.close();
 });
-test('preservation refused for wrong history/native lease or changed operation',async t=>{
- const f=await preservationFixture(t);
- await assert.rejects(f.fleet.reservePreservation(f.caller,{...f.request,identity:{...f.request.identity,runnerId:'wrong'}}));
- await assert.rejects(f.fleet.reservePreservation(f.caller,{...f.request,identity:{...f.request.identity,sandboxId:'other'}}));
- await assert.rejects(f.fleet.reservePreservation(f.caller,{...f.request,expiresAt:new Date(f.now()+901000).toISOString()}));
- await f.fleet.reservePreservation(f.caller,f.request);
- await assert.rejects(f.fleet.reservePreservation(f.caller,{...f.request,sourceBindingSha256:'b'.repeat(64)}));
+test('preservation refused for wrong history/native lease or changed operation', async (t) => {
+  const f = await preservationFixture(t);
+  await assert.rejects(
+    f.fleet.reservePreservation(f.caller, {
+      ...f.request,
+      identity: { ...f.request.identity, runnerId: 'wrong' },
+    }),
+  );
+  await assert.rejects(
+    f.fleet.reservePreservation(f.caller, {
+      ...f.request,
+      identity: { ...f.request.identity, sandboxId: 'other' },
+    }),
+  );
+  await assert.rejects(
+    f.fleet.reservePreservation(f.caller, {
+      ...f.request,
+      expiresAt: new Date(f.now() + 901000).toISOString(),
+    }),
+  );
+  await f.fleet.reservePreservation(f.caller, f.request);
+  await assert.rejects(
+    f.fleet.reservePreservation(f.caller, { ...f.request, sourceBindingSha256: 'b'.repeat(64) }),
+  );
 });
-test('preservation replay revalidates retained managed history',async t=>{
- const f=await preservationFixture(t);
- await f.fleet.reservePreservation(f.caller,f.request);
- await f.state.transaction(tx=>tx.run('DELETE FROM session_managed_assignments WHERE allocation_id=?',f.a.id));
- await assert.rejects(f.fleet.reservePreservation(f.caller,f.request),/Original managed assignment is unavailable/);
+test('preservation replay revalidates retained managed history', async (t) => {
+  const f = await preservationFixture(t);
+  await f.fleet.reservePreservation(f.caller, f.request);
+  await f.state.transaction((tx) =>
+    tx.run('DELETE FROM session_managed_assignments WHERE allocation_id=?', f.a.id),
+  );
+  await assert.rejects(
+    f.fleet.reservePreservation(f.caller, f.request),
+    /Original managed assignment is unavailable/,
+  );
 });
-test('preservation refuses a shutdown already durably authorized',async t=>{
- const f=await preservationFixture(t),entered=deferred<void>(),answer=deferred<boolean>();
- f.owner.prepareStop=async()=>{entered.resolve();return answer.promise;};await f.fleet.cancel(f.caller,f.a.id);
- const tick=f.fleet.tick();await entered.promise;await assert.rejects(f.fleet.reservePreservation(f.caller,f.request));answer.resolve(false);await tick;
- assert.equal(f.runtimes.stopped.length,0);assert.ok((await f.fleet.inspect(f.caller,f.a.id)).shutdownAuthorizedAt);
+test('preservation refuses a shutdown already durably authorized', async (t) => {
+  const f = await preservationFixture(t),
+    entered = deferred<void>(),
+    answer = deferred<boolean>();
+  f.owner.prepareStop = async () => {
+    entered.resolve();
+    return answer.promise;
+  };
+  await f.fleet.cancel(f.caller, f.a.id);
+  const tick = f.fleet.tick();
+  await entered.promise;
+  await assert.rejects(f.fleet.reservePreservation(f.caller, f.request));
+  answer.resolve(false);
+  await tick;
+  assert.equal(f.runtimes.stopped.length, 0);
+  assert.ok((await f.fleet.inspect(f.caller, f.a.id)).shutdownAuthorizedAt);
 });
 
-test('preservation cannot overtake an already authorized native deletion',async t=>{
- const f=await preservationFixture(t),entered=deferred<void>(),answer=deferred<FleetRuntimeHandle>();
- f.owner.prepareStop=async()=>true;const original=f.runtimes.stop.bind(f.runtimes);
- f.runtimes.stop=async(project,handle)=>{entered.resolve();await answer.promise;return original(project,handle);};
- await f.fleet.cancel(f.caller,f.a.id);const tick=f.fleet.tick();await entered.promise;
- await assert.rejects(f.fleet.reservePreservation(f.caller,f.request));answer.resolve(f.a.runtime!);await tick;
+test('preservation cannot overtake an already authorized native deletion', async (t) => {
+  const f = await preservationFixture(t),
+    entered = deferred<void>(),
+    answer = deferred<FleetRuntimeHandle>();
+  f.owner.prepareStop = async () => true;
+  const original = f.runtimes.stop.bind(f.runtimes);
+  f.runtimes.stop = async (project, handle) => {
+    entered.resolve();
+    await answer.promise;
+    return original(project, handle);
+  };
+  await f.fleet.cancel(f.caller, f.a.id);
+  const tick = f.fleet.tick();
+  await entered.promise;
+  await assert.rejects(f.fleet.reservePreservation(f.caller, f.request));
+  answer.resolve(f.a.runtime!);
+  await tick;
 });
