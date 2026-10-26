@@ -1,3 +1,4 @@
+import {preservationRequest,type PreservationRequest} from './preservation.js';
 import { bootMaintenance } from '@merv/contracts/maintenance';
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
@@ -739,6 +740,30 @@ export class FleetService implements Fleet {
   drain(caller: Caller, id: string, tx?: Transaction) {
     return this.changeIntent(caller, id, 'drain', tx);
   }
+  /** Internal admin coordinator only; deliberately absent from Fleet tools and routes. */
+  async reservePreservation(caller:Caller,input:PreservationRequest) {
+    const parsed=preservationRequest.safeParse(input);
+    check(parsed.success,'preservation_refused','Preservation identity is invalid',400);
+    const request=parsed.data;
+    return this.state.transaction(async tx=>{
+      await this.scope.require(caller,'admin',tx);
+      check(!caller.session && request.identity.projectId===caller.projectId,'preservation_refused','Preservation authority is unavailable',403);
+      const a=await this.get(tx,request.identity.allocationId),before=structuredClone(a),i=request.identity;
+      const until=Date.parse(request.expiresAt);
+      check(a.projectId===i.projectId&&a.epoch===i.epoch&&a.owner.kind==='workflow'&&
+        ['running','releasing'].includes(a.phase)&&a.runtime?.sandboxId===i.sandboxId&&a.runtime.ready&&
+        a.runtime.launch?.launchId===i.launchId&&a.runtime.launch?.jobId===i.jobId&&
+        a.runtime.launch.deliveryState==='launched'&&!a.shutdownAcknowledged&&!a.deletionAuthorizedAt&&!a.shutdownAuthorizedAt&&
+        until>this.clock()&&until<=this.clock()+900000&&Date.parse(a.runtime.leaseExpiresAt??'')>=until+60000,
+        'preservation_refused','No bounded preservation window is available',409);
+      const bound=await tx.get<{runner_id:string;session_id:string}>(
+        'SELECT a.runner_id,a.session_id FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id WHERE a.allocation_id=? AND m.epoch=? AND a.session_id=? AND a.runner_id=?',a.id,a.epoch,i.sessionId,i.runnerId);
+      check(!!bound,'preservation_refused','Original managed assignment is unavailable',409);
+      if(a.preservation){const {requestedAt,quiesced,lifecycleBarrierVerified,nativeIdentityVerified,...saved}=a.preservation;check(digest(saved)===digest(request),'preservation_conflict','Preservation intent differs',409);return a.preservation;}
+      a.preservation={...request,requestedAt:this.time(),quiesced:false,lifecycleBarrierVerified:false,nativeIdentityVerified:false};
+      await this.save(tx,a,before,caller);this.kick();return a.preservation;
+    });
+  }
   async admits(id: string, epoch: number, tx: Transaction): Promise<boolean> {
     this.state.assertTransaction(tx);
     // A held work machine (its owner's machines outlive Main) takes no new step: a release is
@@ -749,6 +774,7 @@ export class FleetService implements Fleet {
       id,
       (a) =>
         a.epoch === epoch &&
+        !a.preservation &&
         a.intent === 'run' &&
         ['starting', 'running'].includes(a.phase) &&
         !!a.runtime?.ready &&
@@ -775,6 +801,7 @@ export class FleetService implements Fleet {
       (asker && owner !== asker) ||
       a.deadlineAt <= this.time() ||
       this.stale(a) ||
+      !!a.preservation ||
       !ok(a)
     )
       return false;
@@ -1049,6 +1076,17 @@ export class FleetService implements Fleet {
     // Closing stops only machines Fleet has seen: a kept one is left as it is, and a create
     // whose reply was lost is left to the successor, which recovers it by its key.
     if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
+    a=await this.state.read(sql=>this.get(sql,a.id));
+    if(a.preservation) {
+      // The watchdog must finish inside the already-admitted lease. Neither timeout nor
+      // lost heartbeat authorizes cleanup, ref changes, new work, or policy-bypassing renewal.
+      if(a.runtime){const runtime=this.sbxMerv.runtimes(await this.scope.serviceActor('fleet',a.rentedIn??a.projectId));
+        const observed=await runtime.inspect(a.runtime.sandboxId,a.runtime.launch?.launchId);
+        const handle=runtimeHandle(observed.sandbox,a.runtime.launch,this.clock());
+        await this.observed(a,handle,a.phase);
+      }
+      return;
+    }
     // Past releaseBy the lease has ended any machine it held: its slot is free.
     if (
       a.intent === 'stop' &&
@@ -1068,6 +1106,7 @@ export class FleetService implements Fleet {
     // then only watched, until it is gone or releaseBy. A provider that still reports it up is
     // asked again, at most once a pass.
     const stop = async (a: FleetAllocation, handle: FleetRuntimeHandle) => {
+      a=await this.state.read(sql=>this.get(sql,a.id));if(a.preservation)return;
       // A failed/deleting machine is already an unexpected loss. An intact launched host
       // receives a durable shutdown request; provider deletion waits for its verified receipt.
       if (
@@ -1080,9 +1119,13 @@ export class FleetService implements Fleet {
           a = await this.update(a.id, (current) => {
             current.shutdownRequired = true;
           });
+        // Serialize first teardown authorization against preservation reservation.
+        a=await this.update(a.id,current=>{if(!current.preservation)current.shutdownAuthorizedAt??=this.time();});
+        if(a.preservation)return;
         if (!owner?.prepareStop || !(await owner.prepareStop(structuredClone(a)))) {
           // Keep the machine while capture is retrying, even after its work deadline. It admits
           // no new work. Losing the provider is distinct from deliberately deleting dirty work.
+          a=await this.state.read(sql=>this.get(sql,a.id));if(a.preservation)return;
           if (handle.leaseExpiresAt && Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000) {
             const seconds =
               profile?.leaseSeconds ?? Math.max(...this.profiles.map((p) => p.leaseSeconds));
@@ -1099,9 +1142,12 @@ export class FleetService implements Fleet {
           return;
         }
         a = await this.update(a.id, (current) => {
-          current.shutdownAcknowledged = true;
+          if(!current.preservation)current.shutdownAcknowledged = true;
         });
+        if(a.preservation)return;
       }
+      a=await this.update(a.id,current=>{if(!current.preservation)current.deletionAuthorizedAt??=this.time();});
+      if(a.preservation)return;
       if (handle.state !== 'deleting')
         a = await this.observed(
           a,

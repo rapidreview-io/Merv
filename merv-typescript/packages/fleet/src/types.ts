@@ -1,4 +1,5 @@
 import type { Caller, DelegationSource, Sql, Transaction } from '@merv/contracts';
+import type { PreservationFence } from './preservation.js';
 import type { MountHandler } from '@merv/api/types';
 
 export type FleetPhase =
@@ -29,6 +30,11 @@ export interface FleetAllocation {
   /** A launched host must acknowledge durable shutdown before provider deletion. */
   shutdownRequired?: true;
   shutdownAcknowledged?: true;
+  /** Immutable operator preservation fence; never authorizes source cleanup. */
+  preservation?: PreservationFence;
+  /** Committed before native stop I/O: a preservation fence cannot overtake deletion. */
+  deletionAuthorizedAt?: string;
+  shutdownAuthorizedAt?: string;
   /** When Fleet adopted its current machine, which must be ready within a minute. */
   adoptedAt?: string;
   /** Machines that never became ready, stopped and rented again each under a new create key. */
