@@ -27,7 +27,12 @@ import { s3Blobs } from './fixtures/s3-blobs.js';
  * Fleet provisioning and report rendering are outside this test (the ordinary app fixture
  * supplies its documented report adapter). This is not deployed hosted-image acceptance.
  */
-type Scenario = 'lifecycle' | 'failed-preparation' | 'newer-attachment' | 'other-allocation';
+type Scenario =
+  | 'lifecycle'
+  | 'failed-preparation'
+  | 'failed-preparation-updated-runner'
+  | 'newer-attachment'
+  | 'other-allocation';
 function lifecycle(scenario: Scenario) {
   return async (t: test.TestContext) => {
     const root = mkdtempSync(join(tmpdir(), 'merv-http-lifecycle-'));
@@ -434,7 +439,7 @@ function lifecycle(scenario: Scenario) {
       }
       await http('/sessions/runners/shutdown', writer.controlToken, { request: true });
       current.delete(writer.allocationId);
-      if (scenario !== 'failed-preparation') {
+      if (!scenario.startsWith('failed-preparation')) {
         await assert.rejects(
           http('/code/v2/shutdown-credential', writer.controlToken, {
             sessionId: planner.session.id,
@@ -457,22 +462,29 @@ function lifecycle(scenario: Scenario) {
             ),
           ))!.generation,
         );
-      const beforeRecovery = await generation();
-      for (let attempt = 0; attempt < 2; attempt++) {
-        await http('/code/v2/shutdown-credential', writer.controlToken, {
-          sessionId: planner.session.id,
-          ...planner.control,
-        });
-        assert.equal(
-          await generation(),
-          beforeRecovery + 1,
-          'lost grant retries do not advance the writer again',
-        );
+      if (scenario === 'failed-preparation') {
+        const beforeRecovery = await generation();
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await http('/code/v2/shutdown-credential', writer.controlToken, {
+            sessionId: planner.session.id,
+            ...planner.control,
+          });
+          assert.equal(
+            await generation(),
+            beforeRecovery + 1,
+            'lost grant retries do not advance the writer again',
+          );
+        }
       }
       const captures = await writer.driver.shutdownCapture();
       assert.equal(captures.length, 1);
       assert.equal(captures[0]!.sessionId, planner.session.id);
       assert.equal(git(repository, ['show', `${captures[0]!.headOid}:plan.py`]), planCode.trim());
+      assert.equal(
+        git(repository, ['rev-parse', `refs/heads/merv/work/${experiment.id}`]),
+        captures[0]!.headOid,
+        'failed unattached successors must preserve the prior checkout on the working branch',
+      );
       assert.equal(readFileSync(join(planner.workspace.path, 'plan.py'), 'utf8'), planCode);
       const receipt = { captures, empty: false };
       assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
@@ -572,6 +584,7 @@ function lifecycle(scenario: Scenario) {
 for (const scenario of [
   'lifecycle',
   'failed-preparation',
+  'failed-preparation-updated-runner',
   'newer-attachment',
   'other-allocation',
 ] as const)

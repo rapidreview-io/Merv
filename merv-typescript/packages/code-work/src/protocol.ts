@@ -95,7 +95,6 @@ export class CodeWorkspaceProtocol {
                 caller.projectId,
                 session.id,
                 Number(row.generation),
-                session.id,
               ),
             }
           : undefined;

@@ -29,3 +29,7 @@ export const validRetentionRef = (ref: string): boolean =>
   ref
     .split('/')
     .every((part) => !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'));
+
+/** Immutable destination for a stopped allocation checkout. */
+export const shutdownRef = (allocationId: string, sessionId: string) =>
+  `refs/merv/shutdown/${unitRef(allocationId)}/${unitRef(sessionId)}`;

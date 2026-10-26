@@ -171,27 +171,26 @@ Local Docker gate evidence does not replace a live hosted-runtime acceptance run
 
 ### Historical shutdown archives
 
-A newer runner may opt into immutable shutdown archival when another session has
-already acquired the work unit. The control service authenticates the old stopped
-allocation and attached writer, and grants only its `refs/merv/shutdown/...` ref.
-It does not restore the old writer generation or move the current work branch.
-Fleet requires a completed receipt bound to the historical allocation, epoch,
-session, head and tree before considering the host releasable.
+Shutdown first recovers the working branch when later same-host preparations never
+attached a checkout. Otherwise updated runners retain the stopped checkout under
+an immutable `refs/merv/shutdown/<allocation>/<session>` ref, without changing the
+current writer. Sessions owns checkout selection; Code consumes its
+`session_shutdown_checkouts` view. The receipt binds allocation, epoch, session,
+commit and tree before release.
 
-Existing transfers migrate into a new journal; their original journal and exact
-commit/tree remain intact. Historical recovery stops if ignored files exist or the frozen journal
-no longer matches the stopped checkout. Inspect those files through supported
-administrative access, identify research evidence versus runtime caches and
-secrets, and retain research evidence in immutable Sandbox artifacts with exact
-provenance before considering any disposal. Never automatically upload ignored
-files or infer that a Git receipt preserves them. Ordinary current-writer
-shutdown remains unchanged.
+To inspect an archive with existing authorized Git access, use the exact ref from
+the retained receipt (allocation/session segments may be encoded):
 
-This protocol requires updated runner code. Old running hosts do not learn new
-capture behavior from a server update, and standard Cloudflare image replacement
-is not an in-place preservation mechanism. Do not deploy over retained hosts or
-force-delete them to resolve a shutdown wait. A supported selective export or
-in-place recovery mechanism must preserve their checkout and ledger first; the
-current Fleet lifecycle does not expose such an upgrade. New allocation admission
-need not rewrite the old writer: archival deliberately remains independent of
-later generations, while provider release remains gated on the old receipt.
+```sh
+git fetch merv refs/merv/shutdown/<allocation>/<session>
+git show --stat FETCH_HEAD
+git switch --detach FETCH_HEAD
+```
+
+Inspect in a separate clean checkout. Archive refs do not automatically advance
+research work; any integration needs explicit reconciliation with its current
+writer and review. Existing transfer journals retain their exact commit/tree.
+Ignored files or changed trees block archival: preserve research evidence through
+supported artifact export; never upload ignored secrets or force-delete the host.
+Old running drivers require a separate supported recovery/upgrade; updating the
+server does not replace them or authorize deletion of retained hosts.

@@ -23,7 +23,7 @@ import { admit, defaultLimits } from './admission.js';
 import { CodeRepositories } from './repository.js';
 import { waitGitOwner } from '../git-owner.js';
 import { gitHttp } from './native-http.js';
-import { workBranch, workRef, unitRef } from './refs.js';
+import { workBranch, workRef, unitRef, shutdownRef } from './refs.js';
 import { pendingMerge, verifyResolution } from '../pending-merge.js';
 import type { CodeWriterService, WriterFence } from '../writers.js';
 import type { CodeStoreOperation } from './protocol.js';
@@ -423,15 +423,22 @@ $merv$;
     await this.state.transaction(async (tx) => {
       if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
         await this.cleanup(tx, grant);
-        const current = await this.writers.row(tx, grant.projectId, grant.unitId);
-        if (input.archive && current?.writer_session_id !== grant.sessionId) {
+        // Preserve working-branch recovery when successors never attached. Archive is
+        // only the fallback for historical work that cannot safely regain that branch.
+        if (!(await this.recoverShutdownWriter(tx, grant))) {
+          check(
+            input.archive,
+            'code_generation_stale',
+            'The historical checkout cannot safely resume shutdown capture',
+            409,
+          );
           const historical = await this.historicalShutdown(tx, grant);
           grant.generation = historical.generation;
           grant.archive = {
-            ref: `refs/merv/shutdown/${unitRef(grant.cleanup!.allocationId)}/${unitRef(grant.sessionId)}`,
+            ref: shutdownRef(grant.cleanup!.allocationId, grant.sessionId),
             baseHead: historical.baseHead,
           };
-        } else await this.recoverShutdownWriter(tx, grant);
+        }
       } else await this.scope.require(caller, 'read', tx);
       await this.live(tx, grant, true);
       await tx.run(
@@ -462,34 +469,7 @@ $merv$;
       403,
     );
     await this.cleanup(sql, grant);
-    const attached = await sql.get<{ attachment_json: string }>(
-      `
-      SELECT w.attachment_json FROM session_managed_assignments a
-      JOIN worker_sessions s ON s.id=a.session_id JOIN session_workspaces w ON w.session_id=s.id
-      WHERE a.allocation_id=? AND a.session_id=? AND a.runner_id=?
-        AND s.project_id=? AND s.instance_id=? AND s.status IN ('released','expired')
-        AND a.release_ack_at IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM session_managed_assignments later
-          JOIN worker_sessions ls ON ls.id=later.session_id
-          JOIN session_workspaces lw ON lw.session_id=ls.id
-          WHERE later.allocation_id=a.allocation_id AND later.ordinal>a.ordinal
-            AND ls.instance_id=s.instance_id
-            AND COALESCE((ls.session_json::jsonb #>> '{execution,policy,readOnly}')::boolean,false)=false)`,
-      grant.cleanup.allocationId,
-      grant.sessionId,
-      grant.runnerId,
-      grant.projectId,
-      grant.unitId,
-    );
-    const saved = await sql.get<{ grant_json: string }>(
-      `SELECT grant_json FROM code_git_credentials
-      WHERE project_id=? AND grant_json::jsonb ->> 'sessionId'=?
-        AND grant_json::jsonb ->> 'audience'='runner' AND grant_json::jsonb ->> 'mode'='write'
-      ORDER BY created_at LIMIT 1`,
-      grant.projectId,
-      grant.sessionId,
-    );
-    const original = saved && (JSON.parse(saved.grant_json) as Grant);
+    const { attached, original } = await this.stoppedCheckout(sql, grant);
     const baseHead = attached && JSON.parse(attached.attachment_json).headOid;
     check(
       attached &&
@@ -518,62 +498,64 @@ $merv$;
     return { baseHead, generation: original.generation! };
   }
 
+  private async stoppedCheckout(sql: Sql, grant: Grant) {
+    const attached = await sql.get<{
+      ordinal: number;
+      session_rowid: number;
+      attachment_json: string;
+      result_json: string | null;
+    }>(
+      `SELECT ordinal,session_rowid,attachment_json,result_json FROM session_shutdown_checkouts
+       WHERE allocation_id=? AND session_id=? AND runner_id=? AND project_id=? AND unit_id=?
+         AND status IN ('released','expired') AND release_ack_at IS NOT NULL`,
+      grant.cleanup!.allocationId,
+      grant.sessionId,
+      grant.runnerId,
+      grant.projectId,
+      grant.unitId,
+    );
+    const saved = await sql.get<{ grant_json: string }>(
+      `SELECT grant_json FROM code_git_credentials WHERE project_id=?
+       AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb ->> 'unitId'=?
+       AND grant_json::jsonb ->> 'audience'='runner' AND grant_json::jsonb ->> 'mode'='write'
+       ORDER BY created_at LIMIT 1`,
+      grant.projectId,
+      grant.sessionId,
+      grant.unitId,
+    );
+    return { attached, original: saved ? (JSON.parse(saved.grant_json) as Grant) : undefined };
+  }
+
   /** Preserve a host's last attached checkout after subsequent preparations failed. This
    * grants no ordinary work authority and never rewinds a generation or changes Git refs. */
-  private async recoverShutdownWriter(tx: Transaction, grant: Grant): Promise<void> {
-    if (!grant.cleanup || grant.audience !== 'shutdown') return;
+  private async recoverShutdownWriter(tx: Transaction, grant: Grant): Promise<boolean> {
+    if (!grant.cleanup || grant.audience !== 'shutdown') return true;
     const row = await this.writers.row(tx, grant.projectId, grant.unitId);
-    if (!row) return;
+    if (!row) return true;
     if (row.writer_session_id !== grant.sessionId) {
-      const original = await tx.get<{
-        ordinal: number;
-        session_rowid: number;
-        attachment_json: string;
-        result_json: string | null;
-      }>(
-        `SELECT a.ordinal,s._merv_rowid AS session_rowid,w.attachment_json,w.result_json
-         FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
-         JOIN session_workspaces w ON w.session_id=s.id
-         WHERE a.allocation_id=? AND s.id=? AND s.project_id=? AND s.instance_id=?
-           AND s.status IN ('released','expired') AND a.release_ack_at IS NOT NULL`,
-        grant.cleanup.allocationId,
-        grant.sessionId,
-        grant.projectId,
-        grant.unitId,
-      );
-      const previousGrant = await tx.get<{ grant_json: string }>(
-        `SELECT grant_json FROM code_git_credentials WHERE project_id=?
-         AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb ->> 'unitId'=?
-         AND grant_json::jsonb ->> 'audience'='runner' ORDER BY created_at LIMIT 1`,
-        grant.projectId,
-        grant.sessionId,
-        grant.unitId,
-      );
-      const previous = previousGrant && (JSON.parse(previousGrant.grant_json) as Grant);
+      const { attached: original, original: previous } = await this.stoppedCheckout(tx, grant);
       const successor = await tx.get<{ ordinal: number }>(
         `SELECT ordinal FROM session_managed_assignments WHERE allocation_id=? AND session_id=?`,
         grant.cleanup.allocationId,
         row.writer_session_id,
       );
-      check(
+      if (!(
         original &&
-          original.result_json &&
-          previous &&
-          successor &&
-          Number(successor.ordinal) > Number(original.ordinal) &&
-          row.writer_state === 'closed' &&
-          !row.final_owed &&
-          row.head_oid === null &&
-          !row.blocked_by &&
-          !row.quarantine_operation_id &&
-          Number.isSafeInteger(previous.generation) &&
-          Number(previous.generation) < Number(row.generation) &&
-          JSON.parse(original.attachment_json).headOid === this.writers.base(row) &&
-          JSON.parse(original.result_json).headOid === this.writers.base(row),
-        'code_generation_stale',
-        'The historical checkout cannot safely resume shutdown capture',
-        409,
-      );
+        original.result_json &&
+        previous &&
+        successor &&
+        Number(successor.ordinal) > Number(original.ordinal) &&
+        row.writer_state === 'closed' &&
+        !row.final_owed &&
+        row.head_oid === null &&
+        !row.blocked_by &&
+        !row.quarantine_operation_id &&
+        Number.isSafeInteger(previous.generation) &&
+        Number(previous.generation) < Number(row.generation) &&
+        JSON.parse(original.attachment_json).headOid === this.writers.base(row) &&
+        JSON.parse(original.result_json).headOid === this.writers.base(row)
+      ))
+        return false;
       const unsafe = await tx.get(
         `SELECT s.id FROM worker_sessions s
          LEFT JOIN session_managed_assignments a ON a.session_id=s.id
@@ -596,12 +578,7 @@ $merv$;
         grant.projectId,
         grant.unitId,
       );
-      check(
-        !unsafe && !pending,
-        'code_generation_stale',
-        'A successor or pending write prevents shutdown recovery',
-        409,
-      );
+      if (unsafe || pending) return false;
       grant.recoveryGeneration = Number(previous.generation);
       grant.generation = Number(row.generation) + 1;
       await tx.run(
@@ -630,6 +607,7 @@ $merv$;
         grant.recoveryGeneration = recovered.recoveryGeneration;
       grant.generation = Number(row.generation);
     }
+    return true;
   }
 
   private async cleanup(sql: Sql, grant: Grant): Promise<void> {
@@ -718,8 +696,7 @@ $merv$;
       check(
         historical.baseHead === grant.archive.baseHead &&
           historical.generation === grant.generation &&
-          grant.archive.ref ===
-            `refs/merv/shutdown/${unitRef(grant.cleanup!.allocationId)}/${unitRef(grant.sessionId)}`,
+          grant.archive.ref === shutdownRef(grant.cleanup!.allocationId, grant.sessionId),
         'code_generation_stale',
         'Historical capture identity changed',
         403,
@@ -1529,6 +1506,8 @@ $merv$;
       const tree = await this.repositories.resolve(projectId, `${head}^{tree}`);
       check(tree === input.treeOid, 'code_upload_required', 'The pushed tree differs', 409);
       const id = await this.state.transaction(async (tx) => {
+        let archive:
+          { allocationId: string; epoch: number; ref: string; baseHead: string } | undefined;
         if (input.archiveRef) {
           check(
             caller.managed?.cleanup && input.kind === 'final',
@@ -1566,51 +1545,13 @@ $merv$;
             403,
           );
           await this.live(tx, grant, true);
-          const existing = await tx.get<{ id: string; input_hash: string }>(
-            'SELECT id,input_hash FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
-            projectId,
-            `session:${input.sessionId}`,
-            requestId,
-          );
-          if (existing) {
-            check(
-              existing.input_hash === digest(input),
-              'request_conflict',
-              'This archive receipt already binds different evidence',
-              409,
-            );
-            return existing.id;
-          }
-          const operationId = newId('cop');
-          const at = now();
-          await tx.run(
-            "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id,generation,phase,progress_json,updated_at) VALUES(?,?,?,?,'upload',?,?,'completed',?,?,?,?,?,'refs_applied',?,?)",
-            operationId,
-            projectId,
-            `session:${input.sessionId}`,
-            requestId,
-            digest(input),
-            canonical({
-              ...input,
-              archive: {
-                allocationId: grant.cleanup!.allocationId,
-                epoch: grant.cleanup!.epoch,
-                ref: input.archiveRef,
-                baseHead: input.expectedHead,
-              },
-            }),
-            canonical({ head, tree }),
-            at,
-            at,
-            input.unitId,
-            input.generation,
-            canonical({ target: head, tree }),
-            at,
-          );
-          return operationId;
-        }
-
-        if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
+          archive = {
+            allocationId: grant.cleanup!.allocationId,
+            epoch: grant.cleanup!.epoch,
+            ref: input.archiveRef,
+            baseHead: input.expectedHead,
+          };
+        } else if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
           check(
             input.kind === 'final',
             'managed_runner_forbidden',
@@ -1663,15 +1604,17 @@ $merv$;
             }
           }
         } else await this.scope.require(caller, 'read', tx);
-        const existing = await tx.get<{ id: string; result_json: string }>(
-          'SELECT id,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+        const existing = await tx.get<{ id: string; result_json: string; input_hash: string }>(
+          'SELECT id,result_json,input_hash FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
           projectId,
           `session:${input.sessionId}`,
           requestId,
         );
         if (existing) {
           check(
-            JSON.parse(existing.result_json).head === head,
+            archive
+              ? existing.input_hash === digest(input)
+              : JSON.parse(existing.result_json).head === head,
             'request_conflict',
             'This acknowledgement already names another commit',
             409,
@@ -1687,21 +1630,24 @@ $merv$;
           expectedHead: head!,
           moves: false,
         };
-        const writer = await this.writers.row(tx, projectId, input.unitId);
-        if (input.kind === 'final' && writer?.writer_state === 'closed') {
-          check(
-            writer.writer_session_id === input.sessionId &&
-              writer.writer_lease_id === input.leaseId &&
-              Number(writer.generation) === input.generation &&
-              (writer.head_oid ?? this.writers.base(writer)) === head,
-            'code_generation_stale',
-            'Another writer owns this work unit',
-            409,
-          );
-        } else await this.writers.fenced(tx, fence, input.kind, true, input.kind === 'final');
+        // Historical receipts never acquire or advance the working-branch fence.
+        if (!archive) {
+          const writer = await this.writers.row(tx, projectId, input.unitId);
+          if (input.kind === 'final' && writer?.writer_state === 'closed') {
+            check(
+              writer.writer_session_id === input.sessionId &&
+                writer.writer_lease_id === input.leaseId &&
+                Number(writer.generation) === input.generation &&
+                (writer.head_oid ?? this.writers.base(writer)) === head,
+              'code_generation_stale',
+              'Another writer owns this work unit',
+              409,
+            );
+          } else await this.writers.fenced(tx, fence, input.kind, true, input.kind === 'final');
+        }
         const operationId = newId('cop');
         const at = now();
-        const pending = await pendingMerge(tx, projectId, input.unitId);
+        const pending = archive ? undefined : await pendingMerge(tx, projectId, input.unitId);
         const merge = pending?.firstMerge
           ? {
               plan: pending.plan,
@@ -1717,7 +1663,7 @@ $merv$;
           `session:${input.sessionId}`,
           requestId,
           digest(input),
-          canonical(input),
+          canonical({ ...input, ...(archive ? { archive } : {}) }),
           canonical({ head, tree, ...(merge ? { merge } : {}) }),
           at,
           at,
@@ -1726,7 +1672,7 @@ $merv$;
           canonical({ target: head, tree }),
           at,
         );
-        if (input.kind === 'final')
+        if (!archive && input.kind === 'final')
           await this.writers.advanced(tx, fence, { head: head!, operationId, final: true });
         return operationId;
       });

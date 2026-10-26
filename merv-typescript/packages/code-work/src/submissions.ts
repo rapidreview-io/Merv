@@ -301,16 +301,11 @@ export class CodeSubmissionService {
     return tx ? read(tx) : this.state.read(read);
   }
   /** Recover only an already requested, unfrozen submission in its original writer generation. */
-  async recoveryParent(
-    projectId: string,
-    sessionId: string,
-    generation: number,
-    leaseId: string,
-  ): Promise<string> {
+  async recoveryParent(projectId: string, sessionId: string, generation: number): Promise<string> {
     return this.state.read(async (sql) => {
       const row = await this.row(sql, projectId, sessionId);
       check(
-        row && row.generation == generation && row.lease_id === leaseId && !row.frozen_json,
+        row && row.generation == generation && row.lease_id === sessionId && !row.frozen_json,
         'code_submission_required',
         'An exact unfrozen submission is required',
         409,

@@ -910,18 +910,11 @@ export class ManagedRunnerBindings {
             historical: boolean;
           }>(
             `
-          WITH attached AS (
-            SELECT DISTINCT ON (s.instance_id) s.instance_id AS unit_id,s.id AS session_id
-            FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
-            JOIN session_workspaces sw ON sw.session_id=s.id
-            WHERE a.allocation_id=? AND s.project_id=?
-              AND COALESCE((s.session_json::jsonb #>> '{execution,policy,readOnly}')::boolean,false)=false
-            ORDER BY s.instance_id,a.ordinal DESC
-          )
           SELECT w.unit_id,COALESCE(h.session_id,w.writer_session_id) AS writer_session_id,
             w.head_oid,w.writer_state,w.generation,w.final_owed,
             (h.session_id IS NOT NULL AND h.session_id IS DISTINCT FROM w.writer_session_id) AS historical
-          FROM code_workspaces w LEFT JOIN attached h ON h.unit_id=w.unit_id
+          FROM code_workspaces w LEFT JOIN session_shutdown_checkouts h
+            ON h.unit_id=w.unit_id AND h.allocation_id=? AND h.project_id=?
           WHERE w.project_id=? AND (h.session_id IS NOT NULL OR
             (EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.session_id=w.writer_session_id AND a.allocation_id=?)
              AND NOT (w.writer_state='closed' AND NOT w.final_owed AND w.head_oid IS NULL)))`,

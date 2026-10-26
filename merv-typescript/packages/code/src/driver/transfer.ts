@@ -204,6 +204,30 @@ export abstract class DriverTransfer extends DriverCheckout {
     return parent;
   }
 
+  /** Build the same validated tree for first capture and late-change detection. */
+  private async shutdownTree(row: WorkspaceRow, localHead: string): Promise<string> {
+    const cache = this.repository(row.project_ref)!;
+    const index = this.assignmentRoot
+      ? join(row.path, '.git', `index-${randomUUID()}`)
+      : join(driverDirectory(join(dirname(cache), 'indices')), `index-${randomUUID()}`);
+    let tree: string;
+    try {
+      await this.seedIndex(row, localHead, { GIT_INDEX_FILE: index });
+      await this.checkFiles(row, { GIT_INDEX_FILE: index });
+      await this.git.ok(['add', '-A', '--', '.'], {
+        cwd: row.path,
+        env: { GIT_INDEX_FILE: index },
+      });
+      tree = oid(
+        await this.git.ok(['write-tree'], { cwd: row.path, env: { GIT_INDEX_FILE: index } }),
+      );
+      await this.importAssignmentCommit(row, tree);
+    } finally {
+      rmSync(index, { force: true });
+    }
+    return tree;
+  }
+
   /** A planned VM release is the only runner-initiated automatic progress commit. */
   protected async captureShutdown(row: WorkspaceRow) {
     if (!this.host.terminal(row.launch_id) || row.status !== 'closed')
@@ -276,26 +300,9 @@ export abstract class DriverTransfer extends DriverCheckout {
       );
       if (ignored) throw new WorkspaceError('workspace_shutdown_ignored_files_pending');
       if (journal?.tree_oid) {
-        const index = this.assignmentRoot
-          ? join(row.path, '.git', `index-${randomUUID()}`)
-          : join(driverDirectory(join(dirname(cache), 'indices')), `index-${randomUUID()}`);
-        try {
-          await this.seedIndex(row, await this.resolve(row, 'HEAD^{commit}'), {
-            GIT_INDEX_FILE: index,
-          });
-          await this.checkFiles(row, { GIT_INDEX_FILE: index });
-          await this.git.ok(['add', '-A', '--', '.'], {
-            cwd: row.path,
-            env: { GIT_INDEX_FILE: index },
-          });
-          const currentTree = oid(
-            await this.git.ok(['write-tree'], { cwd: row.path, env: { GIT_INDEX_FILE: index } }),
-          );
-          if (currentTree !== journal.tree_oid)
-            throw new WorkspaceError('workspace_shutdown_tree_changed');
-        } finally {
-          rmSync(index, { force: true });
-        }
+        const currentTree = await this.shutdownTree(row, await this.resolve(row, 'HEAD^{commit}'));
+        if (currentTree !== journal.tree_oid)
+          throw new WorkspaceError('workspace_shutdown_tree_changed');
       }
       if (journal && !JSON.parse(journal.command_json ?? '{}').archive) {
         // A prior normal transfer may already have built its target. Retain that exact
@@ -354,24 +361,7 @@ export abstract class DriverTransfer extends DriverCheckout {
         ).code !== 0
       )
         throw new WorkspaceError('workspace_shutdown_head_conflict');
-      const index = this.assignmentRoot
-        ? join(row.path, '.git', `index-${randomUUID()}`)
-        : join(driverDirectory(join(dirname(cache), 'indices')), `index-${randomUUID()}`);
-      let tree: string;
-      try {
-        await this.seedIndex(row, localHead, { GIT_INDEX_FILE: index });
-        await this.checkFiles(row, { GIT_INDEX_FILE: index });
-        await this.git.ok(['add', '-A', '--', '.'], {
-          cwd: row.path,
-          env: { GIT_INDEX_FILE: index },
-        });
-        tree = oid(
-          await this.git.ok(['write-tree'], { cwd: row.path, env: { GIT_INDEX_FILE: index } }),
-        );
-        await this.importAssignmentCommit(row, tree);
-      } finally {
-        rmSync(index, { force: true });
-      }
+      const tree = await this.shutdownTree(row, localHead);
       const remoteTree = oid(
         await this.git.ok(['--git-dir', cache, 'rev-parse', `${remoteHead}^{tree}`]),
       );

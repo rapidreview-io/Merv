@@ -602,11 +602,25 @@ test('closed writer recovers only its requested immutable submission without mov
     ),
   );
   await assert.rejects(
-    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 2, sessionId),
+    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 2),
     failed('code_submission_required'),
   );
+  // Submission identities are immutable: use a separate malformed retained record.
+  await f.session('ses_wrong_lease');
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO code_submissions(project_id,session_id,unit_id,generation,lease_id,source_json,created_at) VALUES(?,?,?,?,?,?,?)',
+      f.admin.projectId,
+      'ses_wrong_lease',
+      f.unitId,
+      1,
+      sessionId,
+      JSON.stringify({ status: 'pending', workspace: { headOid: f.root, baseOid: f.root } }),
+      new Date().toISOString(),
+    ),
+  );
   await assert.rejects(
-    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 1, 'wrong-lease'),
+    f.code.submissions.recoveryParent(f.admin.projectId, 'ses_wrong_lease', 1),
     failed('code_submission_required'),
   );
   const recovery = (await m.transport.call('capture-credential', {
