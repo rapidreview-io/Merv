@@ -168,3 +168,30 @@ This reviewer gate substitutes only ancestry attestation; the workflow gate chec
 that separately through the supervisor and guardian. Neither is provider acceptance.
 The provider must supply that capability to the supervisor, never the reviewer.
 Local Docker gate evidence does not replace a live hosted-runtime acceptance run.
+
+### Historical shutdown archives
+
+A newer runner may opt into immutable shutdown archival when another session has
+already acquired the work unit. The control service authenticates the old stopped
+allocation and attached writer, and grants only its `refs/merv/shutdown/...` ref.
+It does not restore the old writer generation or move the current work branch.
+Fleet requires a completed receipt bound to the historical allocation, epoch,
+session, head and tree before considering the host releasable.
+
+Existing transfers migrate into a new journal; their original journal and exact
+commit/tree remain intact. Historical recovery stops if ignored files exist or the frozen journal
+no longer matches the stopped checkout. Inspect those files through supported
+administrative access, identify research evidence versus runtime caches and
+secrets, and retain research evidence in immutable Sandbox artifacts with exact
+provenance before considering any disposal. Never automatically upload ignored
+files or infer that a Git receipt preserves them. Ordinary current-writer
+shutdown remains unchanged.
+
+This protocol requires updated runner code. Old running hosts do not learn new
+capture behavior from a server update, and standard Cloudflare image replacement
+is not an in-place preservation mechanism. Do not deploy over retained hosts or
+force-delete them to resolve a shutdown wait. A supported selective export or
+in-place recovery mechanism must preserve their checkout and ledger first; the
+current Fleet lifecycle does not expose such an upgrade. New allocation admission
+need not rewrite the old writer: archival deliberately remains independent of
+later generations, while provider release remains gated on the old receipt.

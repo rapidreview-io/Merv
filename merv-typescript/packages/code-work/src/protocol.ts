@@ -88,11 +88,29 @@ export class CodeWorkspaceProtocol {
         'Another writer owns this branch',
         409,
       );
+      const submissionOnly =
+        row.writer_state === 'closed'
+          ? {
+              parentOid: await this.submissions.recoveryParent(
+                caller.projectId,
+                session.id,
+                Number(row.generation),
+                session.id,
+              ),
+            }
+          : undefined;
+      check(
+        !submissionOnly || !live(session),
+        'code_writer_busy',
+        'Stop the submitting session before recovery',
+        409,
+      );
       return await this.git.issueCapture(caller, {
         ...input,
         unitId: session.instanceId,
         generation: Number(row.generation),
         leaseId: session.id,
+        ...(submissionOnly ? { submissionOnly } : {}),
       });
     }
     if (route === 'pushed') {
@@ -100,6 +118,7 @@ export class CodeWorkspaceProtocol {
         codePushFenceSchema.extend({
           kind: z.enum(['checkpoint', 'final']),
           commandId: id.optional(),
+          archiveRef: z.string().max(512).optional(),
         }),
         body,
       );
@@ -113,7 +132,10 @@ export class CodeWorkspaceProtocol {
       return { operation: await this.git.acknowledge(caller, input) };
     }
     if (route === 'submission-status' || route === 'end' || route === 'shutdown-credential') {
-      const input = parseCodeInput(codeWorkspaceManifestInputSchema, body);
+      const input = parseCodeInput(
+        codeWorkspaceManifestInputSchema.extend({ archive: z.boolean().optional() }),
+        body,
+      );
       const session = await this.controlled(caller, input, 'any');
       const row = await this.state.read((sql) =>
         this.writers.row(sql, caller.projectId, session.instanceId),
