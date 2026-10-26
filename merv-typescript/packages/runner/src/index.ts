@@ -27,6 +27,7 @@ import {
   STOPPED_WITHOUT_HANDOFF,
 } from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
+import { diagnostic } from './diagnostic.js';
 import {
   LocalLedger,
   terminalLaunch,
@@ -143,13 +144,6 @@ const platformOf = (profile: RunnerProfile): RunnerPlatform => ({
   ...('model' in profile && profile.model ? { model: profile.model } : {}),
   ...('effort' in profile && profile.effort ? { effort: profile.effort } : {}),
 });
-const diagnostic = (error: unknown) =>
-  error instanceof RunnerControlError
-    ? error.code
-    : typeof (error as { code?: unknown })?.code === 'string' &&
-        /^[a-z_]{1,100}$/.test((error as { code: string }).code)
-      ? (error as { code: string }).code
-      : 'runner_operation_failed';
 /** Only supervisor-owned fields enter the durable session reason; process output is untrusted. */
 const supervisorReasons = new Set(
   (
