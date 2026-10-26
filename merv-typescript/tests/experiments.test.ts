@@ -726,16 +726,34 @@ test('a leased planner recovers original request and paginated history through i
   await f.work.release(lease);
 });
 
-test('planner and both reviewers receive the original request directly', async (t) => {
+test('stage assignments preserve original requests and distinguish dispatch from scientific approval', async (t) => {
   const f = await fixture(t);
   let e = await f.create('original-request', {
     intent: 'Compare embedding widths; use experiment.read:get literally.',
     details: 'Use widths 64 and 128, seeds 1–3, and the retained baseline.',
   });
   const checkRequest = async (caller: Caller) => {
-    const prompt = (await f.workflows.assignment(caller, e.id)).context!.prompt;
-    assert.ok(prompt.includes(JSON.stringify({ intent: e.intent }).slice(1, -1)));
-    assert.ok(prompt.includes(JSON.stringify({ details: e.details }).slice(1, -1)));
+    const assignment = await f.workflows.assignment(caller, e.id);
+    const prompt = assignment.context!.prompt;
+    if (['planned', 'design_review', 'running'].includes(e.workflow.state)) {
+      assert.match(assignment.brief, /Operational admission is distinct from scientific approval/);
+      assert.match(
+        assignment.brief,
+        /a slot not yet issued is not by itself a missing design dependency/,
+      );
+      assert.match(assignment.brief, /Missing spending authority.*remains a blocker/);
+      assert.match(
+        assignment.brief,
+        /Design PASS neither grants a slot nor permits provisioning without it/,
+      );
+    }
+    if (['planned', 'design_review'].includes(e.workflow.state))
+      assert.match(assignment.brief, /additional scientific approval/);
+    // Execution follows the frozen approved plan; planning and reviews retain the request.
+    if (e.workflow.state !== 'running') {
+      assert.ok(prompt.includes(JSON.stringify({ intent: e.intent }).slice(1, -1)));
+      assert.ok(prompt.includes(JSON.stringify({ details: e.details }).slice(1, -1)));
+    }
   };
   await checkRequest(f.producer);
   const planner = await f.work.lease(e);
@@ -745,6 +763,7 @@ test('planner and both reviewers receive the original request directly', async (
   e = await f.transition(e, 'submit_design');
   await checkRequest(f.reviewer);
   e = await f.submitReview(e);
+  await checkRequest(f.producer);
   e = await f.results(e);
   await checkRequest(f.reviewer);
 });

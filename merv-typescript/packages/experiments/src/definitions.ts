@@ -111,14 +111,20 @@ export const reportPresentation =
  * asked for readiness and final-freeze approvals no state holds, and agents then bent result
  * submissions into gates and spent the result rounds on them (2026-10-05).
  */
+const operationalAdmission =
+  ' Operational admission is distinct from scientific approval. Under a retained, already authorized resource policy, a designated dispatcher may serialize paid work and issue an exclusive scoped execution slot after design PASS. Fresh quote, capacity, storage, zero-live and full-liability checks are per-rental conditions, not facts to assert as already satisfied at design time. The design must identify the existing authority and funded envelope, the dispatcher and supported waiting/handoff path, exact approved-input binding, and fail-closed admission and release rules. Review those mechanisms and their evidence; a slot not yet issued is not by itself a missing design dependency. Missing spending authority, an unfunded envelope, an unavailable required service, an unsupported waiting path, or an unresolved scientific decision remains a blocker and must be reported honestly. Design PASS neither grants a slot nor permits provisioning without it. Do not remove required admission guards, fabricate grants, reinterpret a new scientific approval as scheduling, or use results submission as an admission gate.';
+
 export const workflowGates: Partial<Record<ActiveState, string>> = {
   planned:
-    ' The workflow holds two independent reviews: of this design before execution, and of the results after it. It cannot hold any further approval a plan asks for, such as a readiness check before validation or a freeze before test access, so design the run to need none; split a staged evaluation that does need one into separate experiments.',
+    ' The workflow holds two independent scientific reviews: of this design before execution, and of the results after it. It cannot hold an additional scientific approval, such as a readiness judgment before validation or a freeze approval before test access; split a staged evaluation needing one into separate experiments.' +
+    operationalAdmission,
   design_review:
-    ' The workflow holds only this design review and the results review: a plan that requires a further approval during execution, such as a readiness check or a freeze before test access, cannot be carried out as written and needs changes.',
+    ' The workflow holds only this design review and the results review: a plan requiring an additional scientific approval during execution, such as a readiness judgment or a freeze approval before test access, cannot be carried out as written and needs changes.' +
+    operationalAdmission,
   // Executors handed live runs on with retry_running before their leases ran out (2026-09-30).
   running:
-    ' Execution has no route back to design. If the approved design proves unworkable, stop, retain what showed it, and submit results whose report says so; the results reviewer returns the experiment to planning for a new design. Each return uses one of its result rounds, which status_and_next shows under limits. To wait for a long run where session.await_compute is offered, end your visit with it rather than sleeping or polling; retry_running is for an infrastructure interruption only, never for waiting or for a lease that is about to end.',
+    ' Execution has no route back to design. If the approved design proves unworkable, stop, retain what showed it, and submit results whose report says so; the results reviewer returns the experiment to planning for a new design. Each return uses one of its result rounds, which status_and_next shows under limits. To wait for a long run where session.await_compute is offered, end your visit with it rather than sleeping or polling; retry_running is for an infrastructure interruption only, never for waiting or for a lease that is about to end.' +
+    operationalAdmission,
 };
 
 /** The shape a planner fills in, shown beside the design it is asked for. */
