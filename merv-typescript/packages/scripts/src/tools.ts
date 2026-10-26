@@ -164,7 +164,9 @@ export function scriptTools(tools: Tools, scripts: Scripts): ToolDefinition[] {
         const shown = new Set(listed.map(({ description }) => description.name));
         const retired = (await tools.list()).flatMap((definition) =>
           'actions' in definition && shown.has(definition.name)
-            ? Object.values(definition.actions ?? {}).flatMap(({ was = [] }) => was)
+            ? Object.values(definition.actions ?? {}).flatMap(({ was = [], uiOnly }) =>
+                uiOnly ? [] : was,
+              )
             : [],
         );
         const names = [

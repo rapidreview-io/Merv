@@ -25,6 +25,8 @@ export interface NounAction<S extends ZodTypeAny = ZodTypeAny> {
   was?: string[];
   /** 'people': its retired names are a person's, never listed to a leased session (as the noun's). */
   for?: 'people';
+  /** Human UI only: omitted from agent schemas and refused through aliases too. */
+  uiOnly?: boolean;
   present?(result: unknown, input: z.infer<S>): CallToolResult;
 }
 export type NounActions = Record<string, NounAction>;
@@ -56,6 +58,7 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   for?: 'people' | 'conversations';
   /** Exclude from worker discovery only; handlers must enforce call restrictions. */
   worker?: 'never';
+  uiOnly?: boolean;
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
   act?: { title: string };

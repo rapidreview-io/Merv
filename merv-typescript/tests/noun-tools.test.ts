@@ -901,11 +901,10 @@ test('the assembled project.read contributors register within the shared descrip
     'records',
     'references',
     'status',
-    'usage',
     'whoami',
   ]);
-  assert.match(schema.properties.status.description, /cumulative project\/dependency limits/);
-  assert.match(schema.properties.status.description, /withheld steps.*covering budgets/);
+  assert.match(schema.properties.status.description, /GPU rental spending/);
+  assert.doesNotMatch(JSON.stringify(schema), /model-budget|daily token|closed-session costs/);
   // A later oversized contribution fails without withdrawing the working shared tool.
   assert.throws(
     () =>

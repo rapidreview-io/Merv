@@ -1,6 +1,6 @@
 ---
 name: operations
-description: Operate a Merv project. Read what is running and what stopped moving, steer workers with messages, and use dispatch, budget and machine controls. Use for status questions, stuck or slow work, workers, machines, cost and limits in Merv.
+description: Operate a Merv project. Read what is running and what stopped moving, steer workers with messages, and use dispatch and machine controls. Use for status questions, stuck or slow work, workers, machines, cost and limits in Merv.
 ---
 
 # Operating a Merv project
@@ -14,7 +14,7 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
 ## Read before acting
 
 - `project.read` (status): the first read for any operational question. Dispatch, Fleet allocations,
-  runners, sessions, waiting work, blockers and model-budget waits. It changes nothing; do not
+  runners, sessions, waiting work, blockers. It changes nothing; do not
   propose a control just to inspect.
 - `session.read` (stuck): everything that stopped moving, and why. Each item has `kind`, `code`, `why`
   and `next`; why and next are advice, and the server still enforces every guard. Kinds include:
@@ -25,8 +25,6 @@ top level. For example, `workflow.read` takes `{"action":"status","status":{}}`.
   - work_waiting: waiting for its compute; it comes back by itself.
   - ready_quiet, dispatch_disabled, no_live_runner.
 - `workflow.read` (status) with an `instanceId`: one work item's gate and blockers.
-- `project.read` (usage): what closed sessions cost, in wall minutes (measured by Merv) and tokens
-  (self-reported by the machine).
 
 ## Steering a worker
 
@@ -48,8 +46,6 @@ replacement work that refers to the earlier evidence.
 - `session.write` (dispatch): turn automatic dispatch on or off.
 - `session.write` (halt): close one session, or without a session id turn dispatch off and close all.
 - `session.write` (release_hold): let dispatch offer a held target again once its cause is fixed.
-- `session.write` (budget): bound agents' work in wall minutes or tokens, on the project or one item
-  and what it depends on. Reaching it pauses automatic dispatch; nothing running is stopped.
 - `workflow.write` (extend_limit): allow more rounds of an exhausted review loop (gate
   loop_limit_reached), with a reason.
 
@@ -73,7 +69,9 @@ alone does not establish permission to issue credentials.
 
 ## Money and limits
 
-A dollar budget covers only compute rented through Sandboxes: machines, GPUs and storage.
-Agents' own model use, reviews included, counts in tokens against the person's Fleet daily
-limit and is never priced in dollars. Do not ask for a dollar budget for work that rents no
-compute, and never write a dollar cap for agents or reviews.
+The only budget agents manage is GPU rental compute. Use `sandboxes.spend` to read GPU
+rental actuals, active lease commitments and hardware/work attribution. Compare the relevant
+rentals with the explicitly approved GPU allocation; namespace history is not a wave budget.
+Include failed rentals and GPUs used for CPU work. Keep unknown attribution explicit.
+Independent experiments can rent GPUs concurrently within their allocations. A shared dollar
+cap does not require an empty namespace or an exclusive dispatcher slot.

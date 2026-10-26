@@ -1,3 +1,5 @@
+import { agentOperations } from '@merv/api/agent-status';
+import { isAgentAudience } from '@merv/api/audience';
 import { agentAssignment } from '@merv/contracts/agent-assignment';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
@@ -10,7 +12,8 @@ export const workflowToolsPlugin = {
   inject: ['workflows', 'tools'],
   apply(ctx: Context) {
     const workflows = ctx.workflows;
-    const guide = <T>(caller: Caller, value: T) => ctx.tools.guidance(caller, value);
+    const guide = <T>(caller: Caller, value: T) =>
+      ctx.tools.guidance(caller, isAgentAudience(caller) ? agentOperations(value) : value);
     const byInstance = z.object({ instanceId: z.string().min(1) }).strict();
     ctx.effect(() =>
       ctx.tools.noun('workflow.read', {

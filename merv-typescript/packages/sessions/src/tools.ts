@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
 import type { ComputeWaitInput, QuestionResolution } from './types.js';
+import { isAgentAudience } from '@merv/api/audience';
+import { agentOperations } from '@merv/api/agent-status';
 import { systemStatus } from './system-status.js';
 
 const id = z.string().min(1).max(200);
@@ -23,18 +25,18 @@ export const sessionsToolsPlugin = {
       ctx.tools.noun('project.read', {
         tier: 'core',
         readOnly: true,
-        summary: 'Read operations (status first) and usage/budgets.',
-        description:
-          'status (dispatch, machines, sessions, waiting work, budgets and blockers) and usage (closed-session costs and budgets).',
+        summary: 'Read operational status.',
+        description: 'Read dispatch, machines, sessions, waiting work and blockers.',
         actions: {
           status: {
             description:
-              "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. budgets reports cumulative project/dependency limits and usage, separate from Fleet's daily modelBudget; withheld steps immediately name their covering budgets and recovery action. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
+              'Read dispatch, runners, sessions, waiting work and operational blockers. Leased workers receive their own session and work lineage. GPU rental spending is available through Sandboxes spend.',
             input: z.object({}).strict(),
             was: ['system.status'],
             handler: async (caller) => await systemStatus(caller, sessions),
           },
           usage: {
+            uiOnly: true,
             summary:
               'Closed-session usage/budgets: project or instanceId with dependencies/fan-out (includeDependencies:false for only it). Merv measures activation-to-close time; tokens/models are unverified launcher reports (reportedSessions/accounting indicate coverage/unknowns). Fleet use is bounded by the person’s daily token limit (project.read status modelBudget). Merv does not price sessions; unpriced worker/model/review costs do not justify asking the owner.',
             description:
@@ -63,7 +65,10 @@ export const sessionsToolsPlugin = {
               'Find current/latest session for instanceId; no current session means no live worker. Use threadId with session.message for its live or next visit.',
             input: byInstance,
             was: ['session.find'],
-            handler: async (caller, input) => await sessions.findSession(caller, input.instanceId),
+            handler: async (caller, input) => {
+              const result = await sessions.findSession(caller, input.instanceId);
+              return isAgentAudience(caller) ? agentOperations(result) : result;
+            },
           },
           threads: {
             description:
@@ -71,7 +76,9 @@ export const sessionsToolsPlugin = {
             input: byInstance,
             was: ['session.threads'],
             handler: async (caller, input) => ({
-              threads: await sessions.threads.list(caller, input.instanceId),
+              threads: isAgentAudience(caller)
+                ? agentOperations(await sessions.threads.list(caller, input.instanceId))
+                : await sessions.threads.list(caller, input.instanceId),
             }),
           },
           messages: {
@@ -92,10 +99,13 @@ export const sessionsToolsPlugin = {
           },
           stuck: {
             description:
-              'Project stalls (no leased workers), with since/forSeconds/code/why/next; advice never bypasses commit guards. Kinds include idle sessions (no Merv calls for idleNoticeSeconds; heartbeat is not progress), held/failing dispatch, blocked/deferred work (checkout preparation failed on three machines), compute waits (auto-resume), ready work (immediate covering budget blocks with scope/usage/bounds; otherwise quietReadySeconds since revision), disabled dispatch, no runner and repeated runner refusals (refusalSeconds). At most 200 items; counts cover all; dispatch_failing/work_waiting are listed but excluded from total. next gives recovery.',
+              'Project stalls (no leased workers), with since/forSeconds/code/why/next; advice never bypasses commit guards. Kinds include idle sessions (no Merv calls for idleNoticeSeconds; heartbeat is not progress), held/failing dispatch, blocked/deferred work (checkout preparation failed on three machines), compute waits (auto-resume), ready work (quietReadySeconds since revision), disabled dispatch, no runner and repeated runner refusals (refusalSeconds). At most 200 items; counts cover all; dispatch_failing/work_waiting are listed but excluded from total. next gives recovery.',
             input: z.object({}).strict(),
             was: ['session.stuck'],
-            handler: async (caller) => await sessions.dispatch.stuck(caller),
+            handler: async (caller) => {
+              const result = await sessions.dispatch.stuck(caller);
+              return isAgentAudience(caller) ? agentOperations(result) : result;
+            },
           },
         },
       }),
@@ -104,9 +114,9 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('session.write', {
         tier: 'core',
-        summary: 'Message or ask workers; admin-only dispatch, halt, release_hold and budget.',
+        summary: 'Message or ask workers; admin-only dispatch, halt and release_hold.',
         description:
-          'Steer worker sessions: message (queue a message for a thread’s worker), ask (a short inquiry visit to any thread’s agent), dispatch (automatic dispatch on or off), halt (one session, or all with dispatch off), release_hold (offer a held target again) and budget (a project or instance budget). All but message and ask are a project admin’s.',
+          'Steer worker sessions: message (queue a message for a thread’s worker), ask (a short inquiry visit to any thread’s agent), dispatch (automatic dispatch on or off), halt (one session, or all with dispatch off), release_hold (offer a held target again). All but message and ask are a project admin’s.',
         actions: {
           message: {
             summary:
@@ -119,9 +129,9 @@ export const sessionsToolsPlugin = {
           },
           ask: {
             summary:
-              'Project writers: ask threadId (session.threads/Agents), live/dormant/retired. Read-only inquiry resumes saved conversation without work lease; work/conversation unchanged, next work visit learns exchange. session.thread_messages returns reply/inquiry status. One inquiry/thread (inquiry_busy); saved conversation required (inquiry_unkept). 10 minutes to launch, 10 to answer; tokens charged to you. Retry same requestId.',
+              'Project writers: ask threadId (session.threads/Agents), live/dormant/retired. Read-only inquiry resumes saved conversation without work lease; work/conversation unchanged, next work visit learns exchange. session.thread_messages returns reply/inquiry status. One inquiry/thread (inquiry_busy); saved conversation required (inquiry_unkept). 10 minutes to launch, 10 to answer. Retry same requestId.',
             description:
-              "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer, and a model-token budget charged to you. Reuse requestId after an uncertain response.",
+              "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer. Reuse requestId after an uncertain response.",
             input: toThread,
             was: ['session.ask_thread'],
             handler: async (caller, input) => ({
@@ -154,6 +164,7 @@ export const sessionsToolsPlugin = {
             handler: async (caller, input) => await sessions.dispatch.releaseHold(caller, input),
           },
           budget: {
+            uiOnly: true,
             summary:
               'Admin only, no worker: project or instanceId dependency-closure budget. maxWallMinutes/maxTokens: null clears, omission preserves; unchanged values are a no-op. Exhaustion pauses automatic dispatch (budget_exceeded); raising/clearing resumes. Running/manual work continues. Wall time measured; tokens trust self-reports. Missing activated-session reports or oversized closure pauses with usage_unavailable until reported/bounds cleared. Worker sessions only, not remote jobs.',
             description:

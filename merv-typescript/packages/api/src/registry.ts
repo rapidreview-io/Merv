@@ -1,5 +1,6 @@
 import { isBoardCollaborationTool } from '@merv/contracts/tool-policy';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { agentAudience, isAgentAudience } from './audience.js';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
@@ -14,7 +15,7 @@ import {
 } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { noun, nounActions, presented } from './noun.js';
+import { noun, nounActions, nounInput, presented } from './noun.js';
 import {
   CallToolResultSchema,
   ToolSchema,
@@ -722,7 +723,20 @@ export class ToolRegistry implements Tools {
         ? await this.access.granted(caller)
         : undefined;
     const shown: Entry[] = [];
-    for (const entry of offered)
+    for (const entry of offered.filter((entry) => {
+      if (!agent && !caller?.session && !caller?.conversation) return true;
+      const definition = entry.definition as ToolDefinition;
+      const target =
+        entry.alias &&
+        (this.entries.get(entry.alias.tool)?.definition as ToolDefinition | undefined);
+      return (
+        !definition.uiOnly &&
+        !(
+          definition.actions && Object.values(definition.actions).every((action) => action.uiOnly)
+        ) &&
+        !(entry.alias && target?.actions?.[entry.alias.action]?.uiOnly)
+      );
+    }))
       if (
         (!session ||
           (entry.tool.worker !== 'never' &&
@@ -757,8 +771,29 @@ export class ToolRegistry implements Tools {
       .map((entry) => {
         // Workers keep old descriptions; other callers see noun action names.
         let description = structuredClone((caller?.session && entry.flat) || entry.description);
+        let definition = entry.definition as ToolDefinition;
+        if (
+          (agent || caller?.session || caller?.conversation) &&
+          definition.actions &&
+          !entry.alias &&
+          !entry.remote
+        ) {
+          const actions = Object.fromEntries(
+            Object.entries(definition.actions).filter(([, action]) => !action.uiOnly),
+          );
+          if (Object.keys(actions).length !== Object.keys(definition.actions).length) {
+            definition = {
+              ...definition,
+              actions,
+              inputSchema: nounInput(actions),
+              inputJsonSchema: undefined,
+              legacy: undefined,
+            };
+            description = describeTool(definition);
+          }
+        }
         if (compact && agent && !caller?.session && !entry.remote)
-          description = compactTool(description, entry.definition as ToolDefinition);
+          description = compactTool(description, definition);
         if (renamed && !entry.remote) renamed(description);
         // Session projects are fixed by lease, so omit their project selector.
         if (caller?.session && !entry.remote)
@@ -908,9 +943,11 @@ export class ToolRegistry implements Tools {
       }
     };
     try {
-      const value = await this.run(name, caller, input, agent, admit, (seen) => {
-        identity = seen;
-      });
+      const value = await agentAudience.run(agent || isAgentAudience(caller), () =>
+        this.run(name, caller, input, agent, admit, (seen) => {
+          identity = seen;
+        }),
+      );
       // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
       const failed = (value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp)
         ?.isError;
@@ -953,6 +990,18 @@ export class ToolRegistry implements Tools {
     input = plain(input);
     const identity = this.identify(entry, input);
     seen(identity);
+    const definition = (
+      entry.alias ? this.entries.get(entry.alias.tool)?.definition : entry.definition
+    ) as ToolDefinition;
+    if (
+      isAgentAudience(caller) &&
+      (definition.uiOnly || (identity.action && definition.actions?.[identity.action]?.uiOnly))
+    )
+      throw new MervError(
+        'tool_forbidden',
+        'This control is available only in the human interface',
+        403,
+      );
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       const session = caller.session ? this.sessionPolicy() : undefined;

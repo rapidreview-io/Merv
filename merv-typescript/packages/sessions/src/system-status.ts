@@ -1,3 +1,5 @@
+import { agentOperations } from '@merv/api/agent-status';
+import { isAgentAudience } from '@merv/api/audience';
 import type { Caller } from '@merv/contracts';
 import type { Sessions, StuckReport } from './types.js';
 
@@ -7,6 +9,11 @@ const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitt
 /** A compact operational read. Sessions enforces the caller's authority for each view; other
  * plugins' sections follow `session`, or `workers` in the project view. */
 export async function systemStatus(caller: Caller, sessions: Sessions) {
+  const result = await fullStatus(caller, sessions);
+  return isAgentAudience(caller) ? agentOperations(result) : result;
+}
+
+async function fullStatus(caller: Caller, sessions: Sessions) {
   if (caller.session) {
     const session = await sessions.session(caller);
     return {

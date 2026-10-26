@@ -739,12 +739,12 @@ test('stage assignments preserve original requests and distinguish dispatch from
       assert.match(assignment.brief, /Operational admission is distinct from scientific approval/);
       assert.match(
         assignment.brief,
-        /a slot not yet issued is not by itself a missing design dependency/,
+        /shared dollar cap does not require an empty namespace or a dispatcher slot/,
       );
-      assert.match(assignment.brief, /Missing spending authority.*remains a blocker/);
+      assert.match(assignment.brief, /Missing GPU spending authority.*remains a blocker/);
       assert.match(
         assignment.brief,
-        /Design PASS neither grants a slot nor permits provisioning without it/,
+        /independent experiments may rent GPUs concurrently/,
       );
     }
     if (['planned', 'design_review'].includes(e.workflow.state))
