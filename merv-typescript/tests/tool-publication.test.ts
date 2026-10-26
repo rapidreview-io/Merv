@@ -104,9 +104,10 @@ test('outside noun summaries never change worker metadata or retired calls', asy
 });
 
 // The total is the original measured baseline; optional production tools are enabled.
-// Only sandboxes.spend's individual cap includes its approved funding guidance (933 characters).
-// Metadata accepts only the reviewed budget/funding descriptions (system.status/project.read
-// and sandboxes.spend). Every other hash, including every validation constraint, stays pinned.
+// Only sandboxes.spend's individual cap includes its reviewed GPU guidance (936 characters,
+// vendor d954684). The original total and 25% reduction requirement remain unchanged.
+// Metadata pins the approved UI-only budget actions (9c2d01ed4), current-plan report.clear
+// guidance (36e839307), GPU descriptions, and every remaining validation constraint.
 test('the operator MCP listing stays at least 25% below the measured baseline', async () => {
   const baseline = JSON.parse(
     readFileSync(new URL('./fixtures/tool-list-sizes.json', import.meta.url), 'utf8'),
