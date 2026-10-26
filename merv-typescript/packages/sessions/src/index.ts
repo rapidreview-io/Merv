@@ -35,6 +35,7 @@ import {
   type WorkflowExecutionReferences,
   type Workflows,
 } from '@merv/contracts';
+import type { ReadBrokerBinding, ReadBrokerAuthority } from './read-broker.js';
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
 import { tokenDigest } from '@merv/identity/credentials';
@@ -1569,6 +1570,47 @@ export class LeasedSessions implements Sessions {
       if (this.launchConnectionsProvider === provider) this.launchConnectionsProvider = undefined;
     };
   }
+  /** Internal broker guard only; deliberately not part of SessionRoutes or the MCP interface. */
+  async readBrokerAuthority(
+    owner: Caller,
+    control: SessionControl & { hostRef: string },
+    binding: ReadBrokerBinding,
+    tx: Transaction,
+  ): Promise<ReadBrokerAuthority> {
+    this.state.assertTransaction(tx);
+    const session = await this.controlled(owner, control.sessionId, control.runnerId, tx);
+    attached(session, control.hostRef, 'Public authority receiver');
+    check(
+      session.kind === 'work' &&
+        session.id === binding.sessionId &&
+        session.projectId === binding.projectId &&
+        session.instanceId === binding.assignmentId &&
+        session.expectedRevision === binding.revision,
+      'read_broker_denied',
+      'Public authority read was refused',
+      403,
+    );
+    const tokenHash = await this.tokenHash(tx, session.id);
+    await this.credentials.authenticateHash(tokenHash, 'session-execution', tx);
+    const authority = await this.valid(session, tx, session.execution);
+    return {
+      caller: this.worker(session),
+      expiresAt:
+        session.expiresAt < session.hardDeadline ? session.expiresAt : session.hardDeadline,
+      fingerprint: digest(
+        canonical({
+          execution: session.execution,
+          lease: session.lease,
+          registrationId: authority.registrationId,
+          runnerId: session.runnerId,
+          hostRef: session.hostRef,
+          tokenHash,
+          hardDeadline: session.hardDeadline,
+        }),
+      ),
+    };
+  }
+
   /** Private supervisor response; provider I/O must never hold a database snapshot or lock. */
   async launchConnections(
     caller: Caller,

@@ -18,6 +18,9 @@
     "@merv/ui": "0.1.0",
     "@merv/workflows": "0.1.0",
     "zod": "^3.25.0",
-    "@merv/scope": "0.1.0"
+    "@merv/scope": "0.1.0",
+    "@sandboxes/kernel": "0.1.0",
+    "@sandboxes/runtimes": "0.1.0",
+    "@sandboxes/merv-host": "0.1.0"
   }
 }
