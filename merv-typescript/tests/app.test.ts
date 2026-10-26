@@ -358,13 +358,10 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         today: '2026-09-25',
       }),
     ].join('\n');
-    // A budget Pi or an MCP client writes into a brief is one Merv holds, said once, in the
-    // guide both get: Sandboxes' USD caps, a dispatch budget in wall minutes or tokens, the
-    // person's daily tokens; never agents' or reviews' dollars.
-    assert.match(researchGuide, /session\.write budget/);
-    assert.match(researchGuide, /Fleet daily token limit/);
-    assert.match(researchGuide, /Never write a dollar cap for agents or reviews/);
-    assert.equal(named.split('Never write a dollar cap').length, 2);
+    // Agent guidance exposes only the authorized GPU rental budget, with no project-specific cap.
+    assert.match(researchGuide, /authorized GPU rental compute budget/);
+    assert.doesNotMatch(researchGuide, /session\.write budget|Fleet daily token limit|\$500/);
+    assert.equal(named.split('The only budget agents manage').length, 2);
     const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);
     assert.ok(names.length > 10);
     // Every tool the guide names is one Pi is offered.
