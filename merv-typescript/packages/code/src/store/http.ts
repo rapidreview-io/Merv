@@ -44,6 +44,7 @@ interface Grant extends GitGrantInput {
   cleanup?: { allocationId: string; epoch: number; credentialHash: string };
   /** Original runner generation, accepted only for this recovered shutdown's final receipt. */
   recoveryGeneration?: number;
+  archive?: { ref: string; baseHead: string };
 }
 interface AccountGitGrant {
   audience: 'account';
@@ -377,8 +378,12 @@ $merv$;
   /** A new, explicit capability to capture a stopped work unit before its machine is released. */
   async issueShutdown(
     caller: Caller,
-    input: Omit<GitGrantInput, 'mode'>,
-  ): Promise<{ url: string; token: string }> {
+    input: Omit<GitGrantInput, 'mode'> & { archive?: boolean },
+  ): Promise<{
+    url: string;
+    token: string;
+    archive?: { ref: string; baseHead: string; generation: number };
+  }> {
     check(
       !caller.session &&
         (!caller.managed ||
@@ -390,7 +395,12 @@ $merv$;
     );
     const token = `mg_${randomBytes(32).toString('base64url')}`;
     const grant: Grant = {
-      ...input,
+      sessionId: input.sessionId,
+      runnerId: input.runnerId,
+      hostRef: input.hostRef,
+      unitId: input.unitId,
+      generation: input.generation,
+      leaseId: input.leaseId,
       mode: 'write',
       projectId: caller.projectId,
       actorId: caller.actorId,
@@ -408,7 +418,15 @@ $merv$;
     await this.state.transaction(async (tx) => {
       if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
         await this.cleanup(tx, grant);
-        await this.recoverShutdownWriter(tx, grant);
+        const current = await this.writers.row(tx, grant.projectId, grant.unitId);
+        if (input.archive && current?.writer_session_id !== grant.sessionId) {
+          const historical = await this.historicalShutdown(tx, grant);
+          grant.generation = historical.generation;
+          grant.archive = {
+            ref: `refs/merv/shutdown/${unitRef(grant.cleanup!.allocationId)}/${unitRef(grant.sessionId)}`,
+            baseHead: historical.baseHead,
+          };
+        } else await this.recoverShutdownWriter(tx, grant);
       } else await this.scope.require(caller, 'read', tx);
       await this.live(tx, grant, true);
       await tx.run(
@@ -420,7 +438,79 @@ $merv$;
         now(),
       );
     });
-    return { url: `/git/${encodeURIComponent(caller.projectId)}.git`, token };
+    return {
+      url: `/git/${encodeURIComponent(caller.projectId)}.git`,
+      token,
+      ...(grant.archive ? { archive: { ...grant.archive, generation: grant.generation! } } : {}),
+    };
+  }
+
+  /** Authenticate an immutable historical checkout, never the current writer row. */
+  private async historicalShutdown(
+    sql: Sql,
+    grant: Grant,
+  ): Promise<{ baseHead: string; generation: number }> {
+    check(
+      grant.cleanup && grant.audience === 'shutdown',
+      'managed_runner_forbidden',
+      'Historical capture requires shutdown authority',
+      403,
+    );
+    await this.cleanup(sql, grant);
+    const attached = await sql.get<{ attachment_json: string }>(
+      `
+      SELECT w.attachment_json FROM session_managed_assignments a
+      JOIN worker_sessions s ON s.id=a.session_id JOIN session_workspaces w ON w.session_id=s.id
+      WHERE a.allocation_id=? AND a.session_id=? AND a.runner_id=?
+        AND s.project_id=? AND s.instance_id=? AND s.status IN ('released','expired')
+        AND a.release_ack_at IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM session_managed_assignments later
+          JOIN worker_sessions ls ON ls.id=later.session_id
+          JOIN session_workspaces lw ON lw.session_id=ls.id
+          WHERE later.allocation_id=a.allocation_id AND later.ordinal>a.ordinal
+            AND ls.instance_id=s.instance_id
+            AND COALESCE((ls.session_json::jsonb #>> '{execution,policy,readOnly}')::boolean,false)=false)`,
+      grant.cleanup.allocationId,
+      grant.sessionId,
+      grant.runnerId,
+      grant.projectId,
+      grant.unitId,
+    );
+    const saved = await sql.get<{ grant_json: string }>(
+      `SELECT grant_json FROM code_git_credentials
+      WHERE project_id=? AND grant_json::jsonb ->> 'sessionId'=?
+        AND grant_json::jsonb ->> 'audience'='runner' AND grant_json::jsonb ->> 'mode'='write'
+      ORDER BY created_at LIMIT 1`,
+      grant.projectId,
+      grant.sessionId,
+    );
+    const original = saved && (JSON.parse(saved.grant_json) as Grant);
+    const baseHead = attached && JSON.parse(attached.attachment_json).headOid;
+    check(
+      attached &&
+        original &&
+        original.runnerId === grant.runnerId &&
+        original.hostRef === grant.hostRef &&
+        original.unitId === grant.unitId &&
+        original.leaseId === grant.leaseId &&
+        Number.isSafeInteger(original.generation) &&
+        typeof baseHead === 'string' &&
+        oid.test(baseHead),
+      'code_generation_stale',
+      'No stopped historical checkout belongs to this allocation',
+      409,
+    );
+    check(
+      !(await sql.get(
+        `SELECT s.id FROM worker_sessions s JOIN session_managed_assignments a ON a.session_id=s.id
+      WHERE a.allocation_id=? AND s.status IN ('active','offered') LIMIT 1`,
+        grant.cleanup.allocationId,
+      )),
+      'code_writer_busy',
+      'Stop all allocation processes before historical capture',
+      409,
+    );
+    return { baseHead, generation: original.generation! };
   }
 
   /** Preserve a host's last attached checkout after subsequent preparations failed. This
@@ -618,6 +708,19 @@ $merv$;
       'This Git credential is read-only',
       403,
     );
+    if (grant.archive) {
+      const historical = await this.historicalShutdown(sql, grant);
+      check(
+        historical.baseHead === grant.archive.baseHead &&
+          historical.generation === grant.generation &&
+          grant.archive.ref ===
+            `refs/merv/shutdown/${unitRef(grant.cleanup!.allocationId)}/${unitRef(grant.sessionId)}`,
+        'code_generation_stale',
+        'Historical capture identity changed',
+        403,
+      );
+      return;
+    }
     const row = await this.writers.row(sql, grant.projectId, grant.unitId);
     check(
       row &&
@@ -753,7 +856,7 @@ $merv$;
     await this.repositories.run(projectId, async () => {
       await this.recoverProject(projectId);
       await this.authorized(access, service === 'git-receive-pack');
-      await this.prepare(projectId);
+      if (!access.grant?.archive) await this.prepare(projectId);
       await this.repositories.transfer(() =>
         route === 'git-receive-pack'
           ? this.receive(req, res, url, access)
@@ -1104,6 +1207,24 @@ $merv$;
           'A submission is immutable',
           409,
         );
+      } else if (grant?.archive) {
+        check(
+          update.ref === grant.archive.ref && (zero(update.old) || update.old === update.next),
+          'code_git_ref_forbidden',
+          'Shutdown archives are immutable and cannot change working refs',
+          403,
+        );
+        check(
+          (
+            await this.repositories.git.run(
+              ['merge-base', '--is-ancestor', grant.archive.baseHead, update.next],
+              { env: joined },
+            )
+          ).code === 0,
+          'code_git_ref_forbidden',
+          'The archive must retain its original checkout ancestry',
+          403,
+        );
       } else if (grant) {
         check(
           update.ref === `refs/heads/${workBranch(grant.unitId)}`,
@@ -1172,7 +1293,7 @@ $merv$;
     }
     // Submission-only pushes still belong to the exact writer generation. Their
     // admitted journal fences a successor until the immutable refs are retained.
-    if (grant && !fence) {
+    if (grant && !grant.archive && !fence) {
       const row = await this.state.read((sql) => this.writers.row(sql, projectId, grant.unitId));
       fence = {
         projectId,
@@ -1351,16 +1472,20 @@ $merv$;
       proposedHead: string;
       treeOid: string;
       commandId?: string;
+      archiveRef?: string;
+      inventory?: { ignored: number; untracked: number; untrackedDigest: string };
       kind: 'checkpoint' | 'final';
     },
   ): Promise<CodeStoreOperation> {
-    const requestId = input.commandId ?? `final:${input.sessionId}`;
+    const requestId = input.archiveRef
+      ? `archive:${input.sessionId}:${caller.managed?.allocationId}:${caller.managed?.epoch}`
+      : (input.commandId ?? `final:${input.sessionId}`);
     const projectId = caller.projectId;
     return await this.repositories.run(projectId, async () => {
       await this.recoverProject(projectId);
       const head = await this.repositories.resolve(
         projectId,
-        `refs/heads/${workBranch(input.unitId)}`,
+        input.archiveRef ?? `refs/heads/${workBranch(input.unitId)}`,
       );
       check(
         head === input.proposedHead,
@@ -1371,6 +1496,93 @@ $merv$;
       const tree = await this.repositories.resolve(projectId, `${head}^{tree}`);
       check(tree === input.treeOid, 'code_upload_required', 'The pushed tree differs', 409);
       const id = await this.state.transaction(async (tx) => {
+        if (input.archiveRef) {
+          check(
+            input.inventory?.ignored === 0 &&
+              Number.isSafeInteger(input.inventory.untracked) &&
+              input.inventory.untracked >= 0 &&
+              /^[0-9a-f]{64}$/.test(input.inventory.untrackedDigest),
+            'code_archive_inventory_required',
+            'A non-secret file inventory is required',
+            409,
+          );
+          check(
+            caller.managed?.cleanup && input.kind === 'final',
+            'managed_runner_forbidden',
+            'Only shutdown cleanup can acknowledge an archive',
+            403,
+          );
+          const saved = await tx.get<{ grant_json: string }>(
+            `SELECT grant_json FROM code_git_credentials WHERE project_id=?
+            AND grant_json::jsonb ->> 'sessionId'=? AND grant_json::jsonb #>> '{archive,ref}'=?
+            AND grant_json::jsonb #>> '{cleanup,allocationId}'=? ORDER BY created_at DESC LIMIT 1`,
+            projectId,
+            input.sessionId,
+            input.archiveRef,
+            caller.managed.allocationId,
+          );
+          const grant = saved && (JSON.parse(saved.grant_json) as Grant);
+          check(
+            grant &&
+              canonical(grant.cleanup) ===
+                canonical({
+                  allocationId: caller.managed.allocationId,
+                  epoch: caller.managed.epoch,
+                  credentialHash: caller.managed.credentialHash,
+                }) &&
+              grant.unitId === input.unitId &&
+              grant.generation === input.generation &&
+              grant.leaseId === input.leaseId &&
+              grant.archive?.baseHead === input.expectedHead,
+            'code_generation_stale',
+            'Archive receipt does not match its historical capability',
+            403,
+          );
+          await this.live(tx, grant, true);
+          const existing = await tx.get<{ id: string; input_hash: string }>(
+            'SELECT id,input_hash FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+            projectId,
+            `session:${input.sessionId}`,
+            requestId,
+          );
+          if (existing) {
+            check(
+              existing.input_hash === digest(input),
+              'request_conflict',
+              'This archive receipt already binds different evidence',
+              409,
+            );
+            return existing.id;
+          }
+          const operationId = newId('cop');
+          const at = now();
+          await tx.run(
+            "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id,generation,phase,progress_json,updated_at) VALUES(?,?,?,?,'upload',?,?,'completed',?,?,?,?,?,'refs_applied',?,?)",
+            operationId,
+            projectId,
+            `session:${input.sessionId}`,
+            requestId,
+            digest(input),
+            canonical({
+              ...input,
+              archive: {
+                allocationId: grant.cleanup!.allocationId,
+                epoch: grant.cleanup!.epoch,
+                ref: input.archiveRef,
+                baseHead: input.expectedHead,
+              },
+            }),
+            canonical({ head, tree }),
+            at,
+            at,
+            input.unitId,
+            input.generation,
+            canonical({ target: head, tree }),
+            at,
+          );
+          return operationId;
+        }
+
         if ((caller.managed as { cleanup?: boolean } | undefined)?.cleanup) {
           check(
             input.kind === 'final',

@@ -57,6 +57,10 @@ export abstract class DriverTransfer extends DriverCheckout {
     const cache = this.repository(row.project_ref)!;
     const access = this.access(row.launch_id);
     if (!row.branch) throw new WorkspaceError('workspace_read_only');
+    const archive = journal.command_json
+      ? (JSON.parse(journal.command_json).archive as
+          { ref: string; baseHead: string; generation: number } | undefined)
+      : undefined;
     await this.git.ok(
       [
         '--git-dir',
@@ -68,7 +72,7 @@ export abstract class DriverTransfer extends DriverCheckout {
         'push',
         '--porcelain',
         access.url,
-        `${journal.target_oid}:refs/heads/${row.branch}`,
+        `${journal.target_oid}:${archive?.ref ?? `refs/heads/${row.branch}`}`,
       ],
       { env: this.gitEnvironment(access.url, access.token) },
     );
@@ -78,9 +82,12 @@ export abstract class DriverTransfer extends DriverCheckout {
         runnerId: row.runner_id,
         hostRef: row.launch_id,
         unitId: row.unit_id,
-        generation: row.generation,
+        generation: archive?.generation ?? row.generation,
+        ...(archive
+          ? { archiveRef: archive.ref, inventory: JSON.parse(journal.command_json!).inventory }
+          : {}),
         leaseId: row.session_id,
-        expectedHead: journal.expected_head,
+        expectedHead: archive?.baseHead ?? journal.expected_head,
         proposedHead: journal.target_oid,
         treeOid: journal.tree_oid,
         kind: 'final',
@@ -201,7 +208,9 @@ export abstract class DriverTransfer extends DriverCheckout {
   protected async captureShutdown(row: WorkspaceRow) {
     if (!this.host.terminal(row.launch_id) || row.status !== 'closed')
       throw new WorkspaceError('workspace_process_stop_unconfirmed');
-    const requestId = `shutdown_${hash(row.launch_id).slice(0, 48)}`;
+    let requestId = `shutdown_${hash(row.launch_id).slice(0, 48)}`;
+    const archivedRequest = `archive_${hash(row.launch_id).slice(0, 48)}`;
+    if (this.transfer(archivedRequest)) requestId = archivedRequest;
     let journal = this.transfer(requestId);
     if (journal?.receipt_json)
       return JSON.parse(journal.receipt_json) as {
@@ -212,11 +221,21 @@ export abstract class DriverTransfer extends DriverCheckout {
         operationId: string;
       };
     const control = { sessionId: row.session_id, runnerId: row.runner_id, hostRef: row.launch_id };
-    const granted = (await this.ask(() => this.transport.call('shutdown-credential', control))) as {
+    const granted = (await this.ask(() =>
+      this.transport.call('shutdown-credential', { ...control, archive: true }),
+    )) as {
       url: string;
       token: string;
+      archive?: { ref: string; baseHead: string; generation: number };
     };
     const access = this.access(row.launch_id);
+    if (
+      granted.archive &&
+      (!/^refs\/merv\/shutdown\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(granted.archive.ref) ||
+        !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(granted.archive.baseHead) ||
+        !Number.isSafeInteger(granted.archive.generation))
+    )
+      throw new WorkspaceError('workspace_shutdown_archive_unsupported');
     if (
       this.transport.remoteUrl(granted.url) !== access.url ||
       !/^mg_[A-Za-z0-9_-]{43}$/.test(granted.token)
@@ -235,15 +254,97 @@ export abstract class DriverTransfer extends DriverCheckout {
       '-c',
       'protocol.http.allow=always',
     ];
+    let inventory: { ignored: number; untracked: number; untrackedDigest: string } | undefined;
+    if (granted.archive) {
+      // This recovery path cannot classify arbitrary ignored research files as disposable.
+      // Normal shutdown remains compatible; archive recovery retains its host pending
+      // evidence-aware export instead of uploading ignored files (which may be secrets).
+      const ignored = await this.git.ok(
+        ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'],
+        { cwd: row.path },
+      );
+      const untracked = await this.git.ok(['ls-files', '--others', '--exclude-standard', '-z'], {
+        cwd: row.path,
+      });
+      inventory = {
+        ignored: ignored.split('\0').filter(Boolean).length,
+        untracked: untracked.split('\0').filter(Boolean).length,
+        untrackedDigest: hash(untracked),
+      };
+      const inventoryJson = JSON.stringify(inventory);
+      this.db
+        .prepare(
+          'INSERT OR IGNORE INTO code_shutdown_inventories(launch_id,inventory_hash,inventory_json) VALUES(?,?,?)',
+        )
+        .run(row.launch_id, hash(inventoryJson), inventoryJson);
+      if (ignored) throw new WorkspaceError('workspace_shutdown_ignored_files_pending');
+      if (journal?.tree_oid) {
+        const index = this.assignmentRoot
+          ? join(row.path, '.git', `index-${randomUUID()}`)
+          : join(driverDirectory(join(dirname(cache), 'indices')), `index-${randomUUID()}`);
+        try {
+          await this.seedIndex(row, await this.resolve(row, 'HEAD^{commit}'), {
+            GIT_INDEX_FILE: index,
+          });
+          await this.checkFiles(row, { GIT_INDEX_FILE: index });
+          await this.git.ok(['add', '-A', '--', '.'], {
+            cwd: row.path,
+            env: { GIT_INDEX_FILE: index },
+          });
+          const currentTree = oid(
+            await this.git.ok(['write-tree'], { cwd: row.path, env: { GIT_INDEX_FILE: index } }),
+          );
+          if (currentTree !== journal.tree_oid)
+            throw new WorkspaceError('workspace_shutdown_tree_changed');
+        } finally {
+          rmSync(index, { force: true });
+        }
+      }
+      if (journal && !JSON.parse(journal.command_json ?? '{}').archive) {
+        // A prior normal transfer may already have built its target. Retain that exact
+        // tree/commit and change only the destination; never replay its working-ref push.
+        const previous = journal;
+        requestId = `archive_${hash(row.launch_id).slice(0, 48)}`;
+        journal = this.transfer(requestId);
+        if (!journal) {
+          const command = {
+            ...JSON.parse(previous.command_json ?? '{}'),
+            archive: granted.archive,
+            inventory,
+            migratedFrom: previous.request_id,
+          };
+          this.db
+            .prepare(
+              "INSERT INTO code_v2_transfers(request_id,launch_id,kind,command_json,expected_head,tree_oid,target_oid) VALUES(?,?,'final',?,?,?,?)",
+            )
+            .run(
+              requestId,
+              row.launch_id,
+              JSON.stringify(command),
+              previous.expected_head,
+              previous.tree_oid,
+              previous.target_oid,
+            );
+          journal = this.transfer(requestId)!;
+        }
+      }
+    }
     if (!journal) {
       await this.git.ok(
-        [...network, 'fetch', '--no-tags', access.url, `refs/heads/${row.branch}`],
+        [
+          ...network,
+          'fetch',
+          '--no-tags',
+          access.url,
+          granted.archive?.baseHead ?? `refs/heads/${row.branch}`,
+        ],
         { env },
       );
       const remoteHead = oid(await this.git.ok(['--git-dir', cache, 'rev-parse', 'FETCH_HEAD']));
       const localHead = await this.resolve(row, 'HEAD^{commit}');
       await this.importAssignmentCommit(row, localHead);
       if (
+        !granted.archive &&
         localHead !== remoteHead &&
         (
           await this.git.run([
@@ -278,14 +379,24 @@ export abstract class DriverTransfer extends DriverCheckout {
       const remoteTree = oid(
         await this.git.ok(['--git-dir', cache, 'rev-parse', `${remoteHead}^{tree}`]),
       );
-      if (localHead !== remoteHead && tree !== remoteTree)
+      if (!granted.archive && localHead !== remoteHead && tree !== remoteTree)
         throw new WorkspaceError('workspace_shutdown_head_conflict');
       const stamp = `${Math.floor(Date.now() / 1000)} +0000`;
       this.db
         .prepare(
           "INSERT INTO code_v2_transfers(request_id,launch_id,kind,command_json,expected_head,tree_oid) VALUES(?,?,'final',?,?,?)",
         )
-        .run(requestId, row.launch_id, JSON.stringify({ stamp }), remoteHead, tree);
+        .run(
+          requestId,
+          row.launch_id,
+          JSON.stringify({
+            stamp,
+            inventory,
+            ...(granted.archive ? { archive: granted.archive } : {}),
+          }),
+          granted.archive ? localHead : remoteHead,
+          tree,
+        );
       journal = this.transfer(requestId)!;
     }
     if (!journal.target_oid) {

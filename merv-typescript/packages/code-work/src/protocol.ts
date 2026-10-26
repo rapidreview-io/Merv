@@ -100,6 +100,15 @@ export class CodeWorkspaceProtocol {
         codePushFenceSchema.extend({
           kind: z.enum(['checkpoint', 'final']),
           commandId: id.optional(),
+          archiveRef: z.string().max(512).optional(),
+          inventory: z
+            .object({
+              ignored: z.literal(0),
+              untracked: z.number().int().nonnegative(),
+              untrackedDigest: z.string().regex(/^[0-9a-f]{64}$/),
+            })
+            .strict()
+            .optional(),
         }),
         body,
       );
@@ -113,7 +122,10 @@ export class CodeWorkspaceProtocol {
       return { operation: await this.git.acknowledge(caller, input) };
     }
     if (route === 'submission-status' || route === 'end' || route === 'shutdown-credential') {
-      const input = parseCodeInput(codeWorkspaceManifestInputSchema, body);
+      const input = parseCodeInput(
+        codeWorkspaceManifestInputSchema.extend({ archive: z.boolean().optional() }),
+        body,
+      );
       const session = await this.controlled(caller, input, 'any');
       const row = await this.state.read((sql) =>
         this.writers.row(sql, caller.projectId, session.instanceId),

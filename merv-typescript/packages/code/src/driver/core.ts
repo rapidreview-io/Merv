@@ -189,6 +189,14 @@ export abstract class DriverCore {
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS code_shutdown_inventories (
+        launch_id TEXT NOT NULL, inventory_hash TEXT NOT NULL, inventory_json TEXT NOT NULL,
+        PRIMARY KEY(launch_id,inventory_hash)
+      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS code_shutdown_inventories_immutable BEFORE UPDATE ON code_shutdown_inventories
+        BEGIN SELECT RAISE(ABORT,'immutable shutdown inventory'); END;
+      CREATE TRIGGER IF NOT EXISTS code_shutdown_inventories_retain BEFORE DELETE ON code_shutdown_inventories
+        BEGIN SELECT RAISE(ABORT,'retained shutdown inventory'); END;
       CREATE TABLE IF NOT EXISTS code_v2_review_restores (
         launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
       ) STRICT;
