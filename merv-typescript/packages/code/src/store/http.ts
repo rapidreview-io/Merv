@@ -1465,6 +1465,8 @@ $merv$;
     caller: Caller,
     input: {
       sessionId: string;
+      runnerId?: string;
+      hostRef?: string;
       unitId: string;
       generation: number;
       leaseId: string;
@@ -1530,6 +1532,9 @@ $merv$;
                   epoch: caller.managed.epoch,
                   credentialHash: caller.managed.credentialHash,
                 }) &&
+              grant.sessionId === input.sessionId &&
+              grant.runnerId === input.runnerId &&
+              grant.hostRef === input.hostRef &&
               grant.unitId === input.unitId &&
               grant.generation === input.generation &&
               grant.leaseId === input.leaseId &&

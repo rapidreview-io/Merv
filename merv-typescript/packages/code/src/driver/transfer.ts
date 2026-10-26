@@ -212,22 +212,34 @@ export abstract class DriverTransfer extends DriverCheckout {
     const archivedRequest = `archive_${hash(row.launch_id).slice(0, 48)}`;
     if (this.transfer(archivedRequest)) requestId = archivedRequest;
     let journal = this.transfer(requestId);
-    if (journal?.receipt_json)
-      return JSON.parse(journal.receipt_json) as {
-        sessionId: string;
-        unitId: string;
-        headOid: string;
-        treeOid: string;
-        operationId: string;
-      };
+    const cachedReceipt = journal?.receipt_json
+      ? (JSON.parse(journal.receipt_json) as {
+          sessionId: string;
+          unitId: string;
+          headOid: string;
+          treeOid: string;
+          operationId: string;
+        })
+      : undefined;
+    if (cachedReceipt && JSON.parse(journal!.command_json ?? '{}').archive) return cachedReceipt;
     const control = { sessionId: row.session_id, runnerId: row.runner_id, hostRef: row.launch_id };
-    const granted = (await this.ask(() =>
-      this.transport.call('shutdown-credential', { ...control, archive: true }),
-    )) as {
+    let granted: {
       url: string;
       token: string;
       archive?: { ref: string; baseHead: string; generation: number };
     };
+    try {
+      granted = (await this.ask(() =>
+        this.transport.call('shutdown-credential', { ...control, archive: true }),
+      )) as typeof granted;
+    } catch (error) {
+      // Allocation acknowledgment revokes cleanup authority. Its existing normal receipt
+      // can still be submitted to the idempotent endpoint; that endpoint alone authorizes
+      // release, and rejects it if historical archival is now required.
+      if (cachedReceipt) return cachedReceipt;
+      throw error;
+    }
+    if (cachedReceipt && !granted.archive) return cachedReceipt;
     const access = this.access(row.launch_id);
     if (
       granted.archive &&

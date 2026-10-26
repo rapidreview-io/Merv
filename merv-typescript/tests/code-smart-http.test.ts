@@ -1167,6 +1167,12 @@ test('historical shutdown archives survive a cross-allocation generation race wi
     ),
     /capability/,
   );
+  for (const altered of [
+    { runnerId: 'foreign-runner' },
+    { hostRef: 'foreign-host' },
+    { sessionId: 'foreign-session' },
+  ])
+    await assert.rejects(f.remote.acknowledge(cleanup, { ...ack, ...altered }), /capability/);
   const receipt = await f.remote.acknowledge(cleanup, ack);
   assert.equal((await f.remote.acknowledge(cleanup, ack)).id, receipt.id);
   assert.equal(receipt.head, head);

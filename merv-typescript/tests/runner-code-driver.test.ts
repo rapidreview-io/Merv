@@ -400,154 +400,159 @@ test('review receives a separate read-only credential and cannot push through or
   await driver.close(launch);
 });
 
-test('historical shutdown migrates an existing journal without replaying its branch push and retains ignored inventory', async (t) => {
-  const f = await writerFixture(t);
-  const sessionId = 'ses_managed_shutdown';
-  await f.lease(sessionId);
-  let archival = false;
-  let failAck = true;
-  let cleanup: Caller;
-  const m = machine(t, f, (inner) => ({
-    ...inner,
-    call: async (route, body) => {
-      if (archival && route === 'shutdown-credential')
-        return f.code.gitRemote.issueShutdown(cleanup, {
-          ...(body as { sessionId: string; runnerId: string; hostRef: string }),
-          unitId: f.unitId,
-          generation: 1,
-          leaseId: sessionId,
-          archive: true,
-        });
-      if (route === 'pushed') {
-        if (failAck) {
-          failAck = false;
-          throw Object.assign(new Error('lost control'), {
-            code: 'control_unavailable',
-            status: 0,
+for (const completed of [false, true])
+  test(`historical shutdown migrates ${completed ? 'completed' : 'pending'} normal journal without replaying its branch push and retains ignored inventory`, async (t) => {
+    const f = await writerFixture(t);
+    const sessionId = 'ses_managed_shutdown';
+    await f.lease(sessionId);
+    let archival = false;
+    let failAck = !completed;
+    let cleanup: Caller;
+    const m = machine(t, f, (inner) => ({
+      ...inner,
+      call: async (route, body) => {
+        if (archival && route === 'shutdown-credential')
+          return f.code.gitRemote.issueShutdown(cleanup, {
+            ...(body as { sessionId: string; runnerId: string; hostRef: string }),
+            unitId: f.unitId,
+            generation: 1,
+            leaseId: sessionId,
+            archive: true,
           });
+        if (route === 'pushed') {
+          if (failAck) {
+            failAck = false;
+            throw Object.assign(new Error('lost control'), {
+              code: 'control_unavailable',
+              status: 0,
+            });
+          }
+          if (archival)
+            return {
+              operation: await f.code.gitRemote.acknowledge(
+                cleanup,
+                body as Parameters<typeof f.code.gitRemote.acknowledge>[1],
+              ),
+            };
         }
-        if (archival)
-          return {
-            operation: await f.code.gitRemote.acknowledge(
-              cleanup,
-              body as Parameters<typeof f.code.gitRemote.acknowledge>[1],
-            ),
-          };
-      }
-      return inner.call(route, body);
-    },
-  }));
-  let driver = m.start();
-  const launch = m.launch(sessionId);
-  const handle = await driver.prepare(launch, m.session(sessionId));
-  writeFileSync(join(handle.path, 'progress.txt'), 'original evidence\n');
-  m.terminal.add(launch.id);
-  await driver.capture(launch);
-  await driver.close(launch);
-  await f.end(sessionId);
-  await assert.rejects(driver.shutdownCapture());
-  const ledger = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
-  t.after(() => ledger.close());
-  const prior = ledger.prepare('SELECT * FROM code_v2_transfers').get() as Record<string, unknown>;
-  assert.ok(prior.target_oid);
-  const allocationId = 'allocation_git_shutdown';
-  const credentialHash = 'c'.repeat(64);
-  const at = new Date().toISOString();
-  await f.state.transaction(async (tx) => {
-    await tx.run(
-      "INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at) VALUES(?,?,?,?,'managed-control',?)",
-      'ic_shutdown',
-      credentialHash,
-      'sessions',
-      allocationId,
-      at,
-    );
-    await tx.run(
-      `INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,runner_id,created_at)
+        return inner.call(route, body);
+      },
+    }));
+    let driver = m.start();
+    const launch = m.launch(sessionId);
+    const handle = await driver.prepare(launch, m.session(sessionId));
+    writeFileSync(join(handle.path, 'progress.txt'), 'original evidence\n');
+    m.terminal.add(launch.id);
+    await driver.capture(launch);
+    await driver.close(launch);
+    await f.end(sessionId);
+    if (completed) await driver.shutdownCapture();
+    else await assert.rejects(driver.shutdownCapture());
+    const ledger = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+    t.after(() => ledger.close());
+    const prior = ledger.prepare('SELECT * FROM code_v2_transfers').get() as Record<
+      string,
+      unknown
+    >;
+    assert.ok(prior.target_oid);
+    const allocationId = 'allocation_git_shutdown';
+    const credentialHash = 'c'.repeat(64);
+    const at = new Date().toISOString();
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        "INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at) VALUES(?,?,?,?,'managed-control',?)",
+        'ic_shutdown',
+        credentialHash,
+        'sessions',
+        allocationId,
+        at,
+      );
+      await tx.run(
+        `INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,runner_id,created_at)
       VALUES(?,1,?,?,?,'test','{}','[]',?,?,?,?,?,?)`,
-      allocationId,
-      f.admin.projectId,
-      JSON.stringify({ actorId: f.admin.actorId, projectId: f.admin.projectId }),
-      'source',
-      'e'.repeat(64),
-      at,
-      credentialHash,
-      at,
-      'runner-1',
-      at,
-    );
-    await tx.run(
-      'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at,release_ack_at,settled_at) VALUES(?,?,?,?,?,?,?)',
+        allocationId,
+        f.admin.projectId,
+        JSON.stringify({ actorId: f.admin.actorId, projectId: f.admin.projectId }),
+        'source',
+        'e'.repeat(64),
+        at,
+        credentialHash,
+        at,
+        'runner-1',
+        at,
+      );
+      await tx.run(
+        'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at,release_ack_at,settled_at) VALUES(?,?,?,?,?,?,?)',
+        sessionId,
+        allocationId,
+        'runner-1',
+        '{}',
+        at,
+        at,
+        at,
+      );
+      await tx.run(
+        'INSERT INTO session_managed_shutdowns(allocation_id,epoch,requested_at) VALUES(?,1,?)',
+        allocationId,
+        at,
+      );
+    });
+    cleanup = {
+      actorId: f.admin.actorId,
+      projectId: f.admin.projectId,
+      managed: { allocationId, epoch: 1, credentialHash, cleanup: true },
+    };
+    const input = {
       sessionId,
-      allocationId,
-      'runner-1',
-      '{}',
-      at,
-      at,
-      at,
-    );
-    await tx.run(
-      'INSERT INTO session_managed_shutdowns(allocation_id,epoch,requested_at) VALUES(?,1,?)',
-      allocationId,
-      at,
-    );
-  });
-  cleanup = {
-    actorId: f.admin.actorId,
-    projectId: f.admin.projectId,
-    managed: { allocationId, epoch: 1, credentialHash, cleanup: true },
-  };
-  const input = {
-    sessionId,
-    runnerId: 'runner-1',
-    hostRef: `launch-${sessionId}`,
-    unitId: f.unitId,
-    generation: 1,
-    leaseId: sessionId,
-  };
+      runnerId: 'runner-1',
+      hostRef: `launch-${sessionId}`,
+      unitId: f.unitId,
+      generation: 1,
+      leaseId: sessionId,
+    };
 
-  await f.state.transaction(async (tx) => {
-    await tx.run(
-      'INSERT INTO session_workspaces(session_id,attachment_json) VALUES(?,?)',
-      sessionId,
-      JSON.stringify({ headOid: f.root }),
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        'INSERT INTO session_workspaces(session_id,attachment_json) VALUES(?,?)',
+        sessionId,
+        JSON.stringify({ headOid: f.root }),
+      );
+    });
+    await f.lease('replacement_writer');
+    const current = await f.unit();
+    archival = true;
+    writeFileSync(join(handle.path, '.gitignore'), 'private-output\n');
+    writeFileSync(join(handle.path, 'private-output'), 'do not export automatically');
+    await assert.rejects(
+      driver.shutdownCapture(),
+      failed('workspace_shutdown_ignored_files_pending'),
     );
+    assert.equal(
+      readFileSync(join(handle.path, 'private-output'), 'utf8'),
+      'do not export automatically',
+    );
+    const inventory = ledger
+      .prepare('SELECT inventory_json FROM code_shutdown_inventories')
+      .get() as { inventory_json: string };
+    assert.equal(JSON.parse(inventory.inventory_json).ignored, 1);
+    assert.equal(inventory.inventory_json.includes('private-output'), false);
+    // Test fixture simulates a reviewed external export; production never removes it automatically.
+    rmSync(join(handle.path, 'private-output'));
+    rmSync(join(handle.path, '.gitignore'));
+    writeFileSync(join(handle.path, 'late-evidence.txt'), 'must not silently omit');
+    await assert.rejects(driver.shutdownCapture(), failed('workspace_shutdown_tree_changed'));
+    rmSync(join(handle.path, 'late-evidence.txt')); // fixture's reviewed export
+    const receipts = await driver.shutdownCapture();
+    assert.equal(receipts[0].headOid, prior.target_oid);
+    assert.deepEqual(
+      ledger
+        .prepare('SELECT * FROM code_v2_transfers WHERE request_id=?')
+        .get(prior.request_id as string),
+      prior,
+    );
+    assert.deepEqual(await f.unit(), current);
+    assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
+    driver.dispose();
+    driver = m.start();
+    assert.deepEqual(await driver.shutdownCapture(), receipts);
   });
-  await f.lease('replacement_writer');
-  const current = await f.unit();
-  archival = true;
-  writeFileSync(join(handle.path, '.gitignore'), 'private-output\n');
-  writeFileSync(join(handle.path, 'private-output'), 'do not export automatically');
-  await assert.rejects(
-    driver.shutdownCapture(),
-    failed('workspace_shutdown_ignored_files_pending'),
-  );
-  assert.equal(
-    readFileSync(join(handle.path, 'private-output'), 'utf8'),
-    'do not export automatically',
-  );
-  const inventory = ledger
-    .prepare('SELECT inventory_json FROM code_shutdown_inventories')
-    .get() as { inventory_json: string };
-  assert.equal(JSON.parse(inventory.inventory_json).ignored, 1);
-  assert.equal(inventory.inventory_json.includes('private-output'), false);
-  // Test fixture simulates a reviewed external export; production never removes it automatically.
-  rmSync(join(handle.path, 'private-output'));
-  rmSync(join(handle.path, '.gitignore'));
-  writeFileSync(join(handle.path, 'late-evidence.txt'), 'must not silently omit');
-  await assert.rejects(driver.shutdownCapture(), failed('workspace_shutdown_tree_changed'));
-  rmSync(join(handle.path, 'late-evidence.txt')); // fixture's reviewed export
-  const receipts = await driver.shutdownCapture();
-  assert.equal(receipts[0].headOid, prior.target_oid);
-  assert.deepEqual(
-    ledger
-      .prepare('SELECT * FROM code_v2_transfers WHERE request_id=?')
-      .get(prior.request_id as string),
-    prior,
-  );
-  assert.deepEqual(await f.unit(), current);
-  assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
-  driver.dispose();
-  driver = m.start();
-  assert.deepEqual(await driver.shutdownCapture(), receipts);
-});
