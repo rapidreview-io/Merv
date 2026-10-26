@@ -1111,11 +1111,15 @@ $merv$;
               socket.end('ok');
             },
             (error) => {
-              socket.end(
+              const reason =
                 error instanceof MervError
                   ? `${error.code}: ${error.message}`
-                  : 'code_git_rejected: Git admission failed',
+                  : 'code_git_rejected: Git admission failed';
+              // Only the pusher sees Git's reply; an operator recovering a host needs it too.
+              process.stderr.write(
+                `${JSON.stringify({ event: 'code_git_push_rejected', projectId, push: id, reason })}\n`,
               );
+              socket.end(reason);
             },
           ),
         );
@@ -1346,7 +1350,7 @@ $merv$;
     check(
       !admission.findings.length,
       'code_git_admission',
-      'Git content failed repository admission',
+      `Git content failed repository admission (${[...new Set(admission.findings.map((f) => f.rule))].join(', ')})`,
       409,
     );
     let merge: Push['merge'];
