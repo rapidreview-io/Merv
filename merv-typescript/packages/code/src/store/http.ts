@@ -45,6 +45,7 @@ interface Grant extends GitGrantInput {
   /** Original runner generation, accepted only for this recovered shutdown's final receipt. */
   recoveryGeneration?: number;
   archive?: { ref: string; baseHead: string };
+  submissionOnly?: { parentOid: string };
 }
 interface AccountGitGrant {
   audience: 'account';
@@ -331,8 +332,8 @@ $merv$;
   /** The controller attests process stop before receiving this runner-only capture capability. */
   async issueCapture(
     caller: Caller,
-    input: Omit<GitGrantInput, 'mode'> & { stopped: true },
-  ): Promise<{ url: string; token: string }> {
+    input: Omit<GitGrantInput, 'mode'> & { stopped: true; submissionOnly?: { parentOid: string } },
+  ): Promise<{ url: string; token: string; submissionOnly?: true }> {
     check(
       !caller.session &&
         input.stopped &&
@@ -372,7 +373,11 @@ $merv$;
         now(),
       );
     });
-    return { url: `/git/${encodeURIComponent(caller.projectId)}.git`, token };
+    return {
+      url: `/git/${encodeURIComponent(caller.projectId)}.git`,
+      token,
+      ...(input.submissionOnly ? { submissionOnly: true as const } : {}),
+    };
   }
 
   /** A new, explicit capability to capture a stopped work unit before its machine is released. */
@@ -737,6 +742,19 @@ $merv$;
       'This work is quarantined',
       409,
     );
+    if (grant.submissionOnly) {
+      check(
+        grant.audience === 'capture' &&
+          row.writer_state === 'closed' &&
+          session.status !== 'active' &&
+          session.status !== 'offered' &&
+          grant.submissionOnly.parentOid === (row.head_oid ?? this.writers.base(row)),
+        'code_generation_stale',
+        'Stopped submission authority no longer matches its writer and parent',
+        403,
+      );
+      return;
+    }
     if (grant.audience === 'shutdown') {
       check(
         row.writer_state === 'closed' || row.writer_state === 'closing',
@@ -1192,7 +1210,21 @@ $merv$;
       const submission =
         (grant?.audience === 'runner' || grant?.audience === 'capture') &&
         update.ref.startsWith(`refs/merv/submissions/${unitRef(grant.sessionId)}/`);
+      check(
+        !grant?.submissionOnly || submission,
+        'code_git_ref_forbidden',
+        'Stopped submission recovery cannot change working refs',
+        403,
+      );
       if (submission) {
+        check(
+          !grant?.submissionOnly ||
+            !update.ref.endsWith('/parent') ||
+            update.next === grant.submissionOnly.parentOid,
+          'code_head_conflict',
+          'The submission parent differs from its retained authority',
+          409,
+        );
         check(
           ['parent', 'tree'].some(
             (name) => update.ref === `refs/merv/submissions/${unitRef(grant!.sessionId)}/${name}`,

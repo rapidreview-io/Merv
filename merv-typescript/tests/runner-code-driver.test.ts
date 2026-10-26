@@ -556,3 +556,135 @@ for (const completed of [false, true])
     driver = m.start();
     assert.deepEqual(await driver.shutdownCapture(), receipts);
   });
+
+test('closed writer recovers only its requested immutable submission without moving working refs', async (t) => {
+  const f = await writerFixture(t);
+  const sessionId = 'ses_closed_unfrozen';
+  await f.lease(sessionId);
+  let requested = false;
+  let captureGrants = 0;
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    call: async (route, body) => {
+      if (route === 'capture-credential') captureGrants++;
+      if (route === 'submission-status')
+        return { ...((await inner.call(route, body)) as object), requested, frozen: false };
+      return inner.call(route, body);
+    },
+  }));
+  const driver = m.start();
+  const launch = m.launch(sessionId);
+  const handle = await driver.prepare(launch, m.session(sessionId));
+  writeFileSync(join(handle.path, 'pending-evidence.txt'), 'retain this submitted evidence\n');
+  await f.event('session.workspace_attached', sessionId);
+  await f.end(sessionId);
+  await f.event('session.closed', sessionId);
+  assert.equal((await f.unit()).writerState, 'closed');
+  const canonicalBefore = (await f.unit()).canonicalHead;
+  requested = true;
+  m.terminal.add(launch.id);
+  await assert.rejects(driver.capture(launch));
+  assert.equal(captureGrants, 1);
+  await assert.rejects(
+    m.transport.call('capture-credential', {
+      sessionId,
+      runnerId: 'runner-1',
+      hostRef: launch.id,
+      stopped: true,
+    }),
+    failed('code_submission_required'),
+  );
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO code_submissions(project_id,session_id,unit_id,generation,lease_id,source_json,created_at) VALUES(?,?,?,?,?,?,?)',
+      f.admin.projectId,
+      sessionId,
+      f.unitId,
+      1,
+      sessionId,
+      JSON.stringify({ status: 'pending', workspace: { headOid: f.root, baseOid: f.root } }),
+      new Date().toISOString(),
+    ),
+  );
+  await assert.rejects(
+    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 2, sessionId),
+    failed('code_submission_required'),
+  );
+  await assert.rejects(
+    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 1, 'wrong-lease'),
+    failed('code_submission_required'),
+  );
+  const recovery = (await m.transport.call('capture-credential', {
+    sessionId,
+    runnerId: 'runner-1',
+    hostRef: launch.id,
+    stopped: true,
+  })) as { url: string; token: string; submissionOnly: boolean };
+  assert.equal(recovery.submissionOnly, true);
+  await assert.rejects(
+    m.transport.call('capture-credential', {
+      sessionId,
+      runnerId: 'runner-1',
+      hostRef: 'another-launch',
+      stopped: true,
+    }),
+  );
+  const recoveryGit = (args: string[]) =>
+    exec('git', args, {
+      cwd: handle.path,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: `http.${m.transport.remoteUrl(recovery.url)}.extraHeader`,
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${recovery.token}`).toString('base64')}`,
+      },
+    });
+  await driver.capture(launch);
+  const frozen = await f.code.submissions.capture(f.admin, sessionId);
+  assert.equal(frozen.status, 'ready');
+  assert.equal(frozen.parentOid, f.root);
+  assert.equal((await f.unit()).writerState, 'closed');
+  await driver.capture(launch);
+  assert.deepEqual(await f.code.submissions.capture(f.admin, sessionId), frozen);
+  assert.equal(
+    readFileSync(join(handle.path, 'pending-evidence.txt'), 'utf8'),
+    'retain this submitted evidence\n',
+  );
+  assert.equal((await f.unit()).canonicalHead, canonicalBefore);
+  git(handle.path, ['add', '.']);
+  git(handle.path, ['commit', '-qm', 'must not move retained branch']);
+  await assert.rejects(
+    recoveryGit([
+      'push',
+      m.transport.remoteUrl(recovery.url),
+      `HEAD:refs/heads/merv/work/${f.unitId}`,
+    ]),
+    /cannot change working refs|rejected/,
+  );
+  await assert.rejects(
+    recoveryGit([
+      'push',
+      m.transport.remoteUrl(recovery.url),
+      `HEAD:refs/merv/submissions/${sessionId}/parent`,
+    ]),
+    /parent differs|immutable|rejected/,
+  );
+  await assert.rejects(
+    recoveryGit([
+      'push',
+      m.transport.remoteUrl(recovery.url),
+      'HEAD:refs/merv/submissions/another_session/parent',
+    ]),
+    /cannot change working refs|rejected/,
+  );
+  assert.equal((await f.unit()).canonicalHead, canonicalBefore);
+  await f.lease('ses_successor_after_frozen');
+  await assert.rejects(
+    recoveryGit(['ls-remote', m.transport.remoteUrl(recovery.url)]),
+    /403|generation|assignment/,
+  );
+  assert.deepEqual(await f.code.submissions.capture(f.admin, sessionId), frozen);
+});

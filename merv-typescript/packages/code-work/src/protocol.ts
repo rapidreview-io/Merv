@@ -88,11 +88,29 @@ export class CodeWorkspaceProtocol {
         'Another writer owns this branch',
         409,
       );
+      const submissionOnly =
+        row.writer_state === 'closed'
+          ? {
+              parentOid: await this.submissions.recoveryParent(
+                caller.projectId,
+                session.id,
+                Number(row.generation),
+                session.id,
+              ),
+            }
+          : undefined;
+      check(
+        !submissionOnly || !live(session),
+        'code_writer_busy',
+        'Stop the submitting session before recovery',
+        409,
+      );
       return await this.git.issueCapture(caller, {
         ...input,
         unitId: session.instanceId,
         generation: Number(row.generation),
         leaseId: session.id,
+        ...(submissionOnly ? { submissionOnly } : {}),
       });
     }
     if (route === 'pushed') {
