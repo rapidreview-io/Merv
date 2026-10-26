@@ -697,3 +697,82 @@ test('closed writer recovers only its requested immutable submission without mov
   );
   assert.deepEqual(await f.code.submissions.capture(f.admin, sessionId), frozen);
 });
+
+test('an earlier runner seals a requested submission on a closed writer through its own calls', async (t) => {
+  // Retained hosts run the driver from before stopped-submission recovery: it asks for capture
+  // only while the writer reads open, then pushes its unchanged branch head with both refs.
+  const f = await writerFixture(t);
+  const sessionId = 'ses_earlier_runner';
+  await f.lease(sessionId);
+  const m = machine(t, f);
+  const launch = m.launch(sessionId);
+  const handle = await m.start().prepare(launch, m.session(sessionId));
+  writeFileSync(join(handle.path, 'pending-evidence.txt'), 'retain this submitted evidence\n');
+  await f.event('session.workspace_attached', sessionId);
+  await f.end(sessionId);
+  await f.event('session.closed', sessionId);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO code_submissions(project_id,session_id,unit_id,generation,lease_id,source_json,created_at) VALUES(?,?,?,?,?,?,?)',
+      f.admin.projectId,
+      sessionId,
+      f.unitId,
+      1,
+      sessionId,
+      JSON.stringify({ status: 'pending', workspace: { headOid: f.root, baseOid: f.root } }),
+      new Date().toISOString(),
+    ),
+  );
+  const canonicalBefore = (await f.unit()).canonicalHead;
+  const control = { sessionId, runnerId: 'runner-1', hostRef: launch.id };
+  const status = (await m.transport.call('submission-status', control)) as {
+    requested: boolean;
+    writerClosed: boolean;
+  };
+  assert.deepEqual([status.requested, status.writerClosed], [true, false]);
+  const grant = (await m.transport.call('capture-credential', { ...control, stopped: true })) as {
+    url: string;
+    token: string;
+  };
+  const index = { ...process.env, GIT_INDEX_FILE: join(m.directory, 'earlier-runner.index') };
+  await exec('git', ['read-tree', 'HEAD'], { cwd: handle.path, env: index });
+  await exec('git', ['add', '-A', '--', '.'], { cwd: handle.path, env: index });
+  const tree = (await exec('git', ['write-tree'], { cwd: handle.path, env: index })).stdout.trim();
+  const url = m.transport.remoteUrl(grant.url);
+  await exec(
+    'git',
+    [
+      'push',
+      '--atomic',
+      '--porcelain',
+      url,
+      `${f.root}:refs/heads/merv/work/${f.unitId}`,
+      `${f.root}:refs/merv/submissions/${sessionId}/parent`,
+      `${tree}:refs/merv/submissions/${sessionId}/tree`,
+    ],
+    {
+      cwd: handle.path,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: `http.${url}.extraHeader`,
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${grant.token}`).toString('base64')}`,
+      },
+    },
+  );
+  const sealed = (await m.transport.call('submissions', {
+    ...control,
+    generation: 1,
+    leaseId: sessionId,
+    parentOid: f.root,
+    treeOid: tree,
+    stopped: true,
+  })) as { capture: { status: string; workspace?: { treeOid?: string } } };
+  assert.equal(sealed.capture.status, 'ready');
+  assert.equal(sealed.capture.workspace?.treeOid, tree);
+  assert.equal((await f.unit()).canonicalHead, canonicalBefore);
+  assert.equal((await f.unit()).writerState, 'closed');
+});

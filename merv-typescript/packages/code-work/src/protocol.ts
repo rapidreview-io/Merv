@@ -161,7 +161,9 @@ export class CodeWorkspaceProtocol {
           requested,
           head,
           cleanup: !!caller.managed?.cleanup,
-          writerClosed: row.writer_state === 'closed',
+          // A requested submission stays capturable on a closed writer; earlier runners ask
+          // for that capture only while the writer reads open.
+          writerClosed: row.writer_state === 'closed' && !requested,
           frozen: requested && (await this.submissions.frozen(caller.projectId, session.id)),
         };
       check(
