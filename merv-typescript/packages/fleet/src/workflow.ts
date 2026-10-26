@@ -694,6 +694,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
   async prepareStop(a: FleetAllocation): Promise<boolean> {
     return await this.sessions.managed.requestShutdown(a.id, a.epoch);
   }
+  /** Dispatch and this stop decision share State's writer transaction. A five-minute
+   * compute wake can land exactly as the five-minute idle observation expires. */
+  async canFinish(a: FleetAllocation, tx: Transaction): Promise<boolean> {
+    const observed = await this.sessions.managed.inspect(a.id, a.epoch, tx);
+    const session = observed?.session;
+    if (!session) return true;
+    if (!['released', 'expired'].includes(session.status) || session.capturePending) return false;
+    if (Date.parse(a.deadlineAt) - this.clock() < (stepSeconds + 300) * 1000) return true;
+    const idle = session.releaseAcknowledged ? workIdleMs : releaseAckGraceMs;
+    return this.clock() - Date.parse(session.closedAt!) >= idle;
+  }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
     check(
       this.accepted(a),

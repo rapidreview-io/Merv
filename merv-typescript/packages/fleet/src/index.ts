@@ -930,11 +930,14 @@ export class FleetService implements Fleet {
       }
     });
   }
-  private async update(id: string, mutate: (a: FleetAllocation) => void): Promise<FleetAllocation> {
+  private async update(
+    id: string,
+    mutate: (a: FleetAllocation, tx: Transaction) => void | Promise<void>,
+  ): Promise<FleetAllocation> {
     return this.state.transaction(async (tx) => {
       const a = await this.get(tx, id),
         before = structuredClone(a);
-      mutate(a);
+      await mutate(a, tx);
       await this.save(tx, a, before);
       return a;
     });
@@ -1262,8 +1265,12 @@ export class FleetService implements Fleet {
       a = await this.observed(a, exchanged, status);
     }
     if (status === 'finished') {
-      a = await this.update(a.id, halt);
-      await stop(a, handle);
+      // observe ran outside the writer transaction: an idle host may have acquired its
+      // next visit meanwhile. Commit stop only while that completion is still true.
+      a = await this.update(a.id, async (current, tx) => {
+        if (!owner.canFinish || (await owner.canFinish(current, tx))) halt(current);
+      });
+      if (a.intent === 'stop') await stop(a, handle);
     } else {
       if (status === 'starting') await this.observed(a, handle, status);
       if (
