@@ -1,5 +1,7 @@
 import { createService, MervError, type Caller } from '@merv/contracts';
-import type { FleetMachine, FleetRuntimeHandle } from '@merv/fleet/types';
+import type { FleetMachine, FleetRuntimeHandle, Fleet } from '@merv/fleet/types';
+import { FleetWorkflowAdapter } from '@merv/fleet/workflow';
+import type { Sessions, ManagedRunnerInspection } from '@merv/sessions/types';
 import { ProjectScope } from '@merv/scope';
 import type { RuntimeLauncher } from '@sandboxes/runtimes/launcher';
 import assert from 'node:assert/strict';
@@ -851,4 +853,98 @@ test('projectSpend reports priced and unpriced hours without changing admission 
     pricedHours: 3,
     unpricedHours: 1,
   });
+});
+
+test('idle completion is fenced against a compute-wake visit admitted after observation', async (t) => {
+  const f = await fixture(t, { allocationTimeoutSeconds: 86400 });
+  await f.state.transaction((tx) => tx.run('CREATE TABLE resume_race (inspection TEXT NOT NULL)'));
+  const oldVisit: ManagedRunnerInspection = {
+    runnerId: 'compute-runner',
+    enrollmentExpiresAt: new Date(f.now() + 3600_000).toISOString(),
+    session: {
+      id: 'old',
+      instanceId: 'work_1',
+      expectedRevision: 2,
+      status: 'released',
+      closedAt: new Date(f.now() - 300_000).toISOString(),
+      outcome: 'awaited_compute',
+      releaseAcknowledged: true,
+      capturePending: false,
+    },
+  };
+  const save = (inspection: ManagedRunnerInspection) =>
+    f.state.transaction(async (tx) => {
+      await tx.run('DELETE FROM resume_race');
+      await tx.run('INSERT INTO resume_race VALUES(?)', JSON.stringify(inspection));
+    });
+  await save(oldVisit);
+  const sessions = {
+    managed: {
+      inspect: async (_id: string, _epoch: number, tx?: import('@merv/contracts').Transaction) => {
+        assert.ok(tx, 'completion revalidation must use the stop-intent transaction');
+        return JSON.parse(
+          (await tx.get<{ inspection: string }>('SELECT inspection FROM resume_race'))!.inspection,
+        );
+      },
+    },
+  } as unknown as Sessions;
+  const adapter = new FleetWorkflowAdapter(
+    { allocationSeconds: 86400 } as Fleet,
+    sessions,
+    f.scope,
+    { people: ['*'], baseUrl: 'https://example.invalid', modelApiKeyEnv: 'TEST_UNUSED_KEY' },
+    f.now,
+    f.state,
+  );
+  // An unclaimed initial host can still finish; only an admitted visit changes that decision.
+  await save({ ...oldVisit, session: null });
+  assert.equal(
+    await f.state.transaction((tx) =>
+      adapter.canFinish(
+        { id: 'empty', epoch: 1 } as import('@merv/fleet/types').FleetAllocation,
+        tx,
+      ),
+    ),
+    true,
+  );
+  await save(oldVisit);
+  f.owner.canFinish = (a, tx) => adapter.canFinish(a, tx);
+  let shutdowns = 0;
+  f.owner.prepareStop = async () => {
+    shutdowns++;
+    return true;
+  };
+  const allocation = await f.fleet.request(f.caller, input('compute-wake-race'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  await f.fleet.tick();
+  // Completion was observed before dispatch's successor transaction commits.
+  f.owner.observe = async () => {
+    await save({
+      ...oldVisit,
+      session: { ...oldVisit.session!, id: 'successor', status: 'offered', closedAt: null },
+    });
+    return 'finished';
+  };
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).intent, 'run');
+  assert.equal(shutdowns, 0);
+  assert.deepEqual(f.runtimes.stopped, []);
+  // Finishing the successor is not enough to reuse the old visit's expired idle timer.
+  f.owner.observe = async () => 'finished';
+  await save({
+    ...oldVisit,
+    session: { ...oldVisit.session!, id: 'successor', closedAt: new Date(f.now()).toISOString() },
+  });
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).intent, 'run');
+  f.advance(300_000);
+  await save({ ...oldVisit, session: { ...oldVisit.session!, capturePending: true } });
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).intent, 'run');
+  await save(oldVisit);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).intent, 'stop');
+  assert.equal(shutdowns, 1);
+  assert.equal(f.runtimes.stopped.length, 1);
 });

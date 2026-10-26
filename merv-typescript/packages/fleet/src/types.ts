@@ -120,6 +120,9 @@ export interface FleetOwner {
   bootstrap(allocation: FleetAllocation): Promise<string>;
   /** Stops producers and returns true only once the host durably retained teardown captures. */
   prepareStop?(allocation: FleetAllocation): Promise<boolean>;
+  /** Recheck mutable completion under the transaction that commits stop intent.
+   * Owners that admit new work after observe must fence that race here. */
+  canFinish?(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** finished means ordinary session work has settled; prepareStop gates machine release. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
   /** The model tokens this owner charges `person` for over the UTC days [from, to): read for the
