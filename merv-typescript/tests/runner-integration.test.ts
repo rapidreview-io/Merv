@@ -141,7 +141,12 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     if (managed) delete process.env[managedSecretEnv];
     rmSync(directory, { recursive: true, force: true });
   });
-  const make = (fetcher?: typeof fetch, clock?: () => number, code = !managed) => {
+  const make = (
+    fetcher?: typeof fetch,
+    clock?: () => number,
+    code = !managed,
+    prepareError?: Error,
+  ) => {
     const runner = new MachineRunner(config, {
       autoPoll: false,
       drivers: !code
@@ -149,7 +154,14 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
         : [
             {
               name: 'code.git.1',
-              create: (host, transport) => new CodeWorkspaceDriver(host, transport),
+              create: (host, transport) => {
+                const driver = new CodeWorkspaceDriver(host, transport);
+                if (prepareError)
+                  driver.prepare = async () => {
+                    throw prepareError;
+                  };
+                return driver;
+              },
             },
           ],
       ...(fetcher ? { fetch: fetcher } : {}),
@@ -183,6 +195,34 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     token: boot.token,
   };
 }
+
+test('filesystem preparation failure survives halt and settle as a durable bounded reason', async (t) => {
+  const f = await fixture(t);
+  const runner = f.make(
+    undefined,
+    undefined,
+    true,
+    Object.assign(new Error('private checkout path and credential must not leave the runner'), {
+      code: 'ENOSPC',
+      path: '/private/checkout',
+    }),
+  );
+  await runner.start();
+  await f.enabled(true);
+  await until(
+    async () => (await f.sessions()).some((session) => session.status === 'released'),
+    runner,
+    'failed preparation release',
+  );
+  await f.enabled(false);
+  const session = (await f.sessions())[0];
+  assert.equal(session.outcome, 'workspace_failed');
+  assert.equal(session.closeReason, 'runner_filesystem_no_space');
+  assert.equal(session.activatedAt, null);
+  assert.equal(childResults(f.runnerDirectory).length, 0);
+  await runner.tick();
+  assert.equal(runner.snapshot().launches[0].transcriptPending, false);
+});
 
 test(
   'a real runner child receives only its session authority, calls MCP and releases after process exit',
