@@ -46,7 +46,7 @@ export const reportsToolsPlugin = {
     register({
       name: 'report.clear',
       tier: 'worker',
-      description: `Start the report over: return the draft to the approved plan's prefill, removing every written section, data file and chart approval. ${SUBJECT}`,
+      description: `Start the report over from the current approved plan's prefill, refreshing locked sections and removing every written section, data file and chart approval. Earlier report revisions remain retained. ${SUBJECT}`,
       inputSchema: clearSchema,
       handler: (caller, input) => reports.clear(caller, input),
     });

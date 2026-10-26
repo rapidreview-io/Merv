@@ -355,7 +355,27 @@ export class ReportService implements Reports {
     return await this.command(caller, 'clear', input, async (tx) => {
       const before = await this.required(caller, ref(input), tx);
       this.expect(before, input.expectedRevision);
-      const change = { source: before.base, files: {}, approvals: {} };
+      // A new approved design may have replaced the plan since this report was opened.
+      // Rebase only through the subject's authoritative prefill, never caller-supplied text.
+      // revise appends a revision, preserving the earlier report and its original plan.
+      const prefill = await this.subject(before.subject.kind).prefill(
+        caller,
+        before.subject.id,
+        tx,
+      );
+      check(
+        Buffer.byteLength(prefill.source) <= MAX_SOURCE_BYTES,
+        'report_too_large',
+        'The prefilled report is too large',
+        422,
+      );
+      const change = {
+        source: prefill.source,
+        base: prefill.source,
+        locked: prefill.locked,
+        files: {},
+        approvals: {},
+      };
       return this.view(await this.revise(caller, before, change, tx));
     });
   }
