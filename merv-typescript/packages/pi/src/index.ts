@@ -4,6 +4,7 @@ import type {} from '@merv/fleet/types';
 import type {} from '@merv/sessions/types';
 import { questionResponder } from './questions.js';
 import { check } from '@merv/contracts';
+import { reporter } from '@merv/contracts/issues';
 import { piConfig, type PiConfig } from './schema.js';
 import { PiService } from './service.js';
 import { recordLookTool } from './record-look.js';
@@ -19,6 +20,7 @@ export const piPlugin = {
   async apply(ctx: Context, config: PiConfig) {
     // The service checks the configuration, naming the first field it refuses.
     const pi = new PiService(ctx.state, ctx.scope, ctx.fleet, ctx.tools, ctx.blobs, config);
+    pi.issues = reporter(ctx);
     const { modelApiKeyEnv, host } = pi.config;
     check(
       process.env[modelApiKeyEnv] && process.env[host.credentialEnv],

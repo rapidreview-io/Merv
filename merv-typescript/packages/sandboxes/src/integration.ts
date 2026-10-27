@@ -1,5 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
+import { MervError } from '@merv/contracts';
+import { reporter } from '@merv/contracts/issues';
 import { SandboxRuns, sandboxRunMigrations } from './sandbox-runs.js';
 import { SandboxEvidence } from './sandbox-evidence.js';
 import { SandboxComputeWaits } from './compute-waits.js';
@@ -45,7 +47,9 @@ export const sandboxIntegrationPlugin = {
     ctx.plugin(sandboxesCreditsPlugin);
     await ctx.effect(async function* () {
       await ctx.state.migrate('sandbox-runs', sandboxRunMigrations);
+      const issues = reporter(ctx);
       const runs = new SandboxRuns(ctx.state, ctx.scope, ctx.workflows, ctx.sbxMerv);
+      runs.issues = issues;
       const evidence = new SandboxEvidence(
         ctx.state,
         ctx.scope,
@@ -72,10 +76,22 @@ export const sandboxIntegrationPlugin = {
         from: 'now',
         handle: (event, tx) => runs.event(event, tx),
       });
-      const runTimer = setInterval(() => runs.reconcile().catch(() => {}), 1000).unref();
-      const evidenceTimer = setInterval(() => evidence.reconcile().catch(() => {}), 5000).unref();
-      void runs.reconcile().catch(() => {});
-      void evidence.reconcile().catch(() => {});
+      // Each pass now and on its interval; a failed one is retried by the next.
+      const repeat = (where: string, pass: () => Promise<void>, ms: number) => {
+        const failed = (error: unknown) =>
+          issues.report({
+            class: 'platform',
+            where,
+            code: error instanceof MervError ? error.code : 'unexpected',
+            subject: where,
+            level: 'warn',
+            error,
+          });
+        void pass().catch(failed);
+        return setInterval(() => pass().catch(failed), ms).unref();
+      };
+      const runTimer = repeat('sandboxes.runs', () => runs.reconcile(), 1000);
+      const evidenceTimer = repeat('sandboxes.evidence', () => evidence.reconcile(), 5000);
       yield async () => {
         clearInterval(runTimer);
         clearInterval(evidenceTimer);
