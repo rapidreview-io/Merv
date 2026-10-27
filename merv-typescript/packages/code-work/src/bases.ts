@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { silent, type Issues } from '@merv/contracts/issues';
 import {
   CODE_CHECK_SLACK_SECONDS,
   codeCheckSpecSchema,
@@ -225,6 +226,7 @@ export class CodeBaseService {
   private readonly busy = new Map<string, Promise<void>>();
   private closed = false;
   private readonly executions = new Map<string, AbortController>();
+  issues: Issues = silent;
   constructor(
     private readonly state: State,
     private readonly repositories: CodeRepositories,
@@ -247,12 +249,21 @@ export class CodeBaseService {
   start(everyMs = 5000): void {
     if (bootMaintenance.active) return;
     if (this.timer) return;
+    const failed = (error: unknown) =>
+      this.issues.report({
+        class: 'platform',
+        where: 'code_work.bases',
+        code: error instanceof MervError ? error.code : 'unexpected',
+        subject: 'code_work.bases',
+        level: 'warn',
+        error,
+      });
     const tick = () =>
       void this.due()
         .then(async (projects) => {
-          for (const projectId of projects) await this.work(projectId).catch(() => undefined);
+          for (const projectId of projects) await this.work(projectId).catch(failed);
         })
-        .catch(() => undefined);
+        .catch(failed);
     this.timer = setInterval(tick, everyMs);
     this.timer.unref();
     tick();

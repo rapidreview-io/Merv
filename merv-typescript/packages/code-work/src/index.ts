@@ -1,4 +1,5 @@
 import { createService } from '@merv/contracts';
+import { reporter } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import type {} from '@merv/sessions/types';
 import type {} from './types.js';
@@ -19,15 +20,18 @@ export const codePlugin = {
   async apply(ctx: Context, config: { mainLanding?: boolean } = {}) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(
-          ctx.state,
-          ctx.scope,
-          ctx.sessions,
-          ctx.workflows,
-          ctx.reviews,
-          ctx.code,
-          {},
-          config,
+        Object.assign(
+          new CodeService(
+            ctx.state,
+            ctx.scope,
+            ctx.sessions,
+            ctx.workflows,
+            ctx.reviews,
+            ctx.code,
+            {},
+            config,
+          ),
+          { issues: reporter(ctx) },
         ),
       );
       yield () => service.close();

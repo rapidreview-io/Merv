@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { silent, type Issues } from '@merv/contracts/issues';
 import { z } from 'zod';
 import {
   check,
@@ -163,6 +164,7 @@ export class PiCore {
   readonly unsent = new Set<string>();
   /** Conversations sharing a host a transaction saved: they read it from their own snapshots. */
   readonly sharers = new Set<string>();
+  issues: Issues = silent;
   closed = false;
 
   constructor(

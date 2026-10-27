@@ -327,6 +327,8 @@ export class PiHosts implements FleetOwner {
     tx: Transaction,
     command: PiCommandRecord,
     reason: PiInterruption,
+    /** The worker's own words for why, bounded by its schema. */
+    note?: string,
   ): Promise<void> {
     if (!active.has(command.status)) return;
     const conversation = await this.core.conversation(tx, command.conversationId);
@@ -340,6 +342,27 @@ export class PiHosts implements FleetOwner {
     command.completedAt = this.core.time();
     if (conversation.activeCommandId === command.id) conversation.activeCommandId = null;
     await this.core.saveCommand(tx, command);
+    if (reason !== 'cancelled')
+      this.core.issues.report({
+        class: 'platform',
+        where: 'pi.turn',
+        code: reason,
+        subject: conversation.id,
+        level:
+          reason === 'service_unavailable' || reason === 'checkpoint_unavailable'
+            ? 'severe'
+            : reason === 'wallet_refused' || reason === 'ambiguous_prompt'
+              ? 'notice'
+              : 'warn',
+        note,
+        refs: {
+          projectId: conversation.projectId,
+          conversationId: conversation.id,
+          commandId: command.id,
+          allocationId: command.runtimeId,
+          hostId: command.hostId,
+        },
+      });
     await this.core.saveConversation(tx, conversation);
     this.core.unsent.add(conversation.id);
   }
@@ -381,7 +404,7 @@ export class PiHosts implements FleetOwner {
   }
 
   private async reconcile(): Promise<void> {
-    const renter = await this.hostCaller().catch(() => undefined);
+    const renter = await this.hostCaller().catch(this.failed(undefined));
     // Most passes find nothing to do: one read looks at every live host, and only a host with
     // something due takes the writer lock. One host's failure leaves the others' passes alone;
     // the next pass retries it.
@@ -392,11 +415,12 @@ export class PiHosts implements FleetOwner {
           "SELECT data_json FROM pi_hosts WHERE status='live'",
         )) {
           const host = decode<PiHostRecord>(row);
-          if (await this.settle(tx, host, renter, true).catch(() => false)) ids.push(host.id);
+          if (await this.settle(tx, host, renter, true).catch(this.failed(false)))
+            ids.push(host.id);
         }
         return ids;
       })
-      .catch(() => []);
+      .catch(this.failed<string[]>([]));
     for (const id of due) {
       try {
         await this.core.state.transaction(async (tx) => {
@@ -405,8 +429,9 @@ export class PiHosts implements FleetOwner {
         });
         this.core.streams.wake(id);
         this.core.announce();
-      } catch {
-        /* retried on the next pass */
+      } catch (error) {
+        // Retried on the next pass.
+        this.failed(undefined)(error);
       }
     }
     // Fleet's progress is what open pages are waiting on: one read sees every live conversation.
@@ -424,6 +449,20 @@ export class PiHosts implements FleetOwner {
         }
       })
       .catch(() => {});
+  }
+  /** What a pass reads in place of a step that failed, which the next pass retries. */
+  private failed<T>(fallback: T) {
+    return (error: unknown): T => {
+      this.core.issues.report({
+        class: 'platform',
+        where: 'pi.hosts',
+        code: error instanceof MervError ? error.code : 'unexpected',
+        subject: 'pi.hosts',
+        level: 'warn',
+        error,
+      });
+      return fallback;
+    };
   }
   /** Applies Fleet's facts to a host: N not ready (T6), C lost (T7), D released once drained
    * (T5), turns expired or out of the queue, the idle end (T8) and a deadline's rollover (T10).

@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import type { Issues } from '@merv/contracts/issues';
 import type { ScreenLook } from './types.js';
 import {
   check,
@@ -97,6 +98,10 @@ export class PiService implements Pi {
     this.hosts = new PiHosts(this.core);
     this.protocol = new PiWorkerProtocol(this.core, this.hosts);
     ({ config: this.config, streams: this.streams, tokens: this.tokens } = this.core);
+  }
+  /** Where Pi reports its interrupted turns and failed passes. */
+  set issues(issues: Issues) {
+    this.core.issues = issues;
   }
   readonly authenticateWorker: PiWorkerProtocol['authenticateWorker'] = (token) =>
     this.protocol.authenticateWorker(token);

@@ -1,6 +1,8 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { silent, type Issues } from '@merv/contracts/issues';
 import {
   check,
+  MervError,
   type Scope,
   type State,
   type StoredEvent,
@@ -51,6 +53,7 @@ export class SandboxRuns {
   /** When a run whose retire failed or was put off (its work's pipelines still finishing) is
    *  tried again: each try takes the Sandboxes account's lock. */
   private readonly waits = new Map<string, number>();
+  issues: Issues = silent;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -189,8 +192,17 @@ export class SandboxRuns {
           );
         });
         this.waits.delete(run.run_ref);
-      } catch {
+      } catch (error) {
         // The recorded scope remains pending across crashes and temporary host failures.
+        this.issues.report({
+          class: 'platform',
+          where: 'sandboxes.retire',
+          code: error instanceof MervError ? error.code : 'unexpected',
+          level: 'warn',
+          subject: run.run_ref,
+          refs: { projectId: run.project_id },
+          error,
+        });
       }
     }
   }

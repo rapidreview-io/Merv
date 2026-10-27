@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { reporter, silent, type Issues } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -153,11 +154,8 @@ const refusedAs =
     if (error instanceof MervError && statuses.includes(error.status)) return value;
     throw error;
   };
-/** Messages may carry credentials; operators get the project and the finite code only. */
-const skipped = (projectId: string, error: unknown) => {
-  const code = error instanceof MervError ? error.code : 'unexpected';
-  process.stderr.write(`${JSON.stringify({ event: 'fleet.workflow_skipped', projectId, code })}\n`);
-};
+/** Messages may carry credentials; an issue keeps the finite code only. */
+const codeOf = (error: unknown) => (error instanceof MervError ? error.code : 'unexpected');
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
@@ -168,6 +166,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   /** A step in progress survives a Main release: the restarted adapter takes its machine back. */
   readonly keepsRunning = true;
   readonly config: z.infer<typeof workflowConfig>;
+  issues: Issues = silent;
   /** The projects the last reconcile rented for. */
   private served = new Set<string>();
   /** Each project's review director actor, retained once made. */
@@ -265,11 +264,24 @@ export class FleetWorkflowAdapter implements FleetOwner {
       throw error;
     }
     this.timer = setInterval(() => {
-      void this.reconcile().catch(() => undefined);
+      void this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
     }, this.config.pollIntervalMs);
     this.timer.unref();
     // A missing model key leaves demand unserved, never the server down.
-    await this.reconcile().catch(() => undefined);
+    await this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
+  }
+  /** A failed pass, or a project one passed over (`projectId`): the next pass tries again. */
+  private failed(where: string, error: unknown, projectId?: string) {
+    const code = codeOf(error);
+    this.issues.report({
+      class: 'platform',
+      where,
+      code,
+      level: code === 'sandbox_not_connected' ? 'notice' : 'warn',
+      subject: projectId ?? where,
+      refs: { projectId },
+      error,
+    });
   }
   /** Revocation is fenced by each allocation's own source; a new director lets work finish. */
   private accepted(a: FleetAllocation): boolean {
@@ -612,7 +624,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       });
       return granted(row!);
     });
-    void this.reconcile().catch(() => undefined);
+    void this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
     return result;
   }
   /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
@@ -805,7 +817,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
               }
         served.set(projectId, wanted);
       } catch (error) {
-        skipped(projectId, error);
+        this.failed('fleet.workflow_skipped', error, projectId);
         failed.add(projectId);
       }
     }
@@ -878,6 +890,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
         grants.get(grantKey(projectId, id))?.prior_allocations,
         since.get(grantKey(projectId, id)),
       );
+      // Hosted machines that never claim this work: re-reported each pass while it holds.
+      if (unclaimed >= unclaimedAttemptLimit)
+        this.issues.report({
+          class: 'platform',
+          where: 'fleet.unclaimed',
+          code: 'unclaimed',
+          key: grantKey(projectId, id),
+          standing: true,
+          level: 'severe',
+          refs: { projectId, instanceId: id.slice(0, id.lastIndexOf(':')) },
+        });
       if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
@@ -917,7 +940,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       } catch (error) {
         // A refusal, such as the payer's spend cap, passes over the project's other targets this
         // pass; only a project without a connection is no longer served.
-        skipped(projectId, error);
+        this.failed('fleet.workflow_skipped', error, projectId);
         failed.add(projectId);
         if (error instanceof MervError && error.code === 'sandbox_not_connected')
           this.served.delete(projectId);
@@ -972,6 +995,7 @@ export const fleetWorkflowPlugin = {
       Date.now,
       ctx.state,
     );
+    adapter.issues = reporter(ctx);
     await adapter.start();
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.
