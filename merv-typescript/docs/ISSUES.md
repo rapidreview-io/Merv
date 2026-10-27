@@ -82,8 +82,9 @@ identity (`id, fingerprint, class, where_at, code, key, first_at`) or a falling 
     when its subject differs from the last kept; at most 20 a flush; a standing condition keeps
     only its first.
 - A failed flush keeps its batch, bounded, for the next. From the third failure in a row entries
-  go one at a time, so a row the database refuses is dropped (and counted) once another lands;
-  two refused with none landed mean the database is away and the rest wait. After 30 failures in
+  go one at a time: a row the database refuses (`state_constraint`, `state_invalid_value`,
+  `state_integer_range`) is dropped and counted; any other failure keeps that entry and the
+  rest for the next flush, ahead of new ones. After 30 failures in
   a row with a severe issue pending, the sink gets one digest `issues cannot be recorded`, at
   most every 30 minutes.
 
@@ -103,7 +104,9 @@ alert pass of at most 10 s.
 eventIds: [first, last]}`. Too far behind, the scan restarts at the head.
 - **Pin.** Up to 200 unpinned cases older than a minute a page, through
   `ctx.get('sessions')?.running.platformTrace(sessionIds)` (absent Sessions: skipped). A trace is
-  written once its visit has closed or the case is a day old; a session Sessions does not know
+  written 15 minutes after its visit closed (the runner's result, transcript and conversation
+  arrive after its release, uploads retried for ten minutes) or once the case is a day old; a
+  close reason that is not a code is left out; a session Sessions does not know
   keeps `{}`. The trace (`SessionTrace`) is one snapshot join: thread, instance, revision, role,
   harness, status, outcome, close reason, runner, host, allocation, the uploaded transcript, the
   conversation it left (the thread's while it is the latest, else the resuming visit's
@@ -118,7 +121,7 @@ eventIds: [first, last]}`. Too far behind, the scan restarts at the head.
 | where             | code                                                                                         | level, subject, refs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<tool>:<action>` | MervError code, `internal_error`, or a mounted tool's inner `error.code` (else `tool_error`) | 500 severe; other 5xx and the execution refusals (`execution_tool_forbidden`, `…_arguments_forbidden`, `…_reference_unavailable`) warn; other 4xx and mounted errors notice. Subject `<session, conversation or actor>:<digest(name, input)[0:16]>`; refs project, actor, client, session, thread, invocation, conversation, command, allocation. `MervError.wait` is never reported; a caller that is neither an agent, a session nor a conversation only at ≥ 500; a nested call's error once (`tools.reported`) |
-| `api_error`       | the answer's code                                                                            | ≥ 500 only, not while stopping, not an error a tool call reported; key `<METHOD> /<mount>` or `mcp`                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `api_error`       | the answer's code                                                                            | ≥ 500 only, not while stopping, not an error a tool call reported; key `<METHOD> /<mount>` or `mcp`; never an unmounted or withdrawn route's 503                                                                                                                                                                                                                                                                                                                                                                   |
 | `git.push`        | MervError code or `code_git_rejected`                                                        | notice; subject the fence's session, else the project; refs project, push, session, instance                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 **Questions (`sessions`).**
@@ -148,13 +151,14 @@ responder sweep settles the open questions that no longer stand) resolves both `
 | `fleet.not_ready`, `fleet.unpriced`, `fleet.machine_gone`                                       | `runtime_not_ready`, `fleet_unpriced`, `stopped`                                  | severe                                                                                                                                                     |
 | `fleet.stuck_releasing`                                                                         | `releasing`                                                                       | standing, severe: stopped over 10 minutes without the host acknowledging its shutdown                                                                      |
 | `fleet.queued`                                                                                  | `queued`                                                                          | standing: queued over 15 minutes                                                                                                                           |
+| `fleet.relay`                                                                                   | the provider's code, else the relay's                                             | key `<relay> <key env> <model>`, status the provider's; severe for a key it refuses (401, `invalid_api_key`), else an outage or timeout as warn            |
 | `fleet.pass`, `fleet.reconcile`                                                                 | `issueCode`                                                                       | swallowed passes                                                                                                                                           |
 | `fleet.workflow_skipped`                                                                        | `issueCode`                                                                       | standing, key the project; notice for `sandbox_not_connected` and `fleet_compute_cap`                                                                      |
 | `fleet.unclaimed`                                                                               | `unclaimed`                                                                       | standing, severe, key `<project> <target>`: hosted machines that never claim the work                                                                      |
 | `pi.turn`                                                                                       | the `PiInterruption`                                                              | not `cancelled`; severe for `service_unavailable`, `checkpoint_unavailable`; notice for `wallet_refused`, `ambiguous_prompt`; note the worker's own reason |
 | `pi.hosts`                                                                                      | `issueCode`                                                                       | swallowed host-pass steps                                                                                                                                  |
 | `code.maintain`, `code_work.bases`, `code_work.landing`, `sandboxes.runs`, `sandboxes.evidence` | `issueCode`                                                                       | swallowed passes: a pass failing every tick becomes a loop                                                                                                 |
-| `code.capture_quarantined`                                                                      | `capture_quarantined`                                                             | severe, key the unit                                                                                                                                       |
+| `code.capture_quarantined`                                                                      | `capture_quarantined`                                                             | severe, key the unit, subject the session; refs the session and operation (`commandId`)                                                                    |
 | `sandboxes.retire`                                                                              | `issueCode`                                                                       | subject the run                                                                                                                                            |
 | `consumer`                                                                                      | the handler's code                                                                | standing, key the consumer, severe from the fifth attempt; refs the event                                                                                  |
 | `plugin`                                                                                        | the error's code, `plugin_failed`, or an unready required entry's state           | severe, key the plugin: the root logger exporter (activation, reload, dispose) and a refused boot                                                          |
@@ -190,7 +194,7 @@ boot.
 - **Reading agents.** `readsAgents` admits the platform actor (`PLATFORM_ACTOR`, now in
   `contracts/scope-models.ts`), so the admin's drill-in reads an agent's stream and conversation.
 - **Following a case.** The alert links `/ui/admin/issues?issue=<id>`; each case's `Thread →`
-  opens its visit in the drill-in; `Download case` saves the detail JSON for an investigating
+  opens its visit in the drill-in, `Work →` the work a case names without a visit; `Download case` saves the detail JSON for an investigating
   agent; every id sits in the case row's hover title.
 
 ## 5. Alerts (`alerts.ts`)
@@ -206,7 +210,8 @@ webhook URL", so the Credentials page lists it), publicOrigin }`. `deploy/render
   (linked title · count · since) and the digest time, with a 10 s timeout. A non-2xx throws.
 - **Pass.** The open severe issues owed an alert (`alerted_at` null, not `issues.*`), oldest 20,
   one digest at most every five minutes by the durable `max(alerted_at)`, so a restart never
-  sends sooner. On success they are marked; on failure they stay owed, the sink is retried after
+  sends sooner. On success they are marked, and the store waits five minutes even when the
+  marking fails; on failure they stay owed, the sink is retried after
   1, 2, 4, then 10 minutes, and `issues.alert` is reported. Each episode alerts once; a spike or
   loop re-arms it.
 - **Latency.** A severe report: about a second to flush plus at most 30 s, under a minute after a

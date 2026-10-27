@@ -59,9 +59,11 @@ export async function floods(state: State, issues: Issues): Promise<() => Promis
   };
 }
 
-/** Pins each kept case's visit once: when it has ended, or as it stands a day on. A case whose
- *  session Sessions does not know keeps `{}`. Retirement and the next visit take the rest. Each
- *  pass pages past the cases whose visit is still open. */
+/** Pins each kept case's visit once: fifteen minutes after it ended, when what the runner
+ *  delivers after its release (its result, transcript and conversation, retried for ten
+ *  minutes) is in, or as it stands a day on. A case whose session Sessions does not know keeps
+ *  `{}`. Retirement and the next visit take the rest. Each pass pages past the cases whose visit
+ *  is still owed. */
 export async function pin(state: State, traces: Traces, clock = Date.now): Promise<void> {
   const now = clock();
   for (let after = 0; ;) {
@@ -78,7 +80,8 @@ export async function pin(state: State, traces: Traces, clock = Date.now): Promi
     const pins = rows.flatMap((row): [string, string][] => {
       const trace = found.get(row.session_id);
       if (!trace) return [[row.id, '{}']];
-      return trace.closedAt || row.at < iso(now - 1440 * MINUTE)
+      return (trace.closedAt && trace.closedAt < iso(now - 15 * MINUTE)) ||
+        row.at < iso(now - 1440 * MINUTE)
         ? [[row.id, JSON.stringify(trace)]]
         : [];
     });

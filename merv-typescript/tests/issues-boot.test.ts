@@ -8,7 +8,7 @@ import type { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -186,4 +186,10 @@ test('a crashed or killed run is reported by the next under its release; a clean
   third.child.kill('SIGTERM');
   assert.equal(await third.exited, 0);
   assert.equal(existsSync(marker), false);
+  // A marker that cannot be written only goes unreported: the run serves and stops cleanly.
+  mkdirSync(marker);
+  const fourth = serve('r4');
+  await fourth.ready;
+  fourth.child.kill('SIGTERM');
+  assert.equal(await fourth.exited, 0);
 });

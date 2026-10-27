@@ -42,6 +42,7 @@ import {
   migrationV6,
 } from './schema.js';
 import { ownLimits } from './model-ledger.js';
+import { relayFault } from './codex-relay.js';
 import { ModelRelay } from './model-relay.js';
 import { rentedWork } from './running.js';
 import type {
@@ -827,6 +828,21 @@ export class FleetService implements Fleet {
         ]);
       },
       onFailure: async (record, grant) => {
+        // What the provider did: a key it refuses is severe, its outage a warning a spike raises.
+        const rejected =
+          record.upstreamHttpStatus === 401 || record.providerCode === 'invalid_api_key';
+        if (
+          rejected ||
+          (['upstream_failed', 'relay_timeout'].includes(record.code) && relayFault(record))
+        )
+          this.issues.report({
+            class: 'platform',
+            where: 'fleet.relay',
+            code: record.providerCode ?? record.code,
+            key: `${config.name} ${keyEnv} ${record.model}`,
+            status: record.upstreamHttpStatus,
+            level: rejected ? 'severe' : 'warn',
+          });
         await Promise.all([
           config.onFailure?.(record, grant),
           record.code === 'upstream_failed' &&

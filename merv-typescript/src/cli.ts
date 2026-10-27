@@ -202,18 +202,19 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
       startedAt: new Date().toISOString(),
       release: process.env.MERV_RELEASE ?? null,
     };
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    writeFileSync(marker, JSON.stringify(current));
-    const clear = () => rmSync(marker, { force: true });
-    // Observes only: Node's own handling of the crash, and its exit, are untouched.
-    process.on('uncaughtExceptionMonitor', (error, origin) => {
+    // Telemetry: a marker that cannot be written or removed only goes unreported.
+    const mark = (value?: object) => {
       try {
-        writeFileSync(
-          marker,
-          JSON.stringify({ ...current, crash: { origin, ...errorFacts(error) } }),
-        );
+        if (!value) return rmSync(marker, { force: true });
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        writeFileSync(marker, JSON.stringify(value));
       } catch {}
-    });
+    };
+    mark(current);
+    // Observes only: Node's own handling of the crash, and its exit, are untouched.
+    process.on('uncaughtExceptionMonitor', (error, origin) =>
+      mark({ ...current, crash: { origin, ...errorFacts(error) } }),
+    );
     let app: Awaited<ReturnType<typeof createApp>>;
     try {
       app = await createApp({
@@ -224,8 +225,7 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
       });
     } catch (error) {
       // A refused start is no unclean exit, and the run before it is reported by the next to boot.
-      if (previous) writeFileSync(marker, JSON.stringify(previous));
-      else clear();
+      mark(previous);
       throw error;
     }
     if (previous) {
@@ -250,7 +250,7 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
     const stop = () => {
       void app.stop().then(
         () => {
-          clear();
+          mark();
           process.exit(0);
         },
         (error) => {
@@ -289,7 +289,7 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
       process.removeListener('SIGINT', stop);
       process.removeListener('SIGTERM', stop);
       await app.stop();
-      clear();
+      mark();
       throw error;
     }
     return;

@@ -200,6 +200,9 @@ interface CatalogState {
   current: Set<Entry>;
   owned: Set<Entry>;
 }
+/** A caller kind's refusal, fresh each time: an error object is reported once. */
+const refusal = ({ code, message, status, details }: MervError) =>
+  new MervError(code, message, status, details);
 const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const namespace = '_';
@@ -679,7 +682,7 @@ export class ToolRegistry implements Tools {
     if (!kind) return undefined;
     const rules = this.callerRules.get(kind);
     if (!rules) throw new MervError('unavailable', `Tools are unavailable to ${kind} callers`, 503);
-    if (!rules.offers) throw rules.forbidden;
+    if (!rules.offers) throw refusal(rules.forbidden);
     return rules;
   }
 
@@ -959,9 +962,12 @@ export class ToolRegistry implements Tools {
       try {
         this.issues.report({
           class: 'tool',
+          // A name no tool answers to is the agent's own words: the subject's digest keeps it.
           where: identity
             ? `${identity.tool}${identity.action ? `:${identity.action}` : ''}`
-            : name,
+            : code === 'unknown_tool'
+              ? code
+              : name,
           code,
           status,
           level,
@@ -1051,7 +1057,7 @@ export class ToolRegistry implements Tools {
     name = entry.name;
     if (entry.alias && !this.aliasesOpen && !caller.session)
       throw this.renamed(name, entry.alias, entry.alias.wrap(input));
-    if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
+    if (rules && !rules.offers!(entry.tool)) throw refusal(rules.forbidden);
     // Judge aliases by their target; writes retain their own permission checks.
     const became = entry.alias?.tool ?? (entry.definition as ToolDefinition).became;
     const judged = became ? this.entries.get(became) : entry;

@@ -660,7 +660,13 @@ export class CodeReceiver {
           code: 'capture_quarantined',
           key: upload.unitId,
           level: 'severe',
-          refs: { projectId: row.project_id, instanceId: upload.unitId },
+          subject: upload.sessionId,
+          refs: {
+            projectId: row.project_id,
+            instanceId: upload.unitId,
+            sessionId: upload.sessionId,
+            commandId: row.id,
+          },
         });
       }
       await this.core.state.appendEvent(tx, {

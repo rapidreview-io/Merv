@@ -327,8 +327,10 @@ export class ApiServer {
           }
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
-          // Keyed by mount, so one fault across ids is one issue.
-          this.failed(error, status, body.code, `${req.method} /${pathOf(req).split('/')[1]}`);
+          // Keyed by mount, so one fault across ids is one issue; no mount is no fault.
+          const mount = `/${pathOf(req).split('/')[1]}`;
+          if (this.mounts.get(mount))
+            this.failed(error, status, body.code, `${req.method} ${mount}`);
         }),
         new Promise((closed) => res.once('close', closed)),
       ]);

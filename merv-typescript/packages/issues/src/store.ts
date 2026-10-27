@@ -1,5 +1,6 @@
 import {
   check,
+  MervError,
   newId,
   sha256Hex,
   type SqlValue,
@@ -37,6 +38,10 @@ const CLASSES: readonly IssueClass[] = ['tool', 'question', 'platform'];
 const LEVELS: readonly IssueLevel[] = ['notice', 'warn', 'severe'];
 const higher = (a: IssueLevel, b: IssueLevel) => (LEVELS.indexOf(a) >= LEVELS.indexOf(b) ? a : b);
 const iso = (ms: number) => new Date(ms).toISOString();
+/** A refusal the database repeats on every retry; anything else may pass a moment later. */
+const refused = (error: unknown) =>
+  error instanceof MervError &&
+  ['state_constraint', 'state_invalid_value', 'state_integer_range'].includes(error.code);
 const word = (value: unknown, max: number) => cleanText(value, max) || undefined;
 /** Refs as kept: ids only, each clipped, at most 30 of them. */
 const ids = (refs: IssueRefs | undefined): IssueRefs =>
@@ -246,29 +251,30 @@ export class IssueStore implements IssueService {
     if (!this.pending.size) return;
     const all = [...this.pending];
     this.pending = new Map();
-    // From the third failure in a row entries go one at a time, so a row the database refuses is
-    // dropped once another lands. Two refused with none landed mean it is away: the rest wait,
-    // ahead of those two.
-    const parts = this.failures < 2 ? [all] : all.map((entry) => [entry]);
-    const failed: [string, Pending][] = [];
-    let landed = false;
-    let tried = 0;
-    for (const part of parts) {
-      if (!landed && failed.length >= 2) break;
-      tried++;
+    // From the third failure in a row entries go one at a time: a row the database refuses is
+    // dropped, and any other failure keeps that entry and the rest, ahead of new ones.
+    const alone = this.failures >= 2;
+    const parts = alone ? all.map((entry) => [entry]) : [all];
+    let kept: [string, Pending][] = [];
+    for (const [i, part] of parts.entries()) {
       try {
         await this.state.transaction((tx) => this.apply(tx, new Map(part)));
-        landed = true;
-      } catch {
-        failed.push(...part);
+      } catch (error) {
+        if (alone && refused(error)) {
+          this.dropped++;
+          continue;
+        }
+        // The database answered the entries before this one: it is not away.
+        if (i) this.failures = 1;
+        kept = parts.slice(i).flat();
+        break;
       }
     }
-    if (landed) {
-      this.dropped += failed.length;
+    if (!kept.length) {
       this.failures = 0;
       return;
     }
-    const batch = new Map([...parts.slice(tried).flat(), ...failed]);
+    const batch = new Map(kept);
     for (const [id, entry] of this.pending) {
       const older = batch.get(id);
       if (older) older.ops.push(...entry.ops.slice(0, Math.max(0, OPS - older.ops.length)));
@@ -448,6 +454,8 @@ export class IssueStore implements IssueService {
       return;
     }
     this.alertFailures = 0;
+    // Sent: a marking that fails waits out the five minutes rather than sending it again.
+    this.alertAt = now + 5 * MINUTE;
     await this.state.transaction((tx) =>
       tx.run(
         `UPDATE issues SET alerted_at=? WHERE alerted_at IS NULL AND (id,opened_at) IN (${owed.map(() => '(?,?)').join(',')})`,

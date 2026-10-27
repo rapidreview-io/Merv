@@ -411,6 +411,10 @@ test('a case pins a visit’s conversation after the next visit took it over, an
   assert.deepEqual(before.conversation, conversation, 'the thread’s own while it is the latest');
   assert.deepEqual(traces.get(second.session.id)!.conversation, later);
   assert.deepEqual(await f.sessions.running.platformTrace([]), new Map());
+  // A halt's reason in words is not pinned.
+  await f.sessions.dispatch.halt(f.owner, { sessionId: second.session.id, reason: 'Stop sk-1' });
+  const [halted] = (await f.sessions.running.platformTrace([second.session.id])).values();
+  assert.deepEqual([halted!.outcome, halted!.closeReason], ['halted', undefined]);
 
   // A platform administrator reads what agents say, as an operator does; a reader does not.
   const require = f.app.ctx.scope.require.bind(f.app.ctx.scope);

@@ -75,11 +75,18 @@ export function useDrawer<T extends { id: string }>(
 ) {
   useSidebarEscape(!!openId, () => setOpen(undefined));
   const last = useRef<string>();
+  // Where the open row stands: one that left the list (resolved, or filtered out) goes on from there.
+  const at = useRef(-1);
+  const index = rows.findIndex((row) => row.id === openId);
+  if (index >= 0) at.current = index;
   useEffect(() => {
-    if (!openId && last.current)
-      [...document.querySelectorAll<HTMLElement>(selector)]
-        .find((name) => name.dataset.id === last.current)
-        ?.focus();
+    if (!openId && last.current) {
+      const names = [...document.querySelectorAll<HTMLElement>(selector)];
+      (
+        names.find((name) => name.dataset.id === last.current) ??
+        names[Math.min(at.current, names.length - 1)]
+      )?.focus();
+    }
     last.current = openId;
   }, [openId, selector]);
   const held = useRef(rows);
@@ -89,7 +96,8 @@ export function useDrawer<T extends { id: string }>(
     const onKey = (event: KeyboardEvent) => {
       const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
       if (!step || event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
-      const next = held.current[held.current.findIndex((row) => row.id === openId) + step];
+      const index = held.current.findIndex((row) => row.id === openId);
+      const next = held.current[index >= 0 ? index + step : at.current + Math.min(step, 0)];
       if (!next) return;
       event.preventDefault();
       setOpen(next.id);

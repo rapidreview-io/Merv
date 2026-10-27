@@ -7,6 +7,7 @@ import {
   type Role,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
+import type { IssueReport } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -898,7 +899,9 @@ test('Pi’s model relay charges a worker’s call before it runs and settles it
   await f.pi.begin(bound.token, bound.input);
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
   const { fetch: send } = globalThis;
+  let refused = false;
   const asked = provider(t, async () => {
+    if (refused) return new Response('{}', { status: 401 });
     const completed = {
       type: 'response.completed',
       response: {
@@ -953,6 +956,30 @@ test('Pi’s model relay charges a worker’s call before it runs and settles it
     (await spent()).map(({ tokens }) => Number(tokens)),
     [15],
   );
+  // A key the provider refuses is Fleet's severe issue, named by relay, key and model.
+  const reports: IssueReport[] = [];
+  f.fleet.issues = { report: (r) => void reports.push(r), resolve() {} };
+  refused = true;
+  const again = await send(`http://127.0.0.1:${port}/pi-model/responses`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${bound.work.modelToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  assert.equal(again.status, 502, await again.text());
+  for (let tries = 0; tries < 50 && !reports.length; tries++) await pause(10);
+  assert.deepEqual(reports, [
+    {
+      class: 'platform',
+      where: 'fleet.relay',
+      code: 'upstream_failed',
+      key: `pi MERV_PI_MODEL_API_KEY ${grant.model}`,
+      status: 401,
+      level: 'severe',
+    },
+  ]);
 });
 
 test('a person’s Agent tokens are charged before each call and settled after, and refused at the day’s ceiling', async (t) => {

@@ -669,12 +669,12 @@ export class SessionRunning {
     if (!sessionIds.length) return new Map();
     // The conversation a visit left is its thread's while it is the latest, and after that the
     // one the visit that resumed it names, which the thread no longer holds. A fact a visit
-    // lacks is absent, never null.
+    // lacks is absent, never null; a close reason that is not a code (a halt's words) too.
     const rows = await this.state.snapshotTransaction((tx) =>
       tx.all<{ id: string; trace: string }>(
         `SELECT s.id,jsonb_strip_nulls(jsonb_build_object('projectId',s.project_id,
             'threadId',s.thread_id,'instanceId',s.instance_id,'revision',s.revision,'role',s.role,
-            'harness',t.harness,'status',s.status,'outcome',s.outcome,'closeReason',s.close_reason,
+            'harness',t.harness,'status',s.status,'outcome',s.outcome,'closeReason',CASE WHEN s.close_reason ~ '^[a-z0-9_.:-]{1,80}$' THEN s.close_reason END,
             'createdAt',s.created_at,'closedAt',s.closed_at,'runnerId',s.runner_id,
             'hostRef',s.host_ref,'allocationId',a.allocation_id,
             'transcript',CASE WHEN r.sha256 IS NOT NULL THEN jsonb_build_object('sha256',r.sha256,'size',r.size) END,

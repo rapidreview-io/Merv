@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Context } from 'cordis';
-import { sha256Hex, type SqlValue, type State, type Transaction } from '@merv/contracts';
+import { MervError, sha256Hex, type SqlValue, type State, type Transaction } from '@merv/contracts';
 import type { IssueReport, SessionTrace } from '@merv/contracts/issues';
 import issuesPlugin, { IssueStore } from '@merv/issues';
 import { slackSink, type AlertDigest, type AlertSink } from '@merv/issues/alerts';
@@ -289,7 +289,7 @@ test('the flood scan counts each window of events once', async () => {
   ]);
 });
 
-test('a case pins its visit once, after the visit ended or a day on', async () => {
+test('a case pins its visit once, fifteen minutes after the visit ended or a day on', async () => {
   const f = await bed();
   for (const sessionId of ['ses_closed', 'ses_open', 'ses_unknown'])
     f.store.report({ ...tool, subject: sessionId, refs: { sessionId } });
@@ -317,8 +317,12 @@ test('a case pins its visit once, after the visit ended or a day on', async () =
   assert.deepEqual(Object.values(await pinned()), [null, null, null], 'Sessions absent');
   await pin(f.state, async () => traces, f.time);
   let now = await pinned();
+  assert.deepEqual(Object.values(now), [null, null, '{}'], 'its deliveries still owed');
+  f.clock.now += 15 * MINUTE;
+  await pin(f.state, async () => traces, f.time);
+  now = await pinned();
   assert.deepEqual(JSON.parse(now.ses_closed), traces.get('ses_closed'));
-  assert.deepEqual([now.ses_open, now.ses_unknown], [null, '{}']);
+  assert.equal(now.ses_open, null);
   traces = new Map([
     ['ses_closed', trace('2026-10-27T11:00:00.000Z')],
     ['ses_open', trace()],
@@ -363,7 +367,7 @@ test('the pin pages past cases whose visit is still open', async () => {
         ...visit,
         status: 'closed',
         createdAt: '2026-10-27T09:00:00.000Z',
-        closedAt: '2026-10-27T10:01:00.000Z',
+        closedAt: '2026-10-27T09:40:00.000Z',
       },
     ],
   ]);
@@ -458,9 +462,10 @@ test('stop writes the reports that arrive while a flush is in flight', async () 
   for (const code of ['a', 'b']) assert.equal((await f.row(idOf({ ...tool, code }))).count, 1);
 });
 
-test('a row the database refuses is dropped once others land; repeats stay in an INTEGER', async () => {
+test('alone, a row the database refuses is dropped and one that times out waits; repeats stay in an INTEGER', async () => {
   const f = await bed();
-  // A database that refuses any statement naming `poison`.
+  // A database that refuses any statement naming `poison`, and times out once on `late`.
+  let late = true;
   const picky = Object.assign(Object.create(f.state) as State, {
     transaction: (fn: (tx: Transaction) => Promise<unknown>) =>
       f.state.transaction((tx) =>
@@ -469,7 +474,11 @@ test('a row the database refuses is dropped once others land; repeats stay in an
           all: tx.all.bind(tx),
           get: tx.get.bind(tx),
           run: (sql: string, ...args: SqlValue[]) =>
-            args.includes('poison') ? Promise.reject(new Error('refused')) : tx.run(sql, ...args),
+            args.includes('poison')
+              ? Promise.reject(new MervError('state_constraint', 'refused', 409))
+              : args.includes('late') && late && !(late = false)
+                ? Promise.reject(new MervError('state_timeout', 'timed out', 503))
+                : tx.run(sql, ...args),
         } as Transaction),
       ),
   });
@@ -477,15 +486,34 @@ test('a row the database refuses is dropped once others land; repeats stay in an
   store.report({ ...tool, code: 'poison' });
   store.report({ ...tool, code: 'big', n: 3_000_000_000 });
   store.report({ ...tool, code: 'big', n: 3_000_000_000 });
+  store.report({ ...tool, code: 'late' });
   await settle();
   for (let i = 0; i < 3; i++) await store.flush();
   const [big] = await f.cases(idOf({ ...tool, code: 'big' }));
   assert.equal(big!.repeats, 2 ** 31 - 1);
   await store.flush();
+  assert.equal((await f.row(idOf({ ...tool, code: 'late' }))).count, 1);
   assert.equal(
     (await f.row(idOf({ class: 'platform', where: 'issues.dropped', code: 'overflow' }))).count,
     1,
   );
+});
+
+test('a digest sent whose marking fails is not sent again within five minutes', async () => {
+  const { sent, own } = sink();
+  const f = await bed();
+  f.store.report({ ...tool, level: 'severe' });
+  await f.flush();
+  const stuck = Object.assign(Object.create(f.state) as State, {
+    transaction: async () => {
+      throw new MervError('state_timeout', 'timed out', 503);
+    },
+  });
+  const store = new IssueStore(stuck, own, f.time);
+  await assert.rejects(store.alertPass(), { code: 'state_timeout' });
+  f.clock.now += MINUTE / 2;
+  await store.alertPass();
+  assert.equal(sent.length, 1);
 });
 
 test('the plugin flushes and alerts as it is disposed', async (t) => {

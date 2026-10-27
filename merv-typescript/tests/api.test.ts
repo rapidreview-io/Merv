@@ -620,8 +620,15 @@ test('mount prefixes are single segments with public paths inside them, and with
   assert.equal((await fetch(`${url}/nowhere`)).status, 404);
   withdraw();
   withdraw();
-  const withdrawn = await fetch(`${url}/open/door`);
-  assert.deepEqual([withdrawn.status, (await withdrawn.json()).error.code], [503, 'unavailable']);
+  // Neither a withdrawn route nor one never mounted is a fault of the server's.
+  api.issues = lineOnly();
+  const logged = await stderrOf(async () => {
+    const withdrawn = await fetch(`${url}/open/door`);
+    assert.deepEqual([withdrawn.status, (await withdrawn.json()).error.code], [503, 'unavailable']);
+    const unmounted = await fetch(`${url}/nowhere`, { headers: { authorization: 'Bearer x' } });
+    assert.equal(unmounted.status, 503);
+  });
+  assert.deepEqual(logged, []);
   // Mounted again, the prefix serves again.
   api.mount('/open', () => ({ again: true }), { public: true });
   assert.deepEqual(await (await fetch(`${url}/open`)).json(), { again: true });

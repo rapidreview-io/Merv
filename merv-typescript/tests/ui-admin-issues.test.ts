@@ -103,7 +103,10 @@ test('?issue= opens its drawer, whose Resolve issue posts and leaves once resolv
     body: { rows: [issue('issue_1', { state })], open: 1, severe: 1, at },
   }));
   serve('/admin/issues/issue_1', () => ({
-    body: { issue: issue('issue_1', { state }), cases: [kept] },
+    body: {
+      issue: issue('issue_1', { state }),
+      cases: [kept, { ...kept, id: 'case_2', refs: { instanceId: 'wf_9' }, trace: null }],
+    },
   }));
   serve('/admin/issues/issue_1/resolve', () => {
     state = 'resolved';
@@ -116,8 +119,17 @@ test('?issue= opens its drawer, whose Resolve issue posts and leaves once resolv
   assert.match(said, /tool failed/);
   assert.match(said, /Thread →/);
   for (const id of ['session_1', 'thread_1', 'wf_1', 'a53efa40']) assert.ok(!said.includes(id));
-  const link = drawer().querySelector<HTMLAnchorElement>('a.admin-more')!;
-  assert.equal(link.getAttribute('href'), '/admin/p/project_a/work?key=work:wf_1&thread=thread_1');
+  // A case that names only its work opens the work.
+  assert.deepEqual(
+    [...drawer().querySelectorAll('a.admin-more')].map((a) => [
+      a.textContent,
+      a.getAttribute('href'),
+    ]),
+    [
+      ['Thread →', '/admin/p/project_a/work?key=work:wf_1&thread=thread_1'],
+      ['Work →', '/admin/p/project_a/work?key=work:wf_9'],
+    ],
+  );
   assert.match(drawer().querySelector('li')!.title, /session session_1/);
   await click('Resolve issue');
   await settle(20);
@@ -145,6 +157,39 @@ test('the drawer steps with ↑ and ↓, and Escape hands the cursor back to its
   await key('Escape');
   assert.ok(drawer().hidden);
   assert.equal((document.activeElement as HTMLElement).dataset.id, 'issue_2');
+});
+
+test('an issue resolved leaves the list, and ↓ or Escape go on from where it stood', async (t) => {
+  t.after(unmount);
+  for (const [press, lands] of [
+    ['ArrowDown', 'issue_3'],
+    ['ArrowUp', 'issue_1'],
+    ['Escape', 'issue_3'],
+  ]) {
+    let state = 'open';
+    const rows = () =>
+      ['issue_1', 'issue_2', 'issue_3'].map((id) => issue(id, id === 'issue_2' ? { state } : {}));
+    serve('/admin/issues', () => ({ body: { rows: rows(), open: 3, severe: 3, at } }));
+    for (const id of ['issue_1', 'issue_2', 'issue_3'])
+      serve(`/admin/issues/${id}`, () => ({
+        body: { issue: rows().find((r) => r.id === id), cases: [] },
+      }));
+    serve('/admin/issues/issue_2/resolve', () => {
+      state = 'resolved';
+      return { body: { id: 'issue_2', state } };
+    });
+    await open('/admin/issues?issue=issue_2');
+    await click('Resolve issue');
+    await settle(20);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: press, bubbles: true }));
+    await settle(20);
+    const on =
+      press === 'Escape'
+        ? (document.activeElement as HTMLElement).dataset.id
+        : document.querySelector<HTMLElement>('.admin-name[aria-expanded="true"]')?.dataset.id;
+    assert.equal(on, lands, press);
+    await unmount();
+  }
 });
 
 test('with only resolved issues the page says Nothing open, and Clear filters shows them', async (t) => {

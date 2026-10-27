@@ -144,6 +144,23 @@ test("a person's refusal is not reported, but a fault is, severe, and the API do
   await tools.close();
 });
 
+test('each refusal of a caller kind is reported, and a name no tool answers to is not kept', async () => {
+  const { tools, issues } = registry();
+  const forbidden = new MervError('tool_forbidden', 'Not offered', 403);
+  tools.registerCallerRules('conversation', { offers: () => false, forbidden });
+  for (const id of ['c1', 'c2']) {
+    const conversation = { id, epoch: 1, commandId: 'cmd', runtimeId: 'rt' };
+    await assert.rejects(tools.invoke('item.write', { ...caller, conversation }, {}), {
+      code: 'tool_forbidden',
+    });
+  }
+  await assert.rejects(tools.invoke('sk-secret', caller, {}, true), { code: 'unknown_tool' });
+  assert.deepEqual(
+    issues.reports.map(({ where, code }) => `${where} ${code}`),
+    ['item.write tool_forbidden', 'item.write tool_forbidden', 'unknown_tool unknown_tool'],
+  );
+});
+
 test("a mounted tool's own failure is a notice with its inner code", async () => {
   const { tools, issues } = registry();
   const result = await tools.invoke('item.mounted', caller, {}, true);
@@ -285,7 +302,13 @@ test('a quarantined final capture is reported once it commits, and not when it r
       code: 'capture_quarantined',
       key: f.unitId,
       level: 'severe',
-      refs: { projectId: f.admin.projectId, instanceId: f.unitId },
+      subject: 'ses_1',
+      refs: {
+        projectId: f.admin.projectId,
+        instanceId: f.unitId,
+        sessionId: 'ses_1',
+        commandId: id,
+      },
     },
   ]);
 });

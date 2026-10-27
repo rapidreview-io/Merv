@@ -278,10 +278,12 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
             const { projectId } = c;
             const thread = c.trace?.threadId ?? c.refs.threadId;
             const instance = c.trace?.instanceId ?? c.refs.instanceId;
+            const at = thread && `thread=${part(thread)}`;
             const to =
               projectId &&
-              thread &&
-              `/admin/p/${part(projectId)}/${instance ? `work?key=work:${part(instance)}&` : 'sessions?'}thread=${part(thread)}`;
+              (instance
+                ? `/admin/p/${part(projectId)}/work?key=work:${part(instance)}${at ? `&${at}` : ''}`
+                : at && `/admin/p/${part(projectId)}/sessions?${at}`);
             const ids = {
               session: c.refs.sessionId,
               invocation: c.refs.invocationId,
@@ -311,7 +313,7 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
                 )}
                 {to && (
                   <Link className="admin-more" to={to} reloadDocument>
-                    Thread →
+                    {thread ? 'Thread' : 'Work'} →
                   </Link>
                 )}
               </li>
