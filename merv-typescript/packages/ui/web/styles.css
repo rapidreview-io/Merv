@@ -8313,6 +8313,13 @@ html.modal-open {
 .admin-ledger .guard {
   flex-basis: 100%;
 }
+/* An issue's error: its code, then each frame on a line of its own, faint. */
+.admin-frame {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
 /* The drill-in: one thin line above the member shell, which stands below it. */
 :root {
   --drill-h: 36px;

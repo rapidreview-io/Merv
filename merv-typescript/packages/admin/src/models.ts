@@ -2,6 +2,7 @@
  * What the /admin routes answer: types alone, written out rather than borrowed from the owners
  * they are composed from, so the browser reads the same ones (`@merv/admin/models`).
  */
+import type { IssueCase, IssueRow } from '@merv/contracts/issues';
 import type { RunningPhrase } from '@merv/contracts/running';
 import type { UsageTotals } from '@merv/sessions/models';
 
@@ -133,4 +134,28 @@ export interface PersonCredits {
 /** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
 export interface AdminCredits {
   people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
+}
+
+export type {
+  ErrorFacts,
+  IssueCase,
+  IssueClass,
+  IssueLevel,
+  IssueRow,
+  SessionTrace,
+} from '@merv/contracts/issues';
+type Named = { id: string; name: string };
+/** An issue with the projects its kept cases name, those Scope still knows. */
+export type AdminIssue = Omit<IssueRow, 'projects'> & { projects: Named[] };
+/** `GET /admin/issues`: one read for the page and the rail's count of open severe issues. */
+export interface AdminIssues {
+  rows: AdminIssue[];
+  open: number;
+  severe: number;
+  at: string;
+}
+/** `GET /admin/issues/:id`, which `Download case` saves as it is. */
+export interface AdminIssueDetail {
+  issue: AdminIssue;
+  cases: (IssueCase & { project: Named | null })[];
 }
