@@ -1,9 +1,9 @@
 # Platform admin
 
-`/ui/admin` is the operator's view of the whole product: what work runs, what credit each person
-holds per sandbox provider, and which credential serves which purpose. Only the human identities
-in `MERV_ADMIN_IDENTITIES` (exact issuer/subject pairs, verified sign-in) may open it. Project
-roles, user keys, machine keys and agent credentials never inherit it.
+`/ui/admin` is the operator's view of the whole product: what work runs, what went wrong, what
+credit each person holds per sandbox provider, and which credential serves which purpose. Only
+the human identities in `MERV_ADMIN_IDENTITIES` (exact issuer/subject pairs, verified sign-in)
+may open it. Project roles, user keys, machine keys and agent credentials never inherit it.
 
 ## Ownership
 
@@ -13,6 +13,7 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Platform read authority (`caller.platform`)              | `@merv/scope` slot, `@merv/admin` installs it                                                                                 | read-only, synthetic actor, never delegates                                                                                                                                                                                                                                                                                                                                                        |
 | Platform caller tool rules                               | `@merv/api` registry `platform` kind, `@merv/admin` installs them                                                             | read tools only                                                                                                                                                                                                                                                                                                                                                                                    |
 | Work state                                               | `@merv/workflows` (instances, definitions, blockers)                                                                          | terminal states per version                                                                                                                                                                                                                                                                                                                                                                        |
+| Issues, their cases and alerts                           | `@merv/issues` (`issues`, `required: false`; docs/ISSUES.md)                                                                  | `platformIssues`, `platformIssue` and `close`, platform reads never exposed through a tool, a lease or a machine key                                                                                                                                                                                                                                                                               |
 | Fleet spend, model-token ledgers, relay outcomes         | `@merv/fleet`                                                                                                                 | a read per ledger over UTC days [from, to); each person's daily dollars (`fleet_usd_limits`) and the admin's token cap for them (`fleet_model_caps`), which a person's own limit (`fleet_model_limits`, the `fleet.daily_tokens` tool) only lowers; each relay's latest success and failure per key and model, and whether the provider rejected the key                                           |
 | Pi model-token ledger                                    | `@merv/pi`                                                                                                                    | a read over UTC days [from, to); each person's own daily tokens (`pi_model_limits`), which its charge enforces                                                                                                                                                                                                                                                                                     |
 | Credits, providers                                       | Sandboxes (`sbxBilling`, `sbxProviders`)                                                                                      | in process; `CreditService` refuses new credit for a provider without an operator connection, and counts a provider's use per window (`usage`)                                                                                                                                                                                                                                                     |
@@ -39,6 +40,14 @@ owner not loaded here leaves its facts out.
   `reflections.platformLenses`, `customerExperiments.customers` and `scope.directory`. An agent's
   need is Sessions' own phrase; a machine is found by its allocation id or by the unit Fleet says
   it serves.
+- `GET /admin/issues` — `AdminIssues`: the open issues and those resolved in the last 7 days
+  (`issues.platformIssues`), each with the projects its cases name from `scope.directory`, and
+  the open and open-severe counts the page and the rail's badge read. `GET /admin/issues/:id` —
+  `AdminIssueDetail`, what `Download case` saves: the issue and its kept cases (refs, error facts,
+  note, pinned visit trace), each with its project; 404 `not_found`. `POST
+/admin/issues/:id/resolve` `{}` → `{ id, state }`: `issues.close` under the admin's label,
+  recorded as `issues.resolve`; its next report reopens it. All three answer 503
+  `issues_unavailable` where Issues is not loaded.
 - `GET /admin/credits` — one row per person: each credit type's use today (UTC), its limit, own
   or not, and what is left. `GET /admin/credits/people/:person` — the drawer (`PersonCredits`):
   the same per window (today, last 7 days, last 30, all time), with their own account's grants and
@@ -81,7 +90,7 @@ credential_fixed`): what State, Secrets, Identity and the Sandboxes host read, a
 ## Pages (`packages/ui/web/admin/`)
 
 `/ui/admin` is an app of its own beside the projects (`AdminApp`, no project selected): a rail
-with Work, Credits and Credentials and the signed-in admin at its foot. Work polls `/admin/work`
+with Work, Issues, Credits and Credentials and the signed-in admin at its foot. Work polls `/admin/work`
 every 15 s into one ruled list, attention first, with kind, state and `Ended today` behind
 `Filter` (`/` opens it); a row opens its record in the drill-in, a standalone experiment its
 customer snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials poll every 60 s.
@@ -89,7 +98,12 @@ Credentials draws one ruled table per purpose, then Sandbox providers and Machin
 row's quiet `Reveal` shows its value under it for 30 s, `Change` opens one password field. Credits
 is one row per person and a column per credit type; a row opens the drawer at the right (the
 page, on a phone): one 1D · 1W · 1M · Total switch for every type, and each type with its
-control (`Set limit`, or `Give credit` and its grants and schedules behind ⋯). The pages read the
+control (`Set limit`, or `Give credit` and its grants and schedules behind ⋯). Issues polls
+`/admin/issues` every 10 s (the rail's Issues row counts the open severe ones from the same
+read): it opens on the open ones, severe, warn, then notice, newest first, with class and state
+(each level, `Resolved`) behind `Filter`; a row, or `?issue=<id>` (the alert's link), opens its drawer, as on
+Credits (`useDrawer`): its facts, note and error, `Resolve issue`, `Download case`, and each
+case's visit with `Thread →` into the drill-in, its ids in the hover title. The pages read the
 routes' types from `@merv/admin/models`.
 
 ## Drill-in
