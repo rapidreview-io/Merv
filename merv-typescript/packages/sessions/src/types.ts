@@ -2,6 +2,7 @@ import type { NativeMcpConnection } from '@merv/contracts';
 import type { AgentEvent, AgentStreamEvent } from '@merv/sessions/agent-stream';
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
+import type { SessionTrace } from '@merv/contracts/issues';
 import type {
   Caller,
   Data,
@@ -650,6 +651,9 @@ export interface SessionRunningReads {
   platform(
     work: readonly { id: string; projectId: string; revision: number }[],
   ): Promise<Map<string, SessionsPlatformWork>>;
+  /** Platform admin read, never exposed through a tool, a lease or a machine key: what a case
+   *  pins of each visit named. */
+  platformTrace(sessionIds: readonly string[]): Promise<Map<string, SessionTrace>>;
 }
 /** Why an active lease needs a person: its runner's key, its runner's silence, or its own. */
 export type LeaseNeed = 'key_revoked' | 'machine_offline' | 'quiet';

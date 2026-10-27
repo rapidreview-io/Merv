@@ -1,4 +1,5 @@
 import { check, type DelegationSource, type Transaction } from '@merv/contracts';
+import type { IssueRefs, Issues } from '@merv/contracts/issues';
 import type { QuestionResponse } from './models.js';
 import type { MessageHost, QuestionRow } from './messages.js';
 import type { QuestionResponder, ThreadQuestion } from './types.js';
@@ -13,6 +14,24 @@ export interface ResponseRow {
 }
 const INTERVAL = 30_000;
 const DEADLINE = 15 * 60_000;
+const SILENT = 'The responder did not respond.';
+/** Why a question reached its owner after all: Pi's own judgement, or its responder's failure. */
+export type NeedsYouCause =
+  'pi' | 'responder_unloaded' | 'responder_deadline' | 'responder_silent' | 'responder_failed';
+/** A question's issues name its asking visit. */
+export const questionRefs = (row: QuestionRow): IssueRefs => ({
+  projectId: row.project_id,
+  sessionId: row.session_id,
+  threadId: row.thread_id,
+  instanceId: row.instance_id,
+  revision: Number(row.revision),
+  questionId: row.id,
+});
+/** An answer, or its work moving on, ends the question's issues. */
+export const settled = (issues: Issues, id: string) => {
+  for (const code of ['asked', 'needs_you'])
+    issues.resolve({ class: 'question', where: 'session.ask_owner', code, key: id });
+};
 
 /** A narrow durable delivery slot for a question, serviced by Sessions' existing upkeep. */
 export class QuestionResponders {
@@ -43,12 +62,19 @@ export class QuestionResponders {
           responder.name,
         );
         for (const row of rows)
-          await this.finish(tx, row, 'needs_you', 'The responder became unavailable.');
+          await this.finish(
+            tx,
+            row,
+            'needs_you',
+            'The responder became unavailable.',
+            'responder_unloaded',
+          );
       });
     };
   }
-  async reserve(tx: Transaction, id: string): Promise<void> {
-    if (!this.responder) return;
+  /** Whether a responder took the question. */
+  async reserve(tx: Transaction, id: string): Promise<boolean> {
+    if (!this.responder) return false;
     const response: QuestionResponse = { state: 'investigating', label: this.responder.label };
     await tx.run(
       `INSERT INTO session_question_responses(question_id,responder,data_json,state,deadline,check_at) VALUES(?,?,?,'investigating',?,?)`,
@@ -58,6 +84,7 @@ export class QuestionResponders {
       new Date(this.clock() + DEADLINE).toISOString(),
       new Date(this.clock()).toISOString(),
     );
+    return true;
   }
   async read(tx: Transaction, id: string): Promise<ResponseRow | undefined> {
     return await tx.get<ResponseRow>(
@@ -70,6 +97,7 @@ export class QuestionResponders {
     question: QuestionRow,
     state: QuestionResponse['state'],
     reason?: string,
+    cause?: NeedsYouCause,
   ): Promise<void> {
     const row = await this.read(tx, question.id);
     if (!row) return;
@@ -85,6 +113,26 @@ export class QuestionResponders {
       question.id,
     );
     await this.report(question.project_id, question.instance_id, tx);
+    const { issues } = this.host;
+    if (state !== 'needs_you') return settled(issues, question.id);
+    const refs = questionRefs(question);
+    issues.report({
+      class: 'question',
+      where: 'session.ask_owner',
+      code: 'needs_you',
+      key: question.id,
+      level: 'severe',
+      refs,
+    });
+    if (cause && cause !== 'pi')
+      issues.report({
+        class: 'platform',
+        where: 'sessions.question_responder',
+        code: cause,
+        level: 'severe',
+        subject: question.id,
+        refs,
+      });
   }
   sweep(): Promise<void> {
     if (!this.running)
@@ -122,6 +170,7 @@ export class QuestionResponders {
             row,
             'needs_you',
             'The investigation is unavailable or exceeded its time limit.',
+            Date.parse(row.deadline) <= this.clock() ? 'responder_deadline' : 'responder_unloaded',
           );
         } else {
           await tx.run(
@@ -179,14 +228,21 @@ export class QuestionResponders {
           const reason = await Promise.race([
             run(),
             new Promise<string>((resolve) => {
-              timer = setTimeout(() => resolve('The responder did not respond.'), 10_000);
+              timer = setTimeout(() => resolve(SILENT), 10_000);
             }),
           ]);
-          if (reason) await this.fallback(question, reason);
+          // Else its investigation said why it stopped.
+          if (reason)
+            await this.fallback(
+              question,
+              reason,
+              reason === SILENT ? 'responder_silent' : 'responder_failed',
+            );
         } catch {
           await this.fallback(
             question,
             'The investigation could not continue. You can answer directly or continue its conversation.',
+            'responder_failed',
           );
         } finally {
           if (timer) clearTimeout(timer);
@@ -194,10 +250,14 @@ export class QuestionResponders {
       }),
     );
   }
-  private async fallback(question: QuestionRow, reason: string): Promise<void> {
+  private async fallback(
+    question: QuestionRow,
+    reason: string,
+    cause: NeedsYouCause,
+  ): Promise<void> {
     await this.host.transaction(async (tx) => {
       if ((await this.read(tx, question.id))?.state === 'investigating')
-        await this.finish(tx, question, 'needs_you', reason);
+        await this.finish(tx, question, 'needs_you', reason, cause);
     });
   }
 }

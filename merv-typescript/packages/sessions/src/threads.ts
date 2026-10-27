@@ -938,12 +938,7 @@ export class SessionThreads {
     const cursor = /^([^:]{1,200})(?::(\d{1,15}))?$/.exec(before ?? '');
     const visits = await this.state.snapshotTransaction(async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
-      check(
-        readsAgents(actor.role),
-        'forbidden',
-        'Only an operator reads an agent’s conversation',
-        403,
-      );
+      check(readsAgents(actor), 'forbidden', 'Only an operator reads an agent’s conversation', 403);
       await threadIn(tx, caller.projectId, threadId);
       return await tx.all<Said>(
         `SELECT s.id,s.project_id,s.status,t.sha256,t.size,t.declared_at,

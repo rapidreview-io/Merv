@@ -9,10 +9,11 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
+import type { Issues } from '@merv/contracts/issues';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { nativeRevisionContinuity } from '@merv/workflows/native-continuity';
 import { isoNow, ordinary, ownLive, text, threadIn, type Row } from './common.js';
-import { QuestionResponders } from './question-responder.js';
+import { QuestionResponders, questionRefs, settled } from './question-responder.js';
 import type { QuestionResponse } from './models.js';
 import { messageInquiry } from './inquiries.js';
 import type {
@@ -163,6 +164,8 @@ export interface MessageHost {
   ): Promise<Map<string, { revision: number; ended: boolean }>>;
   /** Ends the waits for compute the thread's agent started (`session.await_compute`). */
   woken(tx: Transaction, projectId: string, threadId: string): Promise<void>;
+  /** Where a question that reached its owner, and a responder that failed it, are said. */
+  issues: Issues;
 }
 
 /**
@@ -266,7 +269,7 @@ export class SessionMessages {
         );
       }
       if (input.outcome === 'needs_you')
-        await this.responders.finish(tx, row, 'needs_you', input.body);
+        await this.responders.finish(tx, row, 'needs_you', input.body, 'pi');
       await tx.run(
         'UPDATE session_question_responses SET receipt_json=? WHERE question_id=?',
         JSON.stringify({ requestId: input.requestId, fingerprint }),
@@ -561,6 +564,7 @@ export class SessionMessages {
         ...open.map((row) => row.id),
       );
       for (const row of open) {
+        settled(this.host.issues, row.id);
         if (row.response_json)
           await tx.run(
             'UPDATE session_question_responses SET state=?,data_json=? WHERE question_id=?',
@@ -668,7 +672,7 @@ export class SessionMessages {
         asked,
         isoNow(this.clock),
       );
-      await this.responders.reserve(tx, id);
+      const reserved = await this.responders.reserve(tx, id);
       await this.report(session.projectId, session.instanceId, tx);
       await this.state.appendEvent(tx, {
         projectId: session.projectId,
@@ -684,10 +688,18 @@ export class SessionMessages {
         },
       });
       await this.host.asked(session, tx);
-      return question(
-        (await tx.get<QuestionRow>('SELECT * FROM session_questions WHERE id=?', id))!,
-        true,
-      );
+      const row = (await tx.get<QuestionRow>('SELECT * FROM session_questions WHERE id=?', id))!;
+      // Its owner's move at once, unless a responder took it first.
+      this.host.issues.report({
+        class: 'question',
+        where: 'session.ask_owner',
+        code: 'asked',
+        key: id,
+        level: reserved ? 'notice' : 'severe',
+        note: asked,
+        refs: questionRefs(row),
+      });
+      return question(row, true);
     });
   }
   /**

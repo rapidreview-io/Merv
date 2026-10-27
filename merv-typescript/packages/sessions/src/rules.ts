@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import type { RunnerPlatform } from '@merv/contracts/types';
-import type { Role } from '@merv/contracts/scope-models';
+import { PLATFORM_ACTOR, type Actor } from '@merv/contracts/scope-models';
 
 /** Keyed by the harness type, so the list below is exactly that type's members. */
 const harnesses: Record<RunnerPlatform['harness'], true> = {
@@ -77,5 +77,7 @@ export const SESSION_STATUSES = ['offered', 'active', 'released', 'expired'] as 
 /** A lease's platform as a person reads it, on the Running sidebar and the Agents page. */
 export const platformPhrase = (platform: Pick<RunnerPlatform, 'name' | 'model' | 'effort'>) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
-/** Who reads what agents say (a visit's live stream, a thread's conversation): an operator. */
-export const readsAgents = (role: Role): boolean => role === 'operator';
+/** Who reads what agents say (a visit's live stream, a thread's conversation): an operator, or a
+ *  platform administrator reading the project. */
+export const readsAgents = (actor: Pick<Actor, 'id' | 'role'>): boolean =>
+  actor.role === 'operator' || actor.id === PLATFORM_ACTOR;

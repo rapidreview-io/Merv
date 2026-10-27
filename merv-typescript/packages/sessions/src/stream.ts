@@ -182,7 +182,7 @@ export class SessionStreams implements SessionStreamReads {
     const actor = await this.state.snapshotTransaction((tx) =>
       this.scope.require(caller, 'read', tx),
     );
-    check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
+    check(readsAgents(actor), 'forbidden', 'Only an operator reads an agent’s stream', 403);
   }
 
   /** Whether an authorized session's stream may still grow, from the columns kept beside it. */
@@ -322,11 +322,12 @@ export class SessionStreams implements SessionStreamReads {
   }
 
   /**
-   * The sweep's: the events of sessions that ended over 30 days ago. Each sweep looks at the
-   * next hundred sessions that still hold events, in id order from where the last one stopped
-   * and from the start again after the last, a step along the events' own key each; so it
-   * never reads the sessions whose events are gone, and a session still live, or ended
-   * lately, is only one it passes over.
+   * The sweep's: the events of sessions that ended over 30 days ago and whose transcript reached
+   * the store; a visit whose machine vanished before its upload keeps its stream, its only
+   * record. Each sweep looks at the next hundred sessions that still hold events, in id order
+   * from where the last one stopped and from the start again after the last, a step along the
+   * events' own key each; so it never reads the sessions whose events are gone, and a session
+   * still live, ended lately or never uploaded is only one it passes over.
    */
   async prune(): Promise<void> {
     const cutoff = isoNow(() => this.clock() - RETAIN_MS);
@@ -344,7 +345,8 @@ export class SessionStreams implements SessionStreamReads {
       if (!held.length) return '';
       const ended = await tx.all<{ id: string }>(
         `SELECT id FROM worker_sessions WHERE id IN (${held.map(() => '?').join(',')})
-          AND status IN ('released','expired') AND closed_at<?`,
+          AND status IN ('released','expired') AND closed_at<?
+          AND EXISTS (SELECT 1 FROM session_transcripts t WHERE t.session_id=worker_sessions.id AND t.uploaded_at IS NOT NULL)`,
         ...held.map((row) => row.id),
         cutoff,
       );
