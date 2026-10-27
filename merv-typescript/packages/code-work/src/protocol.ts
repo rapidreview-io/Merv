@@ -88,15 +88,17 @@ export class CodeWorkspaceProtocol {
         'Another writer owns this branch',
         409,
       );
+      if (row.writer_state === 'closed')
+        await this.submissions.requireRecoverable(
+          caller.projectId,
+          session.id,
+          Number(row.generation),
+        );
+      // Its authority starts at the retained head: a retry after its push landed starts where
+      // that push left the branch.
       const submissionOnly =
         row.writer_state === 'closed'
-          ? {
-              parentOid: await this.submissions.recoveryParent(
-                caller.projectId,
-                session.id,
-                Number(row.generation),
-              ),
-            }
+          ? { parentOid: row.head_oid ?? this.writers.base(row) }
           : undefined;
       check(
         !submissionOnly || !live(session),

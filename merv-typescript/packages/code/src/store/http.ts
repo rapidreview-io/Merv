@@ -1176,6 +1176,19 @@ $merv$;
     };
     const grant = access.grant;
     let fence: WriterFence | undefined;
+    // A stopped submission may still fast-forward its own branch to the parent it seals in the
+    // same push, as the interrupted stop would have; the branch checks below apply to it.
+    const forward =
+      grant?.submissionOnly &&
+      updates.find(
+        (u) =>
+          u.ref === `refs/heads/${workBranch(grant.unitId)}` &&
+          updates.some(
+            (p) =>
+              p.ref === `refs/merv/submissions/${unitRef(grant.sessionId)}/parent` &&
+              p.next === u.next,
+          ),
+      );
     for (const update of updates) {
       check(
         !zero(update.next),
@@ -1192,7 +1205,7 @@ $merv$;
         (grant?.audience === 'runner' || grant?.audience === 'capture') &&
         update.ref.startsWith(`refs/merv/submissions/${unitRef(grant.sessionId)}/`);
       check(
-        !grant?.submissionOnly || submission,
+        !grant?.submissionOnly || submission || update === forward,
         'code_git_ref_forbidden',
         'Stopped submission recovery cannot change working refs',
         403,
@@ -1201,7 +1214,7 @@ $merv$;
         check(
           !grant?.submissionOnly ||
             !update.ref.endsWith('/parent') ||
-            update.next === grant.submissionOnly.parentOid,
+            update.next === (forward ? forward.next : grant.submissionOnly.parentOid),
           'code_head_conflict',
           'The submission parent differs from its retained authority',
           409,
