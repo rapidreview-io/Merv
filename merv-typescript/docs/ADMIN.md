@@ -44,9 +44,9 @@ owner not loaded here leaves its facts out.
   (`issues.platformIssues`), each with the projects its cases name from `scope.directory`, and
   the open and open-severe counts the page and the rail's badge read. `GET /admin/issues/:id` —
   `AdminIssueDetail`, what `Download case` saves: the issue and its kept cases (refs, error facts,
-  note, pinned visit trace), each with its project; 404 `not_found`. `POST
-/admin/issues/:id/resolve` `{}` → `{ id, state }`: `issues.close` under the admin's label,
-  recorded as `issues.resolve`; its next report reopens it. All three answer 503
+  note, pinned visit trace), each with its project; 404 `not_found`.
+  `POST /admin/issues/:id/resolve` `{}` → `{ id, state }`: `issues.close` under the admin's
+  label, recorded as `issues.resolve`; its next report reopens it. All three answer 503
   `issues_unavailable` where Issues is not loaded.
 - `GET /admin/credits` — one row per person: each credit type's use today (UTC), its limit, own
   or not, and what is left. `GET /admin/credits/people/:person` — the drawer (`PersonCredits`):
