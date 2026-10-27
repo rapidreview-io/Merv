@@ -425,7 +425,7 @@ test('alerts: one digest per five minutes, owed until sent, never for Issues its
   f.clock.now += 5 * MINUTE;
   next.report({ ...tool, code: 'fourth', level: 'severe' });
   await settle();
-  await next.stop();
+  await next.drain();
   assert.equal(sent.at(-1)!.issues[0]!.title, 'experiment write create · fourth');
 });
 
@@ -457,7 +457,7 @@ test('stop writes the reports that arrive while a flush is in flight', async () 
   const flushing = f.store.flush();
   f.store.report({ ...tool, code: 'b' });
   await settle();
-  await f.store.stop();
+  await f.store.drain();
   await flushing;
   for (const code of ['a', 'b']) assert.equal((await f.row(idOf({ ...tool, code }))).count, 1);
 });

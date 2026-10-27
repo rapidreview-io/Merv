@@ -52,6 +52,14 @@ export async function createApp(options: ConfigurationOptions) {
   const ctx = new Context();
   // Until Issues is up its reports keep only their stderr line; the first 50 are replayed to it.
   const issues = reporter(ctx);
+  // Issues writes and alerts before anything is disposed, while State is still open.
+  const drain = async () => {
+    try {
+      await ctx.get('issues')?.drain();
+    } catch {
+      // Telemetry never decides a stop.
+    }
+  };
   const early: IssueReport[] = [];
   const report = (r: IssueReport) => {
     if (!ctx.get('issues') && early.length < 50) early.push(r);
@@ -281,8 +289,10 @@ export async function createApp(options: ConfigurationOptions) {
     await settle();
     for (const r of early.splice(0)) ctx.get('issues')?.report(r);
     const unready = inactive(status()).filter((entry) => entry.required);
-    // The catch's dispose then runs Issues' own: its final flush and alert pass.
-    for (const entry of unready)
+    // The catch drains Issues before disposing. Entries left pending behind one that failed are
+    // its consequence, not issues of their own.
+    const broken = unready.filter((entry) => entry.state === 'failed');
+    for (const entry of broken.length ? broken : unready)
       report({
         class: 'platform',
         where: 'plugin',
@@ -315,6 +325,7 @@ export async function createApp(options: ConfigurationOptions) {
           } catch (error) {
             errors.push(error);
           }
+          await drain();
           try {
             await ctx.fiber.dispose();
           } catch (error) {
@@ -325,6 +336,7 @@ export async function createApp(options: ConfigurationOptions) {
         })()),
     };
   } catch (error) {
+    await drain();
     await ctx.fiber.dispose();
     throw error;
   }

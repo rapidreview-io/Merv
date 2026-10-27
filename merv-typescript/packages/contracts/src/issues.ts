@@ -68,6 +68,10 @@ export interface IssueStore extends Issues {
   platformIssue(id: string): Promise<{ issue: IssueRow; cases: IssueCase[] } | undefined>;
   /** An admin resolves it, recorded under their label; its next report reopens it. */
   close(id: string, by: string): Promise<IssueRow>;
+  /** Writes what is pending and runs one alert pass (at most ten seconds). The composition root
+   *  calls it before disposing anything: State may close before Issues' own disposer runs, and a
+   *  refused boot is the failure that most needs its alert. */
+  drain(): Promise<void>;
 }
 
 declare module 'cordis' {

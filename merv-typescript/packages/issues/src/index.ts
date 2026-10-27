@@ -49,7 +49,7 @@ export const issuesPlugin = {
       pass(() => store.alertPass())();
       yield async () => {
         for (const timer of timers) clearInterval(timer);
-        await store.stop();
+        await store.drain();
       };
       yield ctx.provide('issues', store);
     });

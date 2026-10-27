@@ -59,6 +59,7 @@ async function fixture(t: TestContext, installed = true) {
   const issues: IssueStore = {
     report() {},
     resolve() {},
+    drain: async () => {},
     platformIssues: async () => ({ rows: [row], open: 1, severe: 1 }),
     platformIssue: async (id) =>
       id === row.id

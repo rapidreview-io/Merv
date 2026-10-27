@@ -16,7 +16,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createApp } from './fixtures/app.js';
 
-const seen: (IssueReport | 'disposed')[] = [];
+const seen: (IssueReport | 'disposed' | 'drained')[] = [];
 /** This file as the `issues` entry: a store that keeps what reaches it, up only after the
  *  plugin that fails has failed. */
 export default {
@@ -28,6 +28,7 @@ export default {
       yield ctx.provide('issues', {
         report: (issue: IssueReport) => void seen.push(issue),
         resolve() {},
+        drain: async () => void seen.push('drained'),
       } as unknown as IssueStore);
     });
   },
@@ -67,10 +68,15 @@ test('a refused boot reports its unready entry and the plugin error to Issues be
     (error: { code?: string }) => error.code === 'plugin_unavailable',
   );
   const disposed = seen.indexOf('disposed');
-  const failed = seen.findIndex((r) => r !== 'disposed' && r.code === 'plugin_failed');
-  const unready = seen.findIndex((r) => r !== 'disposed' && r.code === 'failed');
+  const failed = seen.findIndex((r) => typeof r === 'object' && r.code === 'plugin_failed');
+  const unready = seen.findIndex((r) => typeof r === 'object' && r.code === 'failed');
   // The error came before Issues was up: it reached the store as the boot settled.
-  assert.ok(failed >= 0 && unready > failed && disposed > unready, JSON.stringify(seen));
+  const drained = seen.indexOf('drained');
+  // Issues writes before anything is disposed: State may close before Issues' own disposer.
+  assert.ok(
+    failed >= 0 && unready > failed && drained > unready && disposed > drained,
+    JSON.stringify(seen),
+  );
   const { error, ...report } = seen[failed] as IssueReport;
   assert.deepEqual(report, {
     class: 'platform',
@@ -82,7 +88,7 @@ test('a refused boot reports its unready entry and the plugin error to Issues be
   assert.ok(error instanceof Error);
   assert.deepEqual(
     seen
-      .filter((r) => r !== 'disposed' && r.key === 'store-like')
+      .filter((r) => typeof r === 'object' && r.key === 'store-like')
       .map((r) => (r as IssueReport).code),
     ['internal_error'],
   );

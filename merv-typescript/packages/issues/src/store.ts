@@ -466,7 +466,7 @@ export class IssueStore implements IssueService {
   }
 
   /** The last flush, then one alert pass of at most ten seconds: the state store closes after. */
-  async stop(): Promise<void> {
+  async drain(): Promise<void> {
     await this.sending?.catch(() => {});
     // A flush in flight took its batch before the reports since: the last one writes those.
     await this.flushing;

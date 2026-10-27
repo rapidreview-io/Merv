@@ -54,7 +54,7 @@ export function slackSink({ webhookEnv, publicOrigin }: z.infer<typeof slackConf
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `<${link(issue.id)}|${mrkdwn(issue.title)}> · ${issue.count.toLocaleString('en-US')} · since ${stamp(issue.openedAt)}`,
+            text: `<${link(issue.id)}|${mrkdwn(issue.title)}>${issue.loop ? ' · loop' : ''} · ${issue.count.toLocaleString('en-US')} · since ${stamp(issue.openedAt)}`,
           },
         })),
         { type: 'context', elements: [{ type: 'mrkdwn', text: `Digest ${stamp(at)}` }] },
