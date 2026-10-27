@@ -40,9 +40,18 @@ function temporary(t: TestContext) {
 }
 
 test('a refused boot reports its unready entry and the plugin error to Issues before disposing', async (t) => {
+  const directory = temporary(t);
+  // A database failure as State throws one: Cordis logs its plain-object cause first, alone.
+  const store = join(directory, 'store.mjs');
+  writeFileSync(
+    store,
+    `export default { name: 'store-like', apply() {
+  throw Object.assign(new Error('x', { cause: { sqlstate: '42P01' } }), { code: 'internal_error' });
+} };`,
+  );
   await assert.rejects(
     createApp({
-      directory: temporary(t),
+      directory,
       config: {
         plugins: [
           { id: 'issues', name: import.meta.url, required: false },
@@ -51,6 +60,7 @@ test('a refused boot reports its unready entry and the plugin error to Issues be
             name: './tests/fixtures/loader-marker.ts',
             config: { value: 'fails', fail: true },
           },
+          { id: 'store', name: pathToFileURL(store).href, required: false },
         ],
       },
     }),
@@ -70,6 +80,12 @@ test('a refused boot reports its unready entry and the plugin error to Issues be
     level: 'severe',
   });
   assert.ok(error instanceof Error);
+  assert.deepEqual(
+    seen
+      .filter((r) => r !== 'disposed' && r.key === 'store-like')
+      .map((r) => (r as IssueReport).code),
+    ['internal_error'],
+  );
   assert.deepEqual(seen[unready], {
     class: 'platform',
     where: 'plugin',
@@ -87,18 +103,19 @@ test('a crashed or killed run is reported by the next under its release; a clean
   writeFileSync(
     stub,
     `export default { name: 'boot-stub', apply(ctx, config) {
+  if (config.refuse) throw new Error('refused');
   // Serving, as the API's server would, until it is stopped.
   const serving = setInterval(() => {}, 1000);
   ctx.provide('api', { url: 'http://127.0.0.1:1', stop: () => clearInterval(serving) });
   if (config.crash) setTimeout(() => { throw new Error('private crash words'); }, 200);
 } };`,
   );
-  const serve = (release: string, crash = false) => {
+  const serve = (release: string, crash = false, refuse = false) => {
     const config = join(directory, `${release}.json`);
     writeFileSync(
       config,
       JSON.stringify({
-        plugins: [{ id: 'api', name: pathToFileURL(stub).href, config: { crash } }],
+        plugins: [{ id: 'api', name: pathToFileURL(stub).href, config: { crash, refuse } }],
       }),
     );
     const child = spawn(
@@ -134,6 +151,9 @@ test('a crashed or killed run is reported by the next under its release; a clean
   assert.equal(left.crash.name, 'Error');
   assert.ok(left.crash.at.length);
   assert.ok(!readFileSync(marker, 'utf8').includes('private crash words'));
+  // A refused start leaves the crash for the first run that comes up.
+  await assert.rejects(serve('r1b', false, true).ready, /plugin_unavailable/);
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')), left);
 
   const second = serve('r2');
   await second.ready;

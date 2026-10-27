@@ -63,17 +63,20 @@ export async function createApp(options: ConfigurationOptions) {
   let stopping: Promise<void> | undefined;
   let changing: Promise<unknown> = Promise.resolve();
   try {
-    // What Cordis logs as an error (a plugin's activation, reload or dispose that threw).
+    // What Cordis logs as an error (a plugin's activation, reload or dispose that threw). It logs
+    // an error's plain-object `cause` first as a message of its own, which errorFacts reads off
+    // the error itself.
     ctx.logger.exporter({
       export: (m) => {
-        if (m.type === 'error')
+        const error = m.args?.[0];
+        if (m.type === 'error' && error instanceof Error)
           report({
             class: 'platform',
             where: 'plugin',
-            code: (m.args?.[0] as { code?: string } | undefined)?.code ?? 'plugin_failed',
+            code: (error as { code?: string }).code ?? 'plugin_failed',
             key: m.name,
             level: 'severe',
-            error: m.args?.[0],
+            error,
           });
       },
     });
@@ -119,10 +122,9 @@ export async function createApp(options: ConfigurationOptions) {
               : [],
         };
       });
-    const assertReady = (items: PluginStatus[]) => {
-      const inactive = items.filter(
-        (entry) => entry.state !== 'active' && entry.state !== 'disabled',
-      );
+    const inactive = (items: PluginStatus[]) =>
+      items.filter((entry) => entry.state !== 'active' && entry.state !== 'disabled');
+    const assertReady = (inactive: PluginStatus[]) => {
       check(
         !inactive.length,
         'plugin_unavailable',
@@ -184,7 +186,7 @@ export async function createApp(options: ConfigurationOptions) {
         await loader.update(id, { disabled: !enabled });
       }
       await settle();
-      if (enabled) assertReady(status().filter((entry) => ids.includes(entry.id)));
+      if (enabled) assertReady(inactive(status().filter((entry) => ids.includes(entry.id))));
     };
     const setEnv = (env: string, value: string | undefined) =>
       value === undefined ? delete process.env[env] : (process.env[env] = value);
@@ -278,9 +280,7 @@ export async function createApp(options: ConfigurationOptions) {
     await loader.root.update(entries);
     await settle();
     for (const r of early.splice(0)) ctx.get('issues')?.report(r);
-    const unready = status().filter(
-      (entry) => entry.required && entry.state !== 'active' && entry.state !== 'disabled',
-    );
+    const unready = inactive(status()).filter((entry) => entry.required);
     // The catch's dispose then runs Issues' own: its final flush and alert pass.
     for (const entry of unready)
       report({

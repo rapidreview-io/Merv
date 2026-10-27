@@ -223,7 +223,9 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
         ...(args.host !== undefined ? { host: args.host } : {}),
       });
     } catch (error) {
-      clear();
+      // A refused start is no unclean exit, and the run before it is reported by the next to boot.
+      if (previous) writeFileSync(marker, JSON.stringify(previous));
+      else clear();
       throw error;
     }
     if (previous) {
