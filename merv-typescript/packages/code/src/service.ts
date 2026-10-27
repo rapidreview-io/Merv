@@ -105,6 +105,7 @@ export class CodeService {
           await this.gitRemote.recover();
           await writers.expire();
         },
+        report: (issue) => this.gitRemote.issues.report(issue),
       },
       repositories,
       options.fault,

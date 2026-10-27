@@ -4,6 +4,7 @@ import { agentAudience, isAgentAudience } from './audience.js';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
+  digest,
   ellipsis,
   MervError,
   plain,
@@ -14,6 +15,7 @@ import {
   type Scope,
 } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
+import { silent, type IssueLevel, type Issues } from '@merv/contracts/issues';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { noun, nounActions, nounInput, presented } from './noun.js';
 import {
@@ -204,6 +206,27 @@ const namespace = '_';
 /** Identity, not provider: re-registering the same provider still retires calls it began. */
 type SessionRegistration = { provider: SessionToolPolicy };
 
+/** Refusals of what a session or policy withholds: an agent working against its grant. */
+const guarded = new Set([
+  'execution_tool_forbidden',
+  'execution_arguments_forbidden',
+  'execution_reference_unavailable',
+]);
+
+/** A mounted tool's own failure, as the code and status its JSON text names. */
+function mountedError(result: CallToolResult): { code: string; status?: number } {
+  try {
+    const first = result.content?.[0];
+    const inner = first?.type === 'text' ? JSON.parse(first.text)?.error : undefined;
+    return {
+      code: /^[a-z][a-z0-9_]{0,79}$/.test(inner?.code) ? inner.code : 'tool_error',
+      status: typeof inner?.status === 'number' ? inner.status : undefined,
+    };
+  } catch {
+    return { code: 'tool_error' };
+  }
+}
+
 /** Reserved even while a catalog is absent, so remote arguments keep their meaning. */
 export const isMountedToolName = (name: string): boolean => name.startsWith(namespace);
 
@@ -223,6 +246,10 @@ export class ToolRegistry implements Tools {
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
+  /** Where failed calls are reported; the plugin sets it to reporter(ctx). */
+  issues: Issues = silent;
+  /** Errors already reported as a call's issue, which the API does not report again. */
+  readonly reported = new WeakSet<object>();
 
   constructor(
     private readonly scope: Pick<Scope, 'require'>,
@@ -923,7 +950,41 @@ export class ToolRegistry implements Tools {
     caller = structuredClone(caller);
     const logged = agent && !caller.session && !caller.conversation && this.log;
     const started = Date.now();
-    let identity: ToolIdentity | undefined;
+    let identity: (ToolIdentity & { invocationId?: string }) | undefined;
+    // Only a failure is reported, and only it hashes the arguments.
+    const report = (
+      code: string,
+      status: number | undefined,
+      level: IssueLevel,
+      error?: unknown,
+    ) => {
+      try {
+        this.issues.report({
+          class: 'tool',
+          where: identity
+            ? `${identity.tool}${identity.action ? `:${identity.action}` : ''}`
+            : name,
+          code,
+          status,
+          level,
+          subject: `${caller.session?.id ?? caller.conversation?.id ?? caller.actorId}:${digest([name, input]).slice(0, 16)}`,
+          refs: {
+            projectId: caller.projectId,
+            actorId: caller.actorId,
+            client,
+            sessionId: caller.session?.id,
+            threadId: caller.session?.threadId,
+            invocationId: identity?.invocationId,
+            conversationId: caller.conversation?.id,
+            commandId: caller.conversation?.commandId,
+            allocationId: caller.conversation?.runtimeId ?? caller.managed?.allocationId,
+          },
+          error,
+        });
+      } catch {
+        // Telemetry must never decide a call.
+      }
+    };
     const record = (errorCode: string) => {
       if (!logged) return;
       try {
@@ -949,12 +1010,34 @@ export class ToolRegistry implements Tools {
         }),
       );
       // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
-      const failed = (value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp)
-        ?.isError;
-      record(failed ? 'tool_error' : '');
+      const result = value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp;
+      record(result?.isError ? 'tool_error' : '');
+      if (result?.isError) {
+        const inner = mountedError(result);
+        report(inner.code, inner.status, 'notice');
+      }
       return value;
     } catch (error) {
       record(error instanceof MervError ? error.code : 'internal_error');
+      // A nested call's failure stays the innermost call's one issue.
+      if (error && typeof error === 'object' && this.reported.has(error)) throw error;
+      const status = error instanceof MervError ? error.status : 500;
+      if (
+        !(error instanceof MervError && error.wait) &&
+        (agent || caller.session || caller.conversation || status >= 500)
+      ) {
+        report(
+          error instanceof MervError ? error.code : 'internal_error',
+          status,
+          status === 500
+            ? 'severe'
+            : status > 500 || guarded.has((error as MervError).code)
+              ? 'warn'
+              : 'notice',
+          error,
+        );
+        if (error && typeof error === 'object') this.reported.add(error);
+      }
       throw error;
     }
   }
@@ -965,7 +1048,7 @@ export class ToolRegistry implements Tools {
     input: unknown,
     agent: boolean,
     admit: ToolAdmission | undefined,
-    seen: (identity: ToolIdentity) => void,
+    seen: (identity: ToolIdentity & { invocationId?: string }) => void,
   ): Promise<ToolInvocation> {
     const rules = this.rulesFor(caller);
     const resolved = this.resolve(name, input);
@@ -1018,6 +1101,7 @@ export class ToolRegistry implements Tools {
         as: identity.as,
         args: identity.args,
       });
+      if (prepared) seen({ ...identity, invocationId: prepared.caller.session?.invocationId });
       // The original provider must release its reservation even after replacement.
       try {
         if (session) this.fence(session);

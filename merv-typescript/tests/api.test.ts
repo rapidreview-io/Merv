@@ -11,6 +11,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { z } from 'zod';
+import { reporter } from '@merv/contracts/issues';
+import type { Context } from 'cordis';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
@@ -479,9 +481,13 @@ async function stderrOf(fn: () => Promise<void>): Promise<string[]> {
   return lines.filter((line) => line.includes('"api_error"'));
 }
 
+/** The reporter as owners hold it, with no Issues loaded: only its stderr line. */
+const lineOnly = () => reporter({ get: () => undefined } as unknown as Context);
+
 test('a response that fails after its head resets the connection', async () => {
   const { scope, tools } = fixture();
   const api = new ApiServer(scope, tools);
+  api.issues = lineOnly();
   api.mount(
     '/partial',
     (_req, res) => {
@@ -493,12 +499,52 @@ test('a response that fails after its head resets the connection', async () => {
   );
   const url = await api.start();
   const logged = await stderrOf(async () => {
-    const response = await fetch(`${url}/partial`, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`${url}/partial/item_1`, { signal: AbortSignal.timeout(2000) });
     assert.equal(response.status, 200);
     await assert.rejects(response.text(), (error: Error) => error.name !== 'TimeoutError');
   });
   assert.equal(logged.length, 1);
+  const { at, ...line } = JSON.parse(logged[0]!);
+  assert.deepEqual(line, {
+    event: 'api_error',
+    code: 'internal_error',
+    level: 'warn',
+    key: 'GET /partial',
+    status: 500,
+    name: 'Error',
+  });
+  assert.ok(at.length > 0 && at.every((frame: string) => frame.startsWith('at ')));
   await stopWithin(api, 1000);
+  await tools.close();
+});
+
+test('a 503 refused while the server stops is not reported', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  api.issues = lineOnly();
+  let release!: () => void;
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const wait = new Promise<void>((resolve) => (release = resolve));
+  api.mount(
+    '/late',
+    async () => {
+      entered();
+      await wait;
+      throw new MervError('unavailable', 'Stopping', 503);
+    },
+    { public: true },
+  );
+  const url = await api.start();
+  const logged = await stderrOf(async () => {
+    const response = fetch(`${url}/late`);
+    await started;
+    const stopping = api.stop();
+    release();
+    assert.equal((await response).status, 503);
+    await stopping;
+  });
+  assert.deepEqual(logged, []);
   await tools.close();
 });
 

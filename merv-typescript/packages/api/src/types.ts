@@ -213,6 +213,8 @@ export interface Api {
   credential(namespace: `${string}_`, credential: ApiCredential): () => void;
 }
 export interface Tools {
+  /** Errors already reported as a call's issue, which the API does not report again. */
+  readonly reported?: WeakSet<object>;
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Builds and registers one noun tool, with its actions' retired names as hidden aliases. */
   noun(name: string, definition: NounDefinition): () => Promise<void>;
