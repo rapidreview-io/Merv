@@ -1,5 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
-import { reporter, silent, type IssueLevel, type Issues } from '@merv/contracts/issues';
+import { reporter, silent, type IssueReport, type Issues } from '@merv/contracts/issues';
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
 import type { SbxMerv } from '@sandboxes/merv-host';
@@ -582,6 +582,7 @@ export class FleetService implements Fleet {
     if (digest(a) === digest(before)) return;
     const moved = a.phase !== before.phase || a.intent !== before.intent;
     if (moved) a.updatedAt = this.time();
+    if (a.intent === 'stop' && before.intent !== 'stop') a.stoppedAt = a.updatedAt;
     await tx.run(
       'UPDATE fleet_allocations SET phase=?,data_json=? WHERE id=?',
       a.phase,
@@ -988,16 +989,21 @@ export class FleetService implements Fleet {
         runtime.state === 'stopped' ? 'released' : current.intent === 'stop' ? 'releasing' : phase;
     });
   }
-  /** Provider and owner messages may carry credentials; an issue keeps the finite code only. A
-   *  key makes it standing: re-reported each full pass while it holds. */
-  private report(where: string, a: FleetAllocation, why: unknown, level: IssueLevel, key?: string) {
+  /** Provider and owner messages may carry credentials; an issue keeps the finite code only. */
+  private report(
+    where: string,
+    a: FleetAllocation,
+    code: string,
+    level: IssueReport['level'],
+    more?: Pick<IssueReport, 'error' | 'key' | 'standing'>,
+  ) {
     this.issues.report({
       class: 'platform',
       where,
-      code: typeof why === 'string' ? why : codeOf(why),
+      code,
       level,
       subject: a.id,
-      ...(key && { key, standing: true }),
+      ...more,
       refs: {
         projectId: a.projectId,
         allocationId: a.id,
@@ -1006,17 +1012,18 @@ export class FleetService implements Fleet {
         runtimeRelease: this.profiles.find((p) => p.id === a.profileId)?.releaseId,
         instanceId: rentedWork(a) ?? undefined,
       },
-      error: typeof why === 'string' ? undefined : why,
     });
   }
-  /** A machine whose host never acknowledges its shutdown, or a request that waits too long. */
+  /** Standing, re-reported each full pass while it holds: a stopped machine whose host never
+   *  acknowledges its shutdown, whatever its phase, or a request that waits too long. */
   private watch(a: FleetAllocation): void {
-    const age = this.clock() - Date.parse(a.phase === 'queued' ? a.createdAt : a.updatedAt);
-    const stuck =
-      a.phase === 'releasing' && a.shutdownRequired && !a.shutdownAcknowledged && age > 600_000;
-    if (stuck) this.report('fleet.stuck_releasing', a, a.phase, 'severe', a.id);
-    if (a.phase === 'queued' && age > 900_000)
-      this.report('fleet.queued', a, a.phase, 'warn', a.id);
+    const age = (at: string) => this.clock() - Date.parse(at);
+    const standing = { key: a.id, standing: true } as const;
+    const stopped = age(a.stoppedAt ?? a.updatedAt);
+    if (a.intent === 'stop' && a.shutdownRequired && !a.shutdownAcknowledged && stopped > 600_000)
+      this.report('fleet.stuck_releasing', a, 'releasing', 'severe', standing);
+    if (a.phase === 'queued' && age(a.createdAt) > 900_000)
+      this.report('fleet.queued', a, 'queued', 'warn', standing);
   }
   private async reconcile(full = true): Promise<boolean> {
     if (full)
@@ -1071,7 +1078,8 @@ export class FleetService implements Fleet {
                 current.phase = 'uncertain';
               if (!booting) {
                 current.failures++;
-                this.report('fleet.retry', a, error, current.failures < 5 ? 'notice' : 'severe');
+                const level = current.failures < 5 ? 'notice' : 'severe';
+                this.report('fleet.retry', a, codeOf(error), level, { error });
               }
               if (current.error !== 'runtime_not_ready') current.error = 'runtime_unavailable';
               current.retryAt = new Date(
@@ -1203,7 +1211,8 @@ export class FleetService implements Fleet {
           // Refusing the first attempt proves no machine exists: free the slot, do not retry.
           if (!first || !refused(error)) throw error;
           if (walletRefused(error)) refusal = 'wallet_refused';
-          this.report('fleet.refused', a, error, walletRefused(error) ? 'notice' : 'severe');
+          const level = refusal === 'wallet_refused' ? 'notice' : 'severe';
+          this.report('fleet.refused', a, codeOf(error), level, { error });
         });
       if (handle) await this.observed(a, runtimeHandle(handle, null, this.clock()), 'provisioning');
       else

@@ -17,7 +17,7 @@ import {
   MervError,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
-import { CodeBaseService } from './bases.js';
+import { CodeBaseService, passFailed } from './bases.js';
 import { checkedCapture, CodeCaptureReader } from './captures.js';
 import { CodeCommandService } from './commands.js';
 import { beyondMain, MainLanding } from './landing.js';
@@ -251,15 +251,7 @@ export class CodeService implements Code {
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
       this.submissions.start();
-      const failed = (error: unknown) =>
-        this.issues.report({
-          class: 'platform',
-          where: 'code_work.landing',
-          code: error instanceof MervError ? error.code : 'unexpected',
-          subject: 'code_work.landing',
-          level: 'warn',
-          error,
-        });
+      const failed = passFailed(this.issues, 'code_work.landing');
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {

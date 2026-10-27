@@ -270,15 +270,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // A missing model key leaves demand unserved, never the server down.
     await this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
   }
-  /** A failed pass, or a project one passed over (`projectId`): the next pass tries again. */
+  /** A failed pass, or a project one passed over (`projectId`), which stands while every pass
+   *  does: the next pass tries again. A project without compute or its person's is their own. */
   private failed(where: string, error: unknown, projectId?: string) {
     const code = codeOf(error);
     this.issues.report({
       class: 'platform',
       where,
       code,
-      level: code === 'sandbox_not_connected' ? 'notice' : 'warn',
+      level: ['sandbox_not_connected', 'fleet_compute_cap'].includes(code) ? 'notice' : 'warn',
       subject: projectId ?? where,
+      ...(projectId && { key: projectId, standing: true }),
       refs: { projectId },
       error,
     });
@@ -861,7 +863,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const a of active)
       if (a.intent === 'run' && !launched(a) && !failed.has(a.projectId) && !steps(a).length)
         await this.fleet.cancelOwned(this, a.id);
-    if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
     const running = active.filter((a) => a.intent === 'run');
     const covered = new Set(running.flatMap(steps));
     // A target Sessions says its item's hosts cannot take gets a host of its own, unless one is
@@ -870,14 +871,18 @@ export class FleetWorkflowAdapter implements FleetOwner {
       const hosts = running.filter((a) => a.projectId === projectId && steps(a).includes(id));
       if (hosts.every(launched)) covered.delete(id);
     }
-    let slots = Math.max(0, this.config.maxAgents - active.length);
+    // While paused nothing is rented, but exhausted streaks are still reported.
+    let slots =
+      paused && this.clock() - newestRefused < refusedRetryCooldownMs
+        ? 0
+        : Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
-    // Read only once some target reaches the streak check, so a full or covered pass reads none.
+    // Read only once some target reaches the streak check, so a covered pass reads none.
     let grants: Map<string, RetryGrant> | undefined;
     for (const { projectId, source, id } of queue) {
-      if (!slots || covered.has(id) || failed.has(projectId)) continue;
+      if (covered.has(id)) continue;
       const owner = workOwner(id);
       // Accepted: machines the retired per-step owner (`<instance>:<revision>`) rented do not count,
       // so work it exhausted gets one more two-rental window; grants index this list as it is.
@@ -890,7 +895,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
         grants.get(grantKey(projectId, id))?.prior_allocations,
         since.get(grantKey(projectId, id)),
       );
-      // Hosted machines that never claim this work: re-reported each pass while it holds.
+      // Hosted machines that never claim this work: re-reported each pass while it holds, however
+      // busy the pass.
       if (unclaimed >= unclaimedAttemptLimit)
         this.issues.report({
           class: 'platform',
@@ -901,6 +907,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
           level: 'severe',
           refs: { projectId, instanceId: id.slice(0, id.lastIndexOf(':')) },
         });
+      if (!slots || failed.has(projectId)) continue;
       if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
@@ -947,8 +954,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         continue;
       }
       covered.add(id);
-      slots--;
-      if (paused) break;
+      slots = paused ? 0 : slots - 1;
     }
   }
   /**

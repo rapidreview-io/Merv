@@ -212,6 +212,17 @@ export function actionsOf(
   return [...retry, state === 'suspended' ? 'resume' : 'suspend', 'cancel', 'quarantine'];
 }
 
+/** A swallowed pass's failure, which the next pass retries. */
+export const passFailed = (issues: Issues, where: string) => (error: unknown) =>
+  issues.report({
+    class: 'platform',
+    where,
+    code: error instanceof MervError ? error.code : 'unexpected',
+    subject: where,
+    level: 'warn',
+    error,
+  });
+
 interface Execution {
   base: CodeBaseRecord;
   input: ServiceWorkInput;
@@ -249,15 +260,7 @@ export class CodeBaseService {
   start(everyMs = 5000): void {
     if (bootMaintenance.active) return;
     if (this.timer) return;
-    const failed = (error: unknown) =>
-      this.issues.report({
-        class: 'platform',
-        where: 'code_work.bases',
-        code: error instanceof MervError ? error.code : 'unexpected',
-        subject: 'code_work.bases',
-        level: 'warn',
-        error,
-      });
+    const failed = passFailed(this.issues, 'code_work.bases');
     const tick = () =>
       void this.due()
         .then(async (projects) => {

@@ -88,19 +88,22 @@ test('a machine whose host never acknowledges its shutdown stands as stuck relea
   const f = await fleetFixture(t, { prepareStop: async () => false });
   for (const _ of [1, 2, 3]) await f.fleet.tick();
   await f.fleet.cancel(f.caller, f.allocation.id);
-  // Within a minute of its lease the host is renewed while capture retries: it is releasing.
-  f.machine().leaseExpiresAt = '2026-09-22T00:00:30Z';
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.caller, f.allocation.id)).phase, 'releasing');
   await f.fleet.tick();
   assert.deepEqual(f.at('fleet.stuck_releasing'), []);
+  // Far from its lease nothing renews it, so it is still running: counted from the stop.
   f.advance(600_001);
   await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, f.allocation.id)).phase, 'running');
+  // Within a minute of its lease it is renewed and moves to releasing; it stands on regardless.
+  f.machine().leaseExpiresAt = '2026-09-22T00:10:30Z';
   await f.fleet.tick();
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, f.allocation.id)).phase, 'releasing');
   const stuck = f.at('fleet.stuck_releasing');
   assert.deepEqual(
     stuck.map((issue) => [issue.code, issue.key, issue.standing, issue.level]),
-    Array(2).fill(['releasing', f.allocation.id, true, 'severe']),
+    Array(3).fill(['releasing', f.allocation.id, true, 'severe']),
   );
 });
 
@@ -164,10 +167,18 @@ test('work whose hosted machines never claimed it stands as unclaimed', async (t
       createdAt: '2026-09-22T00:00:00Z',
       updatedAt: '2026-09-22T00:00:00Z',
     }) as unknown as FleetAllocation;
+  // Another work's refusal pauses rentals: the streak is reported all the same.
+  const refusal = {
+    ...rented('fa_9'),
+    owner: { kind: 'workflow', id: 'work:wf_9' },
+    runtime: null,
+    error: 'wallet_refused',
+    updatedAt: '2026-09-22T23:55:00Z',
+  } as FleetAllocation;
   const fleet = {
     allocationSeconds: 86_400,
     held: async () => false,
-    listOwned: async () => [rented('fa_1'), rented('fa_2')],
+    listOwned: async () => [rented('fa_1'), rented('fa_2'), refusal],
   } as unknown as Fleet;
   const sessions = {
     dispatch: {
@@ -204,6 +215,13 @@ test('work whose hosted machines never claimed it stands as unclaimed', async (t
       refs: { projectId: 'p1', instanceId: 'wf_1' },
     },
   ]);
+  // A project passed over each pass stands; its person's spent compute is their own.
+  const internals = adapter as unknown as { failed(w: string, e: unknown, p: string): void };
+  internals.failed('fleet.workflow_skipped', new MervError('fleet_compute_cap', 'Used', 429), 'p1');
+  assert.deepEqual(
+    seen.at('fleet.workflow_skipped').map((issue) => [issue.key, issue.standing, issue.level]),
+    [['p1', true, 'notice']],
+  );
 });
 
 test("a failed Pi turn keeps the worker's words as its note; a cancelled one is not reported", async (t) => {
