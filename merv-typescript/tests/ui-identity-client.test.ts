@@ -346,6 +346,73 @@ test('zero-project onboarding discovers the account before any scoped call and o
   );
 });
 
+test('a sign-in opens the chooser instead of the last project while an invitation is pending', async (t) => {
+  setup(t);
+  const browser = new Map<string, string>();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => browser.get(key) ?? null,
+      setItem: (key: string, value: string) => void browser.set(key, value),
+      removeItem: (key: string) => void browser.delete(key),
+    },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  });
+  let invitations = () => Response.json({ invitations: [] as unknown[] });
+  const paths: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (path: string) => {
+    paths.push(path);
+    if (path === '/account') return Response.json(account());
+    if (path === '/account/invitations') return invitations();
+    const actor = {
+      id: 'member',
+      projectId: project.id,
+      name: 'A',
+      role: 'operator',
+      active: true,
+    };
+    return Response.json({ result: { actor, project, rows: [], plugins: [] } });
+  });
+  setToken('user-a');
+  setProject(project.id);
+  // A project chosen in this tab opens without reading invitations.
+  assert.equal((await resolveAccountSession()).phase, 'ready');
+  assert.equal(paths.includes('/account/invitations'), false);
+  // A new sign-in forgets the tab's project; the browser's last project opens when none is pending.
+  setToken('user-a');
+  assert.equal((await resolveAccountSession()).phase, 'ready');
+  assert.equal(projectSelection(), project.id);
+  const invitation = {
+    id: 'invite-a',
+    projectId: 'project-b',
+    projectName: 'Project B',
+    issuer: `${login.url}/auth/v1`,
+    subject: 'user-a',
+    email: 'a@example.com',
+    role: 'operator',
+    status: 'pending',
+    createdAt: project.createdAt,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    sentAt: project.createdAt,
+  };
+  invitations = () => Response.json({ invitations: [invitation] });
+  setToken('user-a');
+  assert.equal((await resolveAccountSession()).phase, 'projects');
+  assert.equal(projectSelection(), null);
+  // Choosing a project on the chooser opens it, the invitation still pending.
+  setProject(project.id);
+  assert.equal((await resolveAccountSession()).phase, 'ready');
+  // A failed invitation read never holds the project back.
+  invitations = () =>
+    Response.json({ error: { code: 'unavailable', message: 'x' } }, { status: 503 });
+  setToken('user-a');
+  assert.equal((await resolveAccountSession()).phase, 'ready');
+});
+
 test('membership loss refreshes project selection without treating it as a failed login', async (t) => {
   setup(t);
   setToken('shared-user');

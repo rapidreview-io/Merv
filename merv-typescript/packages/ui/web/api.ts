@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import type { Actor, IssuedUserKey, Project, UserKey } from '@merv/contracts/scope-models';
+import type {
+  Actor,
+  IssuedUserKey,
+  Project,
+  ProjectInvitation,
+  UserKey,
+} from '@merv/contracts/scope-models';
 
 export class ApiError extends Error {
   constructor(
@@ -305,6 +311,16 @@ export async function resolveAccountSession(
   if (!drilled && (!selected || !account.projects.some((project) => project.id === selected))) {
     setProject(null);
     return { phase: 'projects', account, epoch: scopeEpoch };
+  }
+  // A tab that opens without a project of its own leads with the person's pending invitations:
+  // the chooser is the one place to answer them. A failed read never holds the project back.
+  if (account.kind === 'user' && !drilled && !projectSelection()) {
+    const { invitations } = await accountRequest<{ invitations: ProjectInvitation[] }>(
+      '/account/invitations',
+    ).catch(() => ({ invitations: [] }));
+    requireScope(epoch);
+    if (invitations.some((item) => item.status === 'pending'))
+      return { phase: 'projects', account, epoch };
   }
   setProject(selected);
   if (who && !drilled) opened(who, selected!);
