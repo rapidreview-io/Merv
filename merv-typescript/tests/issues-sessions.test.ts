@@ -14,7 +14,7 @@ import type { Session, ThreadQuestion } from '../packages/sessions/src/types.js'
 import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
 
 async function fixture(t: TestContext) {
-  const f = await twoStepWorkflow(t, 'issues');
+  const f = await twoStepWorkflow(t, 'issues', undefined, ['issues']);
   const reports: IssueReport[] = [];
   const resolved: IssueTarget[] = [];
   f.app.ctx.provide('issues', {

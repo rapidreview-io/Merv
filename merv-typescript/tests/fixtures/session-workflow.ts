@@ -3,7 +3,8 @@
  * two-step workflow, `<label>-test`: working, then a review that revises or approves, then done.
  * Its owner bootstraps the project `<Label>`. `offer` hands a runner the instance's current step
  * and attaches it, `move` takes an action as the owner, and `ok` is a call that must answer 200.
- * `references` are the execution references each step grants, such as its compute profile.
+ * `references` are the execution references each step grants, such as its compute profile;
+ * `omit` names default plugins left out, such as one a test provides a fake of.
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -23,6 +24,7 @@ export async function twoStepWorkflow(
   t: TestContext,
   label: string,
   references?: (state: string) => WorkflowExecutionReferences,
+  omit: string[] = [],
 ) {
   const directory = await mkdtemp(join(tmpdir(), `merv-${label}-`));
   const env = `MERV_${label.toUpperCase()}_TEST_${randomUUID().replaceAll('-', '')}`;
@@ -31,12 +33,14 @@ export async function twoStepWorkflow(
   const config = JSON.parse(
     readFileSync(new URL('../../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  config.plugins = config.plugins.map((plugin) =>
-    plugin.id === 'sessions'
-      ? { ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }
-      : plugin.id === 'blobs'
-        ? s3.entry
-        : plugin,
+  config.plugins = config.plugins.flatMap((plugin) =>
+    omit.includes(plugin.id)
+      ? []
+      : plugin.id === 'sessions'
+        ? { ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }
+        : plugin.id === 'blobs'
+          ? s3.entry
+          : plugin,
   );
   const app = await createApp({ directory, config, port: 0 });
   t.after(async () => {
