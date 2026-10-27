@@ -23,7 +23,8 @@
         "members": [
           "scope",
           "secrets",
-          "domainEvents"
+          "domainEvents",
+          "issues"
         ]
       },
       {
@@ -205,7 +206,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-26",
+  "snapshot": "2026-10-27",
   "groups": [
     {
       "id": "front",
@@ -295,7 +296,8 @@
         "state",
         "scope",
         "blobs",
-        "domainEvents"
+        "domainEvents",
+        "issues"
       ],
       "description": "State and Scope are the most shared dependencies. Blobs stores bytes without depending on State; Artifacts connects file metadata to those bytes. Domain Events reads durable events from State."
     },
@@ -1006,6 +1008,26 @@
       "owner": "identity",
       "label": "Identity",
       "purpose": "Verifies the shared user's identity. Project membership and roles remain in Scope.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-issues",
+      "source": "packages/issues/src/index.ts",
+      "provides": [
+        "issues"
+      ],
+      "requires": [
+        "state"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "issues",
+      "group": "foundation",
+      "owner": "issues",
+      "label": "Issues",
+      "purpose": "Keeps what owners report going wrong (agent tool errors, agent questions, platform failures) as fingerprinted issues with sampled cases, and alerts severe ones to Slack. Owners look it up at each report; nothing injects it.",
       "exposedTools": []
     },
     {
@@ -3170,6 +3192,11 @@
       "optional": false
     },
     {
+      "from": "issues",
+      "to": "state",
+      "optional": false
+    },
+    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -4046,10 +4073,10 @@
     }
   ],
   "counts": {
-    "plugins": 87,
-    "providers": 39,
+    "plugins": 88,
+    "providers": 40,
     "adapters": 48,
-    "dependencies": 281
+    "dependencies": 282
   },
   "network": [
     {

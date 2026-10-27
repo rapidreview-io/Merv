@@ -1,16 +1,16 @@
 {
-  "snapshot": "2026-10-26",
+  "snapshot": "2026-10-27",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 87,
-  "serviceProviders": 39,
+  "pluginCount": 88,
+  "serviceProviders": 40,
   "toolAdapters": 22,
   "uiAdapters": 17,
   "apiAdapters": 5,
-  "defaultEntries": 59,
-  "apiEntries": 46,
-  "serverPlugins": 86,
+  "defaultEntries": 60,
+  "apiEntries": 47,
+  "serverPlugins": 87,
   "machinePlugins": 1,
-  "directDependencyCount": 281,
+  "directDependencyCount": 282,
   "optionalDependencyCount": 22,
   "directConsumers": {
     "api": 14,
@@ -26,6 +26,7 @@
     "feed": 2,
     "fleet": 4,
     "identity": 3,
+    "issues": 0,
     "knowledge": 1,
     "legacyHistory": 2,
     "metrics": 2,
@@ -45,7 +46,7 @@
     "scripts": 1,
     "secrets": 2,
     "sessions": 11,
-    "state": 28,
+    "state": 29,
     "tasks": 4,
     "tools": 32,
     "ui": 18,
@@ -506,6 +507,20 @@
         "identity"
       ],
       "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-issues",
+      "source": "packages/issues/src/index.ts",
+      "provides": [
+        "issues"
+      ],
+      "requires": [
+        "state"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",

@@ -810,6 +810,20 @@ END $merv$;`);
     );
   }
 
+  async eventCounts(after: number, through: number, atLeast: number) {
+    cursor(after);
+    cursor(through);
+    return this.read(
+      async (sql) =>
+        await sql.all<Awaited<ReturnType<State['eventCounts']>>[number]>(
+          'SELECT type, subject_id AS "subjectId", min(project_id) AS "projectId", count(*)::int AS count, min(id) AS first, max(id) AS last FROM events WHERE id>? AND id<=? GROUP BY type, subject_id HAVING count(*)>=? ORDER BY 4 DESC LIMIT 20',
+          after,
+          through,
+          atLeast,
+        ),
+    );
+  }
+
   async nextEvent(
     after: number,
     types: readonly string[],
