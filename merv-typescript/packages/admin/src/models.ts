@@ -4,6 +4,7 @@
  */
 import type { RunningPhrase } from '@merv/contracts/running';
 import type { UsageTotals } from '@merv/sessions/models';
+import type { IssueCase, IssueRow } from '@merv/contracts/issue-models';
 
 /** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
 export interface AdminAttention {
@@ -136,21 +137,8 @@ export interface AdminCredits {
 }
 
 type Named = { id: string; name: string };
-type Ids<K extends string> = Partial<Record<K, string>>;
-/** An issue as Issues lists it (`IssueRow`), with the projects its kept cases name, those Scope
- *  still knows. */
-export interface AdminIssue extends Record<
-  'id' | 'where' | 'code' | 'firstAt' | 'openedAt' | 'lastAt',
-  string
-> {
-  class: 'tool' | 'question' | 'platform';
-  level: 'notice' | 'warn' | 'severe';
-  state: 'open' | 'resolved';
-  loop: boolean;
-  count: number;
-  peakHour: number;
-  note: string | null;
-  resolvedAt: string | null;
+/** An issue as Issues lists it, with the projects its kept cases name, those Scope still knows. */
+export interface AdminIssue extends Omit<IssueRow, 'projects'> {
   projects: Named[];
 }
 /** `GET /admin/issues`: one read for the page and the rail's count of open severe issues. */
@@ -160,24 +148,9 @@ export interface AdminIssues {
   severe: number;
   at: string;
 }
-/** One kept case (`IssueCase`), with its project where Scope still knows it. */
-export interface AdminIssueCase {
-  id: string;
-  at: string;
-  projectId: string | null;
+/** One kept case, with its project where Scope still knows it. */
+export interface AdminIssueCase extends IssueCase {
   project: Named | null;
-  release: string | null;
-  refs: Ids<'threadId' | 'instanceId' | 'sessionId' | 'invocationId' | 'conversationId'> &
-    Ids<'allocationId' | 'sandboxId'>;
-  error: { name?: string; code?: string; status?: number; at?: string[] } | null;
-  /** The visit it pinned (`SessionTrace`). */
-  trace:
-    | (Record<'threadId' | 'instanceId' | 'role' | 'status', string> &
-        Ids<'harness' | 'outcome' | 'closeReason' | 'allocationId'> & {
-          transcript?: { sha256: string };
-          workspace?: { headOid?: string };
-        })
-    | null;
 }
 /** `GET /admin/issues/:id`, which `Download case` saves as it is. */
 export interface AdminIssueDetail {

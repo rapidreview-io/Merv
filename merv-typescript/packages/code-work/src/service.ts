@@ -1,5 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
-import { silent, type Issues } from '@merv/contracts/issues';
+import { silent, swallowed, type Issues } from '@merv/contracts/issues';
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
@@ -17,7 +17,7 @@ import {
   MervError,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
-import { CodeBaseService, passFailed } from './bases.js';
+import { CodeBaseService } from './bases.js';
 import { checkedCapture, CodeCaptureReader } from './captures.js';
 import { CodeCommandService } from './commands.js';
 import { beyondMain, MainLanding } from './landing.js';
@@ -251,7 +251,7 @@ export class CodeService implements Code {
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
       this.submissions.start();
-      const failed = passFailed(this.issues, 'code_work.landing');
+      const failed = swallowed(this.issues, 'code_work.landing');
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {

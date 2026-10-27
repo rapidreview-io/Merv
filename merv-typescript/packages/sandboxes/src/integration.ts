@@ -1,7 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { MervError } from '@merv/contracts';
-import { reporter } from '@merv/contracts/issues';
+import { reporter, swallowed } from '@merv/contracts/issues';
 import { SandboxRuns, sandboxRunMigrations } from './sandbox-runs.js';
 import { SandboxEvidence } from './sandbox-evidence.js';
 import { SandboxComputeWaits } from './compute-waits.js';
@@ -78,15 +77,7 @@ export const sandboxIntegrationPlugin = {
       });
       // Each pass now and on its interval; a failed one is retried by the next.
       const repeat = (where: string, pass: () => Promise<void>, ms: number) => {
-        const failed = (error: unknown) =>
-          issues.report({
-            class: 'platform',
-            where,
-            code: error instanceof MervError ? error.code : 'unexpected',
-            subject: where,
-            level: 'warn',
-            error,
-          });
+        const failed = swallowed(issues, where);
         void pass().catch(failed);
         return setInterval(() => pass().catch(failed), ms).unref();
       };

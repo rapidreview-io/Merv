@@ -1,8 +1,7 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
-import { silent, type Issues } from '@merv/contracts/issues';
+import { issueCode, silent, type Issues } from '@merv/contracts/issues';
 import {
   check,
-  MervError,
   type Scope,
   type State,
   type StoredEvent,
@@ -197,7 +196,7 @@ export class SandboxRuns {
         this.issues.report({
           class: 'platform',
           where: 'sandboxes.retire',
-          code: error instanceof MervError ? error.code : 'unexpected',
+          code: issueCode(error),
           level: 'warn',
           subject: run.run_ref,
           refs: { projectId: run.project_id },

@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { swallowed } from '@merv/contracts/issues';
 import { initializeManagedProjects } from './managed.js';
 import {
   canonical,
@@ -75,19 +76,6 @@ export class CodeStore {
   contains: CodeReceiver['contains'] = (...args) => this.receiver.contains(...args);
   stats: CodeReceiver['stats'] = (...args) => this.receiver.stats(...args);
 
-  /** A maintenance pass that failed: the next one retries it, and a failing tick is a loop. */
-  private readonly unmaintained = (error: unknown) => {
-    const code = (error as { code?: unknown } | undefined)?.code;
-    this.core.hooks.report({
-      class: 'platform',
-      where: 'code.maintain',
-      code: typeof code === 'string' ? code : 'unexpected',
-      subject: 'code.maintain',
-      level: 'warn',
-      error,
-    });
-  };
-
   /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
     try {
@@ -96,8 +84,10 @@ export class CodeStore {
       await this.close();
       throw error;
     }
+    // A maintenance pass that failed: the next one retries it, and a failing tick is a loop.
+    const failed = swallowed(this.core.hooks, 'code.maintain');
     this.timer = setInterval(
-      () => void this.maintain().catch(this.unmaintained),
+      () => void this.maintain().catch(failed),
       this.config.sweepSeconds * 1000,
     );
     this.timer.unref();
@@ -111,7 +101,7 @@ export class CodeStore {
         // has either committed or rolled back. No Git runs inside the barrier.
         await this.core.state.transaction(async () => {});
         await this.maintain(false);
-      })().catch(this.unmaintained);
+      })().catch(failed);
     }, 200);
     this.waker.unref();
   }

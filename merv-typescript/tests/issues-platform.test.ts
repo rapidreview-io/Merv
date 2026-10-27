@@ -216,8 +216,8 @@ test('work whose hosted machines never claimed it stands as unclaimed', async (t
     },
   ]);
   // A project passed over each pass stands; its person's spent compute is their own.
-  const internals = adapter as unknown as { failed(w: string, e: unknown, p: string): void };
-  internals.failed('fleet.workflow_skipped', new MervError('fleet_compute_cap', 'Used', 429), 'p1');
+  const internals = adapter as unknown as { skipped(e: unknown, p: string): void };
+  internals.skipped(new MervError('fleet_compute_cap', 'Used', 429), 'p1');
   assert.deepEqual(
     seen.at('fleet.workflow_skipped').map((issue) => [issue.key, issue.standing, issue.level]),
     [['p1', true, 'notice']],

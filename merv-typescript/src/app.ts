@@ -9,7 +9,7 @@ import {
   type ConfiguredEnv,
   type PluginStatus,
 } from '@merv/contracts';
-import { reporter, type IssueReport } from '@merv/contracts/issues';
+import { issueCode, reporter, type IssueReport } from '@merv/contracts/issues';
 import type {} from '@merv/api';
 import type {} from '@merv/secrets/types';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
@@ -227,7 +227,7 @@ export async function createApp(options: ConfigurationOptions) {
               report({
                 class: 'platform',
                 where: 'composition.restore_failed',
-                code: error instanceof MervError ? error.code : 'internal_error',
+                code: issueCode(error),
                 key: env,
                 level: 'severe',
                 error,

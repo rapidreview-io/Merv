@@ -21,7 +21,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { Issues, IssueTarget } from '@merv/contracts/issues';
+import { issueCode, type Issues, type IssueTarget } from '@merv/contracts/issues';
 import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   AutomaticLease,
@@ -952,9 +952,7 @@ export class SessionDispatch {
         if (!(error instanceof PoisonedOffer)) throw error;
         const key = targetKey(error.candidate);
         skipped.add(key);
-        const { candidate, cause } = error as PoisonedOffer & {
-          cause?: { code?: unknown; status?: number };
-        };
+        const { candidate, cause } = error;
         if (!error.silent) await this.poisoned(error.caller ?? preparedCaller, candidate, cause);
         else {
           this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
@@ -963,8 +961,8 @@ export class SessionDispatch {
           this.hooks.issues.report({
             class: 'platform',
             where: 'dispatch.offer_failed',
-            code: typeof cause?.code === 'string' ? cause.code : 'unexpected',
-            status: cause?.status ?? 500,
+            code: issueCode(cause),
+            status: cause instanceof MervError ? cause.status : 500,
             subject: candidate.instanceId,
             refs: {
               projectId: (error.caller ?? preparedCaller).projectId,

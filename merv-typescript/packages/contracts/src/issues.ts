@@ -8,40 +8,15 @@
 import type { Context } from 'cordis';
 import { MervError } from './index.js';
 
-export type IssueClass = 'tool' | 'question' | 'platform';
-export type IssueLevel = 'notice' | 'warn' | 'severe';
-export type IssueState = 'open' | 'resolved';
-
-/** Ids only: what joins a case to its project, visit, conversation, machine and code. */
-export interface IssueRefs {
-  projectId?: string;
-  actorId?: string;
-  /** An outside agent's client string. */
-  client?: string;
-  sessionId?: string;
-  threadId?: string;
-  /** A leased call's session_tool_calls row. */
-  invocationId?: string;
-  instanceId?: string;
-  revision?: number;
-  questionId?: string;
-  conversationId?: string;
-  commandId?: string;
-  hostId?: string;
-  allocationId?: string;
-  sandboxId?: string;
-  profileId?: string;
-  /** A hosted machine's image, `rt1_…` (deploy/HOSTED_RELEASES.md maps it to its commit). */
-  runtimeRelease?: string;
-  runnerId?: string;
-  hostRef?: string;
-  pushId?: string;
-  eventType?: string;
-  subjectId?: string;
-  eventIds?: [first: number, last: number];
-  /** The Main release a case ran under when it is not this process's: a crash found at restart. */
-  release?: string;
-}
+import type {
+  ErrorFacts,
+  IssueCase,
+  IssueClass,
+  IssueLevel,
+  IssueRefs,
+  IssueRow,
+} from './issue-models.js';
+export type * from './issue-models.js';
 
 /** One thing that went wrong, as its owner judges it where it went wrong. */
 export interface IssueReport {
@@ -83,84 +58,6 @@ export interface Issues {
   resolve(target: IssueTarget): void;
 }
 
-/** What an error is kept as: never its message, which may carry request values or secrets. */
-export interface ErrorFacts {
-  name?: string;
-  code?: string;
-  status?: number;
-  /** Up to three stack frames of a fault (status 500 or above, or no MervError): file:line
-   *  within the release. */
-  at?: string[];
-  sqlstate?: string;
-  table?: string;
-  constraint?: string;
-  /** Paths of the input fields a refusal names (invalid_input), at most ten. */
-  fields?: string[];
-}
-
-/** What Sessions pins of one visit for a case (`sessions.running.platformTrace`). */
-export interface SessionTrace {
-  projectId: string;
-  threadId: string;
-  instanceId: string;
-  revision: number;
-  role: string;
-  harness?: string;
-  status: string;
-  outcome?: string;
-  closeReason?: string;
-  createdAt: string;
-  closedAt?: string;
-  runnerId?: string;
-  hostRef?: string;
-  allocationId?: string;
-  /** Its uploaded transcript: blob `transcripts-<projectId>/<sha256>`. */
-  transcript?: { sha256: string; size: number };
-  /** The resumable conversation it left: blob `conversations-<projectId>/<sha256>`. */
-  conversation?: { sha256: string; size: number };
-  workspace?: { branch?: string; baseOid?: string; headOid?: string; treeOid?: string };
-}
-
-/** An issue as the admin reads it. */
-export interface IssueRow {
-  id: string;
-  class: IssueClass;
-  where: string;
-  code: string;
-  key: string | null;
-  level: IssueLevel;
-  loop: boolean;
-  state: IssueState;
-  count: number;
-  /** The most reports in any one hour. */
-  peakHour: number;
-  note: string | null;
-  /** Up to five projects its kept cases name. */
-  projects: string[];
-  firstAt: string;
-  openedAt: string;
-  lastAt: string;
-  resolvedAt: string | null;
-  resolvedBy: string | null;
-}
-/** One kept case of an issue. */
-export interface IssueCase {
-  id: string;
-  at: string;
-  level: IssueLevel;
-  status: number | null;
-  /** Reports of its subject folded into this case within one flush. */
-  repeats: number;
-  projectId: string | null;
-  subject: string | null;
-  /** The Main release it ran under (`<stamp>-<sha8>-<content12>`), where known. */
-  release: string | null;
-  refs: IssueRefs;
-  error: ErrorFacts | null;
-  note: string | null;
-  /** Pinned once its visit has ended; null before that and for a case without a visit. */
-  trace: SessionTrace | null;
-}
 /** The `issues` service: owners' verbs and the admin's reads. */
 export interface IssueStore extends Issues {
   /** Platform admin read, never exposed through a tool, a lease or a machine key: the open
@@ -181,6 +78,24 @@ declare module 'cordis' {
 
 /** An owner's reporter where nothing collects: a unit test, a CLI command. */
 export const silent: Issues = { report() {}, resolve() {} };
+
+/** A failure's finite code: its MervError's, else `unexpected`. */
+export const issueCode = (error: unknown): string =>
+  error instanceof MervError ? error.code : 'unexpected';
+
+/** The catch of a pass that swallows its failure for the next pass to retry: a platform issue
+ *  at `where`, which is also its subject, so a pass that keeps failing is a loop. */
+export const swallowed =
+  (issues: Pick<Issues, 'report'>, where: string, level: IssueLevel = 'warn') =>
+  (error: unknown): undefined =>
+    void issues.report({
+      class: 'platform',
+      where,
+      code: issueCode(error),
+      subject: where,
+      level,
+      error,
+    });
 
 const bounded = (value: unknown, max: number) =>
   typeof value === 'string' && value ? value.slice(0, max) : undefined;

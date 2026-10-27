@@ -1,5 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
-import { reporter, silent, type Issues } from '@merv/contracts/issues';
+import { issueCode, reporter, silent, swallowed, type Issues } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -154,8 +154,6 @@ const refusedAs =
     if (error instanceof MervError && statuses.includes(error.status)) return value;
     throw error;
   };
-/** Messages may carry credentials; an issue keeps the finite code only. */
-const codeOf = (error: unknown) => (error instanceof MervError ? error.code : 'unexpected');
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
@@ -264,23 +262,25 @@ export class FleetWorkflowAdapter implements FleetOwner {
       throw error;
     }
     this.timer = setInterval(() => {
-      void this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
+      void this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
     }, this.config.pollIntervalMs);
     this.timer.unref();
     // A missing model key leaves demand unserved, never the server down.
-    await this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
+    await this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
   }
-  /** A failed pass, or a project one passed over (`projectId`), which stands while every pass
-   *  does: the next pass tries again. A project without compute or its person's is their own. */
-  private failed(where: string, error: unknown, projectId?: string) {
-    const code = codeOf(error);
+  /** A project a pass passed over, which stands while every pass does: the next pass tries
+   *  again. A project without compute, or its person's cap, is their own. Messages may carry
+   *  credentials; an issue keeps the finite code only. */
+  private skipped(error: unknown, projectId: string) {
+    const code = issueCode(error);
     this.issues.report({
       class: 'platform',
-      where,
+      where: 'fleet.workflow_skipped',
       code,
       level: ['sandbox_not_connected', 'fleet_compute_cap'].includes(code) ? 'notice' : 'warn',
-      subject: projectId ?? where,
-      ...(projectId && { key: projectId, standing: true }),
+      subject: projectId,
+      key: projectId,
+      standing: true,
       refs: { projectId },
       error,
     });
@@ -626,7 +626,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       });
       return granted(row!);
     });
-    void this.reconcile().catch((error) => this.failed('fleet.reconcile', error));
+    void this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
     return result;
   }
   /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
@@ -819,7 +819,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
               }
         served.set(projectId, wanted);
       } catch (error) {
-        this.failed('fleet.workflow_skipped', error, projectId);
+        this.skipped(error, projectId);
         failed.add(projectId);
       }
     }
@@ -947,7 +947,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       } catch (error) {
         // A refusal, such as the payer's spend cap, passes over the project's other targets this
         // pass; only a project without a connection is no longer served.
-        this.failed('fleet.workflow_skipped', error, projectId);
+        this.skipped(error, projectId);
         failed.add(projectId);
         if (error instanceof MervError && error.code === 'sandbox_not_connected')
           this.served.delete(projectId);

@@ -1,5 +1,12 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
-import { reporter, silent, type IssueReport, type Issues } from '@merv/contracts/issues';
+import {
+  issueCode,
+  reporter,
+  silent,
+  swallowed,
+  type IssueReport,
+  type Issues,
+} from '@merv/contracts/issues';
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
 import type { SbxMerv } from '@sandboxes/merv-host';
@@ -115,7 +122,6 @@ const walletRefused = (error: unknown) =>
     'sandbox_concurrency_exceeded',
     'sandbox_storage_cap_exceeded',
   ].includes(error.code);
-const codeOf = (error: unknown) => (error instanceof MervError ? error.code : 'unexpected');
 /** How long a capped request waits for its offer to list a price, as after a restart. */
 const unpricedMs = 600_000;
 /** How long after a restart owners have to register before their kinds' machines are judged. */
@@ -470,17 +476,7 @@ export class FleetService implements Fleet {
     await this.pending?.catch(() => undefined);
     const full = Date.now() >= this.fullAt;
     if (full) this.fullAt = Date.now() + this.config.pollIntervalMs;
-    const busy = await this.run(full).catch((error) => {
-      this.issues.report({
-        class: 'platform',
-        where: 'fleet.pass',
-        code: codeOf(error),
-        subject: 'fleet.pass',
-        level: 'warn',
-        error,
-      });
-      return false;
-    });
+    const busy = await this.run(full).catch(swallowed(this.issues, 'fleet.pass'));
     this.wake(busy ? Math.min(1000, this.config.pollIntervalMs / 5) : this.fullAt - Date.now());
   }
   registerOwner(kind: string, owner: FleetOwner): () => void {
@@ -1008,6 +1004,7 @@ export class FleetService implements Fleet {
         projectId: a.projectId,
         allocationId: a.id,
         sandboxId: a.runtime?.sandboxId,
+        launchId: a.runtime?.launch?.launchId,
         profileId: a.profileId,
         runtimeRelease: this.profiles.find((p) => p.id === a.profileId)?.releaseId,
         instanceId: rentedWork(a) ?? undefined,
@@ -1079,7 +1076,7 @@ export class FleetService implements Fleet {
               if (!booting) {
                 current.failures++;
                 const level = current.failures < 5 ? 'notice' : 'severe';
-                this.report('fleet.retry', a, codeOf(error), level, { error });
+                this.report('fleet.retry', a, issueCode(error), level, { error });
               }
               if (current.error !== 'runtime_not_ready') current.error = 'runtime_unavailable';
               current.retryAt = new Date(
@@ -1212,7 +1209,7 @@ export class FleetService implements Fleet {
           if (!first || !refused(error)) throw error;
           if (walletRefused(error)) refusal = 'wallet_refused';
           const level = refusal === 'wallet_refused' ? 'notice' : 'severe';
-          this.report('fleet.refused', a, codeOf(error), level, { error });
+          this.report('fleet.refused', a, issueCode(error), level, { error });
         });
       if (handle) await this.observed(a, runtimeHandle(handle, null, this.clock()), 'provisioning');
       else

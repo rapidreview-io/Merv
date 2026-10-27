@@ -1,5 +1,6 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
 import type { Context } from 'cordis';
+import type {} from '@merv/sessions/types';
 import { z } from 'zod';
 import { slackConfig, slackSink } from './alerts.js';
 import { issueMigrations } from './schema.js';
@@ -28,10 +29,7 @@ export const issuesPlugin = {
       const store = new IssueStore(ctx.state, slack ? [slackSink(slack)] : []);
       const scan = await floods(ctx.state, store);
       // Sessions is looked up at each pass, never injected.
-      const traces: Traces = (ids) =>
-        (ctx.get('sessions')?.running as { platformTrace?: Traces } | undefined)?.platformTrace?.(
-          ids,
-        );
+      const traces: Traces = (ids) => ctx.get('sessions')?.running.platformTrace(ids);
       // Every pass waits while boot maintenance holds the process.
       const pass = (task: () => Promise<unknown>) => () =>
         void (bootMaintenance.active || task().catch(() => {}));
