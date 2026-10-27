@@ -21,6 +21,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
+import type { Issues, IssueTarget } from '@merv/contracts/issues';
 import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   AutomaticLease,
@@ -157,6 +158,8 @@ interface Hooks {
   inquiries: Pick<Inquiries, 'candidate' | 'demand' | 'offer'>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
   close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
+  /** Where an offer passed over, a refused inquiry and a hold are said. */
+  issues: Issues;
 }
 /** What budgets.ts, runners.ts and stuck.ts read of the dispatch that runs them. */
 export type DispatchContext = Pick<
@@ -181,7 +184,7 @@ class PoisonedOffer extends Error {
     readonly candidate: Target,
     readonly cause: unknown,
     readonly owner: string,
-    /** A server fault or a refusal of who asked: logged and passed over, never held. */
+    /** A server fault or a refusal of who asked: reported and passed over, never held. */
     readonly silent: boolean,
     readonly caller?: Caller,
   ) {
@@ -229,10 +232,17 @@ export class SessionDispatch {
         )
           .filter((row) => row.held_at)
           .sort((a, b) => b.revision - a.revision);
+        const current = await this.workflows.revisions(
+          projectId,
+          [...new Set(holds.map((row) => row.instance_id))],
+          tx,
+        );
         const reported = new Set<string>();
         for (const row of holds)
           if (!reported.has(row.instance_id)) {
-            await this.reportHold(projectId, row.instance_id, row, tx);
+            // A hold its work has moved past holds nothing: withdrawn, never said again.
+            const stands = current.get(row.instance_id)?.revision === row.revision;
+            await this.reportHold(projectId, row.instance_id, stands ? row : null, tx);
             reported.add(row.instance_id);
           }
       }
@@ -366,6 +376,27 @@ export class SessionDispatch {
       },
       tx,
     );
+    // Its last code, never its last message, which embeds the raw failure's text. One issue an
+    // instance, so withdrawing a hold of any revision resolves it.
+    const target: IssueTarget = {
+      class: 'platform',
+      where: 'dispatch.launch_held',
+      code: 'launch_held',
+      key: instanceId,
+    };
+    if (!row) return this.hooks.issues.resolve(target);
+    this.hooks.issues.report({
+      ...target,
+      level: 'severe',
+      subject: `${instanceId}@${row.revision}`,
+      refs: {
+        projectId,
+        instanceId,
+        revision: Number(row.revision),
+        sessionId: row.last_session_id ?? undefined,
+        subjectId: row.last_code,
+      },
+    });
   }
   /**
    * The model budget's wait on a rented machine's work, said on the work so it reaches Needs you
@@ -921,8 +952,28 @@ export class SessionDispatch {
         if (!(error instanceof PoisonedOffer)) throw error;
         const key = targetKey(error.candidate);
         skipped.add(key);
-        if (error.silent) this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
-        else await this.poisoned(error.caller ?? preparedCaller, error.candidate, error.cause);
+        const { candidate, cause } = error as PoisonedOffer & {
+          cause?: { code?: unknown; status?: number };
+        };
+        if (!error.silent) await this.poisoned(error.caller ?? preparedCaller, candidate, cause);
+        else {
+          this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
+          // The whole lease rolled back, leaving no decision or event: only this says why the
+          // work is passed over.
+          this.hooks.issues.report({
+            class: 'platform',
+            where: 'dispatch.offer_failed',
+            code: typeof cause?.code === 'string' ? cause.code : 'unexpected',
+            status: cause?.status ?? 500,
+            subject: candidate.instanceId,
+            refs: {
+              projectId: (error.caller ?? preparedCaller).projectId,
+              instanceId: candidate.instanceId,
+              revision: candidate.expectedRevision,
+            },
+            error: cause,
+          });
+        }
       }
     }
   }
@@ -1093,9 +1144,13 @@ export class SessionDispatch {
               tx,
             );
             if ('refused' in session) {
-              process.stderr.write(
-                `${JSON.stringify({ event: 'dispatch.inquiry_refused', inquiryId: inquiry.id, code: session.refused.code })}\n`,
-              );
+              this.hooks.issues.report({
+                class: 'platform',
+                where: 'dispatch.inquiry_refused',
+                code: session.refused.code,
+                subject: inquiry.id,
+                refs: { projectId: source.projectId },
+              });
               refused.push(inquiry.id);
               continue;
             }
@@ -1155,19 +1210,8 @@ export class SessionDispatch {
         )
         .catch((error: unknown) => {
           const status = (error as { status?: number })?.status ?? 500;
-          // No hold counts a server fault or a refusal of who asked, and the whole lease rolls
-          // back, leaving no decision or event: only this says why the work is passed over.
+          // No hold counts a server fault or a refusal of who asked: the lease loop reports it.
           const silent = status >= 500 || status === 401 || status === 403;
-          if (silent)
-            process.stderr.write(
-              `${JSON.stringify({
-                event: 'dispatch.offer_failed',
-                instanceId: candidate.instanceId,
-                status,
-                code: (error as { code?: unknown })?.code ?? null,
-                message: String((error as Error)?.message ?? error).slice(0, 300),
-              })}\n`,
-            );
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
             error,

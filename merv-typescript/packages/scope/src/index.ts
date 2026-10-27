@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
 import type { ToolGrant, ToolPolicy } from '@merv/contracts';
 import type { Context } from 'cordis';
+import { PLATFORM_ACTOR } from '@merv/contracts/scope-models';
 import {
   check,
   forRead,
@@ -92,8 +93,7 @@ class AuthoritySlot<T> {
     );
   }
 }
-/** The actor every platform caller acts as: a reader that no actor row backs. */
-export const PLATFORM_ACTOR = 'actor_platform';
+export { PLATFORM_ACTOR };
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   readonly members: Memberships;

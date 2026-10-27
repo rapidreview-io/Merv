@@ -4,6 +4,7 @@
  * whose record moved; a full pass, every 30 s, re-checks every live session.
  */
 import { createService, type Caller, type State, type WorkflowPolicy } from '@merv/contracts';
+import type { IssueReport } from '@merv/contracts/issues';
 import { DurableEvents } from '@merv/domain-events';
 import { ProjectScope } from '@merv/scope';
 import { LeasedSessions } from '@merv/sessions';
@@ -103,17 +104,19 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
     credentialId: issued.credential.id,
   };
   const opened: LeasedSessions[] = [];
+  const logged: IssueReport[] = [];
   /** A Sessions process on this state; one closes before the next boots. */
   const open = async () => {
-    opened.push(
-      await createService(
-        new LeasedSessions(tracked, scope, workflows, events, {
-          clock: () => clock,
-          sweepIntervalMs,
-        }),
-      ),
-    );
-    return opened.at(-1)!;
+    const sessions = new LeasedSessions(tracked, scope, workflows, events, {
+      clock: () => clock,
+      sweepIntervalMs,
+    });
+    sessions.issues = {
+      report: (issue) => void (issue.where === 'sessions.sweep_failed' && logged.push(issue)),
+      resolve() {},
+    };
+    opened.push(await createService(sessions));
+    return sessions;
   };
   const sessions = await open();
   t.after(async () => {
@@ -121,12 +124,6 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
     await events.close();
     workflows.close();
     await state.close();
-  });
-  const logged: string[] = [];
-  const write = process.stderr.write.bind(process.stderr);
-  t.mock.method(process.stderr, 'write', (chunk: string, ...rest: never[]) => {
-    if (String(chunk).includes('sessions.sweep_failed')) logged.push(String(chunk));
-    return write(chunk, ...rest);
   });
   return {
     state,
@@ -183,11 +180,11 @@ test('a close that fails holds back only its own session, retried by each full p
   assert.equal(await f.status(healthy.session.id), 'expired');
   assert.equal(await f.status(failed.session.id), 'offered');
   assert.equal(f.logged.length, 1);
-  assert.deepEqual(JSON.parse(f.logged[0]!), {
-    event: 'sessions.sweep_failed',
-    subject: failed.session.id,
-    code: 'transaction_aborted',
-  });
+  const [{ class: kind, where, code, subject }] = f.logged;
+  assert.deepEqual(
+    [kind, where, code, subject],
+    ['platform', 'sessions.sweep_failed', 'transaction_aborted', failed.session.id],
+  );
   f.writers();
   await f.pass(false);
   assert.equal(f.writers(), 0, 'a light pass leaves a failing session to the next full pass');
@@ -197,7 +194,7 @@ test('a close that fails holds back only its own session, retried by each full p
   await f.pass(true);
   assert.equal(f.writers(), 1, 'the full pass retries it');
   assert.equal(await f.status(failed.session.id), 'offered');
-  assert.equal(f.logged.length, 2, 'logged again once per full pass');
+  assert.equal(f.logged.length, 2, 'reported again once per full pass');
   f.failing.clear();
   await f.pass(true);
   assert.equal(await f.status(failed.session.id), 'expired');

@@ -9,6 +9,7 @@ import { postgresMigrations } from './index.postgres.js';
 import { managedNoncePostgresMigration } from './managed-nonce.postgres.js';
 import { managedShutdownMigration } from './managed-shutdown.js';
 import type { Context } from 'cordis';
+import { reporter, silent, type Issues } from '@merv/contracts/issues';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
 import type { Secrets, HuggingFaceGrant, AccountIdentity } from '@merv/secrets/types';
@@ -54,7 +55,7 @@ import {
   type Row,
 } from './common.js';
 import { ComputeWaits } from './compute-waits.js';
-import { ownEnd } from './rules.js';
+import { ownEnd, STOPPED_WITHOUT_HANDOFF } from './rules.js';
 import { SessionServiceWork } from './service-work.js';
 import {
   boundTo,
@@ -376,6 +377,13 @@ export class LeasedSessions implements Sessions {
   observations!: AgentObservations;
   managed!: ManagedRunnerBindings;
   private credentials!: CredentialStore;
+  /** Where what went wrong is said; the plugin sets it before initializing. */
+  issues: Issues = silent;
+  /** `issues` as its parts hold it, read at each call. */
+  private readonly reports: Issues = {
+    report: (issue) => this.issues.report(issue),
+    resolve: (target) => this.issues.resolve(target),
+  };
   private readonly config: z.output<typeof configSchema>;
   constructor(
     private readonly state: State,
@@ -451,6 +459,7 @@ export class LeasedSessions implements Sessions {
             await this.closeSession(session, reason, tx, 'released', 'halted');
             return true;
           },
+          issues: this.reports,
         },
         this.clock,
         this.thresholds,
@@ -496,6 +505,7 @@ export class LeasedSessions implements Sessions {
       publish: (input, tx) =>
         this.workflows.replaceBlockers({ ...input, provider: QUESTION_PROVIDER }, tx),
       woken: (tx, projectId, threadId) => this.computeWaits.woken(tx, projectId, threadId),
+      issues: this.reports,
     });
     this.computeWaits = new ComputeWaits(state, scope, this.clock, {
       transaction: (fn) => this.transaction(fn),
@@ -573,8 +583,8 @@ export class LeasedSessions implements Sessions {
   private checkedAt = Number.NEGATIVE_INFINITY;
   /** Whether the last pass could not read, so runners' presence may have gone unrecorded. */
   private deaf = false;
-  /** Each failing sweep subject with the code last logged, cleared by every full pass. */
-  private readonly failing = new Map<string, string>();
+  /** Each failing sweep subject, cleared by every full pass. */
+  private readonly failing = new Set<string>();
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
@@ -947,6 +957,33 @@ export class LeasedSessions implements Sessions {
           ? 'review_unfinished'
           : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
+    const visit = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      threadId: session.threadId,
+      instanceId: session.instanceId,
+      revision: session.expectedRevision,
+    };
+    const subject = `${session.instanceId}@${session.expectedRevision}`;
+    // An agent that stopped without a handoff or a question waits for someone: its owner's move.
+    if (reason === STOPPED_WITHOUT_HANDOFF)
+      this.issues.report({
+        class: 'question',
+        where: 'session.stopped',
+        code: 'stopped_without_handoff',
+        subject,
+        refs: visit,
+      });
+    else if (failure || session.outcome === 'model_interrupted')
+      this.issues.report({
+        class: 'platform',
+        where: 'sessions.launch',
+        code: failure ?? 'model_interrupted',
+        // A halt's reason is free text: only a code is kept.
+        key: /^[a-z0-9_.:-]{1,80}$/.test(reason) ? reason : 'other',
+        subject,
+        refs: { ...visit, runnerId: session.runnerId, hostRef: session.hostRef ?? undefined },
+      });
     // The work says the day's wait at once, or none if a changed limit already lifted it.
     if (refused)
       await this.dispatch.reportModelWait(
@@ -2102,17 +2139,21 @@ export class LeasedSessions implements Sessions {
     )
       await this.closeSession(session, 'runner_lost', tx, 'expired', 'host_failed');
   }
-  /** One subject on its own: its failure is logged once per code and never stops the rest. */
+  /** One subject on its own: its failure is reported and never stops the rest. */
   private async alone<T>(subject: string, fn: () => Promise<T>): Promise<T | false> {
     try {
       return await fn();
     } catch (error) {
       const code = String((error as { code?: unknown })?.code ?? 'unexpected');
-      if (!this.closed && this.failing.get(subject) !== code)
-        process.stderr.write(
-          `${JSON.stringify({ event: 'sessions.sweep_failed', subject, code })}\n`,
-        );
-      this.failing.set(subject, code);
+      if (!this.closed)
+        this.issues.report({
+          class: 'platform',
+          where: 'sessions.sweep_failed',
+          code,
+          subject,
+          error,
+        });
+      this.failing.add(subject);
       return false;
     }
   }
@@ -2172,9 +2213,15 @@ export const sessionsPlugin = {
   inject: ['state', 'scope', 'workflows', 'domainEvents', 'blobs'],
   async apply(ctx: Context, config: SessionsConfig = {}) {
     await ctx.effect(async function* () {
-      const sessions = await createService(
-        new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),
+      const sessions = new LeasedSessions(
+        ctx.state,
+        ctx.scope,
+        ctx.workflows,
+        ctx.domainEvents,
+        config,
       );
+      sessions.issues = reporter(ctx);
+      await createService(sessions);
       // Transcripts and conversations go to the object store.
       sessions.transcripts.blobs = sessions.threads.blobs = ctx.blobs;
       yield async () => await sessions.close();

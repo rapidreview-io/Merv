@@ -24,6 +24,7 @@ import {
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
+import type { SessionTrace } from '@merv/contracts/issues';
 import type { WorkflowProvidedBlocker } from '@merv/workflows/models';
 import type { AgentEvent } from './agent-stream.js';
 import type { SessionDispatch } from './dispatch.js';
@@ -661,6 +662,41 @@ export class SessionRunning {
         work.map(({ id }) => [id, { visit: visits.get(id) ?? null, usage: used.get(id) ?? null }]),
       );
     });
+  }
+
+  async platformTrace(sessionIds: readonly string[]): Promise<Map<string, SessionTrace>> {
+    this.available();
+    if (!sessionIds.length) return new Map();
+    // The conversation a visit left is its thread's while it is the latest, and after that the
+    // one the visit that resumed it names, which the thread no longer holds. A fact a visit
+    // lacks is absent, never null.
+    const rows = await this.state.snapshotTransaction((tx) =>
+      tx.all<{ id: string; trace: string }>(
+        `SELECT s.id,jsonb_strip_nulls(jsonb_build_object('projectId',s.project_id,
+            'threadId',s.thread_id,'instanceId',s.instance_id,'revision',s.revision,'role',s.role,
+            'harness',t.harness,'status',s.status,'outcome',s.outcome,'closeReason',s.close_reason,
+            'createdAt',s.created_at,'closedAt',s.closed_at,'runnerId',s.runner_id,
+            'hostRef',s.host_ref,'allocationId',a.allocation_id,
+            'transcript',CASE WHEN r.sha256 IS NOT NULL THEN jsonb_build_object('sha256',r.sha256,'size',r.size) END,
+            'conversation',CASE WHEN t.latest_session_id=s.id AND t.uploaded_at IS NOT NULL
+              THEN jsonb_build_object('sha256',t.sha256,'size',t.size)
+              ELSE (SELECT jsonb_build_object('sha256',c->'sha256','size',c->'size') FROM (
+                SELECT n.session_json::jsonb#>'{continuity,resume}' AS c FROM worker_sessions n
+                WHERE n.thread_id=s.thread_id AND n.session_json::jsonb#>>'{continuity,resume,sessionId}'=s.id
+                LIMIT 1) resumed) END,
+            'workspace',CASE WHEN w.session_id IS NOT NULL THEN (SELECT jsonb_build_object(
+              'branch',m->'branch','baseOid',m->'baseOid','headOid',m->'headOid','treeOid',m->'treeOid')
+              FROM (SELECT w.attachment_json::jsonb || COALESCE(w.result_json::jsonb,'{}') AS m) kept) END
+          ))::text AS trace
+          FROM worker_sessions s JOIN session_threads t ON t.id=s.thread_id
+          LEFT JOIN session_transcripts r ON r.session_id=s.id AND r.uploaded_at IS NOT NULL
+          LEFT JOIN session_workspaces w ON w.session_id=s.id
+          LEFT JOIN session_managed_assignments a ON a.session_id=s.id
+          WHERE s.id IN (${sessionIds.map(() => '?').join(',')})`,
+        ...sessionIds,
+      ),
+    );
+    return new Map(rows.map((row) => [row.id, JSON.parse(row.trace) as SessionTrace]));
   }
 
   /**
