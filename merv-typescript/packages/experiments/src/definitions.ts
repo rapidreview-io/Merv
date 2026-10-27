@@ -295,7 +295,8 @@ export const metricsInstruction = (state: ActiveState, version: number) =>
       ? ' When metrics tools are available, log training curves with Trackio: call metrics.write connect, put the returned env on the job and use trackio.init(project=<the project it returns>) or report_to="trackio"; before submitting results, call metrics.write export and attach its artifact as a qualitative result.'
       : state === 'experiment_review'
         ? " When metrics tools are available, use metrics.read look on this attempt's runs and ask metrics.read query (SQL) whatever the report's claims depend on."
-        : '';
+        : // A planner once asked its owner whether Trackio existed: connect is granted only to the running producer.
+          ' When metrics tools are available, metrics.write connect is granted only while the experiment runs: a design may log curves to Trackio and count that connection as present.';
 
 /** The recipe key an experiment's state uses at its version. */
 export const recipeKey = (state: ActiveState, version: number) =>
