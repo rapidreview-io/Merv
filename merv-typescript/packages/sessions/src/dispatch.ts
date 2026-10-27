@@ -232,10 +232,17 @@ export class SessionDispatch {
         )
           .filter((row) => row.held_at)
           .sort((a, b) => b.revision - a.revision);
+        const current = await this.workflows.revisions(
+          projectId,
+          [...new Set(holds.map((row) => row.instance_id))],
+          tx,
+        );
         const reported = new Set<string>();
         for (const row of holds)
           if (!reported.has(row.instance_id)) {
-            await this.reportHold(projectId, row.instance_id, row, tx);
+            // A hold its work has moved past holds nothing: withdrawn, never said again.
+            const stands = current.get(row.instance_id)?.revision === row.revision;
+            await this.reportHold(projectId, row.instance_id, stands ? row : null, tx);
             reported.add(row.instance_id);
           }
       }

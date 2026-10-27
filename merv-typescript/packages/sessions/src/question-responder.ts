@@ -37,6 +37,8 @@ export const settled = (issues: Issues, id: string) => {
 export class QuestionResponders {
   private responder?: QuestionResponder;
   private running?: Promise<void>;
+  /** Questions no responder took that no longer stand, settled once by this process. */
+  private readonly lapsed = new Set<string>();
   constructor(
     private readonly host: MessageHost,
     private readonly clock: () => number,
@@ -141,7 +143,33 @@ export class QuestionResponders {
       });
     return this.running;
   }
+  /**
+   * A question that reached its owner, or that no responder took, goes obsolete when its work
+   * moves on, which no Sessions call sees: each pass settles those that no longer stand.
+   */
+  private async lapse(): Promise<void> {
+    const gone = await this.host.reading(async (tx) => {
+      const open = await tx.all<QuestionRow & { state: string | null }>(
+        `SELECT q.*,r.state FROM session_questions q LEFT JOIN session_question_responses r ON r.question_id=q.id WHERE q.answered_at IS NULL AND (r.state IS NULL OR r.state='needs_you')`,
+      );
+      const rows = [];
+      for (const row of open)
+        if (!this.lapsed.has(row.id) && !(await this.standing(tx, row))) rows.push(row);
+      return rows;
+    });
+    for (const row of gone)
+      if (row.state) {
+        await this.host.transaction(async (tx) => {
+          if ((await this.read(tx, row.id))?.state === 'needs_you')
+            await this.finish(tx, row, 'obsolete');
+        });
+      } else {
+        settled(this.host.issues, row.id);
+        this.lapsed.add(row.id);
+      }
+  }
   private async pass(): Promise<void> {
+    await this.lapse();
     // No writer lock for the common idle case; the partial index reads only active deliveries.
     const due = await this.host.reading((tx) =>
       tx.get(

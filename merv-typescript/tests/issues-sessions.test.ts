@@ -111,6 +111,35 @@ test('a question is said once to its owner, a notice while a responder takes it,
   await dispose();
 });
 
+test('a question its work moved past is settled by the next pass, whether it reached its owner or no responder took it', async (t) => {
+  const f = await fixture(t);
+  const unanswered = await f.asks('Which cohort?');
+  const dispose = f.sessions.messaging.registerResponder({
+    name: 'fixture',
+    label: 'Fixture',
+    start: async () => {
+      throw new Error('The responder broke');
+    },
+    inspect: async () => null,
+  });
+  const sweep = () => f.sessions.messaging.responders.sweep();
+  const failed = await f.asks('Which split?');
+  await sweep();
+  await dispose();
+  assert.deepEqual(f.said('session.ask_owner').at(-1), ['needs_you', 'severe', failed.question.id]);
+  await sweep();
+  assert.deepEqual(f.resolved, [], 'a question that stands stays open');
+  for (const { unit } of [unanswered, failed]) await f.move(unit.id, 'submit');
+  await sweep();
+  await sweep();
+  const order = (targets: { key?: string; code: string }[]) =>
+    targets.map((target) => `${target.key} ${target.code}`).sort();
+  assert.deepEqual(
+    order(f.resolved),
+    order([...settled(unanswered.question.id), ...settled(failed.question.id)]),
+  );
+});
+
 test('each responder fallback brings the question to its owner and says why; Pi’s own needs_you says no fault', async (t) => {
   const f = await fixture(t);
   const conversations = new Set<string>();
@@ -283,9 +312,17 @@ test('a hold is said by its last code, never its message, and resolved by its re
   assert.deepEqual(f.resolved, [target]);
   await hold();
   assert.equal(f.at('dispatch.launch_held').length, 2);
+  // A boot says again a hold that stands, and withdraws one its work has moved past.
+  await f.sessions.dispatch.initialize();
+  assert.equal(f.at('dispatch.launch_held').length, 3);
+  await f.move(unit.id, 'submit');
+  await f.sessions.dispatch.initialize();
+  assert.equal(f.at('dispatch.launch_held').length, 3);
+  assert.deepEqual(f.resolved, [target, target]);
+  await hold();
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
-  assert.deepEqual(f.resolved, [target, target]);
+  assert.deepEqual(f.resolved, [target, target, target]);
 });
 
 test('an offer that cannot be built for a server fault is said once from its lease, then passed over', async (t) => {
