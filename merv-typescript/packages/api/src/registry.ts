@@ -214,16 +214,16 @@ const guarded = new Set([
 ]);
 
 /** A mounted tool's own failure, as the code and status its JSON text names. */
-function mountedError(result: CallToolResult): { code: string; status?: number } {
+function mountedError(result: CallToolResult): [code: string, status?: number] {
   try {
     const first = result.content?.[0];
     const inner = first?.type === 'text' ? JSON.parse(first.text)?.error : undefined;
-    return {
-      code: /^[a-z][a-z0-9_]{0,79}$/.test(inner?.code) ? inner.code : 'tool_error',
-      status: typeof inner?.status === 'number' ? inner.status : undefined,
-    };
+    return [
+      /^[a-z][a-z0-9_]{0,79}$/.test(inner?.code) ? inner.code : 'tool_error',
+      typeof inner?.status === 'number' ? inner.status : undefined,
+    ];
   } catch {
-    return { code: 'tool_error' };
+    return ['tool_error'];
   }
 }
 
@@ -246,9 +246,7 @@ export class ToolRegistry implements Tools {
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
-  /** Where failed calls are reported; the plugin sets it to reporter(ctx). */
   issues: Issues = silent;
-  /** Errors already reported as a call's issue, which the API does not report again. */
   readonly reported = new WeakSet<object>();
 
   constructor(
@@ -1012,30 +1010,21 @@ export class ToolRegistry implements Tools {
       // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
       const result = value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp;
       record(result?.isError ? 'tool_error' : '');
-      if (result?.isError) {
-        const inner = mountedError(result);
-        report(inner.code, inner.status, 'notice');
-      }
+      if (result?.isError) report(...mountedError(result), 'notice');
       return value;
     } catch (error) {
-      record(error instanceof MervError ? error.code : 'internal_error');
+      const code = error instanceof MervError ? error.code : 'internal_error';
+      record(code);
       // A nested call's failure stays the innermost call's one issue.
-      if (error && typeof error === 'object' && this.reported.has(error)) throw error;
+      if (this.reported.has(error as object)) throw error;
       const status = error instanceof MervError ? error.status : 500;
       if (
         !(error instanceof MervError && error.wait) &&
         (agent || caller.session || caller.conversation || status >= 500)
       ) {
-        report(
-          error instanceof MervError ? error.code : 'internal_error',
-          status,
-          status === 500
-            ? 'severe'
-            : status > 500 || guarded.has((error as MervError).code)
-              ? 'warn'
-              : 'notice',
-          error,
-        );
+        const level =
+          status === 500 ? 'severe' : status > 500 || guarded.has(code) ? 'warn' : 'notice';
+        report(code, status, level, error);
         if (error && typeof error === 'object') this.reported.add(error);
       }
       throw error;

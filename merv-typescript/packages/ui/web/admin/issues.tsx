@@ -205,7 +205,7 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
       setFailed((error as Error).message);
     }
   };
-  const cases = [...(read.data?.cases ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const cases = read.data?.cases ?? [];
   const error = cases.find((c) => c.error)?.error;
   const part = encodeURIComponent;
   return (
@@ -275,7 +275,7 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
       {cases.length > 0 && (
         <ul className="admin-ledger">
           {cases.map((c) => {
-            const projectId = c.project?.id ?? c.projectId;
+            const { projectId } = c;
             const thread = c.trace?.threadId ?? c.refs.threadId;
             const instance = c.trace?.instanceId ?? c.refs.instanceId;
             const to =

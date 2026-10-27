@@ -26,7 +26,7 @@ export const issuesPlugin = {
     ctx.effect(async function* () {
       await ctx.state.migrate('issues', issueMigrations);
       const slack = config.alerts.slack;
-      const store = new IssueStore(ctx.state, slack ? [slackSink(slack)] : []);
+      const store = new IssueStore(ctx.state, slack && slackSink(slack));
       const scan = await floods(ctx.state, store);
       // Sessions is looked up at each pass, never injected.
       const traces: Traces = (ids) => ctx.get('sessions')?.running.platformTrace(ids);

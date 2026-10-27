@@ -20,7 +20,7 @@ import {
   type IssueTarget,
 } from '@merv/contracts/issues';
 import { clip, cleanText, redacted } from '@merv/contracts/text';
-import { title, type AlertDigest, type AlertSink } from './alerts.js';
+import { title, type AlertSink } from './alerts.js';
 
 const MINUTE = 60_000;
 /** Pending fingerprints, subjects (and so cases) one fingerprint keeps a flush, loop windows. */
@@ -144,7 +144,7 @@ export class IssueStore implements IssueService {
 
   constructor(
     private readonly state: State,
-    private readonly sinks: readonly AlertSink[] = [],
+    private readonly sink?: AlertSink,
     private readonly clock: () => number = Date.now,
   ) {}
 
@@ -283,10 +283,12 @@ export class IssueStore implements IssueService {
     if (++this.failures < 30 || !severe || now - this.fellBack < 30 * MINUTE) return;
     this.fellBack = now;
     const issue = { id: '', title: 'issues cannot be recorded', level: 'severe' as const };
-    await this.deliver({
-      at: iso(now),
-      issues: [{ ...issue, loop: false, count: batch.size, openedAt: iso(now) }],
-    }).catch(() => {});
+    await this.sink
+      ?.send({
+        at: iso(now),
+        issues: [{ ...issue, loop: false, count: batch.size, openedAt: iso(now) }],
+      })
+      .catch(() => {});
   }
 
   private async apply(tx: Transaction, batch: Map<string, Pending>) {
@@ -416,7 +418,7 @@ export class IssueStore implements IssueService {
 
   private async alert() {
     const now = this.clock();
-    if (!this.sinks.length || now < this.alertAt) return;
+    if (!this.sink || now < this.alertAt) return;
     const owed = await this.state.read(async (sql) => {
       const rows = await sql.all<Row>(
         "SELECT * FROM issues WHERE state='open' AND level='severe' AND alerted_at IS NULL AND where_at NOT LIKE 'issues.%' ORDER BY opened_at LIMIT 20",
@@ -428,7 +430,7 @@ export class IssueStore implements IssueService {
     });
     if (!owed.length) return;
     try {
-      await this.deliver({
+      await this.sink.send({
         at: iso(now),
         issues: owed.map((row) => ({
           id: row.id,
@@ -453,10 +455,6 @@ export class IssueStore implements IssueService {
         ...owed.flatMap((row) => [row.id, row.opened_at]),
       ),
     );
-  }
-
-  private async deliver(digest: AlertDigest) {
-    for (const sink of this.sinks) await sink.send(digest);
   }
 
   /** The last flush, then one alert pass of at most ten seconds: the state store closes after. */

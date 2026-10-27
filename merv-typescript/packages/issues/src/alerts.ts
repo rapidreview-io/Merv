@@ -15,9 +15,8 @@ export interface AlertDigest {
     openedAt: string;
   }[];
 }
-/** Where severe issues are pushed; every configured sink receives every digest. */
+/** Where severe issues are pushed. */
 export interface AlertSink {
-  readonly name: string;
   send(digest: AlertDigest): Promise<void>;
 }
 
@@ -43,7 +42,6 @@ export function slackSink({ webhookEnv, publicOrigin }: z.infer<typeof slackConf
   const link = (id: string) =>
     `${publicOrigin}/ui/admin/issues${id ? `?issue=${encodeURIComponent(id)}` : ''}`;
   return {
-    name: 'slack',
     async send({ at, issues }) {
       const url = process.env[webhookEnv];
       check(url, 'slack_unavailable', 'The Slack webhook for issue alerts is not configured', 503);

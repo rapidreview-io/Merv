@@ -223,7 +223,6 @@ export class ApiServer {
   private readonly maxBodyBytes: number;
   private readonly drainMs: number;
   url?: string;
-  /** Where server failures are reported; the plugin sets it to reporter(ctx). */
   issues: Issues = silent;
 
   constructor(

@@ -16,12 +16,12 @@ const constraint = (error: { code?: string; cause?: { sqlstate?: string } }) =>
   error.code === 'state_constraint' && error.cause?.sqlstate === '23514';
 
 /** A migrated store on a fresh schema, its clock in the test's hand. */
-async function bed(sinks: AlertSink[] = []) {
+async function bed(sink?: AlertSink) {
   const state = await openState();
   await state.migrate('issues', issueMigrations);
   const clock = { now: Date.parse('2026-10-27T10:00:30.000Z') };
   const time = () => clock.now;
-  const store = new IssueStore(state, sinks, time);
+  const store = new IssueStore(state, sink, time);
   const flush = async () => {
     await settle();
     await store.flush();
@@ -50,7 +50,6 @@ const sink = () => {
   const sent: AlertDigest[] = [];
   const failing = { on: false };
   const own: AlertSink = {
-    name: 'test',
     async send(digest) {
       if (failing.on) throw new Error('down');
       sent.push(digest);
@@ -173,7 +172,7 @@ test('the 15th report of one subject in ten minutes is a loop; standing and subj
 
 test('ten platform reports in an hour are a spike, which re-arms its alert once an hour', async () => {
   const { sent, own } = sink();
-  const f = await bed([own]);
+  const f = await bed(own);
   const platform: IssueReport = {
     class: 'platform',
     where: 'sessions.launch',
@@ -375,7 +374,7 @@ test('the pin pages past cases whose visit is still open', async () => {
 
 test('alerts: one digest per five minutes, owed until sent, never for Issues itself, at boot and at stop', async () => {
   const { sent, failing, own } = sink();
-  const f = await bed([own]);
+  const f = await bed(own);
   const severe = (code: string) => f.store.report({ ...tool, code, level: 'severe' });
   severe('first');
   f.store.report({
@@ -416,7 +415,7 @@ test('alerts: one digest per five minutes, owed until sent, never for Issues its
   f.clock.now += 5 * MINUTE;
   severe('third');
   await f.flush();
-  const next = new IssueStore(f.state, [own], f.time);
+  const next = new IssueStore(f.state, own, f.time);
   await next.alertPass();
   assert.equal(sent.at(-1)!.issues[0]!.title, 'experiment write create · third');
   f.clock.now += 5 * MINUTE;
@@ -434,7 +433,7 @@ test('while the database is away, 30 failed flushes with a severe report say so 
       throw new Error('down');
     },
   });
-  const store = new IssueStore(down, [own], f.time);
+  const store = new IssueStore(down, own, f.time);
   store.report({ ...tool, level: 'severe' });
   await settle();
   for (let i = 0; i < 29; i++) await store.flush();
@@ -474,7 +473,7 @@ test('a row the database refuses is dropped once others land; repeats stay in an
         } as Transaction),
       ),
   });
-  const store = new IssueStore(picky, [], f.time);
+  const store = new IssueStore(picky, undefined, f.time);
   store.report({ ...tool, code: 'poison' });
   store.report({ ...tool, code: 'big', n: 3_000_000_000 });
   store.report({ ...tool, code: 'big', n: 3_000_000_000 });

@@ -113,7 +113,6 @@ process.stdin.on('end', () => {
 `;
 
 export class CodeGitRemote {
-  /** Where rejected pushes are reported; Code's plugin sets it to reporter(ctx). */
   issues: Issues = silent;
   constructor(
     private readonly state: State,
