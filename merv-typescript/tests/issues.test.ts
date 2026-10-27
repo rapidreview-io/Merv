@@ -574,7 +574,7 @@ test('the Slack sink posts codes and links, and fails without its webhook or on 
   assert.equal(posts[0]!.body.text, 'Merv · git push · a<b');
   assert.equal(
     posts[0]!.body.blocks[0].text.text,
-    '<https://merv.test/ui/admin/issues?issue=issue_1|git push · a&lt;b> · 1,880 · since 2026-10-27 10:00 UTC',
+    '<https://merv.test/ui/admin/issues?issue=issue_1|git push · a&lt;b> · loop · 1,880 · since 2026-10-27 10:00 UTC',
   );
   status = 500;
   await assert.rejects(slack.send(digest), { code: 'slack_refused' });
