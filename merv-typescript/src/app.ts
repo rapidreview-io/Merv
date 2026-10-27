@@ -9,6 +9,7 @@ import {
   type ConfiguredEnv,
   type PluginStatus,
 } from '@merv/contracts';
+import { reporter, type IssueReport } from '@merv/contracts/issues';
 import type {} from '@merv/api';
 import type {} from '@merv/secrets/types';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
@@ -32,8 +33,6 @@ const FIXED = new Set([...FIRST, '@merv/identity', '@merv/sandboxes/host']);
  *  replaced, everything it sealed or signed stops working. */
 const issued = (purpose: string) => /· (encryption key|signing secret)$/.test(purpose);
 
-const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
-
 /** The `.describe()` a zod config schema gives the field at `path`, through wrappers and unions. */
 function describedAt(schema: unknown, path: readonly string[]): string | undefined {
   const def = (schema as { _def?: Record<string, any> } | null | undefined)?._def;
@@ -51,12 +50,36 @@ export async function createApp(options: ConfigurationOptions) {
   const directory = resolve(options.directory);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const ctx = new Context();
+  // Until Issues is up its reports keep only their stderr line; the first 50 are replayed to it.
+  const issues = reporter(ctx);
+  const early: IssueReport[] = [];
+  const report = (r: IssueReport) => {
+    if (!ctx.get('issues') && early.length < 50) early.push(r);
+    issues.report(r);
+  };
   const required = new Map(
     configuration.entries.map((entry) => [entry.id, entry.required !== false]),
   );
   let stopping: Promise<void> | undefined;
   let changing: Promise<unknown> = Promise.resolve();
   try {
+    // What Cordis logs as an error (a plugin's activation, reload or dispose that threw). It logs
+    // an error's plain-object `cause` first as a message of its own, which errorFacts reads off
+    // the error itself.
+    ctx.logger.exporter({
+      export: (m) => {
+        const error = m.args?.[0];
+        if (m.type === 'error' && error instanceof Error)
+          report({
+            class: 'platform',
+            where: 'plugin',
+            code: (error as { code?: string }).code ?? 'plugin_failed',
+            key: m.name,
+            level: 'severe',
+            error,
+          });
+      },
+    });
     await ctx.plugin(Loader, { baseUrl: configuration.baseUrl });
     const loader = ctx.loader;
     const failed = new WeakSet<Fiber>();
@@ -99,10 +122,9 @@ export async function createApp(options: ConfigurationOptions) {
               : [],
         };
       });
-    const assertReady = (items: PluginStatus[]) => {
-      const inactive = items.filter(
-        (entry) => entry.state !== 'active' && entry.state !== 'disabled',
-      );
+    const inactive = (items: PluginStatus[]) =>
+      items.filter((entry) => entry.state !== 'active' && entry.state !== 'disabled');
+    const assertReady = (inactive: PluginStatus[]) => {
       check(
         !inactive.length,
         'plugin_unavailable',
@@ -164,7 +186,7 @@ export async function createApp(options: ConfigurationOptions) {
         await loader.update(id, { disabled: !enabled });
       }
       await settle();
-      if (enabled) assertReady(status().filter((entry) => ids.includes(entry.id)));
+      if (enabled) assertReady(inactive(status().filter((entry) => ids.includes(entry.id))));
     };
     const setEnv = (env: string, value: string | undefined) =>
       value === undefined ? delete process.env[env] : (process.env[env] = value);
@@ -196,13 +218,20 @@ export async function createApp(options: ConfigurationOptions) {
           await toggle(ids, true);
           return [...ids, ...(await then())];
         };
-        /** Each step of putting the previous value back is tried; one that fails is logged by
+        /** Each step of putting the previous value back is tried; one that fails is reported by
          *  its kind alone, since its words may carry a value. */
         const restore = async () => {
           setEnv(env, previous);
           for (const step of [() => toggle(ids, false), () => toggle(ids, true), then])
             await step().catch((error) =>
-              log({ event: 'composition.restore_failed', env, cause: error?.code ?? error?.name }),
+              report({
+                class: 'platform',
+                where: 'composition.restore_failed',
+                code: error instanceof MervError ? error.code : 'internal_error',
+                key: env,
+                level: 'severe',
+                error,
+              }),
             );
         };
         let reloaded: string[];
@@ -237,14 +266,31 @@ export async function createApp(options: ConfigurationOptions) {
       // A value that no longer opens (the store's key replaced) leaves the deployment's.
       const value = await secrets!.platformSecret(env).catch((error) => {
         if (!(error instanceof MervError && error.code === 'secrets_unavailable')) throw error;
-        log({ event: 'secrets.platform_unopened', env });
+        report({
+          class: 'platform',
+          where: 'secrets.platform_unopened',
+          code: error.code,
+          key: env,
+          level: 'severe',
+        });
         return null;
       });
       if (value !== null) process.env[env] = value;
     }
     await loader.root.update(entries);
     await settle();
-    assertReady(status().filter((entry) => entry.required));
+    for (const r of early.splice(0)) ctx.get('issues')?.report(r);
+    const unready = inactive(status()).filter((entry) => entry.required);
+    // The catch's dispose then runs Issues' own: its final flush and alert pass.
+    for (const entry of unready)
+      report({
+        class: 'platform',
+        where: 'plugin',
+        code: entry.state,
+        key: entry.id,
+        level: 'severe',
+      });
+    assertReady(unready);
 
     const getFiber = (id: string): Fiber | undefined => loader.store[id]?.fiber;
     const setEnabled = (id: string, enabled: boolean): Promise<void> => {

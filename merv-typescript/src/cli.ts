@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
@@ -8,6 +8,7 @@ import { uploadArtifact } from '@merv/artifacts/upload-client';
 import { defaultConfigFile, loadConfiguration } from './config.js';
 import type {} from '@merv/identity/types';
 import { check, MervError, type Credentials, type Role } from '@merv/contracts';
+import { errorFacts, reporter, type ErrorFacts } from '@merv/contracts/issues';
 
 function options(command: string, args: string[]) {
   const result: Record<string, string> = {};
@@ -190,18 +191,72 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
       'arguments',
       'Port must be 0–65535',
     );
-    const app = await createApp({
-      directory,
-      configFile: args.config ? resolve(args.config) : defaultConfigFile,
-      ...(port !== undefined ? { port } : {}),
-      ...(args.host !== undefined ? { host: args.host } : {}),
+    // A marker this run's clean stop removes: one left behind is a run that crashed or was
+    // killed, reported once this one is up, under the release it ran.
+    const marker = join(directory, 'serve.json');
+    let previous: { release?: string | null; crash?: ErrorFacts & { origin: string } } | undefined;
+    try {
+      previous = JSON.parse(readFileSync(marker, 'utf8'));
+    } catch {}
+    const current = {
+      startedAt: new Date().toISOString(),
+      release: process.env.MERV_RELEASE ?? null,
+    };
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    writeFileSync(marker, JSON.stringify(current));
+    const clear = () => rmSync(marker, { force: true });
+    // Observes only: Node's own handling of the crash, and its exit, are untouched.
+    process.on('uncaughtExceptionMonitor', (error, origin) => {
+      try {
+        writeFileSync(
+          marker,
+          JSON.stringify({ ...current, crash: { origin, ...errorFacts(error) } }),
+        );
+      } catch {}
     });
+    let app: Awaited<ReturnType<typeof createApp>>;
+    try {
+      app = await createApp({
+        directory,
+        configFile: args.config ? resolve(args.config) : defaultConfigFile,
+        ...(port !== undefined ? { port } : {}),
+        ...(args.host !== undefined ? { host: args.host } : {}),
+      });
+    } catch (error) {
+      // A refused start is no unclean exit, and the run before it is reported by the next to boot.
+      if (previous) writeFileSync(marker, JSON.stringify(previous));
+      else clear();
+      throw error;
+    }
+    if (previous) {
+      const crash = previous.crash;
+      reporter(app.ctx).report({
+        class: 'platform',
+        where: 'process',
+        code: crash ? 'crashed' : 'unclean_exit',
+        key: crash?.origin,
+        level: 'severe',
+        refs: { release: previous.release ?? undefined },
+        // The crash's kept facts, as an error with no words carries them.
+        error:
+          crash &&
+          Object.assign(new MervError(crash.code ?? '', '', crash.status ?? 500), {
+            name: crash.name,
+            stack: (crash.at ?? []).map((line) => `    ${line}`).join('\n'),
+          }),
+      });
+    }
     // A signal that lands right after the ready line must find its handler already in place.
     const stop = () => {
       void app.stop().then(
-        () => process.exit(0),
+        () => {
+          clear();
+          process.exit(0);
+        },
         (error) => {
-          console.error(error);
+          process.stderr.write(
+            `${JSON.stringify({ event: 'main.stop_failed', ...errorFacts(error) })}\n`,
+          );
           process.exit(1);
         },
       );
@@ -234,6 +289,7 @@ Project code uses ordinary Git at /git/<project-id>.git with an existing Merv us
       process.removeListener('SIGINT', stop);
       process.removeListener('SIGTERM', stop);
       await app.stop();
+      clear();
       throw error;
     }
     return;

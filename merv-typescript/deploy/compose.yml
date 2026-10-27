@@ -12,6 +12,9 @@ services:
       - /etc/merv/typescript.env
       - path: /etc/sandboxes/shared.env
         format: raw
+      # MERV_RELEASE, which deploy/release.mjs writes beside this file in each release.
+      - path: release.env
+        required: false
     ports:
       - 127.0.0.1:3081:3081
     volumes:
