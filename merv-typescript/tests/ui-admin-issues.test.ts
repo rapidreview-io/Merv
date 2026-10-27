@@ -1,7 +1,8 @@
 /**
  * The admin's Issues page against a fixture server: its rows say what went wrong in words and
  * never by an id, the rail counts the open severe issues, `?issue=` opens that issue's drawer,
- * and an issue already resolved offers nothing to resolve.
+ * an issue already resolved offers nothing to resolve, and what is resolved waits behind the
+ * open list. Credits' drawer steps and hands the cursor back through the same `useDrawer`.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -144,4 +145,34 @@ test('the drawer steps with ↑ and ↓, and Escape hands the cursor back to its
   await key('Escape');
   assert.ok(drawer().hidden);
   assert.equal((document.activeElement as HTMLElement).dataset.id, 'issue_2');
+});
+
+test('with only resolved issues the page says Nothing open, and Clear filters shows them', async (t) => {
+  t.after(unmount);
+  serveIssues([issue('issue_1', { state: 'resolved', resolvedAt: at })]);
+  await open('/admin/issues');
+  assert.match(text(), /Nothing open/);
+  assert.doesNotMatch(text(), /experiment\.write create/);
+  await click('Clear filters');
+  assert.match(text(), /experiment\.write create · invalid input/);
+});
+
+test('the Credits drawer steps with ↓ and hands the cursor back to its row', async (t) => {
+  t.after(unmount);
+  const person = (key: string) => ({ key, label: `Person ${key}`, kinds: [] });
+  serve('/admin/credits', { body: { people: [person('a'), person('b')] } });
+  for (const key of ['a', 'b'])
+    serve(`/admin/credits/people/${key}`, {
+      body: { person: person(key), kinds: [], grants: [], schedules: [] },
+    });
+  await open('/admin/credits');
+  await click('Person a');
+  assert.ok(!drawer().hidden);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  await settle(20);
+  assert.match(drawer().textContent ?? '', /Person b/);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle(20);
+  assert.ok(drawer().hidden);
+  assert.equal((document.activeElement as HTMLElement).dataset.id, 'b');
 });

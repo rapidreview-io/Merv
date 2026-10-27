@@ -26,11 +26,6 @@ const CLASSES = [
   { value: 'question', label: 'Questions' },
   { value: 'platform', label: 'Platform' },
 ] as const;
-const LEVELS = [
-  { value: 'severe', label: 'Severe' },
-  { value: 'warn', label: 'Warn' },
-  { value: 'notice', label: 'Notice' },
-] as const;
 const TONE = { severe: 'bad', warn: 'warn', notice: 'dim' } as const;
 
 /** What an issue is called: a question by what it asked, anything else by its site and code
@@ -47,9 +42,10 @@ const level = (row: AdminIssue) => (
     {row.loop && <span className="status--bad"> loop</span>}
   </>
 );
+/** An open issue's state is its level, so the state chips narrow by level too. */
+const stateOf = (row: AdminIssue) => (row.state === 'open' ? row.level : row.state);
 /** Open severe, warn, then notice issues; what was resolved after them. */
-const rank = (row: AdminIssue) =>
-  row.state === 'open' ? LEVELS.findIndex((l) => l.value === row.level) : 3;
+const rank = (row: AdminIssue) => ['severe', 'warn', 'notice', 'resolved'].indexOf(stateOf(row));
 
 export function IssuesView() {
   const issues = useTool<AdminIssues>('/admin/issues', {}, { every: 10_000 });
@@ -58,26 +54,23 @@ export function IssuesView() {
   const openId = params.get('issue') ?? undefined;
   const setOpen = (id?: string) => setParams(id ? { issue: id } : {}, { replace: true });
   const [kind, setKind] = useState('');
-  const [tier, setTier] = useState('');
-  const [resolved, setResolved] = useState(false);
   const roomy = useRoomy();
   const all = issues.data?.rows ?? [];
-  const shown = (row: AdminIssue) => resolved || row.state === 'open';
   const filter = useListFilter(all, {
+    stateOf,
+    isOpen: (state) => state !== 'resolved',
+    history: true,
     labels: (row) => [title(row), row.note, ...row.projects.map((p) => p.name)],
     ids: (row) => [row.id],
-    also: (row) => shown(row) && (!kind || row.class === kind) && (!tier || row.level === tier),
+    also: (row) => !kind || row.class === kind,
   });
   const rows = [...filter.rows].sort(
     (a, b) => rank(a) - rank(b) || Date.parse(b.lastAt) - Date.parse(a.lastAt),
   );
   useDrawer(rows, openId, setOpen, '.admin-name');
-  const closed = all.filter((row) => row.state !== 'open').length;
   const clear = () => {
     filter.clear();
     setKind('');
-    setTier('');
-    setResolved(false);
   };
   const columns = [
     col<AdminIssue>('issue', 'Issue', (row) => (
@@ -129,33 +122,21 @@ export function IssuesView() {
                 facts={issues.data && [severe > 0 && [severe, 'severe', true], [open, 'open']]}
               />
             )}
-            reset={filter.filtering || kind || tier || resolved ? clear : undefined}
+            reset={
+              filter.state !== filter.initial || filter.query || kind
+                ? () => (filter.reset(), setKind(''))
+                : undefined
+            }
             narrow={
-              <>
-                <Chips
-                  label="Class"
-                  options={CLASSES.map((c) => ({
-                    ...c,
-                    count: all.filter((row) => shown(row) && row.class === c.value).length,
-                  }))}
-                  value={kind}
-                  onChange={(value) => setKind(kind === value ? '' : value)}
-                />
-                <Chips
-                  label="Level"
-                  options={LEVELS}
-                  value={tier}
-                  onChange={(value) => setTier(tier === value ? '' : value)}
-                />
-                {closed > 0 && (
-                  <Chips
-                    label="Resolved"
-                    options={[{ value: 'resolved', label: 'Resolved', count: closed }]}
-                    value={resolved ? 'resolved' : ''}
-                    onChange={() => setResolved(!resolved)}
-                  />
-                )}
-              </>
+              <Chips
+                label="Class"
+                options={CLASSES.map((c) => ({
+                  ...c,
+                  count: filter.tabbed.filter((row) => row.class === c.value).length,
+                }))}
+                value={kind}
+                onChange={(value) => setKind(kind === value ? '' : value)}
+              />
             }
             listed={false}
             drawn={
@@ -226,6 +207,7 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
   };
   const cases = [...(read.data?.cases ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const error = cases.find((c) => c.error)?.error;
+  const part = encodeURIComponent;
   return (
     <div className="running-sidebar">
       <header className="running-panel-head">
@@ -296,7 +278,6 @@ function Drawer(props: { id: string; row?: AdminIssue; onClose(): void; done(): 
             const projectId = c.project?.id ?? c.projectId;
             const thread = c.trace?.threadId ?? c.refs.threadId;
             const instance = c.trace?.instanceId ?? c.refs.instanceId;
-            const part = encodeURIComponent;
             const to =
               projectId &&
               thread &&

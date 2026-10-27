@@ -2,7 +2,6 @@
  * What the /admin routes answer: types alone, written out rather than borrowed from the owners
  * they are composed from, so the browser reads the same ones (`@merv/admin/models`).
  */
-import type { IssueCase, IssueRow } from '@merv/contracts/issues';
 import type { RunningPhrase } from '@merv/contracts/running';
 import type { UsageTotals } from '@merv/sessions/models';
 
@@ -136,17 +135,24 @@ export interface AdminCredits {
   people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
 }
 
-export type {
-  ErrorFacts,
-  IssueCase,
-  IssueClass,
-  IssueLevel,
-  IssueRow,
-  SessionTrace,
-} from '@merv/contracts/issues';
 type Named = { id: string; name: string };
-/** An issue with the projects its kept cases name, those Scope still knows. */
-export type AdminIssue = Omit<IssueRow, 'projects'> & { projects: Named[] };
+type Ids<K extends string> = Partial<Record<K, string>>;
+/** An issue as Issues lists it (`IssueRow`), with the projects its kept cases name, those Scope
+ *  still knows. */
+export interface AdminIssue extends Record<
+  'id' | 'where' | 'code' | 'firstAt' | 'openedAt' | 'lastAt',
+  string
+> {
+  class: 'tool' | 'question' | 'platform';
+  level: 'notice' | 'warn' | 'severe';
+  state: 'open' | 'resolved';
+  loop: boolean;
+  count: number;
+  peakHour: number;
+  note: string | null;
+  resolvedAt: string | null;
+  projects: Named[];
+}
 /** `GET /admin/issues`: one read for the page and the rail's count of open severe issues. */
 export interface AdminIssues {
   rows: AdminIssue[];
@@ -154,8 +160,27 @@ export interface AdminIssues {
   severe: number;
   at: string;
 }
+/** One kept case (`IssueCase`), with its project where Scope still knows it. */
+export interface AdminIssueCase {
+  id: string;
+  at: string;
+  projectId: string | null;
+  project: Named | null;
+  release: string | null;
+  refs: Ids<'threadId' | 'instanceId' | 'sessionId' | 'invocationId' | 'conversationId'> &
+    Ids<'allocationId' | 'sandboxId'>;
+  error: { name?: string; code?: string; status?: number; at?: string[] } | null;
+  /** The visit it pinned (`SessionTrace`). */
+  trace:
+    | (Record<'threadId' | 'instanceId' | 'role' | 'status', string> &
+        Ids<'harness' | 'outcome' | 'closeReason' | 'allocationId'> & {
+          transcript?: { sha256: string };
+          workspace?: { headOid?: string };
+        })
+    | null;
+}
 /** `GET /admin/issues/:id`, which `Download case` saves as it is. */
 export interface AdminIssueDetail {
   issue: AdminIssue;
-  cases: (IssueCase & { project: Named | null })[];
+  cases: AdminIssueCase[];
 }

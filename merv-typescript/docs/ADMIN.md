@@ -100,8 +100,8 @@ is one row per person and a column per credit type; a row opens the drawer at th
 page, on a phone): one 1D · 1W · 1M · Total switch for every type, and each type with its
 control (`Set limit`, or `Give credit` and its grants and schedules behind ⋯). Issues polls
 `/admin/issues` every 10 s (the rail's Issues row counts the open severe ones from the same
-read): open severe, warn, then notice, newest first, then resolved, with class, level and
-`Resolved` behind `Filter`; a row, or `?issue=<id>` (the alert's link), opens its drawer, as on
+read): it opens on the open ones, severe, warn, then notice, newest first, with class and state
+(each level, `Resolved`) behind `Filter`; a row, or `?issue=<id>` (the alert's link), opens its drawer, as on
 Credits (`useDrawer`): its facts, note and error, `Resolve issue`, `Download case`, and each
 case's visit with `Thread →` into the drill-in, its ids in the hover title. The pages read the
 routes' types from `@merv/admin/models`.
