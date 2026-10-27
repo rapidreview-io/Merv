@@ -1,8 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { linkArtifactId, linkExpansionMode } from './board-link-layout';
 import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import { ArtifactBody } from './artifacts';
+import { MetricsCharts } from './metrics';
+import { useTool } from '../api';
+import { useReferences } from '../markdown';
+import { rowOf, useRows } from '../navigation';
 import './board-link-details.css';
 
 /** The small, persisted payload of board.draw's link operation. No remote HTML is embedded. */
@@ -42,7 +46,20 @@ export function BoardLinkDetails({
   const link = element.link ?? '';
   const web = /^https?:\/\//i.test(link);
   const artifactId = linkArtifactId(details.artifactId, link);
-  const mode = linkExpansionMode(details.text, artifactId);
+  // An experiment's card shows its runs' curves, where the Metrics plugin keeps them.
+  const record = link.startsWith('merv:') ? link.slice(5) : '';
+  const opens = useReferences(useMemo(() => (record ? [record] : []), [record])).get(record)?.to;
+  const rows = useRows();
+  const experiments = rowOf(rows, 'experiment')?.path;
+  const { data: runs } = useTool<unknown[]>(
+    rows.some((row) => row.id === 'metrics') && experiments && opens === `${experiments}/${record}`
+      ? 'metrics.read:runs'
+      : null,
+    { experimentId: record },
+  );
+  const charted = !artifactId && !!runs?.length;
+  const written = linkExpansionMode(details.text, artifactId);
+  const mode = charted && written === 'none' ? 'reading' : written;
   const anchor = useRef<HTMLElement>(null);
   const dialog = useRef<HTMLElement>(null);
   const expandControl = useRef<HTMLButtonElement>(null);
@@ -176,8 +193,12 @@ export function BoardLinkDetails({
                 )}
               </a>
             )}
-            {!web && !artifactId && !details.text && (
-              <p>Open this Merv record using the link below.</p>
+            {charted ? (
+              <MetricsCharts experimentId={record} compact={expanded ? 4 : 1} />
+            ) : (
+              !web &&
+              !artifactId &&
+              !details.text && <p>Open this Merv record using the link below.</p>
             )}
           </div>
         </>

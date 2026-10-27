@@ -33,6 +33,9 @@ flowchart BT
     legacyHistory["legacyHistory"]
     merv_legacy_history_tools["merv-legacy-history-tools"]
     merv_legacy_history_ui["merv-legacy-history-ui"]
+    metrics["metrics"]
+    merv_metrics_tools["merv-metrics-tools"]
+    merv_metrics_ui["merv-metrics-ui"]
     mounts["mounts"]
     merv_mounts_ui["merv-mounts-ui"]
     nisa["nisa"]
@@ -209,6 +212,16 @@ flowchart BT
   merv_legacy_history_tools --> tools
   merv_legacy_history_ui --> legacyHistory
   merv_legacy_history_ui --> ui
+  metrics --> api
+  metrics --> scope
+  metrics --> experiments
+  metrics --> sessions
+  metrics --> artifacts
+  merv_metrics_tools --> api
+  merv_metrics_tools --> metrics
+  merv_metrics_tools --> tools
+  merv_metrics_ui --> metrics
+  merv_metrics_ui --> ui
   mounts --> tools
   mounts --> scope
   merv_mounts_ui --> mounts

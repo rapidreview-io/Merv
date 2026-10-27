@@ -23,6 +23,7 @@ services:
     networks:
       - legacy_database
       - sandboxes
+      - metrics
     read_only: true
     tmpfs:
       # Chromium uses /tmp for shared image buffers (--disable-dev-shm-usage).
@@ -49,7 +50,36 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+  # Metrics (packages/metrics): Main proxies /trackio here. It idles until /etc/merv/trackio.env
+  # holds TRACKIO_WRITE_TOKEN, the only secret it is given; deploy/release.mjs builds its image
+  # while the previous Main still serves.
+  trackio:
+    image: merv-typescript-trackio:0.43.0
+    build:
+      context: ../packages/metrics/trackio
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: /etc/merv/trackio.env
+        required: false
+    environment:
+      TRACKIO_DIR: /data/trackio
+    volumes:
+      - trackio_data:/data/trackio
+    networks: [metrics]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
 networks:
+  metrics:
+    internal: true
   legacy_database:
     external: true
     name: deploy_default
@@ -57,6 +87,7 @@ networks:
     external: true
     name: sandboxes_default
 volumes:
+  trackio_data:
   sandboxes_data:
     external: true
     name: sandboxes_sandboxes-data

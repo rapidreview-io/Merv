@@ -21,7 +21,7 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
  * (designCheckout), experiment@42 grants nisa.research; experiment@40 and @41 stay registered
  * for the experiments that run on them.
  */
-export const programVersions: readonly number[] = [40, 41, 42, 43, 44, 45];
+export const programVersions: readonly number[] = [40, 41, 42, 43, 44, 45, 46];
 /** experiment@43 (2026-10-14): the executor writes the one-page report with the report tools,
  *  and results are submitted with its final render. Earlier versions keep their Markdown report. */
 export const REPORT_VERSION = 43;
@@ -54,7 +54,7 @@ export const runningNode = {
 };
 
 /** The contract a new experiment runs on. */
-export const programVersion = 45;
+export const programVersion = 46;
 /** Frozen uncommitted submissions; automatic commits follow independent approval. */
 export const approvalCommits = (version: number) => version >= 45;
 

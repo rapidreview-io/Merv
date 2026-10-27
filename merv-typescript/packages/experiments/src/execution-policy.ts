@@ -36,6 +36,12 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
             ? codeWorkspace('read', 'experiment-designs')
             : { mode: 'none' },
     tools: [
+      ...(version >= 46
+        ? ['runs', 'run', 'series', 'look', 'query'].map((name) => grant(`metrics.${name}`, {}))
+        : []),
+      ...(version >= 46 && state === 'running'
+        ? ['connect', 'export'].map((name) => grant(`metrics.${name}`, experiment))
+        : []),
       ...(version >= 42 ? [grant('nisa.research', {})] : []),
       grant(
         'workflow.status_and_next',

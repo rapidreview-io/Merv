@@ -6,6 +6,7 @@ import type { ArtifactListing as Artifact } from '@merv/contracts/artifact-model
 import type { PaperWorkspace } from '@merv/paper/models';
 import type { BoardScene, BoardSummary } from '@merv/board/models';
 import type { CodeProjectStatus } from '@merv/code-work/models';
+import { panel, type Chart } from '@merv/metrics/chart';
 import { useTool } from '../api';
 import { Ago, StatusPill, cx, words } from '../components';
 import { Icon, fileIcon } from '../icons';
@@ -22,7 +23,8 @@ import { needs, useLive } from './work-map';
  * Home: the home of everything. What needs the reader first, then one card per place, each
  * a doorway with one picture and one number: the cycle's units as a ring, Pi as an orb, the
  * month's compute as bars, the fleet as machines with their agents, Git's main line, the
- * newest files, the paper's outline, the last board and the people. A card stands only where
+ * newest files, the paper's outline, the last board, the people and the newest experiment's
+ * curves. A card stands only where
  * its row is registered, reads what that row's page already reads, and fails alone.
  */
 
@@ -610,13 +612,48 @@ function People({ home, to }: { home: HomeData | undefined; to: string }) {
   );
 }
 
+// ─── Metrics: the newest experiment's curves, drawn as its record draws them ───────────────
+
+function Metrics({ to }: { to: string }) {
+  const runs = useTool<{ experimentId?: string; experiment?: string }[]>(
+    'metrics.read:runs',
+    {},
+    { every: 30000 },
+  );
+  const latest = runs.data?.find((run) => run.experimentId);
+  const chart = useTool<Chart>(
+    latest ? 'metrics.chart' : null,
+    { experimentId: latest?.experimentId },
+    { every: (data) => (data?.live ? 15000 : 60000) },
+  ).data;
+  const metric = chart?.metrics.find((name) => /loss/i.test(name)) ?? chart?.metrics[0];
+  if (!latest) return null;
+  return (
+    <Card
+      kind="metrics"
+      title="Metrics"
+      to={to}
+      figure={
+        chart &&
+        metric && (
+          <div
+            className="hub-metrics"
+            dangerouslySetInnerHTML={{ __html: panel(chart, metric, { width: 320, height: 160 }) }}
+          />
+        )
+      }
+      line={<Big n={chart?.runs.length ?? '—'} says={`runs · ${latest.experiment}`} />}
+    />
+  );
+}
+
 export function HomeView({ shell }: { shell: ShellData }) {
   const rows = shell.rows;
   const { project } = useSession();
   const { home, lines } = useNow(rows);
   const live = useLive();
   const row = (kind: string) => rows.find((r) => r.view.kind === kind);
-  const [pi, sessions, code, files, paper, boards, people] = [
+  const [pi, sessions, code, files, paper, boards, people, metrics] = [
     pathOf(rows, 'pi'),
     pathOf(rows, 'sessions'),
     row('code'),
@@ -624,6 +661,7 @@ export function HomeView({ shell }: { shell: ShellData }) {
     pathOf(rows, 'paper'),
     pathOf(rows, 'boards'),
     pathOf(rows, 'settings'),
+    pathOf(rows, 'metrics'),
   ];
   const spend = home.data?.fleet;
   return (
@@ -644,6 +682,7 @@ export function HomeView({ shell }: { shell: ShellData }) {
         {paper && <Paper to={paper} />}
         {boards && <Board to={boards} />}
         {people && <People home={home.data} to={people} />}
+        {metrics && <Metrics to={metrics} />}
       </div>
     </div>
   );

@@ -18,6 +18,8 @@ import type {
 } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
+import { useRows } from '../navigation';
+import { MetricsCharts, useMetricsSession } from './metrics';
 import { safely } from '../api';
 import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
@@ -43,7 +45,7 @@ import {
 
 /**
  * A unit of work on the Work page: its stages, each with the agents on it and what happened
- * there as one short thread, then three tabs that have the rest of the page. Document is the
+ * there as one short thread, then tabs that have the rest of the page. Document is the
  * one thing to read, the unit's key artifact, whole; Agents, every thread of the unit by
  * stage, one read in place; Artifacts, every file of the unit's, one previewed in place. Its
  * owner says which artifact is key, what each entry of the history was and which files are
@@ -316,8 +318,8 @@ export function Files({
   );
 }
 
-type Tab = 'document' | 'agents' | 'artifacts';
-const TABS: Tab[] = ['document', 'agents', 'artifacts'];
+type Tab = 'document' | 'agents' | 'metrics' | 'artifacts';
+const TABS: Tab[] = ['document', 'agents', 'metrics', 'artifacts'];
 /** The tab a reader last chose for this kind of unit, kept in the browser where it can be. */
 const tabKey = (kind: string) => `merv:unit-tab:${kind.toLowerCase()}`;
 const remembered = (kind: string): Tab =>
@@ -417,6 +419,11 @@ export function UnitView({
   details?: ReactNode;
 }) {
   const { nameOf } = useContext(Reading);
+  const metricsPage = useRows().find((row) => row.id === 'metrics');
+  const metrics = useMetricsSession(
+    !!metricsPage && kind === 'Experiment' && !!graph,
+    graph?.instanceId,
+  );
   // The records inside the unit have agents of their own, which its Agents tab lists too, in one
   // read; a thread a later record took up (a lens's author on the next attempt's lens) is listed
   // once. The unit's own stages draw the threads that are not theirs.
@@ -459,7 +466,10 @@ export function UnitView({
   const files = unit.artifacts;
   // A tab the unit has nothing for is not drawn, and one remembered for it reads the document.
   const offered = TABS.filter(
-    (tab) => (tab !== 'agents' || !!graph) && (tab !== 'artifacts' || !!files),
+    (tab) =>
+      (tab !== 'agents' || !!graph) &&
+      (tab !== 'metrics' || !!metrics?.runs) &&
+      (tab !== 'artifacts' || !!files),
   );
   const tab = offered.includes(chosen) ? chosen : 'document';
   const choose = (next: Tab) => {
@@ -469,6 +479,7 @@ export function UnitView({
   const counts: Record<Tab, number | undefined> = {
     document: undefined,
     agents: agents.length,
+    metrics: undefined,
     artifacts: files?.length,
   };
   const onDocument = (handed: Handed) => {
@@ -531,7 +542,14 @@ export function UnitView({
             </div>
           </div>
         )}
-        {tab === 'agents' ? (
+        {tab === 'metrics' ? (
+          <MetricsCharts
+            key={graph!.instanceId}
+            experimentId={graph!.instanceId}
+            trackio={metrics?.url}
+            more={metricsPage?.path}
+          />
+        ) : tab === 'agents' ? (
           <Agents
             graph={graph!}
             threads={agents}

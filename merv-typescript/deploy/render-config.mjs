@@ -528,6 +528,27 @@ if (customerExperimentsEnabled) {
     config: customer,
   });
 }
+if (process.env.MERV_METRICS_TRACKIO_URL) {
+  const secret = required('MERV_METRICS_SECRET');
+  if (secret.length < 32) throw new Error('MERV_METRICS_SECRET requires at least 32 characters');
+  config.plugins.push(
+    {
+      id: 'metrics',
+      name: '@merv/metrics',
+      config: {
+        upstream: origin(
+          'MERV_METRICS_TRACKIO_URL',
+          new URL(required('MERV_METRICS_TRACKIO_URL')).protocol === 'http:' ? 'http:' : 'https:',
+        ),
+        writeToken: required('MERV_METRICS_WRITE_TOKEN'),
+        secret,
+        publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+      },
+    },
+    { id: 'metrics-tools', name: '@merv/metrics/tools' },
+    { id: 'metrics-ui', name: '@merv/metrics/ui', required: false },
+  );
+}
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {

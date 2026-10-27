@@ -34,7 +34,8 @@
         "board",
         "reflections",
         "research",
-        "legacyHistory"
+        "legacyHistory",
+        "metrics"
       ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
@@ -214,6 +215,10 @@
     "scripts": {
       "label": "Scripts",
       "purpose": "Runs an outside agent's short JavaScript program in QuickJS, compiled to WebAssembly, in a child process with no environment and no file reads but its own modules. Its only way out is a tool call, which its tools adapter makes as the agent: reads that stay inside Merv. It has no injected Cordis dependencies."
+    },
+    "metrics": {
+      "label": "Metrics",
+      "purpose": "Optional Trackio training curves, project-scoped proxy, snapshots and retained attempt exports."
     }
   },
   "hierarchy": {
@@ -284,7 +289,8 @@
           "sbxMerv",
           "sandboxEvidence",
           "sandboxesPeople",
-          "payments"
+          "payments",
+          "metrics"
         ]
       },
       {

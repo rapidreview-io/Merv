@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
 import type { ShellData } from '../shell-types';
 import { ArtifactsView } from './artifacts';
+import { MetricsView } from './metrics';
 import { BoardsView } from './board';
 import { CodeView } from './code';
 import { ExperimentsView } from './experiments';
@@ -40,6 +41,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   reviews: ReviewsView,
   artifacts: ArtifactsView,
   boards: BoardsView,
+  metrics: MetricsView,
   feed: FeedView,
   settings: SettingsView,
   sandboxes: SandboxesView,

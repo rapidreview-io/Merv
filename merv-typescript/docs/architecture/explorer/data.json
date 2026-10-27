@@ -103,7 +103,8 @@
           "sbxMerv",
           "sandboxEvidence",
           "sandboxesPeople",
-          "payments"
+          "payments",
+          "metrics"
         ]
       },
       {
@@ -147,6 +148,7 @@
           "merv-fleet-tools",
           "merv-knowledge-tools",
           "merv-legacy-history-tools",
+          "merv-metrics-tools",
           "merv-nisa-tools",
           "merv-paper-tools",
           "merv-pi-tools",
@@ -178,6 +180,7 @@
           "merv-feed-ui",
           "merv-fleet-ui",
           "merv-legacy-history-ui",
+          "merv-metrics-ui",
           "merv-mounts-ui",
           "merv-paper-ui",
           "merv-pi-ui",
@@ -202,7 +205,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-21",
+  "snapshot": "2026-10-26",
   "groups": [
     {
       "id": "front",
@@ -249,7 +252,8 @@
         "board",
         "reflections",
         "research",
-        "legacyHistory"
+        "legacyHistory",
+        "metrics"
       ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
@@ -1107,6 +1111,81 @@
       "owner": "legacyHistory",
       "label": "Legacy history · ui adapter",
       "purpose": "Connects Legacy history to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-metrics",
+      "source": "packages/metrics/src/index.ts",
+      "provides": [
+        "metrics"
+      ],
+      "requires": [
+        "api",
+        "scope",
+        "experiments",
+        "sessions",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "metrics",
+      "group": "research",
+      "owner": "metrics",
+      "label": "Metrics",
+      "purpose": "Optional Trackio training curves, project-scoped proxy, snapshots and retained attempt exports.",
+      "exposedTools": [
+        {
+          "name": "metrics.chart",
+          "description": "What a page's metric charts draw (the page itself reads this).",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-metrics-tools",
+      "source": "packages/metrics/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "api",
+        "metrics",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-metrics-tools",
+      "group": "front",
+      "owner": "metrics",
+      "label": "Metrics · tools adapter",
+      "purpose": "Connects Metrics to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "metrics.chart",
+          "description": "What a page's metric charts draw (the page itself reads this).",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-metrics-ui",
+      "source": "packages/metrics/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "metrics",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-metrics-ui",
+      "group": "front",
+      "owner": "metrics",
+      "label": "Metrics · ui adapter",
+      "purpose": "Connects Metrics to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -3171,6 +3250,56 @@
       "optional": false
     },
     {
+      "from": "metrics",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "metrics",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "metrics",
+      "to": "experiments",
+      "optional": false
+    },
+    {
+      "from": "metrics",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "metrics",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-metrics-tools",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-metrics-tools",
+      "to": "metrics",
+      "optional": false
+    },
+    {
+      "from": "merv-metrics-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-metrics-ui",
+      "to": "metrics",
+      "optional": false
+    },
+    {
+      "from": "merv-metrics-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "mounts",
       "to": "tools",
       "optional": false
@@ -3917,10 +4046,10 @@
     }
   ],
   "counts": {
-    "plugins": 84,
-    "providers": 38,
-    "adapters": 46,
-    "dependencies": 271
+    "plugins": 87,
+    "providers": 39,
+    "adapters": 48,
+    "dependencies": 281
   },
   "network": [
     {

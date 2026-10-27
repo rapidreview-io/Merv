@@ -473,7 +473,17 @@ test('cutover uses real Compose dotenv interpolation and shared raw overrides', 
     assert.equal(config.networks.legacy_database.name, 'deploy_default');
     assert.equal(config.networks.sandboxes.name, 'sandboxes_default');
     assert.equal(control.read_only, true);
+    // Trackio reads only its own token file (absent here) and reaches no network but Main's.
+    const trackio = config.services.trackio;
+    assert.equal(trackio.environment.DATABASE_URL, undefined);
+    assert.equal(trackio.environment.TRACKIO_WRITE_TOKEN, undefined);
+    assert.deepEqual(Object.keys(trackio.networks), ['metrics']);
+    assert.equal(config.networks.metrics.internal, true);
+    assert.equal(trackio.read_only, true);
+    assert.deepEqual(trackio.cap_drop, ['ALL']);
     const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64) });
+    const built = job.indexOf('docker compose -f compose.yml build trackio');
+    assert.ok(built > 0 && built < job.indexOf('docker stop -t 60'), 'Trackio builds while Main serves');
     const cutover = job.slice(job.indexOf('cutover() {'), job.indexOf('\ncutover >'));
     assert.match(cutover, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false/);
     assert.match(cutover, /--entrypoint node control --import tsx deploy\/git-cutover-preflight.mjs/);

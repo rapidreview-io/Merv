@@ -15,7 +15,7 @@ import { codePublishFixture } from './fixtures/code-publish.js';
 import { postgresUrl } from './fixtures/state.js';
 
 test('new workflow policies write plans and isolate reviews while retaining historical published policies', () => {
-  assert.equal(programVersion, 45);
+  assert.equal(programVersion, 46);
   assert.equal(SERVICE_VERSION, 5);
   for (const policy of [experimentExecution('running', 44), serviceExecution(false, 4)])
     assert.equal(policy.workspace?.mode !== 'none' && policy.workspace?.driver, CODE_DRIVER);

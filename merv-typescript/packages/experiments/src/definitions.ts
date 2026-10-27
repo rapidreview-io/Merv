@@ -287,6 +287,16 @@ export const REPORTED_EXECUTE_RECIPE: ContextRecipeDefinition = {
   recipe: { ...runningRecipe.recipe, outputInstructions: reportHandoff },
 };
 
+/** experiment@46's brief names the optional metrics tools; the brief is not part of a recipe. */
+export const metricsInstruction = (state: ActiveState, version: number) =>
+  version < 46
+    ? ''
+    : state === 'running'
+      ? ' When metrics tools are available, log training curves with Trackio: call metrics.write connect, put the returned env on the job and use trackio.init(project=<the project it returns>) or report_to="trackio"; before submitting results, call metrics.write export and attach its artifact as a qualitative result.'
+      : state === 'experiment_review'
+        ? " When metrics tools are available, use metrics.read look on this attempt's runs and ask metrics.read query (SQL) whatever the report's claims depend on."
+        : '';
+
 /** The recipe key an experiment's state uses at its version. */
 export const recipeKey = (state: ActiveState, version: number) =>
   state === 'running' && writesReport(version) ? 'running:report' : state;

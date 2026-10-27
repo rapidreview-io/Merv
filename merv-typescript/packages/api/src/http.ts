@@ -287,7 +287,7 @@ export class ApiServer {
         if (req.method !== 'GET' || r.url.pathname !== '/auth/config') throw unknownEndpoint();
         // Agents reach /mcp at the public origin: the browser origin this server admits (the
         // deployment's MERV_TS_PUBLIC_ORIGIN, which invitation links use too), else its address.
-        const origin = this.options.allowedOrigins?.find((o) => o !== 'null') ?? this.url;
+        const origin = this.publicOrigin;
         return {
           ...(this.identity?.configuration() ?? { enabled: false }),
           mcpUrl: `${origin}/mcp`,
@@ -298,6 +298,10 @@ export class ApiServer {
     );
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
+  }
+
+  get publicOrigin(): string | undefined {
+    return this.options.allowedOrigins?.find((o) => o !== 'null') ?? this.url;
   }
 
   start(): Promise<string> {

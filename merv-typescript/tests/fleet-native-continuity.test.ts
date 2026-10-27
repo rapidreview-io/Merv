@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ExperimentService } from '@merv/experiments';
+import { programVersion } from '@merv/experiments/program';
 import { FleetWorkflowAdapter } from '@merv/fleet/workflow';
 import { modelMigrations } from '@merv/fleet/schema';
 import type { Fleet, FleetAllocation } from '@merv/fleet/types';
@@ -27,8 +28,8 @@ async function fixture(t: TestContext) {
   await waitForManagedCode(app.ctx.codeWork, caller);
   await app.ctx.sessions.dispatch.setDispatch(operator, { enabled: true, ownMachines: false });
   const experiments = app.ctx.experiments as ExperimentService;
-  const native = experiments.handles.get(45)!;
-  experiments.handles.set(45, experiments.handles.get(40)!);
+  const current = experiments.handles.get(programVersion)!;
+  experiments.handles.set(programVersion, experiments.handles.get(40)!);
   let created;
   try {
     created = await experiments.create(caller, {
@@ -37,7 +38,7 @@ async function fixture(t: TestContext) {
       requestId: randomUUID(),
     });
   } finally {
-    experiments.handles.set(45, native);
+    experiments.handles.set(programVersion, current);
   }
   const instanceId = created.id;
   let clock = Date.now();
@@ -134,7 +135,8 @@ async function fixture(t: TestContext) {
     state,
     operator,
     caller,
-    native,
+    // The migration's target version, which owns the instance after it.
+    native: experiments.handles.get(45)!,
     instanceId,
     began,
     allocations,

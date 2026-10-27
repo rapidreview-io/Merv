@@ -3466,7 +3466,7 @@ pre.math--source {
     'work pi spend'
     'work agents git'
     'board files paper'
-    'people . .';
+    'people metrics .';
   gap: var(--space-5);
   margin-top: var(--space-5);
 }
@@ -3476,7 +3476,7 @@ pre.math--source {
     grid-template-areas:
       'work pi spend agents'
       'work git files paper'
-      'board people . .';
+      'board people metrics .';
   }
 }
 @container hub (max-width: 980px) {
@@ -3487,13 +3487,14 @@ pre.math--source {
       'pi spend'
       'agents git'
       'board files'
-      'paper people';
+      'paper people'
+      'metrics .';
   }
 }
 @container hub (max-width: 600px) {
   .hub-grid {
     grid-template-columns: 1fr;
-    grid-template-areas: 'work' 'pi' 'spend' 'agents' 'git' 'board' 'files' 'paper' 'people';
+    grid-template-areas: 'work' 'pi' 'spend' 'agents' 'git' 'board' 'files' 'paper' 'people' 'metrics';
   }
   .hub-needs .ov-list {
     grid-template-columns: 1fr;
@@ -3537,6 +3538,14 @@ pre.math--source {
 }
 .hub-card--people {
   grid-area: people;
+}
+.hub-card--metrics {
+  grid-area: metrics;
+}
+.hub-metrics svg {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 .hub-title {
   display: flex;
@@ -8700,4 +8709,227 @@ html.modal-open {
 }
 .md-figure > a {
   font-size: 0.85em;
+}
+
+/* Merv's charts of Trackio runs: the SVG classes are the same ones an agent's picture styles. */
+.metrics-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.metrics-head,
+.metrics-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.metrics-head {
+  justify-content: flex-end;
+}
+.metrics-filter input[type='search'] {
+  min-width: 240px;
+}
+.metrics-filter label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.metrics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.metrics-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.metrics-legend li.is-muted {
+  opacity: 0.6;
+}
+.metrics-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.metrics-legend button[aria-pressed='true'] {
+  font-weight: 600;
+}
+.metrics-legend i,
+.metrics-tip i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.metrics-legend a,
+.metrics-experiments a {
+  color: var(--active);
+  text-decoration: none;
+}
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+}
+.metrics-charts--compact .metrics-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+.metrics-chart {
+  position: relative;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  user-select: none;
+  touch-action: none;
+  cursor: crosshair;
+}
+.metrics-chart svg {
+  display: block;
+}
+.mc {
+  font-family: inherit;
+}
+.mc-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text);
+}
+.mc-tick {
+  font-size: 10px;
+  fill: var(--faint);
+}
+.mc-grid {
+  stroke: var(--line-soft);
+}
+.mc-axis {
+  stroke: var(--line-strong);
+}
+.mc-when {
+  stroke: var(--ghost);
+  stroke-dasharray: 2 3;
+}
+.metrics-cursor {
+  position: absolute;
+  top: 26px;
+  bottom: 24px;
+  width: 1px;
+  background: var(--line-strong);
+  pointer-events: none;
+}
+.metrics-drag {
+  position: absolute;
+  top: 26px;
+  bottom: 24px;
+  background: var(--select);
+  pointer-events: none;
+}
+.metrics-tip {
+  position: absolute;
+  top: 30px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+  margin-left: 12px;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.08);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.metrics-tip--left {
+  transform: translateX(calc(-100% - 24px));
+}
+.metrics-tip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.metrics-tip em {
+  color: var(--faint);
+  font-style: normal;
+}
+.metrics-tip-mark {
+  max-width: 280px;
+  color: var(--muted);
+  white-space: normal;
+}
+.metrics-page {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.metrics-page > :only-child {
+  grid-column: 1 / -1;
+}
+.metrics-experiments {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.metrics-experiments li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.metrics-experiments button {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.metrics-experiments button:hover {
+  background: var(--hover);
+}
+.metrics-experiments button[aria-pressed='true'] {
+  background: var(--select);
+}
+.metrics-experiments span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metrics-experiments small {
+  color: var(--faint);
+}
+@media (max-width: 760px) {
+  .metrics-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

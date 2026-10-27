@@ -588,7 +588,7 @@ test('a plan creates only managed Git work atomically and replayably', async (t)
   assert.equal(coded.workflow.version, 46);
   assert.equal(coded.baseTaskId, undefined);
   assert.equal(experiment.workspace, 'git');
-  assert.equal(experiment.workflow.version, 45);
+  assert.equal(experiment.workflow.version, 46);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.deepEqual(
     (await f.app.ctx.workflows.prerequisites(f.owner, [experiment.id]))
