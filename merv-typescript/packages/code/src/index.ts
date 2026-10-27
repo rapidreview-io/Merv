@@ -1,4 +1,5 @@
 import { createService } from '@merv/contracts';
+import { reporter } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { CodeService } from './service.js';
@@ -22,7 +23,9 @@ export const codePlugin = {
   inject: ['state', 'scope', 'domainEvents'],
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
-      const service = await createService(new CodeService(ctx.state, ctx.scope, config));
+      const code = new CodeService(ctx.state, ctx.scope, config);
+      code.issues = reporter(ctx);
+      const service = await createService(code);
       yield () => service.close();
       // A session's attach and end open and end its writer generation (one its worker ended by
       // its own hand first waits for its machine's final capture). The cursor is durable, so

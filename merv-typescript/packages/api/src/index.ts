@@ -1,4 +1,5 @@
 import { visible } from '@merv/contracts';
+import { reporter } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { AgentCallLog, callLogMigrations } from './call-log.js';
@@ -25,6 +26,7 @@ export const toolsPlugin = {
       // Read-only tools run in a snapshot scope when a state store is present, except those
       // that call a service outside Merv (ToolDefinition.openWorld).
       const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, snapshotIn(ctx));
+      tools.issues = reporter(ctx);
       // Outside agents' calls are logged where a state store is present (agent_tool_calls), by a
       // fiber that depends on it: state closes only after its last flush.
       ctx.inject(['state'], (ctx) =>
@@ -85,6 +87,7 @@ export const apiPlugin = {
         { ...config, snapshot: snapshotIn(ctx) },
         ctx.identity,
       );
+      api.issues = reporter(ctx);
       yield () => api.stop();
       await api.start();
       yield ctx.provide('api', api);

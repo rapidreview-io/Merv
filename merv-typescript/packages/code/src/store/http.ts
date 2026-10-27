@@ -27,6 +27,7 @@ import { workBranch, workRef, unitRef, shutdownRef } from './refs.js';
 import { pendingMerge, verifyResolution } from '../pending-merge.js';
 import type { CodeWriterService, WriterFence } from '../writers.js';
 import type { CodeStoreOperation } from './protocol.js';
+import { silent, type Issues } from '@merv/contracts/issues';
 
 export interface GitGrantInput {
   sessionId: string;
@@ -112,6 +113,8 @@ process.stdin.on('end', () => {
 `;
 
 export class CodeGitRemote {
+  /** Where rejected pushes are reported; Code's plugin sets it to reporter(ctx). */
+  issues: Issues = silent;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -1111,15 +1114,26 @@ $merv$;
               socket.end('ok');
             },
             (error) => {
-              const reason =
+              // Only the pusher sees Git's reply; an operator recovering a host sees its code.
+              this.issues.report({
+                class: 'tool',
+                where: 'git.push',
+                code: error instanceof MervError ? error.code : 'code_git_rejected',
+                level: 'notice',
+                subject: push.fence?.sessionId ?? projectId,
+                refs: {
+                  projectId,
+                  pushId: id,
+                  sessionId: push.fence?.sessionId,
+                  instanceId: push.fence?.unitId,
+                },
+                error,
+              });
+              socket.end(
                 error instanceof MervError
                   ? `${error.code}: ${error.message}`
-                  : 'code_git_rejected: Git admission failed';
-              // Only the pusher sees Git's reply; an operator recovering a host needs it too.
-              process.stderr.write(
-                `${JSON.stringify({ event: 'code_git_push_rejected', projectId, push: id, reason })}\n`,
+                  : 'code_git_rejected: Git admission failed',
               );
-              socket.end(reason);
             },
           ),
         );

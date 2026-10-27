@@ -1,6 +1,7 @@
 import { added, browse, log, raw } from './browse.js';
 import type { CodeBrowsed } from './models.js';
 import { createService, type Scope, type State, type Transaction } from '@merv/contracts';
+import type { Issues } from '@merv/contracts/issues';
 import { retireGitHubConnections } from './github-retirement.js';
 import { declareManagedProject } from './store/managed.js';
 import {
@@ -61,6 +62,14 @@ export class CodeService {
     this.gitRemote = new CodeGitRemote(state, scope, this.repositories, this.writers);
   }
 
+  /** Where Code reports what went wrong; its plugin sets it to reporter(ctx). */
+  get issues(): Issues {
+    return this.gitRemote.issues;
+  }
+  set issues(issues: Issues) {
+    this.gitRemote.issues = issues;
+  }
+
   async initialize(): Promise<void> {
     try {
       await createService(this.units);
@@ -105,6 +114,7 @@ export class CodeService {
           await this.gitRemote.recover();
           await writers.expire();
         },
+        report: (issue) => this.issues.report(issue),
       },
       repositories,
       options.fault,
