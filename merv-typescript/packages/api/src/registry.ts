@@ -1019,6 +1019,8 @@ export class ToolRegistry implements Tools {
       return value;
     } catch (error) {
       record(error instanceof MervError ? error.code : 'internal_error');
+      // A nested call's failure stays the innermost call's one issue.
+      if (error && typeof error === 'object' && this.reported.has(error)) throw error;
       const status = error instanceof MervError ? error.status : 500;
       if (
         !(error instanceof MervError && error.wait) &&

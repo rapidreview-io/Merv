@@ -266,8 +266,7 @@ export class ApiServer {
 
   /** A server failure, unless the tool call already reported it or the server is stopping. */
   private failed(error: unknown, status: number, code: string, where: string): void {
-    const { reported } = this.tools as { reported?: WeakSet<object> };
-    if (status < 500 || this.stopping || reported?.has(error as object)) return;
+    if (status < 500 || this.stopping || this.tools.reported?.has(error as object)) return;
     this.issues.report({ class: 'platform', where: 'api_error', code, key: where, status, error });
   }
 
@@ -329,7 +328,8 @@ export class ApiServer {
           }
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
-          this.failed(error, status, body.code, `${req.method} ${pathOf(req)}`);
+          // Keyed by mount, so one fault across ids is one issue.
+          this.failed(error, status, body.code, `${req.method} /${pathOf(req).split('/')[1]}`);
         }),
         new Promise((closed) => res.once('close', closed)),
       ]);

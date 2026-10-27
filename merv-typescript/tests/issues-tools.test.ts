@@ -66,6 +66,13 @@ function registry() {
       ],
     }),
   });
+  tools.register({
+    name: 'item.nested',
+    description: 'Calls item.write',
+    tier: 'core',
+    inputSchema: z.object({}).strict(),
+    handler: (caller) => tools.invoke('item.write', caller, { id: 'x' }, true),
+  });
   return { tools, issues };
 }
 
@@ -101,6 +108,15 @@ test('an agent refusal is a notice keyed by its arguments, and a wait is never r
     },
   );
   assert.ok(tools.reported.has(report!.error as object));
+});
+
+test('a nested call that fails is reported once, by the innermost call', async () => {
+  const { tools, issues } = registry();
+  await assert.rejects(tools.invoke('item.nested', caller, {}, true), { code: 'item_conflict' });
+  assert.deepEqual(
+    issues.reports.map(({ where }) => where),
+    ['item.write'],
+  );
 });
 
 test("a person's refusal is not reported, but a fault is, severe, and the API does not repeat it", async () => {
@@ -165,7 +181,7 @@ test("a leased call's report names its invocation", async () => {
 async function code(t: TestContext) {
   const f = await writerFixture(t);
   const issues = capture(f.state);
-  f.core.issues = issues;
+  f.core.gitRemote.issues = issues;
   const server = createServer((req, res) => {
     void f.core.gitRemote.handle(req, res, new URL(req.url!, 'http://localhost')).catch(() => {
       if (!res.headersSent) res.writeHead(500);

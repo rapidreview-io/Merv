@@ -499,7 +499,7 @@ test('a response that fails after its head resets the connection', async () => {
   );
   const url = await api.start();
   const logged = await stderrOf(async () => {
-    const response = await fetch(`${url}/partial`, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`${url}/partial/item_1`, { signal: AbortSignal.timeout(2000) });
     assert.equal(response.status, 200);
     await assert.rejects(response.text(), (error: Error) => error.name !== 'TimeoutError');
   });

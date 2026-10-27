@@ -24,7 +24,7 @@ export const codePlugin = {
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
       const code = new CodeService(ctx.state, ctx.scope, config);
-      code.issues = reporter(ctx);
+      code.gitRemote.issues = reporter(ctx);
       const service = await createService(code);
       yield () => service.close();
       // A session's attach and end open and end its writer generation (one its worker ended by
