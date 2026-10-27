@@ -549,6 +549,18 @@ if (process.env.MERV_METRICS_TRACKIO_URL) {
     { id: 'metrics-ui', name: '@merv/metrics/ui', required: false },
   );
 }
+// Issue alerts post to a Slack incoming webhook once the operator installs one; Issues stays
+// optional either way, and the URL never leaves the environment.
+const issues = config.plugins.find((entry) => entry.id === 'issues');
+if (issues && process.env.MERV_ISSUES_SLACK_WEBHOOK?.trim())
+  issues.config = {
+    alerts: {
+      slack: {
+        webhookEnv: 'MERV_ISSUES_SLACK_WEBHOOK',
+        publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+      },
+    },
+  };
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {
