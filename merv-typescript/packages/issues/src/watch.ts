@@ -60,32 +60,38 @@ export async function floods(state: State, issues: Issues): Promise<() => Promis
 }
 
 /** Pins each kept case's visit once: when it has ended, or as it stands a day on. A case whose
- *  session Sessions does not know keeps `{}`. Retirement and the next visit take the rest. */
+ *  session Sessions does not know keeps `{}`. Retirement and the next visit take the rest. Each
+ *  pass pages past the cases whose visit is still open. */
 export async function pin(state: State, traces: Traces, clock = Date.now): Promise<void> {
   const now = clock();
-  const rows = await state.read((sql) =>
-    sql.all<{ id: string; session_id: string; at: string }>(
-      'SELECT id, session_id, at FROM issue_occurrences WHERE trace_json IS NULL AND session_id IS NOT NULL AND at<? ORDER BY _merv_rowid LIMIT 200',
-      iso(now - MINUTE),
-    ),
-  );
-  if (!rows.length) return;
-  const found = await traces([...new Set(rows.map((row) => row.session_id))]);
-  if (!found) return;
-  const pins = rows.flatMap((row): [string, string][] => {
-    const trace = found.get(row.session_id);
-    if (!trace) return [[row.id, '{}']];
-    return trace.closedAt || row.at < iso(now - 1440 * MINUTE)
-      ? [[row.id, JSON.stringify(trace)]]
-      : [];
-  });
-  if (pins.length)
-    await state.transaction(async (tx) => {
-      for (const [id, trace] of pins)
-        await tx.run(
-          'UPDATE issue_occurrences SET trace_json=? WHERE id=? AND trace_json IS NULL',
-          trace,
-          id,
-        );
+  for (let after = 0; ;) {
+    const rows = await state.read((sql) =>
+      sql.all<{ id: string; session_id: string; at: string; rowid: number }>(
+        'SELECT id, session_id, at, _merv_rowid AS rowid FROM issue_occurrences WHERE trace_json IS NULL AND session_id IS NOT NULL AND at<? AND _merv_rowid>? ORDER BY _merv_rowid LIMIT 200',
+        iso(now - MINUTE),
+        after,
+      ),
+    );
+    if (!rows.length) return;
+    const found = await traces([...new Set(rows.map((row) => row.session_id))]);
+    if (!found) return;
+    const pins = rows.flatMap((row): [string, string][] => {
+      const trace = found.get(row.session_id);
+      if (!trace) return [[row.id, '{}']];
+      return trace.closedAt || row.at < iso(now - 1440 * MINUTE)
+        ? [[row.id, JSON.stringify(trace)]]
+        : [];
     });
+    if (pins.length)
+      await state.transaction(async (tx) => {
+        for (const [id, trace] of pins)
+          await tx.run(
+            'UPDATE issue_occurrences SET trace_json=? WHERE id=? AND trace_json IS NULL',
+            trace,
+            id,
+          );
+      });
+    if (rows.length < 200) return;
+    after = rows.at(-1)!.rowid;
+  }
 }

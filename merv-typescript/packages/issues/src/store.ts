@@ -31,6 +31,8 @@ const LOOPS = 5000;
 const LOOP = 15;
 /** Reports and resolves one fingerprint holds between flushes. */
 const OPS = 8;
+/** The most repeats one case records (an INTEGER column). */
+const REPEATS = 2 ** 31 - 1;
 const CLASSES: readonly IssueClass[] = ['tool', 'question', 'platform'];
 const LEVELS: readonly IssueLevel[] = ['notice', 'warn', 'severe'];
 const higher = (a: IssueLevel, b: IssueLevel) => (LEVELS.indexOf(a) >= LEVELS.indexOf(b) ? a : b);
@@ -185,7 +187,7 @@ export class IssueStore implements IssueService {
     const entry = this.entry(r);
     if (!entry) return;
     const at = iso(now);
-    const n = Number.isSafeInteger(r.n) && r.n! > 0 ? r.n! : 1;
+    const n = Number.isSafeInteger(r.n) && r.n! > 0 ? Math.min(r.n!, REPEATS) : 1;
     const status =
       Number.isInteger(r.status) && r.status! >= 0 && r.status! < 1000 ? r.status! : null;
     // The fault rule: a 500 is severe whatever its owner said.
@@ -217,7 +219,11 @@ export class IssueStore implements IssueService {
       group.loop ||= count >= LOOP;
     }
     const bucket = group.buckets.find((b) => b.subject === subject);
-    if (bucket) Object.assign(bucket, { n: bucket.n + n, level: higher(bucket.level, level) });
+    if (bucket)
+      Object.assign(bucket, {
+        n: Math.min(bucket.n + n, REPEATS),
+        level: higher(bucket.level, level),
+      });
     else if (group.buckets.length < SUBJECTS) {
       const error = errorFacts(r.error) ?? null;
       group.buckets.push({ subject, n, at, level, status, refs: ids(r.refs), error, note });
@@ -238,21 +244,38 @@ export class IssueStore implements IssueService {
       );
     this.dropped = 0;
     if (!this.pending.size) return;
-    const batch = this.pending;
+    const all = [...this.pending];
     this.pending = new Map();
-    try {
-      await this.state.transaction((tx) => this.apply(tx, batch));
+    // From the third failure in a row entries go one at a time, so a row the database refuses is
+    // dropped once another lands. Two refused with none landed mean it is away: the rest wait,
+    // ahead of those two.
+    const parts = this.failures < 2 ? [all] : all.map((entry) => [entry]);
+    const failed: [string, Pending][] = [];
+    let landed = false;
+    let tried = 0;
+    for (const part of parts) {
+      if (!landed && failed.length >= 2) break;
+      tried++;
+      try {
+        await this.state.transaction((tx) => this.apply(tx, new Map(part)));
+        landed = true;
+      } catch {
+        failed.push(...part);
+      }
+    }
+    if (landed) {
+      this.dropped += failed.length;
       this.failures = 0;
       return;
-    } catch {
-      for (const [id, entry] of this.pending) {
-        const older = batch.get(id);
-        if (older) older.ops.push(...entry.ops.slice(0, Math.max(0, OPS - older.ops.length)));
-        else if (batch.size < KEYS) batch.set(id, entry);
-        else this.dropped++;
-      }
-      this.pending = batch;
     }
+    const batch = new Map([...parts.slice(tried).flat(), ...failed]);
+    for (const [id, entry] of this.pending) {
+      const older = batch.get(id);
+      if (older) older.ops.push(...entry.ops.slice(0, Math.max(0, OPS - older.ops.length)));
+      else if (batch.size < KEYS) batch.set(id, entry);
+      else this.dropped++;
+    }
+    this.pending = batch;
     // While the database is away nothing is recorded: say so once every 30 minutes.
     const severe = [...batch.values()].some((entry) =>
       entry.ops.some((op) => op !== 'resolve' && op.level === 'severe'),
@@ -343,12 +366,13 @@ export class IssueStore implements IssueService {
         if (level === 'severe' && row.level !== 'severe') row.alerted_at = null;
         Object.assign(row, { level, standing: op.standing, last_at: op.at });
         row.note = op.note ?? row.note;
-        // Sampling: every case up to 50 an episode, then a new subject or one every ten minutes;
-        // a standing condition keeps only its first.
+        // Sampling: every case up to 50 an episode, then one every ten minutes, or a minute after
+        // the last when its subject differs; a standing condition keeps only its first.
         for (const b of op.buckets) {
           if (kept >= SUBJECTS || (op.standing && row.stored > 0)) break;
-          const stale = !row.kept_at || row.kept_at <= iso(now - 10 * MINUTE);
-          if (row.stored >= 50 && !stale && b.subject === row.kept_subject) continue;
+          const last = row.kept_at ?? '';
+          const other = b.subject !== row.kept_subject && last <= iso(now - MINUTE);
+          if (row.stored >= 50 && last > iso(now - 10 * MINUTE) && !other) continue;
           kept++;
           Object.assign(row, { stored: row.stored + 1, kept_at: b.at, kept_subject: b.subject });
           const { projectId, sessionId, instanceId, release } = b.refs;
@@ -438,6 +462,8 @@ export class IssueStore implements IssueService {
   /** The last flush, then one alert pass of at most ten seconds: the state store closes after. */
   async stop(): Promise<void> {
     await this.sending?.catch(() => {});
+    // A flush in flight took its batch before the reports since: the last one writes those.
+    await this.flushing;
     await this.flush();
     await Promise.race([
       this.alertPass().catch(() => {}),

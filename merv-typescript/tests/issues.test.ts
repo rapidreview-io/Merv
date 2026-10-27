@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sha256Hex, type State } from '@merv/contracts';
+import { Context } from 'cordis';
+import { sha256Hex, type SqlValue, type State, type Transaction } from '@merv/contracts';
 import type { IssueReport, SessionTrace } from '@merv/contracts/issues';
-import { IssueStore } from '@merv/issues';
+import issuesPlugin, { IssueStore } from '@merv/issues';
 import { slackSink, type AlertDigest, type AlertSink } from '@merv/issues/alerts';
 import { issueMigrations } from '@merv/issues/schema';
 import { floods, pin, quiet } from '@merv/issues/watch';
@@ -108,7 +109,7 @@ test('a report waits for its writer: a rollback drops it and a snapshot attempt 
   assert.equal(await f.store.platformIssue(idOf({ ...tool, code: 'rolled_back' })), undefined);
 });
 
-test('cases are sampled: 20 a flush, all up to 50, then a new subject or one every ten minutes', async () => {
+test('cases are sampled: 20 a flush, all up to 50, then a new subject a minute on or any ten', async () => {
   const f = await bed();
   const id = idOf(tool);
   const report = (...subjects: string[]) =>
@@ -125,6 +126,10 @@ test('cases are sampled: 20 a flush, all up to 50, then a new subject or one eve
   await f.flush();
   report('fresh');
   await f.flush();
+  assert.equal((await f.cases(id)).length, 50, 'a new subject waits a minute');
+  f.clock.now += MINUTE;
+  report('fresh', 'other');
+  await f.flush();
   report('fresh');
   await f.flush();
   assert.equal((await f.cases(id)).length, 51);
@@ -132,7 +137,11 @@ test('cases are sampled: 20 a flush, all up to 50, then a new subject or one eve
   report('fresh');
   await f.flush();
   const kept = await f.cases(id);
-  assert.deepEqual([kept.length, kept.at(-1)!.subject], [52, 'fresh']);
+  assert.deepEqual(
+    kept.slice(-2).map((c) => c.subject),
+    ['fresh', 'fresh'],
+  );
+  assert.equal(kept.length, 52);
   const detail = (await f.store.platformIssue(id))!;
   assert.deepEqual([detail.cases.length, detail.cases.at(-1)!.subject], [51, 's0']);
 });
@@ -327,6 +336,43 @@ test('a case pins its visit once, after the visit ended or a day on', async () =
   );
 });
 
+test('the pin pages past cases whose visit is still open', async () => {
+  const f = await bed();
+  for (let code = 0; code < 11; code++)
+    for (let i = 0; i < 20; i++)
+      f.store.report({
+        ...tool,
+        code: `c${code}`,
+        subject: `s${i}`,
+        refs: { sessionId: 'ses_open' },
+      });
+  f.store.report({ ...tool, code: 'closed', refs: { sessionId: 'ses_closed' } });
+  await f.flush();
+  f.clock.now += 2 * MINUTE;
+  const visit = {
+    projectId: 'p1',
+    threadId: 'thr',
+    instanceId: 'wf',
+    revision: 1,
+    role: 'producer',
+  };
+  const traces = new Map<string, SessionTrace>([
+    ['ses_open', { ...visit, status: 'active', createdAt: '2026-10-27T09:00:00.000Z' }],
+    [
+      'ses_closed',
+      {
+        ...visit,
+        status: 'closed',
+        createdAt: '2026-10-27T09:00:00.000Z',
+        closedAt: '2026-10-27T10:01:00.000Z',
+      },
+    ],
+  ]);
+  await pin(f.state, async () => traces, f.time);
+  const [closed] = await f.cases(idOf({ ...tool, code: 'closed' }));
+  assert.equal(JSON.parse(closed!.trace_json).status, 'closed');
+});
+
 test('alerts: one digest per five minutes, owed until sent, never for Issues itself, at boot and at stop', async () => {
   const { sent, failing, own } = sink();
   const f = await bed([own]);
@@ -398,6 +444,73 @@ test('while the database is away, 30 failed flushes with a severe report say so 
   assert.deepEqual(
     sent.map((d) => d.issues[0]!.title),
     ['issues cannot be recorded'],
+  );
+});
+
+test('stop writes the reports that arrive while a flush is in flight', async () => {
+  const f = await bed();
+  f.store.report({ ...tool, code: 'a' });
+  await settle();
+  const flushing = f.store.flush();
+  f.store.report({ ...tool, code: 'b' });
+  await settle();
+  await f.store.stop();
+  await flushing;
+  for (const code of ['a', 'b']) assert.equal((await f.row(idOf({ ...tool, code }))).count, 1);
+});
+
+test('a row the database refuses is dropped once others land; repeats stay in an INTEGER', async () => {
+  const f = await bed();
+  // A database that refuses any statement naming `poison`.
+  const picky = Object.assign(Object.create(f.state) as State, {
+    transaction: (fn: (tx: Transaction) => Promise<unknown>) =>
+      f.state.transaction((tx) =>
+        fn({
+          ...tx,
+          all: tx.all.bind(tx),
+          get: tx.get.bind(tx),
+          run: (sql: string, ...args: SqlValue[]) =>
+            args.includes('poison') ? Promise.reject(new Error('refused')) : tx.run(sql, ...args),
+        } as Transaction),
+      ),
+  });
+  const store = new IssueStore(picky, [], f.time);
+  store.report({ ...tool, code: 'poison' });
+  store.report({ ...tool, code: 'big', n: 3_000_000_000 });
+  store.report({ ...tool, code: 'big', n: 3_000_000_000 });
+  await settle();
+  for (let i = 0; i < 3; i++) await store.flush();
+  const [big] = await f.cases(idOf({ ...tool, code: 'big' }));
+  assert.equal(big!.repeats, 2 ** 31 - 1);
+  await store.flush();
+  assert.equal(
+    (await f.row(idOf({ class: 'platform', where: 'issues.dropped', code: 'overflow' }))).count,
+    1,
+  );
+});
+
+test('the plugin flushes and alerts as it is disposed', async (t) => {
+  const posts: unknown[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    posts.push(JSON.parse(String(init.body)));
+    return new Response('ok');
+  });
+  process.env.MERV_TEST_ISSUES_SLACK = 'https://hooks.slack.test/T/B/x';
+  t.after(() => delete process.env.MERV_TEST_ISSUES_SLACK);
+  const f = await bed();
+  const ctx = new Context();
+  ctx.provide('state', f.state);
+  const fiber = ctx.plugin(issuesPlugin, {
+    alerts: { slack: { webhookEnv: 'MERV_TEST_ISSUES_SLACK', publicOrigin: 'https://merv.test' } },
+  });
+  while (!ctx.get('issues')) await settle();
+  ctx.get('issues')!.report({ ...tool, code: 'late', level: 'severe' });
+  await settle();
+  await fiber.dispose();
+  assert.equal((await f.row(idOf({ ...tool, code: 'late' }))).count, 1);
+  assert.deepEqual(
+    posts.map((post: any) => post.text),
+    ['Merv · experiment write create · late'],
   );
 });
 
