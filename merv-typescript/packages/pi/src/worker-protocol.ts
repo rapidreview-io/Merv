@@ -841,14 +841,14 @@ export class PiWorkerProtocol {
         15_000,
       );
     if (!request) return;
-    // Charged to the person's Agent tokens as the relay charges a turn's calls: a day already
+    // Charged to the person's Agent spending as the relay charges a turn's calls: a day already
     // used up names nothing.
     const person = {
       userId: (await this.core.read((tx) => this.core.conversation(tx, id))).userId,
     };
-    const reserved = await this.core.tokens.reserve(person, request.body);
+    const reserved = await this.core.spend.reserve(person, titler, request.body);
     const { texts, usage } = await request.send();
-    if (usage) await this.core.tokens.settle(usage, person, reserved);
+    if (usage) await this.core.spend.settle(usage, person, reserved);
     const title = piTitle(texts);
     if (!title) return;
     const named = await this.core.state.transaction(async (tx) => {

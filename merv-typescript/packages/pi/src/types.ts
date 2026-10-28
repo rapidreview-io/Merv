@@ -208,7 +208,8 @@ export interface PiRelayGrant {
   toolNames: string[];
 }
 /** A model call's charge: the day it was charged to and its tokens at their most. */
-export type PiModelCharge = { day: string; tokens: number };
+/** A call's charge: the day it counts toward, in micro-dollars at its model's prices. */
+export type PiModelCharge = { day: string; micros: number; model: string };
 export interface PiCompletion {
   commandId: string;
   workerId: string;
@@ -278,12 +279,12 @@ export interface PiRuntime extends Pi {
   /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it
    *  public and closes it with the mount. */
   modelRelay(): ModelRelayHandle;
-  /** For the platform admin only, never a tool: each of `persons`' Agent tokens over the UTC
+  /** For the platform admin only, never a tool: each of `persons`' Agent dollars over the UTC
    *  days [from, to), with the daily limit that holds for them now. */
-  tokensUsed(persons: readonly string[], from: string, to: string): Promise<ModelTokens[]>;
-  /** For the platform admin only, never a tool: sets `person`'s own daily Agent tokens, or clears
+  spendUsed(persons: readonly string[], from: string, to: string): Promise<ModelTokens[]>;
+  /** For the platform admin only, never a tool: sets `person`'s own daily Agent dollars, or clears
    *  them (null) so the deployment's ceiling holds again. */
-  setTokenLimit(person: string, tokens: number | null): Promise<void>;
+  setSpendLimit(person: string, usd: number | null): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {

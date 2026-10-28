@@ -495,11 +495,11 @@ function ledger() {
     reserve: async () => {
       book.charges++;
       book.used += 100;
-      return { day: '2026-09-29', tokens: 100 };
+      return { day: '2026-09-29', micros: 100, model: 'test-model' };
     },
-    onUsage: (record: PiRelayUsageRecord, _grant: PiRelayGrant, reserved: { tokens: number }) => {
+    onUsage: (record: PiRelayUsageRecord, _grant: PiRelayGrant, reserved: { micros: number }) => {
       book.records.push(record);
-      book.used += record.inputTokens + record.outputTokens - reserved.tokens;
+      book.used += record.inputTokens + record.outputTokens - reserved.micros;
     },
   };
 }

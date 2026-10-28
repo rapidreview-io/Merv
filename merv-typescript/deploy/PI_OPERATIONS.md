@@ -80,8 +80,9 @@ runtime catalog in `MERV_FLEET_RUNTIMES`. Link and runtime availability are chec
 - `MERV_PI_MODELS` is the catalog: a JSON array of 1 to 8 entries, the first
   the default, each with `id`, `label` and `effort`. `id` is the provider's
   model id; `label` (at most 24 characters) is all the picker shows; the
-  retired `inputUsdPerM`/`outputUsdPerM` prices are dropped by the render if an
-  env file still carries them; `effort` (`none` or `low`) is the reasoning effort the relay
+  optional `inputUsdPerM`, `cachedInputUsdPerM` and `outputUsdPerM` (USD per million tokens)
+  price the model's calls, else the provider's list price in `packages/pi/src/relay.ts`
+  (`PRICES`; a model in neither is charged as the dearest listed); `effort` (`none` or `low`) is the reasoning effort the relay
   sets on every call, whatever the worker asks. Unset, the catalog is GPT-6.1 Sol at low effort, followed by GPT-6 Luna. `MERV_PI_MODEL` is ignored. The render makes the
   checks Main makes as it starts, so dry-run it on the edited env before you
   recreate Main; it refuses a bad catalog with `Invalid MERV_PI_MODELS entry`
@@ -94,6 +95,11 @@ runtime catalog in `MERV_FLEET_RUNTIMES`. Link and runtime availability are chec
   ```
   MERV_PI_MODELS=[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","effort":"low"},{"id":"gpt-6-luna","label":"GPT-6 Luna","effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","effort":"low"}]
   ```
+- **Spending limit:** every Agent call (turns, titles, screen looks) is charged in dollars at its
+  model's prices: fresh input, cached input and output tokens as the provider reports them. A
+  person's calls stop for the UTC day at $200 (`dailyUsdPerPerson`, founder ruling 2026-10-28);
+  the platform admin's Credits page shows the spending and sets a person's own limit in dollars.
+  Anthropic cache writes are charged at the input price (their 1.25× premium is not counted).
 - **Claude models** (ids beginning `claude-`, such as `claude-haiku-5-5` and
   `claude-opus-5-5`) are Anthropic's: the relay sends them to
   `https://api.anthropic.com/v1/messages` under the key in `MERV_PI_ANTHROPIC_API_KEY` (or the

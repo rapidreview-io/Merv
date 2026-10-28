@@ -57,31 +57,30 @@ export function fleetRuntimes(entries, name) {
 /**
  * The models a person may pick for a Pi conversation, the default first, as entries of
  * { id, label, effort }. These are the checks Main's piConfig makes as it starts, so a dry run
- * of the render refuses a catalog that would stop Main. The retired per-model prices an older
- * env file may still carry (inputUsdPerM, outputUsdPerM) are dropped, never rendered.
+ * of the render refuses a catalog that would stop Main. An entry's prices (inputUsdPerM,
+ * cachedInputUsdPerM, outputUsdPerM: USD per million tokens) price its Agent spending.
  */
 export function piModels(entries, name) {
   if (!Array.isArray(entries) || !entries.length || entries.length > 8) {
     throw new Error(`${name} must hold 1-8 models`);
   }
   const models = entries.map((entry) => {
-    const {
-      id,
-      label,
-      effort,
-      inputUsdPerM: _input,
-      outputUsdPerM: _output,
-      ...rest
-    } = entry ?? {};
+    const { id, label, effort, ...rest } = entry ?? {};
+    const prices = Object.entries(rest);
     if (
-      Object.keys(rest).length ||
+      prices.some(
+        ([key, usd]) =>
+          !['inputUsdPerM', 'cachedInputUsdPerM', 'outputUsdPerM'].includes(key) ||
+          typeof usd !== 'number' ||
+          !(usd >= 0 && usd <= 1_000),
+      ) ||
       !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(typeof id === 'string' ? id : '') ||
       !/^\S(?:.{0,22}\S)?$/.test(typeof label === 'string' ? label : '') ||
       !['none', 'low', 'medium'].includes(effort)
     ) {
       throw new Error(`Invalid ${name} entry`);
     }
-    return { id, label, effort };
+    return { id, label, effort, ...Object.fromEntries(prices) };
   });
   if (new Set(models.map((model) => model.id)).size !== models.length) {
     throw new Error(`${name} repeats a model id`);

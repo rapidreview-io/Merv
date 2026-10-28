@@ -26,45 +26,103 @@ export type PiRelayConfig = Omit<
     modelIdPrefix?: string;
   };
 
-/** People's own daily limits, set by the platform admin, each replace the ceiling. */
-const piLedger = dailyTokens('pi_model_usage', 'pi_model_limits');
+/** USD per million tokens: input, cached input, output. */
+type Price = readonly [input: number, cached: number, output: number];
+/** The providers' list prices; a catalog entry's own prices replace these. Cached input is a tenth
+ *  of input where the provider publishes no other. */
+const PRICES: Record<string, Price> = {
+  'gpt-6.1-sol': [2, 0.2, 10],
+  'gpt-6-sol': [2, 0.2, 10],
+  'gpt-6-luna': [0.1, 0.01, 0.5],
+  'gpt-6-astra': [10, 1, 50],
+  'claude-haiku-5-5': [0.1, 0.01, 0.5],
+  'claude-opus-5-5': [4, 0.2, 20],
+};
+/** A model nobody priced is charged as the dearest listed one: never free. */
+const UNPRICED: Price = [10, 1, 50];
+export interface PiModelPrice {
+  id: string;
+  inputUsdPerM?: number;
+  cachedInputUsdPerM?: number;
+  outputUsdPerM?: number;
+}
+
+/** People's own daily limits, set by the platform admin, each replace the ceiling. The shared
+ *  ledger names its column `tokens`; Pi's counts micro-dollars in it. */
+const piLedger = dailyTokens('pi_model_spend', 'pi_model_spend_limits');
+const micros = (usd: number) => Math.round(usd * 1_000_000);
+const dollars = (micro: number) => micro / 1_000_000;
 /**
- * A person's Agent tokens today: a call is charged at its most (its request and its output)
+ * A person's Agent spending today, in micro-dollars at each model's prices (USD per million
+ * tokens is micro-dollars per token): a call is charged at its most (its request and its output)
  * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
  * The day's total refuses any call that would pass their own limit, else the ceiling.
  */
-export const piTokens = (state: State, now: () => string, ceiling: number) => ({
-  async reserve(
-    grant: { userId: string },
-    body: { max_output_tokens?: unknown; max_tokens?: unknown },
-  ): Promise<PiModelCharge> {
-    const most =
-      Math.ceil(JSON.stringify(body).length / 4) +
-      (Number(body.max_output_tokens ?? body.max_tokens) || 128_000);
-    const day = now().slice(0, 10);
-    const charged = await state.transaction((tx) =>
-      piLedger.charge(tx, grant.userId, day, most, ceiling),
-    );
-    check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
-    return { day, tokens: most };
-  },
-  async settle(
-    usage: { inputTokens: number; outputTokens: number },
-    grant: { userId: string },
-    reserved: PiModelCharge,
-  ): Promise<void> {
-    // Settles the day the call was charged to, even past midnight.
-    const delta = usage.inputTokens + usage.outputTokens - reserved.tokens;
-    await state.transaction((tx) => piLedger.settle(tx, grant.userId, reserved.day, delta));
-  },
-  /** Each of `persons`' tokens over the UTC days [from, to), and the daily limit that holds. */
-  used: (persons: readonly string[], from: string, to: string): Promise<ModelTokens[]> =>
-    state.read((sql) => piLedger.used(sql, persons, from, to, ceiling)),
-  /** Sets `person`'s own daily limit, or clears it (null) so the ceiling holds again. */
-  async setLimit(person: string, tokens: number | null): Promise<void> {
-    await state.transaction((tx) => piLedger.setLimit(tx, person, tokens));
-  },
-});
+export const piSpend = (
+  state: State,
+  now: () => string,
+  models: readonly PiModelPrice[],
+  ceilingUsd: number,
+) => {
+  const ceiling = micros(ceilingUsd);
+  const price = (model: string): Price => {
+    const own = models.find(({ id }) => id === model);
+    const [input, cached, output] = PRICES[model] ?? UNPRICED;
+    const ownInput = own?.inputUsdPerM ?? input;
+    return [
+      ownInput,
+      own?.cachedInputUsdPerM ?? (own?.inputUsdPerM === undefined ? cached : ownInput / 10),
+      own?.outputUsdPerM ?? output,
+    ];
+  };
+  return {
+    async reserve(
+      person: { userId: string },
+      model: string,
+      body: { max_output_tokens?: unknown; max_tokens?: unknown },
+    ): Promise<PiModelCharge> {
+      const [input, , output] = price(model);
+      const most = Math.ceil(
+        Math.ceil(JSON.stringify(body).length / 4) * input +
+          (Number(body.max_output_tokens ?? body.max_tokens) || 128_000) * output,
+      );
+      const day = now().slice(0, 10);
+      const charged = await state.transaction((tx) =>
+        piLedger.charge(tx, person.userId, day, most, ceiling),
+      );
+      check(charged, 'pi_model_ceiling', "Today's Agent spending is used up", 403);
+      return { day, micros: most, model };
+    },
+    async settle(
+      usage: { inputTokens: number; cachedTokens?: number; outputTokens: number },
+      person: { userId: string },
+      reserved: PiModelCharge,
+    ): Promise<void> {
+      const [input, cached, output] = price(reserved.model);
+      const reused = Math.min(usage.cachedTokens ?? 0, usage.inputTokens);
+      const cost = Math.ceil(
+        (usage.inputTokens - reused) * input + reused * cached + usage.outputTokens * output,
+      );
+      // Settles the day the call was charged to, even past midnight.
+      await state.transaction((tx) =>
+        piLedger.settle(tx, person.userId, reserved.day, cost - reserved.micros),
+      );
+    },
+    /** Each of `persons`' dollars over the UTC days [from, to), and the daily limit that holds. */
+    used: async (persons: readonly string[], from: string, to: string): Promise<ModelTokens[]> =>
+      (await state.read((sql) => piLedger.used(sql, persons, from, to, ceiling))).map((use) => ({
+        ...use,
+        used: dollars(use.used),
+        limit: dollars(use.limit),
+      })),
+    /** Sets `person`'s own daily limit in dollars, or clears it (null) so the ceiling holds. */
+    async setLimit(person: string, usd: number | null): Promise<void> {
+      await state.transaction((tx) =>
+        piLedger.setLimit(tx, person, usd === null ? null : micros(usd)),
+      );
+    },
+  };
+};
 
 /** What both of Pi's relays share: one model call at a time per conversation, as a person's
  *  conversations share one machine, under a grant that names a model of `efforts`. */

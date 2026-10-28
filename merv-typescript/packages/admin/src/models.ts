@@ -99,7 +99,7 @@ export interface AdminCredentials {
 export type CredentialTarget = { env: string } | { provider: string; field: string };
 
 /** A credit type a person spends: the platform's own, or one sandbox provider's. */
-export type CreditKind = 'agent-tokens' | 'fleet-tokens' | 'fleet-usd' | `provider:${string}`;
+export type CreditKind = 'agent-usd' | 'fleet-tokens' | 'fleet-usd' | `provider:${string}`;
 export interface CreditUse {
   kind: CreditKind;
   label: string;

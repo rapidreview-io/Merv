@@ -267,12 +267,16 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(models) }).status, 0);
   const rendered = JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config;
   assert.deepEqual(rendered.models, models);
-  // An older env file's retired prices are dropped, not rendered.
+  // An entry's prices price its Agent spending; a price out of range is refused.
   const priced = models.map((model) => ({ ...model, inputUsdPerM: 1, outputUsdPerM: 2 }));
   assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(priced) }).status, 0);
   assert.deepEqual(
     JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config.models,
-    models,
+    priced,
+  );
+  assert.notEqual(
+    run({ ...pi, MERV_PI_MODELS: JSON.stringify([{ ...models[0], outputUsdPerM: -1 }]) }).status,
+    0,
   );
   assert.notEqual(run({ ...pi, MERV_PI_MODELS: 'gpt-6-sol' }).status, 0);
   const [luna] = models;

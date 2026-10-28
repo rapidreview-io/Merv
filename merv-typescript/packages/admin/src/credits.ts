@@ -42,12 +42,15 @@ const scheduleInput = z
 const limitInput = z.union([
   z
     .object({
-      kind: z.enum(['agent-tokens', 'fleet-tokens']),
+      kind: z.literal('fleet-tokens'),
       limit: z.number().int().min(1).max(1_000_000_000).nullable(),
     })
     .strict(),
   z
-    .object({ kind: z.literal('fleet-usd'), limit: z.number().positive().max(100_000).nullable() })
+    .object({
+      kind: z.enum(['agent-usd', 'fleet-usd']),
+      limit: z.number().positive().max(100_000).nullable(),
+    })
     .strict(),
 ]);
 
@@ -120,7 +123,7 @@ async function uses(
   };
   const pi = env.ctx.get('pi');
   const fleet = env.ctx.get('fleet');
-  const agent = await read(pi && ((from, to) => pi.tokensUsed(keys, from, to)));
+  const agent = await read(pi && ((from, to) => pi.spendUsed(keys, from, to)));
   const machines = await read(fleet && ((from, to) => fleet.peopleUsage(keys, from, to)));
   const at = (day: string) => Instant.parseIso(`${day}T00:00:00Z`);
   /** A credit type from its owner's reading in each window, if it has one. The limit is now's;
@@ -167,7 +170,7 @@ async function uses(
         label: personLabel(env.admins, person) ?? own?.name ?? 'Unnamed',
       },
       kinds: [
-        ...kind('agent-tokens', 'Agent tokens', 'tokens', agent?.[i]),
+        ...kind('agent-usd', 'Agent', 'usd', agent?.[i]),
         ...kind('fleet-tokens', 'Fleet agent tokens', 'tokens', metered),
         ...kind(
           'fleet-usd',
@@ -240,8 +243,8 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
       const input = await r.json(limitInput);
       const [pi, fleet] = [env.ctx.get('pi'), env.ctx.get('fleet')];
       const set =
-        input.kind === 'agent-tokens'
-          ? pi && (() => pi.setTokenLimit(keyOf(person), input.limit))
+        input.kind === 'agent-usd'
+          ? pi && (() => pi.setSpendLimit(keyOf(person), input.limit))
           : fleet &&
             (() =>
               fleet.setPersonLimit(

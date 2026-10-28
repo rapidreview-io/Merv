@@ -91,15 +91,15 @@ export class PiService implements Pi {
   private readonly protocol: PiWorkerProtocol;
   readonly config: PiCore['config'];
   readonly streams: PiCore['streams'];
-  /** Each person's Agent tokens today, which every model call of theirs is charged to. */
-  readonly tokens: PiCore['tokens'];
+  /** Each person's Agent spending today, which every model call of theirs is charged to. */
+  readonly spend: PiCore['spend'];
   private readonly disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
   constructor(...args: ConstructorParameters<typeof PiCore>) {
     this.core = new PiCore(...args);
     this.hosts = new PiHosts(this.core);
     this.protocol = new PiWorkerProtocol(this.core, this.hosts);
-    ({ config: this.config, streams: this.streams, tokens: this.tokens } = this.core);
+    ({ config: this.config, streams: this.streams, spend: this.spend } = this.core);
   }
   /** Where Pi reports its interrupted turns and failed passes. */
   set issues(issues: Issues) {
@@ -118,10 +118,10 @@ export class PiService implements Pi {
     await this.hosts.tick();
   };
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
-  readonly tokensUsed: PiCore['tokens']['used'] = (persons, from, to) =>
-    this.core.tokens.used(persons, from, to);
-  readonly setTokenLimit: PiCore['tokens']['setLimit'] = (person, tokens) =>
-    this.core.tokens.setLimit(person, tokens);
+  readonly spendUsed: PiCore['spend']['used'] = (persons, from, to) =>
+    this.core.spend.used(persons, from, to);
+  readonly setSpendLimit: PiCore['spend']['setLimit'] = (person, usd) =>
+    this.core.spend.setLimit(person, usd);
   async initialize(): Promise<void> {
     await this.core.credentials.initialize();
     await this.core.state.migrate('pi', piMigrations);
@@ -569,16 +569,13 @@ export class PiService implements Pi {
       this.core.conversation(tx, caller.conversation!.id),
     );
     const picture = await renderScreen(this.config.screen, shot);
-    const request = piAsk(
-      this.config,
-      screenAsk(this.core.model(model).id, question, picture, shot.path),
-      60_000,
-    );
+    const looker = this.core.model(model).id;
+    const request = piAsk(this.config, screenAsk(looker, question, picture, shot.path), 60_000);
     check(request, 'pi_screen_unavailable', 'The screen could not be read', 503);
-    // Charged to the person's Agent tokens as the relay charges a turn's calls.
-    const reserved = await this.core.tokens.reserve({ userId }, request.body);
+    // Charged to the person's Agent spending as the relay charges a turn's calls.
+    const reserved = await this.core.spend.reserve({ userId }, looker, request.body);
     const { texts, usage } = await request.send();
-    if (usage) await this.core.tokens.settle(usage, { userId }, reserved);
+    if (usage) await this.core.spend.settle(usage, { userId }, reserved);
     const text = texts.join('\n').trim();
     check(text, 'pi_screen_unavailable', 'The screen could not be read', 502);
     return { page: shot.path, seen: text };
@@ -808,14 +805,14 @@ export class PiService implements Pi {
         validate: (grant: PiRelayGrant) => this.validateModel(grant),
       },
       reserve: (grant: PiRelayGrant, body: Record<string, unknown>) =>
-        this.core.tokens.reserve(grant, body),
+        this.core.spend.reserve(grant, grant.model, body),
       onUsage: async (
-        record: { inputTokens: number; outputTokens: number },
+        record: { inputTokens: number; cachedTokens: number; outputTokens: number },
         grant: PiRelayGrant,
         reserved: PiModelCharge,
       ) => {
         log(record);
-        await this.core.tokens.settle(record, grant, reserved);
+        await this.core.spend.settle(record, grant, reserved);
       },
     };
     const openai = this.core.fleet.modelRelay(

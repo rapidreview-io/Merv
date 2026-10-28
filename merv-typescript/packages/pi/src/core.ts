@@ -21,7 +21,7 @@ import type { Fleet, FleetAllocation } from '@merv/fleet/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { piConfig, type PiConfig } from './schema.js';
 import { PiStreams } from './stream.js';
-import { piTokens } from './relay.js';
+import { piSpend } from './relay.js';
 import { PiProfiles } from './profiles.js';
 import { piInstructions } from './prompt.js';
 import type {
@@ -135,8 +135,8 @@ export class PiCore {
   readonly apiOrigin: string;
   readonly secret: string;
   readonly credentials: CredentialStore;
-  /** Each person's Agent tokens today, which every model call of theirs is charged to. */
-  readonly tokens: ReturnType<typeof piTokens>;
+  /** Each person's Agent spending today, which every model call of theirs is charged to. */
+  readonly spend: ReturnType<typeof piSpend>;
   /** Memory only, never State: the stage each open conversation last showed, what its worker
    * last reported within a turn, and the answer it has streamed so far, which a turn ended early
    * keeps (interrupt). */
@@ -185,7 +185,12 @@ export class PiCore {
       );
     this.config = parsed.data;
     this.credentials = new CredentialStore(state, clock);
-    this.tokens = piTokens(state, () => this.time(), this.config.dailyTokensPerPerson);
+    this.spend = piSpend(
+      state,
+      () => this.time(),
+      this.config.models,
+      this.config.dailyUsdPerPerson,
+    );
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
       this.secret.length >= 32 && this.config.baseUrl,

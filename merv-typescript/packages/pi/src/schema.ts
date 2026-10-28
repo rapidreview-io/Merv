@@ -120,6 +120,10 @@ export const piConfig = z.strictObject({
         id: modelId,
         label: z.string().trim().min(1).max(24),
         effort: z.enum(['none', 'low', 'medium']),
+        // USD per million tokens; unset, the provider's list price (relay.ts PRICES).
+        inputUsdPerM: z.number().min(0).max(1_000).optional(),
+        cachedInputUsdPerM: z.number().min(0).max(1_000).optional(),
+        outputUsdPerM: z.number().min(0).max(1_000).optional(),
       }),
     )
     .min(1)
@@ -161,8 +165,9 @@ export const piConfig = z.strictObject({
   /** The model a worker's question is investigated on (MERV_PI_QUESTION_MODEL), a catalog model;
    * unset, the person's own pick. */
   questionModel: modelId.optional(),
-  /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
-  dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
+  /** A person's Agent model dollars in a UTC day (founder ruling 2026-10-28: $200; it replaced
+   * 2026-09-25's 100M tokens). */
+  dailyUsdPerPerson: z.number().positive().max(100_000).default(200),
   /** How long a turn may go without progress: to reach its machine, then between any two signs
    * of work (its claim, a streamed word, a tool call). Its one ceiling is turnCeilingMs. */
   turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
@@ -368,6 +373,23 @@ export const limitsMigration = {
   );`,
 };
 
+/** A person's Agent spending for each UTC day, and their own daily limit set by the platform
+ *  admin, both in micro-dollars (the shared ledger's `tokens` column). They replace the token
+ *  tables, whose rows stay as history. New tables: no prod count. */
+export const spendMigration = {
+  version: 6,
+  sql: `CREATE TABLE pi_model_spend (
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    tokens BIGINT NOT NULL,
+    PRIMARY KEY(person, day)
+  );
+  CREATE TABLE pi_model_spend_limits (
+    person TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL CHECK (tokens > 0)
+  );`,
+};
+
 /** Pi's tables, in order: what its service migrates when it starts. */
 export const piMigrations = [
   migration,
@@ -375,4 +397,5 @@ export const piMigrations = [
   usageMigration,
   toldMigration,
   limitsMigration,
+  spendMigration,
 ];

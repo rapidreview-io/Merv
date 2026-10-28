@@ -944,17 +944,19 @@ test('Pi’s model relay charges a worker’s call before it runs and settles it
   const spent = () =>
     f.state.read((sql) =>
       sql.all<{ tokens: number | string }>(
-        'SELECT tokens FROM pi_model_usage WHERE person=?',
+        'SELECT tokens FROM pi_model_spend WHERE person=?',
         grant.userId,
       ),
     );
   // The charge made the day's row and the settlement brought it to what the call used; usage
   // settles as its frame passes, beside the response.
-  for (let tries = 0; tries < 50 && Number((await spent())[0]?.tokens) !== 15; tries++)
+  // 10 input and 5 output tokens of GPT-6 Luna: 10 × $0.10 + 5 × $0.50 per million, 3.5
+  // micro-dollars, rounded up.
+  for (let tries = 0; tries < 50 && Number((await spent())[0]?.tokens) !== 4; tries++)
     await pause(10);
   assert.deepEqual(
     (await spent()).map(({ tokens }) => Number(tokens)),
-    [15],
+    [4],
   );
   // A key the provider refuses is Fleet's severe issue, named by relay, key and model.
   const reports: IssueReport[] = [];
@@ -982,59 +984,73 @@ test('Pi’s model relay charges a worker’s call before it runs and settles it
   ]);
 });
 
-test('a person’s Agent tokens are charged before each call and settled after, and refused at the day’s ceiling', async (t) => {
-  const f = await fixture(t, { pi: { dailyTokensPerPerson: 1_000 } as PiConfig });
+test('a person’s Agent dollars are charged before each call and settled after, and refused at the day’s ceiling', async (t) => {
+  const f = await fixture(t, { pi: { dailyUsdPerPerson: 0.0005 } as PiConfig });
   const conversation = await f.create();
   const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  assert.equal(grant.model, 'gpt-6-luna');
   const body = { model: grant.model, input: [], max_output_tokens: 600 };
-  const charged = await f.pi.tokens.reserve(grant, body);
-  assert.equal(charged.tokens, Math.ceil(JSON.stringify(body).length / 4) + 600);
+  // GPT-6 Luna's list price: $0.10 input, $0.01 cached, $0.50 output per million tokens, which
+  // is micro-dollars per token.
+  const charged = await f.pi.spend.reserve(grant, grant.model, body);
+  assert.equal(
+    charged.micros,
+    Math.ceil(Math.ceil(JSON.stringify(body).length / 4) * 0.1 + 600 * 0.5),
+  );
   assert.match(charged.day, /^\d{4}-\d{2}-\d{2}$/);
-  // A second call at its most would pass the ceiling while the first is still out.
-  await assert.rejects(f.pi.tokens.reserve(grant, body), code('pi_model_ceiling'));
-  // Settled to what it used, the day has room again.
-  await f.pi.tokens.settle({ inputTokens: 40, outputTokens: 10 }, grant, charged);
-  assert.deepEqual(await f.pi.tokens.reserve(grant, body), charged);
+  // A second call at its most would pass the $0.0005 ceiling while the first is still out.
+  await assert.rejects(f.pi.spend.reserve(grant, grant.model, body), code('pi_model_ceiling'));
+  // Settled to what it cost (20 fresh and 20 cached input, 10 output: 2 + 0.2 + 5, rounded up to
+  // 8), the day has room again.
+  await f.pi.spend.settle({ inputTokens: 40, cachedTokens: 20, outputTokens: 10 }, grant, charged);
+  assert.deepEqual(await f.pi.spend.reserve(grant, grant.model, body), charged);
   // A call settles to the day it was charged to, whatever the day is when it finishes.
   await f.state.transaction((tx) =>
     tx.run(
-      'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?)',
+      'INSERT INTO pi_model_spend(person,day,tokens) VALUES(?,?,?)',
       grant.userId,
       '2000-01-01',
       10,
     ),
   );
-  await f.pi.tokens.settle({ inputTokens: 1, outputTokens: 2 }, grant, {
+  await f.pi.spend.settle({ inputTokens: 1, outputTokens: 2 }, grant, {
     day: '2000-01-01',
-    tokens: 10,
+    micros: 10,
+    model: grant.model,
   });
   const days = await f.state.read((sql) =>
     sql.all<{ day: string; tokens: number | string }>(
-      'SELECT day, tokens FROM pi_model_usage WHERE person=? ORDER BY day',
+      'SELECT day, tokens FROM pi_model_spend WHERE person=? ORDER BY day',
       grant.userId,
     ),
   );
   assert.deepEqual(
-    days.map(({ day, tokens }) => ({ day, tokens: Number(tokens) })),
+    days.map(({ day, tokens }) => ({ day, micros: Number(tokens) })),
     [
-      { day: '2000-01-01', tokens: 3 },
-      { day: charged.day, tokens: 50 + charged.tokens },
+      { day: '2000-01-01', micros: 2 },
+      { day: charged.day, micros: 8 + charged.micros },
     ],
   );
-  // The platform admin's read: each window's tokens against the ceiling, none for a person without.
+  // The platform admin's read, in dollars: each window against the ceiling, none for a person
+  // without.
   const tomorrow = new Date(Date.parse(charged.day) + 86_400_000).toISOString().slice(0, 10);
-  assert.deepEqual(await f.pi.tokensUsed([grant.userId, 'nobody'], charged.day, tomorrow), [
-    { used: 50 + charged.tokens, limit: 1_000, own: false },
-    { used: 0, limit: 1_000, own: false },
+  assert.deepEqual(await f.pi.spendUsed([grant.userId, 'nobody'], charged.day, tomorrow), [
+    { used: (8 + charged.micros) / 1e6, limit: 0.0005, own: false },
+    { used: 0, limit: 0.0005, own: false },
   ]);
   assert.deepEqual(
-    (await f.pi.tokensUsed([grant.userId], '1970-01-01', tomorrow)).map(({ used }) => used),
-    [3 + 50 + charged.tokens],
+    (await f.pi.spendUsed([grant.userId], '2000-01-01', '2000-01-02')).map(({ used }) => used),
+    [2 / 1e6],
   );
+  // An admin's own limit for the person, in dollars, replaces the ceiling.
+  await f.pi.setSpendLimit(grant.userId, 5);
   assert.deepEqual(
-    (await f.pi.tokensUsed([grant.userId], '2000-01-01', '2000-01-02')).map(({ used }) => used),
-    [3],
+    (await f.pi.spendUsed([grant.userId], charged.day, tomorrow)).map(({ limit, own }) => ({
+      limit,
+      own,
+    })),
+    [{ limit: 5, own: true }],
   );
 });
