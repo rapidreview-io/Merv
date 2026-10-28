@@ -77,7 +77,7 @@ export function RailRow({
       }
       title={sick?.status.detail}
     >
-      <Icon name={icon} className="rail-icon" />
+      <Icon name={icon} size={18} className="rail-icon" />
       <span className="rail-row-label">{label}</span>
       {counted && <span className="rail-count">{count}</span>}
       {!counted && badge && (
@@ -109,11 +109,11 @@ const DiscordRow = () => (
     target="_blank"
     rel="noreferrer"
   >
-    <svg className="rail-icon" viewBox="0 0 24 24" width={16} height={16} aria-hidden="true">
+    <svg className="rail-icon" viewBox="0 0 24 24" width={18} height={18} aria-hidden="true">
       <path fill="currentColor" d={DISCORD_MARK} />
     </svg>
     <span className="rail-row-label">Discord</span>
-    <Icon name="arrow-right" size={14} className="rail-out" />
+    <Icon name="arrow-right" size={16} className="rail-out" />
   </a>
 );
 
@@ -146,7 +146,7 @@ export const RailHead = ({ onHide }: { onHide(): void }) => (
       title={`Hide sidebar (${SIDEBAR_KB})`}
       aria-label="Hide sidebar"
     >
-      <Icon name="sidebar" size={18} />
+      <Icon name="sidebar" size={20} />
     </button>
   </div>
 );
@@ -197,7 +197,7 @@ export function AccountMenu({
           <span className="account-name">{name}</span>
           {role && <span className="account-role">{role}</span>}
         </span>
-        <Icon name="chevrons" className="account-caret" />
+        <Icon name="chevrons" size={18} className="account-caret" />
       </button>
       {open && (
         // The row it opens from already says whose menu this is, so the menu does not.
@@ -289,7 +289,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           title="Switch project"
         >
           <span className="rail-project-name">{project.name}</span>
-          <Icon name="chevrons" className="rail-project-caret" />
+          <Icon name="chevrons" size={18} className="rail-project-caret" />
         </button>
       ) : (
         <div className="rail-project" data-tour="project">
@@ -618,7 +618,7 @@ export function ShellFrame({
           aria-label="Show sidebar"
         >
           <span className="sb-edge-glyph">
-            <Icon name="sidebar" size={18} />
+            <Icon name="sidebar" size={20} />
           </span>
         </button>
       )}
