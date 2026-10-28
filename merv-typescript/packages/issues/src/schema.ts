@@ -27,7 +27,7 @@ CREATE TABLE issues (
 );
 CREATE INDEX issues_recent ON issues(last_at);
 CREATE INDEX issues_owed ON issues(opened_at) WHERE state='open' AND level='severe' AND alerted_at IS NULL;
-CREATE INDEX issues_quiet ON issues(last_at) WHERE state='open' AND (standing OR level<>'severe');
+CREATE INDEX issues_quiet ON issues(last_at) WHERE state='open';
 CREATE FUNCTION issues_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN
   IF TG_OP='DELETE' OR NEW.count < OLD.count OR
@@ -71,5 +71,14 @@ END;
 $merv$;
 CREATE TRIGGER issue_occurrences_immutable BEFORE UPDATE OR DELETE ON issue_occurrences
 FOR EACH ROW EXECUTE FUNCTION issue_occurrences_guard();
+
+-- Each issue's reports in each UTC hour that had any (YYYY-MM-DDTHH), for the admin's timelines.
+CREATE TABLE issue_hours (
+  issue_id TEXT NOT NULL REFERENCES issues(id),
+  hour TEXT NOT NULL,
+  count BIGINT NOT NULL CHECK (count > 0),
+  PRIMARY KEY (issue_id, hour)
+);
+CREATE INDEX issue_hours_recent ON issue_hours(hour);
 `,
 };

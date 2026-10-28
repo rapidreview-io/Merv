@@ -1,6 +1,54 @@
-/** Issues' data as kept and read, types alone, so the browser reads the same ones (`issues.ts`
- *  re-exports them). */
+/** Issues' data as kept and read, and the words an issue is called by, free of any import so the
+ *  browser reads the same ones (`issues.ts` re-exports them). */
 export type IssueClass = 'tool' | 'question' | 'platform';
+
+/** What a site is called where its code alone would not say it; `<where> <code>` where the code
+ *  is the whole story. A tool's site is its own name and action, said as it is. */
+const SITES: Record<string, string> = {
+  'session.ask_owner asked': 'An agent asked its owner',
+  'session.ask_owner needs_you': 'Pi passed an agent’s question to you',
+  'sessions.question_responder': 'Pi could not answer an agent',
+  'session.stopped': 'An agent stopped without handing off',
+  'sessions.launch': 'An agent failed to launch',
+  'sessions.launch model_interrupted': 'An agent’s model was interrupted',
+  'sessions.sweep_failed': 'The session sweep failed',
+  'dispatch.offer_failed': 'Work could not be offered',
+  'dispatch.inquiry_refused': 'An inquiry could not be offered',
+  'dispatch.launch_held': 'Work is held after failed launches',
+  'fleet.retry': 'Fleet keeps retrying a machine',
+  'fleet.refused': 'Fleet was refused a machine',
+  'fleet.not_ready': 'A Fleet machine’s runtime is not ready',
+  'fleet.unpriced': 'A Fleet machine has no price',
+  'fleet.machine_gone': 'A Fleet machine vanished',
+  'fleet.stuck_releasing': 'A Fleet machine is stuck releasing',
+  'fleet.queued': 'A Fleet request is stuck in the queue',
+  'fleet.relay': 'The model relay is failing',
+  'fleet.workflow_skipped': 'Fleet skipped a project’s work',
+  'fleet.unclaimed': 'Hosted machines never claimed the work',
+  'pi.turn': 'A Pi turn was interrupted',
+  'git.push': 'A git push was rejected',
+  'code.capture_quarantined': 'A code capture was quarantined',
+  consumer: 'An event consumer keeps failing',
+  plugin: 'A plugin failed',
+  'plugin plugin_failed': 'A plugin failed to start',
+  'composition.restore_failed': 'The composition could not be restored',
+  'secrets.platform_unopened': 'Platform secrets could not be opened',
+  'process crashed': 'The server crashed',
+  'process unclean_exit': 'The server exited uncleanly',
+  'events event_flood': 'An event flood',
+  api_error: 'The API answered a server error',
+  'issues.dropped overflow': 'Issues dropped reports',
+  'issues.alert alert_failed': 'Slack alerts are failing',
+};
+const words = (code: string) => code.replace(/[._:-]+/g, ' ').trim();
+/** What an issue is called, in Slack and on the admin's page: its site in words and then its
+ *  code, unless the site's words already say both. */
+export function issueTitle(where: string, code: string): string {
+  const whole = SITES[`${where} ${code}`];
+  if (whole) return whole;
+  const site = SITES[where];
+  return `${site ?? words(where)} · ${words(code)}`;
+}
 export type IssueLevel = 'notice' | 'warn' | 'severe';
 export type IssueState = 'open' | 'resolved';
 
@@ -91,6 +139,8 @@ export interface IssueRow {
   note: string | null;
   /** Up to five projects its kept cases name. */
   projects: string[];
+  /** The agents' visits its kept cases name. */
+  visits: number;
   firstAt: string;
   openedAt: string;
   lastAt: string;
@@ -114,4 +164,10 @@ export interface IssueCase {
   note: string | null;
   /** Pinned once its visit has ended; null before that and for a case without a visit. */
   trace: SessionTrace | null;
+}
+/** An issue as the admin's list reads it: its reports in each hour of the last week that had any,
+ *  oldest first (`YYYY-MM-DDTHH`, UTC), and its newest kept case. */
+export interface IssueListed extends IssueRow {
+  hours: [hour: string, count: number][];
+  latest: IssueCase | null;
 }

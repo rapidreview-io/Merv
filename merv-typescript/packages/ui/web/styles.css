@@ -49,6 +49,10 @@
   --kind-amber: #b45309;
   --kind-slate: #475569;
   --kind-gray: #5f6875;
+  /* Issues' three classes, in one fixed order and validated as a set on each ground. */
+  --issue-tool: #2563eb;
+  --issue-question: #c2610c;
+  --issue-platform: #0d9488;
   --supports-rgb: 31, 122, 58;
   --qualifies-rgb: 148, 96, 0;
   --refutes-rgb: 192, 57, 43;
@@ -112,6 +116,9 @@ html[data-theme='dark'] {
   --kind-amber: #f59e0b;
   --kind-slate: #94a3b8;
   --kind-gray: #a1a1aa;
+  --issue-tool: #3b82f6;
+  --issue-question: #d97706;
+  --issue-platform: #0d9488;
   --supports-rgb: 95, 196, 110;
   --qualifies-rgb: 212, 160, 69;
   --refutes-rgb: 229, 103, 90;
@@ -8313,12 +8320,343 @@ html.modal-open {
 .admin-ledger .guard {
   flex-basis: 100%;
 }
-/* An issue's error: its code, then each frame on a line of its own, faint. */
-.admin-frame {
-  display: block;
+/* Issues: the week's pulse, where it fails, then one card per issue. Each wears its class's hue
+   as --issue, on its marks only; the words stay in ink. */
+.issues {
+  container: issues / inline-size;
+  display: grid;
+  gap: var(--space-5);
+}
+.issues-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+}
+/* The legend's keys and the breakdown's groups are quiet buttons that narrow the page. */
+:is(.issues-key, .issues-part button) {
+  min-height: var(--hit);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+:is(.issues-key, .issues-part button):is(:hover, [aria-pressed='true']) {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.issues-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  color: var(--muted);
+}
+.issues-key b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.issues-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--issue);
+}
+.issues-when {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.issues-bars {
+  display: grid;
+  grid-template-columns: repeat(168, minmax(0, 1fr));
+  align-items: end;
+  height: 84px;
+  border-bottom: 1px solid var(--line);
+}
+.issues-col {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 1px;
+  height: 100%;
+  padding: 0 0.5px;
+}
+.issues-col > span {
+  min-height: 2px;
+  background: var(--issue);
+}
+.issues-col > span:last-child {
+  border-radius: 2px 2px 0 0;
+}
+.issues-col--on {
+  background: var(--hover);
+}
+.issues-days {
+  position: relative;
+  height: 18px;
   font-size: var(--text-xs);
-  color: var(--faint);
+}
+.issues-days > span {
+  position: absolute;
+  top: 4px;
+  padding-left: 2px;
+  border-left: 1px solid var(--line);
+}
+.issues-where {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4) var(--space-5);
+}
+.issues-part ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.issues-part-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.issues-part-head svg {
+  color: var(--issue);
+}
+.issues-part button {
+  display: grid;
+  grid-template-columns: minmax(6em, 14em) minmax(48px, 1fr) 44px;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.issues-part-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.issues-part-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
+}
+.issues-part-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--issue);
+}
+.issues-part b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* One card a row, two side by side once the page holds them at a readable width. */
+.issues-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 760px), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.issue {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 150px;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+.issue--ended {
+  background: transparent;
+}
+.issue--ended :is(.issue-title, .issue-icon) {
+  opacity: 0.7;
+}
+.issue-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--issue) 12%, transparent);
+  color: var(--issue);
+}
+.issue-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+.issue-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
   overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.issue-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.issue-marks {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.issue-mark {
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.issue-mark--bad {
+  border-color: rgba(var(--refutes-rgb), 0.4);
+  color: var(--refutes);
+}
+:is(.issue-what, .issue-where, .issue-case-where) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.issue-what .mono {
+  color: var(--text);
+}
+/* Each fact after the first stands after a quiet dot; the place line steps down as a path. */
+.issue-what > span + span::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--ghost);
+}
+:is(.issue-where, .issue-case-where) > span + span::before {
+  content: '›';
+  margin-right: var(--space-2);
+  color: var(--ghost);
+}
+.issue-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-1);
+}
+.issue-acts:empty {
+  display: none;
+}
+.issue-side {
+  display: grid;
+  align-content: start;
+  justify-items: end;
+  gap: 2px;
+  font-size: var(--text-xs);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.issue-week {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.issue-week b {
+  color: var(--text);
+}
+.issues-spark {
+  width: 112px;
+  height: 24px;
+  margin-bottom: 2px;
+  fill: var(--issue);
+}
+.issues-spark-zero {
+  fill: var(--line-strong);
+}
+.issue-cases {
+  grid-column: 2 / -1;
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.issue-cases ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.issue-cases li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--text-sm);
+}
+.issue-cases .mono {
+  font-size: var(--text-xs);
+}
+.issue-case-acts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: var(--space-3);
+}
+.issue-cases-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+}
+@container issues (max-width: 720px) {
+  .issue {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .issue-side {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px var(--space-3);
+    text-align: left;
+  }
+  .issue-cases {
+    grid-column: 1 / -1;
+  }
+  .issue-cases li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .issue-case-acts {
+    justify-content: start;
+  }
 }
 /* The drill-in: one thin line above the member shell, which stands below it. */
 :root {

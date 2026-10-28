@@ -41,13 +41,14 @@ owner not loaded here leaves its facts out.
   need is Sessions' own phrase; a machine is found by its allocation id or by the unit Fleet says
   it serves.
 - `GET /admin/issues` — `AdminIssues`: the open issues and those resolved in the last 7 days
-  (`issues.platformIssues`), each with the projects its cases name from `scope.directory`, and
-  the open and open-severe counts the page and the rail's badge read. `GET /admin/issues/:id` —
-  `AdminIssueDetail`, what `Download case` saves: the issue and its kept cases (refs, error facts,
-  note, pinned visit trace), each with its project; 404 `not_found`.
-  `POST /admin/issues/:id/resolve` `{}` → `{ id, state }`: `issues.close` under the admin's
-  label, recorded as `issues.resolve`; its next report reopens it. All three answer 503
-  `issues_unavailable` where Issues is not loaded.
+  (`issues.platformIssues`), each with the projects its cases name from `scope.directory`, its
+  reports in each hour of the week, its newest case, and the open and open-severe counts the page
+  and the rail's badge read. `GET /admin/issues/:id` — `AdminIssueDetail`, what `Download case`
+  saves: the issue and its kept cases (refs, error facts, note, pinned visit trace); 404
+  `not_found`. Every case carries its project, its visit (Issues' pin, else
+  `sessions.running.platformTrace` now) and the work that visit served
+  (`workflows.platformWork`). Both answer 503 `issues_unavailable` where Issues is not loaded.
+  Nothing resolves an issue by hand: its owner does, or it goes quiet.
 - `GET /admin/credits` — one row per person: each credit type's use today (UTC), its limit, own
   or not, and what is left. `GET /admin/credits/people/:person` — the drawer (`PersonCredits`):
   the same per window (today, last 7 days, last 30, all time), with their own account's grants and
@@ -99,11 +100,8 @@ row's quiet `Reveal` shows its value under it for 30 s, `Change` opens one passw
 is one row per person and a column per credit type; a row opens the drawer at the right (the
 page, on a phone): one 1D · 1W · 1M · Total switch for every type, and each type with its
 control (`Set limit`, or `Give credit` and its grants and schedules behind ⋯). Issues polls
-`/admin/issues` every 10 s (the rail's Issues row counts the open severe ones from the same
-read): it opens on the open ones, severe, warn, then notice, newest first, with class and state
-(each level, `Resolved`) behind `Filter`; a row, or `?issue=<id>` (the alert's link), opens its drawer, as on
-Credits (`useDrawer`): its facts, note and error, `Resolve issue`, `Download case`, and each
-case's visit with `Thread →` into the drill-in, its ids in the hover title. The pages read the
+`/admin/issues` every 15 s (the rail's Issues row counts the open severe ones from the same
+read); docs/ISSUES.md §6 draws it. The pages read the
 routes' types from `@merv/admin/models`.
 
 ## Drill-in

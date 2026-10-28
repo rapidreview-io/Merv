@@ -52,10 +52,11 @@ identity (`id, fingerprint, class, where_at, code, key, first_at`) or a falling 
 - `id = 'issue_' || fingerprint[0:32]`, `fingerprint = sha256(JSON [class, where, code, key])`.
 - An issue: level, loop, standing, `open | resolved`, count, the hour bucket and its peak, the
   episode's kept-case count and last kept case, note, first, opened, last and resolved times,
-  `resolved_by` (`owner`, `quiet` or the admin's label), `alerted_at`, `reopened`.
+  `resolved_by` (`owner` or `quiet`), `alerted_at`, `reopened`.
 - A case: time, level, status, repeats (reports of its subject folded in within one flush),
   project, subject, session, instance, release (`refs.release ?? MERV_RELEASE`), refs, error
   facts, note and the pinned trace.
+- `issue_hours`: each issue's reports in each UTC hour that had any, for the page's week.
 - Partial indexes serve the owed alerts, the quiet pass, the unpinned cases, and the reverse
   reads by session and instance.
 
@@ -95,8 +96,8 @@ quiet and pin 60 s, floods 5 min; an alert pass at start; on dispose the last fl
 alert pass of at most 10 s.
 
 - **Quiet.** A standing issue resolves 10 minutes after its last report, any other non-severe
-  one after 24 hours. A severe one is closed by its owner or the admin. One read first; a write
-  only when rows are due.
+  one after 24 hours, a severe one after 3 days. A question stays open until its owner settles
+  it. One read first; a write only when rows are due.
 - **Floods.** From the event head at start (no backfill), non-overlapping windows of at most
   100,000 event ids through `State.eventCounts(after, through, 150)` (a PK-range group-by, the 20
   largest): each (type, subject) with ≥ 150 events in a window is a severe loop
@@ -223,18 +224,36 @@ webhook URL", so the Credentials page lists it), publicOrigin }`. `deploy/render
 Routes, all 503 `issues_unavailable` without Issues; see docs/ADMIN.md:
 
 - `GET /admin/issues` → `AdminIssues { rows, open, severe, at }`: the open issues and those
-  resolved in the last 7 days (at most 500), each with the project names its cases name.
+  resolved in the last 7 days (at most 500), each with the project names its cases name, its
+  hours of the week (`issue_hours`) and its newest case.
 - `GET /admin/issues/:id` → `AdminIssueDetail { issue, cases }`: the first kept case and the
-  newest 50, each with its project; 404 `not_found`.
-- `POST /admin/issues/:id/resolve` `{}` → `{ id, state }`, audited as `issues.resolve`.
+  newest 50; 404 `not_found`.
 
-The page follows docs/UI_DESIGN.md. The rail's Issues row counts the open severe issues. The
-list polls every 10 s: open severe, warn, then notice, newest first, then resolved; class chips
-and the level and `Resolved` states behind `Filter`; columns Issue (class word, title — a
-question's first sentence — and its note), Level (with `loop`), Count (peak hour in the hover),
-Project, Last, Since. A row or `?issue=` opens the drawer (`useDrawer`, shared with Credits):
-`Resolve issue`, `Download case`, the facts line, note, the error's code, status and frames, and
-the cases newest first.
+Every case the admin reads carries its project's name, its visit (the pinned trace, else Sessions'
+`platformTrace` of it now) and the work that visit served (`workflows.platformWork`). No admin
+resolves an issue: its owner does, or the quiet pass.
+
+The page follows docs/UI_DESIGN.md and polls every 15 s; the rail's Issues row counts the open
+severe issues. Top to bottom:
+
+- **The week.** Each hour's reports stacked by class (tools, questions, platform, each its own
+  hue); the legend names each class with its total, or the hovered hour's, and narrows the page
+  to it.
+- **Where it fails.** Each class's busiest groups this week: a tool by its name, a question by
+  its project, the platform by its part (Fleet, Sessions, Code, Server, …). A group narrows the
+  page to its issues.
+- **One card per issue**, open severe, warn, then notice, newest first; resolved ones behind
+  `Filter`. A card says what went wrong in words (`issueTitle`, shared with Slack; a question by
+  what it asked) with its level, `loop`, `new` or `back`; the facts (key, status, fields, SQL
+  state, the fault's frame, the owner's note); where it last happened (project › work › agent,
+  and how many projects and agents); its week as six-hour bars with its total, first and last.
+- **Open …** goes where that case's context is, in its project's read-only drill-in, as its people
+  see it: an agent's visit opens the project's Work with its record beside the map and its Agents
+  tab on that thread; work with no thread opens the same without it; a machine its Fleet page;
+  else the project's Work. A fault's frame opens the code at the release's commit on GitHub, and a
+  case with neither project nor frame, the commit.
+- The title (or `?issue=`, the alert's link) unfolds the issue's kept cases, each with its own
+  way in, and `Download case`.
 
 ## 7. Rollout
 

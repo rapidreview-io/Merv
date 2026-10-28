@@ -1,13 +1,14 @@
 /**
  * The admin's Issues routes: Issues' platform reads with each project named from Scope's
- * directory, a resolve that is audited, and 503 while Issues is not installed.
+ * directory, each case's visit read from Sessions until Issues pins it and its work named by
+ * Workflows, and 503 while Issues is not installed.
  */
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import type { IssueCase, IssueRow, IssueStore } from '@merv/contracts/issues';
+import type { IssueCase, IssueRow, IssueStore, SessionTrace } from '@merv/contracts/issues';
 import type { AdminIssueDetail, AdminIssues } from '@merv/admin/models';
-import { adminAudit, adminRoutes, refused } from './fixtures/admin.js';
+import { adminRoutes, refused } from './fixtures/admin.js';
 import { openState } from './fixtures/state.js';
 
 const admin = { issuer: 'https://identity.example/auth/v1', subject: 'founder', label: 'Founder' };
@@ -25,6 +26,7 @@ const row: IssueRow = {
   peakHour: 2,
   note: null,
   projects: ['project_a', 'project_gone'],
+  visits: 1,
   firstAt: at,
   openedAt: at,
   lastAt: at,
@@ -40,10 +42,28 @@ const kept: IssueCase = {
   projectId: 'project_a',
   subject: null,
   release: null,
-  refs: { projectId: 'project_a' },
+  refs: { projectId: 'project_a', sessionId: 'session_1' },
   error: { code: 'invalid_input', status: 400 },
   note: null,
   trace: null,
+};
+const visit: SessionTrace = {
+  projectId: 'project_a',
+  threadId: 'thread_1',
+  instanceId: 'wf_1',
+  revision: 3,
+  role: 'producer',
+  harness: 'codex',
+  status: 'active',
+  createdAt: at,
+};
+const named = { id: 'project_a', name: 'Grokking' };
+const work = {
+  id: 'wf_1',
+  kind: 'experiment',
+  name: 'grokking-sweep',
+  state: 'running',
+  terminal: false,
 };
 
 async function fixture(t: TestContext, installed = true) {
@@ -52,76 +72,86 @@ async function fixture(t: TestContext, installed = true) {
   t.after(() => ctx.fiber.dispose());
   ctx.provide('state', state);
   ctx.provide('scope', {
-    directory: async () => ({ people: [], projects: [{ id: 'project_a', name: 'Grokking' }] }),
+    directory: async () => ({ people: [], projects: [named] }),
     registerPlatformAuthority: () => () => {},
   });
-  const closed: [string, string][] = [];
+  const asked: string[][] = [];
+  ctx.provide('sessions', {
+    running: {
+      platformTrace: async (ids: string[]) => (asked.push(ids), new Map([['session_1', visit]])),
+    },
+  });
+  const units: (readonly string[])[] = [];
+  ctx.provide('workflows', {
+    platformWork: async (ids: readonly string[]) => (
+      units.push(ids),
+      [{ ...work, workflow: work.kind, projectId: 'project_a' }]
+    ),
+  });
   const issues: IssueStore = {
     report() {},
     resolve() {},
     drain: async () => {},
-    platformIssues: async () => ({ rows: [row], open: 1, severe: 1 }),
+    platformIssues: async () => ({
+      rows: [{ ...row, hours: [['2026-10-27T10', 3]], latest: kept }],
+      open: 1,
+      severe: 1,
+    }),
     platformIssue: async (id) =>
       id === row.id
-        ? { issue: row, cases: [kept, { ...kept, id: 'case_2', projectId: null }] }
+        ? {
+            issue: row,
+            cases: [kept, { ...kept, id: 'case_2', projectId: null, refs: {}, trace: visit }],
+          }
         : undefined,
-    close: async (id, by) => (closed.push([id, by]), { ...row, state: 'resolved' }),
   };
   if (installed) ctx.provide('issues', issues);
   const call = await adminRoutes(ctx, [admin]);
-  return { state, call, closed };
+  return { state, call, asked, units };
 }
 
-test('the issue list names each project Scope still knows', async (t) => {
-  const { call } = await fixture(t);
+test('the issue list names each project and reads its newest case’s visit and work', async (t) => {
+  const { call, asked, units } = await fixture(t);
   const listed = await call<AdminIssues>('GET', '/admin/issues');
   assert.deepEqual(
     { ...listed, at: undefined },
     {
-      rows: [{ ...row, projects: [{ id: 'project_a', name: 'Grokking' }] }],
+      rows: [
+        {
+          ...row,
+          projects: [named],
+          hours: [['2026-10-27T10', 3]],
+          latest: { ...kept, project: named, visit, work },
+        },
+      ],
       open: 1,
       severe: 1,
       at: undefined,
     },
   );
   assert.ok(Date.parse(listed.at));
+  // Only a visit Issues has not pinned is read from Sessions, and only its work from Workflows.
+  assert.deepEqual(asked, [['session_1']]);
+  assert.deepEqual(units, [['wf_1']]);
 });
 
-test('an issue opens with its cases, each named by its project', async (t) => {
-  const { call } = await fixture(t);
+test('an issue opens with its cases, each with its project, visit and work', async (t) => {
+  const { call, asked } = await fixture(t);
   const detail = await call<AdminIssueDetail>('GET', '/admin/issues/issue_1');
-  assert.deepEqual(detail.issue.projects, [{ id: 'project_a', name: 'Grokking' }]);
+  assert.deepEqual(detail.issue.projects, [named]);
   assert.deepEqual(
-    detail.cases.map((c) => c.project),
-    [{ id: 'project_a', name: 'Grokking' }, null],
+    detail.cases.map((c) => [c.project, c.visit?.threadId, c.work?.name]),
+    [
+      [named, 'thread_1', 'grokking-sweep'],
+      [null, 'thread_1', 'grokking-sweep'],
+    ],
   );
+  assert.deepEqual(asked, [['session_1']]);
   await assert.rejects(call('GET', '/admin/issues/issue_none'), refused('not_found', 404));
-});
-
-test('resolving an issue is recorded under the admin and audited', async (t) => {
-  const { state, call, closed } = await fixture(t);
-  await assert.rejects(
-    call('POST', '/admin/issues/issue_1/resolve', { reason: 'no' }),
-    refused('invalid_input', 400),
-  );
-  assert.deepEqual(await call('POST', '/admin/issues/issue_1/resolve', {}), {
-    id: 'issue_1',
-    state: 'resolved',
-  });
-  assert.deepEqual(closed, [['issue_1', 'Founder']]);
-  const audit = await adminAudit(state);
-  assert.deepEqual(
-    audit.map(({ action, target }) => [action, target]),
-    [['issues.resolve', 'issue_1']],
-  );
 });
 
 test('every Issues route answers 503 while Issues is not installed', async (t) => {
   const { call } = await fixture(t, false);
-  for (const [method, path] of [
-    ['GET', '/admin/issues'],
-    ['GET', '/admin/issues/issue_1'],
-    ['POST', '/admin/issues/issue_1/resolve'],
-  ] as const)
-    await assert.rejects(call(method, path, {}), refused('issues_unavailable', 503), path);
+  for (const path of ['/admin/issues', '/admin/issues/issue_1'])
+    await assert.rejects(call('GET', path), refused('issues_unavailable', 503), path);
 });

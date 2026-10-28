@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Context } from 'cordis';
 import { MervError, sha256Hex, type SqlValue, type State, type Transaction } from '@merv/contracts';
-import type { IssueReport, SessionTrace } from '@merv/contracts/issues';
+import { issueTitle, type IssueReport, type SessionTrace } from '@merv/contracts/issues';
 import issuesPlugin, { IssueStore } from '@merv/issues';
 import { slackSink, type AlertDigest, type AlertSink } from '@merv/issues/alerts';
 import { issueMigrations } from '@merv/issues/schema';
@@ -82,10 +82,12 @@ test('a fingerprint is one issue; a resolve ends its episode and the next report
   row = await f.row(id);
   assert.deepEqual([row.state, row.count, row.reopened, row.level], ['open', 3, 2, 'notice']);
   assert.equal(row.opened_at, new Date(f.clock.now).toISOString());
+  // The list counts each hour's reports and carries the newest case.
   const read = await f.store.platformIssues();
-  assert.deepEqual([read.open, read.severe, read.rows[0]!.projects], [1, 0, ['p1']]);
-  assert.equal((await f.store.close(id, 'Ada')).resolvedBy, 'Ada');
-  await assert.rejects(f.store.close('issue_unknown', 'Ada'), { code: 'not_found' });
+  const [listed] = read.rows;
+  assert.deepEqual([read.open, read.severe, listed!.projects, listed!.visits], [1, 0, ['p1'], 0]);
+  assert.deepEqual(listed!.hours, [[new Date(f.clock.now).toISOString().slice(0, 13), 3]]);
+  assert.equal(listed!.latest!.at, new Date(f.clock.now).toISOString());
 });
 
 test('a report waits for its writer: a rollback drops it and a snapshot attempt does not double it', async () => {
@@ -200,7 +202,7 @@ test('ten platform reports in an hour are a spike, which re-arms its alert once 
   assert.deepEqual([row.alerted_at, row.peak_hour, row.count], [null, 15, 25]);
 });
 
-test('quiet resolution: a standing condition ten minutes after its last report, others short of severe after a day', async () => {
+test('quiet resolution: a standing condition after ten minutes, others after a day, severe after three, a question never', async () => {
   const f = await bed();
   const standing: IssueReport = {
     class: 'platform',
@@ -209,7 +211,14 @@ test('quiet resolution: a standing condition ten minutes after its last report, 
     standing: true,
   };
   const severe = { ...tool, code: 'severe', level: 'severe' as const };
-  for (const r of [standing, standing, tool, severe]) f.store.report(r);
+  const asked: IssueReport = {
+    class: 'question',
+    where: 'session.ask_owner',
+    code: 'asked',
+    key: 'question_1',
+    level: 'severe',
+  };
+  for (const r of [standing, standing, tool, severe, asked]) f.store.report(r);
   await f.flush();
   f.store.report(standing);
   await f.flush();
@@ -228,6 +237,10 @@ test('quiet resolution: a standing condition ten minutes after its last report, 
   await quiet(f.state, f.time);
   assert.equal((await f.row(idOf(tool))).state, 'resolved');
   assert.equal((await f.row(idOf(severe))).state, 'open');
+  f.clock.now += 2 * 1440 * MINUTE;
+  await quiet(f.state, f.time);
+  assert.equal((await f.row(idOf(severe))).state, 'resolved');
+  assert.equal((await f.row(idOf(asked))).state, 'open');
 });
 
 test('guards keep issues and cases: no delete, no identity change, a trace written once', async () => {
@@ -578,4 +591,13 @@ test('the Slack sink posts codes and links, and fails without its webhook or on 
   );
   status = 500;
   await assert.rejects(slack.send(digest), { code: 'slack_refused' });
+});
+
+test('an issue is called by its site in words and then its code, a tool by its own name', () => {
+  assert.equal(issueTitle('fleet.machine_gone', 'stopped'), 'A Fleet machine vanished · stopped');
+  assert.equal(issueTitle('process', 'crashed'), 'The server crashed');
+  assert.equal(
+    issueTitle('experiment.write:attach', 'invalid_input'),
+    'experiment write attach · invalid input',
+  );
 });

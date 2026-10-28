@@ -29,9 +29,6 @@ export const slackConfig = z
   })
   .strict();
 
-const words = (code: string) => code.replace(/[._:-]+/g, ' ').trim();
-/** An issue as an alert and the board name it: `words(where) · words(code)`. */
-export const title = (where: string, code: string) => `${words(where)} · ${words(code)}`;
 const mrkdwn = (text: string) =>
   text.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[char]!);
 const stamp = (at: string) => `${at.slice(0, 16).replace('T', ' ')} UTC`;

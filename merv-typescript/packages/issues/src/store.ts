@@ -1,5 +1,4 @@
 import {
-  check,
   MervError,
   newId,
   sha256Hex,
@@ -10,9 +9,11 @@ import {
 import {
   errorFacts,
   type ErrorFacts,
+  issueTitle,
   type IssueCase,
   type IssueClass,
   type IssueLevel,
+  type IssueListed,
   type IssueRefs,
   type IssueReport,
   type IssueRow,
@@ -20,8 +21,8 @@ import {
   type IssueStore as IssueService,
   type IssueTarget,
 } from '@merv/contracts/issues';
-import { clip, cleanText, redacted } from '@merv/contracts/text';
-import { title, type AlertSink } from './alerts.js';
+import { cleanText, redacted } from '@merv/contracts/text';
+import type { AlertSink } from './alerts.js';
 
 const MINUTE = 60_000;
 /** Pending fingerprints, subjects (and so cases) one fingerprint keeps a flush, loop windows. */
@@ -117,8 +118,13 @@ const MUTABLE = columns(
 const ISSUE = `SELECT id, class, where_at AS "where", code, key, level, loop, state, count,
   peak_hour AS "peakHour", note, first_at AS "firstAt", opened_at AS "openedAt", last_at AS "lastAt",
   resolved_at AS "resolvedAt", resolved_by AS "resolvedBy",
-  ARRAY(SELECT DISTINCT o.project_id FROM issue_occurrences o WHERE o.issue_id=i.id AND o.project_id IS NOT NULL LIMIT 5) AS projects
+  ARRAY(SELECT DISTINCT o.project_id FROM issue_occurrences o WHERE o.issue_id=i.id AND o.project_id IS NOT NULL LIMIT 5) AS projects,
+  (SELECT count(DISTINCT o.session_id)::int FROM issue_occurrences o WHERE o.issue_id=i.id) AS visits
   FROM issues i`;
+/** A kept case as the admin reads it. */
+const CASE = `id, at, level, status, repeats, project_id AS "projectId", subject, release,
+  refs_json::jsonb AS refs, error_json::jsonb AS error, note, NULLIF(trace_json, '{}')::jsonb AS trace`;
+const marks = (n: number) => Array(n).fill('?').join(',');
 
 /** Rows in statements of at most 100 each; booleans as PostgreSQL reads them. */
 async function insert(tx: Transaction, head: string, rows: unknown[][], tail = '') {
@@ -311,6 +317,7 @@ export class IssueStore implements IssueService {
     const rows = new Map(found.map((row) => [row.fingerprint, row]));
     const issues: Row[] = [];
     const cases: unknown[][] = [];
+    const counted = new Map<string, number>();
     for (const { fingerprint, ops, ...entry } of entries) {
       let row = rows.get(fingerprint);
       let kept = 0;
@@ -357,6 +364,7 @@ export class IssueStore implements IssueService {
         const n = op.standing ? Number(fresh) : op.n;
         let level = higher(row.level, op.level);
         row.count += n;
+        if (n) counted.set(row.id, (counted.get(row.id) ?? 0) + n);
         row.hour_count = row.hour_at === hour ? row.hour_count + n : n;
         row.hour_at = hour;
         row.peak_hour = Math.max(row.peak_hour, row.hour_count);
@@ -415,6 +423,12 @@ export class IssueStore implements IssueService {
       'INSERT INTO issue_occurrences (id,issue_id,at,level,status,repeats,project_id,subject,session_id,instance_id,release,refs_json,error_json,note)',
       cases,
     );
+    await insert(
+      tx,
+      'INSERT INTO issue_hours (issue_id,hour,count)',
+      [...counted].map(([id, n]) => [id, hour, n]),
+      'ON CONFLICT (issue_id,hour) DO UPDATE SET count=issue_hours.count+excluded.count',
+    );
   }
 
   /** Pushes the severe issues still owed an alert, one digest at most every five minutes. */
@@ -440,7 +454,7 @@ export class IssueStore implements IssueService {
         at: iso(now),
         issues: owed.map((row) => ({
           id: row.id,
-          title: title(row.where_at, row.code),
+          title: issueTitle(row.where_at, row.code),
           level: row.level,
           loop: row.loop,
           count: row.count,
@@ -478,15 +492,45 @@ export class IssueStore implements IssueService {
   }
 
   async platformIssues() {
+    const week = iso(this.clock() - 7 * 1440 * MINUTE);
     return await this.state.read(async (sql) => {
       const rows = await sql.all<IssueRow>(
         `${ISSUE} WHERE state='open' OR resolved_at>=? ORDER BY last_at DESC LIMIT 500`,
-        iso(this.clock() - 7 * 1440 * MINUTE),
+        week,
       );
+      const ids = rows.map((row) => row.id);
+      const [hours, latest] = ids.length
+        ? await Promise.all([
+            // The 168 hours the page draws, the current one last.
+            sql.all<{ id: string; hour: string; count: number }>(
+              `SELECT issue_id AS id, hour, count FROM issue_hours WHERE hour>=? AND issue_id IN (${marks(ids.length)}) ORDER BY hour`,
+              iso(this.clock() - 167 * 60 * MINUTE).slice(0, 13),
+              ...ids,
+            ),
+            // Each one's newest case, by the index on (issue_id, _merv_rowid).
+            sql.all<IssueCase & { issueId: string }>(
+              `SELECT i.id AS "issueId", c.* FROM issues i CROSS JOIN LATERAL (
+                SELECT ${CASE} FROM issue_occurrences o WHERE o.issue_id=i.id ORDER BY o._merv_rowid DESC LIMIT 1) c
+              WHERE i.id IN (${marks(ids.length)})`,
+              ...ids,
+            ),
+          ])
+        : [[], []];
+      const series = new Map<string, [string, number][]>();
+      for (const { id, hour, count } of hours)
+        series.get(id)?.push([hour, count]) ?? series.set(id, [[hour, count]]);
+      const newest = new Map(latest.map(({ issueId, ...c }) => [issueId, c]));
       const counts = await sql.get<{ open: number; severe: number }>(
         "SELECT count(*)::int AS open, (count(*) FILTER (WHERE level='severe'))::int AS severe FROM issues WHERE state='open'",
       );
-      return { rows, ...counts! };
+      return {
+        rows: rows.map((row): IssueListed => ({
+          ...row,
+          hours: series.get(row.id) ?? [],
+          latest: newest.get(row.id) ?? null,
+        })),
+        ...counts!,
+      };
     });
   }
 
@@ -495,9 +539,7 @@ export class IssueStore implements IssueService {
       const issue = await sql.get<IssueRow>(`${ISSUE} WHERE id=?`, id);
       if (!issue) return undefined;
       const cases = await sql.all<IssueCase>(
-        `SELECT id, at, level, status, repeats, project_id AS "projectId", subject, release,
-          refs_json::jsonb AS refs, error_json::jsonb AS error, note, NULLIF(trace_json, '{}')::jsonb AS trace
-        FROM issue_occurrences WHERE _merv_rowid IN (
+        `SELECT ${CASE} FROM issue_occurrences WHERE _merv_rowid IN (
           SELECT min(_merv_rowid) FROM issue_occurrences WHERE issue_id=?
           UNION ALL (SELECT _merv_rowid FROM issue_occurrences WHERE issue_id=? ORDER BY _merv_rowid DESC LIMIT 50)
         ) ORDER BY _merv_rowid DESC`,
@@ -505,20 +547,6 @@ export class IssueStore implements IssueService {
         id,
       );
       return { issue, cases };
-    });
-  }
-
-  async close(id: string, by: string): Promise<IssueRow> {
-    return await this.state.transaction(async (tx) => {
-      await tx.run(
-        "UPDATE issues SET state='resolved', resolved_at=?, resolved_by=? WHERE id=? AND state='open'",
-        iso(this.clock()),
-        clip(by, 200),
-        id,
-      );
-      const issue = await tx.get<IssueRow>(`${ISSUE} WHERE id=?`, id);
-      check(issue, 'not_found', 'Issue not found', 404);
-      return issue;
     });
   }
 }

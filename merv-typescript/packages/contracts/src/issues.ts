@@ -13,10 +13,12 @@ import type {
   IssueCase,
   IssueClass,
   IssueLevel,
+  IssueListed,
   IssueRefs,
   IssueRow,
 } from './issue-models.js';
 export type * from './issue-models.js';
+export { issueTitle } from './issue-models.js';
 
 /** One thing that went wrong, as its owner judges it where it went wrong. */
 export interface IssueReport {
@@ -62,12 +64,10 @@ export interface Issues {
 export interface IssueStore extends Issues {
   /** Platform admin read, never exposed through a tool, a lease or a machine key: the open
    *  issues and those resolved in the last seven days, at most 500, newest report first. */
-  platformIssues(): Promise<{ rows: IssueRow[]; open: number; severe: number }>;
+  platformIssues(): Promise<{ rows: IssueListed[]; open: number; severe: number }>;
   /** Platform admin read, never exposed through a tool, a lease or a machine key: one issue,
    *  its first kept case and its newest 50. */
   platformIssue(id: string): Promise<{ issue: IssueRow; cases: IssueCase[] } | undefined>;
-  /** An admin resolves it, recorded under their label; its next report reopens it. */
-  close(id: string, by: string): Promise<IssueRow>;
   /** Writes what is pending and runs one alert pass (at most ten seconds). The composition root
    *  calls it before disposing anything: State may close before Issues' own disposer runs, and a
    *  refused boot is the failure that most needs its alert. */

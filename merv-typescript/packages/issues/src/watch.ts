@@ -13,11 +13,13 @@ export type Traces = (
 ) => Promise<Map<string, SessionTrace>> | undefined;
 
 /** Resolves what is no longer reported: a standing condition ten minutes after its last report,
- *  any other issue short of severe after a day. A severe one closes by its owner or an admin. */
+ *  any other issue short of severe after a day, a severe one after three. A question stays open
+ *  until its owner settles it: it is asked once, so its silence says nothing. */
 export async function quiet(state: State, clock = Date.now): Promise<void> {
   const now = clock();
-  const due = `state='open' AND (standing OR level<>'severe') AND ((standing AND last_at<?) OR (NOT standing AND level<>'severe' AND last_at<?))`;
-  const since = [iso(now - 10 * MINUTE), iso(now - 1440 * MINUTE)];
+  const due = `state='open' AND ((standing AND last_at<?) OR (NOT standing AND level<>'severe' AND last_at<?)
+    OR (NOT standing AND level='severe' AND class<>'question' AND last_at<?))`;
+  const since = [iso(now - 10 * MINUTE), iso(now - 1440 * MINUTE), iso(now - 3 * 1440 * MINUTE)];
   if (!(await state.read((sql) => sql.get(`SELECT 1 FROM issues WHERE ${due} LIMIT 1`, ...since))))
     return;
   await state.transaction((tx) =>
