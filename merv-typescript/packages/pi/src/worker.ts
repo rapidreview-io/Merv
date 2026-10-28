@@ -384,14 +384,15 @@ async function executeTurn(
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
   const known = Object.hasOwn(OPENAI_MODELS, work.model)
     ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS]
-    : work.model === 'gpt-6.1-sol'
+    : /^gpt-6\.1-/.test(work.model)
       ? OPENAI_MODELS['gpt-6-sol']
       : null;
   // Claude's models are Anthropic's: they think adaptively at the relay's effort, and replay their
   // signed thinking. They work within Sol's budget, not their 1M window, to keep context spend.
   const claude = piProvider(work.model) === 'anthropic';
-  // The bundled catalog predates 6.1 Sol. Keep Sol's 272K working budget until it knows the
-  // new model, instead of treating it as an unknown 32K model or increasing context spend.
+  // The bundled catalog predates GPT-6.1 (Sol, Terra). Keep Sol's 272K working budget until it
+  // knows the new models, instead of treating them as unknown 32K models or increasing context
+  // spend.
   const contextWindow = claude ? 272_000 : (known?.contextWindow ?? 32_000);
   const maxTokens = claude ? 64_000 : (known?.maxTokens ?? 32_000);
   // Before compaction the window held the model's longest answer (at most half of it) and, at 3
