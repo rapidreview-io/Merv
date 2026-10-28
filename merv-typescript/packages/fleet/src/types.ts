@@ -183,6 +183,9 @@ export interface ModelRelayUsage<E extends string = string> {
   model: string;
   inputTokens: number;
   cachedTokens: number;
+  /** Input written to the provider's prompt cache (Anthropic's, billed at a premium); part of
+   *  inputTokens, absent where the provider reports none. */
+  cacheWriteTokens?: number;
   outputTokens: number;
   reasoningTokens: number;
   /** A zero record that returns the charge of a call the provider never took. */

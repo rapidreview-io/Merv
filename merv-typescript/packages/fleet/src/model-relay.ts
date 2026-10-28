@@ -45,8 +45,9 @@ const authorityStaleMs = 5_000;
  *  that read took longer): each re-reads the grant from the database, and reads that each take
  *  up to `authorityStaleMs` keep frames within it. */
 const authorityRecheckMs = 3_000;
-/** A call's usage, whichever provider reported it; `input` counts cached input too. */
-type Usage = { input: number; cached: number; output: number; reasoning: number };
+/** A call's usage, whichever provider reported it; `input` counts cached and cache-written input
+ *  too. */
+type Usage = { input: number; cached: number; written?: number; output: number; reasoning: number };
 const tokens = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 /** A frame's data as JSON, or undefined where it is none. */
@@ -170,6 +171,7 @@ const wires: Record<NonNullable<ModelRelayConfig<ModelRelayGrant>['wire']>, Wire
           usage = {
             input: Math.max(usage?.input ?? 0, input),
             cached: Math.max(usage?.cached ?? 0, tokens(counts.cache_read_input_tokens)),
+            written: Math.max(usage?.written ?? 0, tokens(counts.cache_creation_input_tokens)),
             output: Math.max(usage?.output ?? 0, tokens(counts.output_tokens)),
             reasoning: Math.max(
               usage?.reasoning ?? 0,
@@ -518,6 +520,7 @@ export class ModelRelay<
             model: grant.model,
             inputTokens: usage.input,
             cachedTokens: usage.cached,
+            ...(usage.written ? { cacheWriteTokens: usage.written } : {}),
             outputTokens: usage.output,
             reasoningTokens: usage.reasoning,
           });

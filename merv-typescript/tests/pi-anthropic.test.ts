@@ -171,6 +171,7 @@ test('the relay reads Anthropic usage and ends at message_stop', async () => {
       model: 'claude-haiku-5-5',
       inputTokens: 105,
       cachedTokens: 90,
+      cacheWriteTokens: 5,
       outputTokens: 42,
       reasoningTokens: 0,
     },

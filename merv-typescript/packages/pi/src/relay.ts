@@ -40,6 +40,8 @@ const PRICES: Record<string, Price> = {
 };
 /** A model nobody priced is charged as the dearest listed one: never free. */
 const UNPRICED: Price = [10, 1, 50];
+/** Anthropic bills a five-minute prompt-cache write at 1.25 times input. */
+const CACHE_WRITE = 1.25;
 export interface PiModelPrice {
   id: string;
   inputUsdPerM?: number;
@@ -82,8 +84,9 @@ export const piSpend = (
       body: { max_output_tokens?: unknown; max_tokens?: unknown },
     ): Promise<PiModelCharge> {
       const [input, , output] = price(model);
+      // At most every input token is a cache write.
       const most = Math.ceil(
-        Math.ceil(JSON.stringify(body).length / 4) * input +
+        Math.ceil(JSON.stringify(body).length / 4) * input * CACHE_WRITE +
           (Number(body.max_output_tokens ?? body.max_tokens) || 128_000) * output,
       );
       const day = now().slice(0, 10);
@@ -93,15 +96,15 @@ export const piSpend = (
       check(charged, 'pi_model_ceiling', "Today's Agent spending is used up", 403);
       return { day, micros: most, model };
     },
-    async settle(
-      usage: { inputTokens: number; cachedTokens?: number; outputTokens: number },
-      person: { userId: string },
-      reserved: PiModelCharge,
-    ): Promise<void> {
+    async settle(usage: Usage, person: { userId: string }, reserved: PiModelCharge): Promise<void> {
       const [input, cached, output] = price(reserved.model);
       const reused = Math.min(usage.cachedTokens ?? 0, usage.inputTokens);
+      const written = Math.min(usage.cacheWriteTokens ?? 0, usage.inputTokens - reused);
       const cost = Math.ceil(
-        (usage.inputTokens - reused) * input + reused * cached + usage.outputTokens * output,
+        (usage.inputTokens - reused - written) * input +
+          reused * cached +
+          written * input * CACHE_WRITE +
+          usage.outputTokens * output,
       );
       // Settles the day the call was charged to, even past midnight.
       await state.transaction((tx) =>
@@ -216,7 +219,13 @@ export function piAnthropicRelay({
   };
 }
 
-type Usage = { inputTokens: number; outputTokens: number };
+/** A call's tokens: input counts cached and cache-written input too. */
+type Usage = {
+  inputTokens: number;
+  cachedTokens?: number;
+  cacheWriteTokens?: number;
+  outputTokens: number;
+};
 /** Where Main's own requests go: the Responses provider, and both providers' keys. */
 type Providers = {
   modelResponsesUrl?: string;
@@ -323,7 +332,11 @@ async function responses(
   if (!response.ok) return { texts: [], usage: { inputTokens: 0, outputTokens: 0 } };
   const answer = (await response.json().catch(() => null)) as {
     output?: { type?: string; content?: { type?: string; text?: string }[] }[];
-    usage?: { input_tokens?: unknown; output_tokens?: unknown };
+    usage?: {
+      input_tokens?: unknown;
+      input_tokens_details?: { cached_tokens?: unknown };
+      output_tokens?: unknown;
+    };
   } | null;
   const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
   return {
@@ -335,6 +348,7 @@ async function responses(
     usage: answer?.usage
       ? {
           inputTokens: count(answer.usage.input_tokens),
+          cachedTokens: count(answer.usage.input_tokens_details?.cached_tokens),
           outputTokens: count(answer.usage.output_tokens),
         }
       : null,
@@ -360,6 +374,8 @@ async function claudeTexts(
           usage.input_tokens +
           (usage.cache_read_input_tokens ?? 0) +
           (usage.cache_creation_input_tokens ?? 0),
+        cachedTokens: usage.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
         outputTokens: usage.output_tokens,
       },
     };

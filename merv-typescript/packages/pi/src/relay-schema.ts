@@ -169,9 +169,8 @@ export function piTool(definition: ToolDescription): PiWork['tools'][number] | n
 
 /** Anthropic's prompt-cache marker, which pi-ai puts on the system prompt, the last tool and the
  * newest message. */
-const cacheControl = z
-  .strictObject({ type: z.literal('ephemeral'), ttl: z.enum(['5m', '1h']).optional() })
-  .optional();
+// Five minutes only: the spending ledger prices a cache write at 1.25 times input.
+const cacheControl = z.strictObject({ type: z.literal('ephemeral') }).optional();
 const anthropicText = z.strictObject({
   type: z.literal('text'),
   text,

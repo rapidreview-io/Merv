@@ -99,7 +99,7 @@ runtime catalog in `MERV_FLEET_RUNTIMES`. Link and runtime availability are chec
   model's prices: fresh input, cached input and output tokens as the provider reports them. A
   person's calls stop for the UTC day at $200 (`dailyUsdPerPerson`, founder ruling 2026-10-28);
   the platform admin's Credits page shows the spending and sets a person's own limit in dollars.
-  Anthropic cache writes are charged at the input price (their 1.25× premium is not counted).
+  Anthropic prompt-cache writes are charged at 1.25× input (five-minute caching only).
 - **Claude models** (ids beginning `claude-`, such as `claude-haiku-5-5` and
   `claude-opus-5-5`) are Anthropic's: the relay sends them to
   `https://api.anthropic.com/v1/messages` under the key in `MERV_PI_ANTHROPIC_API_KEY` (or the

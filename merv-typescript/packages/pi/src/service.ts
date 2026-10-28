@@ -13,7 +13,7 @@ import {
 } from '@merv/contracts';
 import { randomBytes } from 'node:crypto';
 import { personKey } from '@merv/fleet/model-ledger';
-import type { ModelRelayHandle } from '@merv/fleet/types';
+import type { ModelRelayHandle, ModelRelayUsage } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
 import {
   createInput,
@@ -806,11 +806,7 @@ export class PiService implements Pi {
       },
       reserve: (grant: PiRelayGrant, body: Record<string, unknown>) =>
         this.core.spend.reserve(grant, grant.model, body),
-      onUsage: async (
-        record: { inputTokens: number; cachedTokens: number; outputTokens: number },
-        grant: PiRelayGrant,
-        reserved: PiModelCharge,
-      ) => {
+      onUsage: async (record: ModelRelayUsage, grant: PiRelayGrant, reserved: PiModelCharge) => {
         log(record);
         await this.core.spend.settle(record, grant, reserved);
       },

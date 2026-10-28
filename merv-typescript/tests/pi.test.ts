@@ -1044,6 +1044,24 @@ test('a person’s Agent dollars are charged before each call and settled after,
     (await f.pi.spendUsed([grant.userId], '2000-01-01', '2000-01-02')).map(({ used }) => used),
     [2 / 1e6],
   );
+  // A prompt-cache write costs 1.25 times input: 100 written Luna tokens are 12.5 micro-dollars.
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO pi_model_spend(person,day,tokens) VALUES(?,?,?)',
+      grant.userId,
+      '2000-01-03',
+      0,
+    ),
+  );
+  await f.pi.spend.settle({ inputTokens: 100, cacheWriteTokens: 100, outputTokens: 0 }, grant, {
+    day: '2000-01-03',
+    micros: 0,
+    model: grant.model,
+  });
+  assert.deepEqual(
+    (await f.pi.spendUsed([grant.userId], '2000-01-03', '2000-01-04')).map(({ used }) => used),
+    [13 / 1e6],
+  );
   // An admin's own limit for the person, in dollars, replaces the ceiling.
   await f.pi.setSpendLimit(grant.userId, 5);
   assert.deepEqual(
