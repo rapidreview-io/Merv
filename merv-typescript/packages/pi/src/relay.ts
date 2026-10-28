@@ -34,6 +34,7 @@ const PRICES: Record<string, Price> = {
   'gpt-6.1-sol': [2, 0.2, 10],
   'gpt-6-sol': [2, 0.2, 10],
   'gpt-6-luna': [0.1, 0.01, 0.5],
+  'gpt-6.1-terra': [1, 0.05, 5],
   'gpt-6-astra': [10, 1, 50],
   'claude-haiku-5-5': [0.1, 0.01, 0.5],
   'claude-opus-5-5': [4, 0.2, 20],
