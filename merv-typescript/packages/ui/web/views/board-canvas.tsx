@@ -27,6 +27,7 @@ import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
 import { BoardLinkDetails } from './board-link-details';
+import { AddButton, CardPicker, type CardPick } from './board-add';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -34,6 +35,16 @@ import { BoardLinkDetails } from './board-link-details';
 const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame'.split(' '));
 const SAVE_MS = 600;
 const ASK_MS = 1500;
+/** The card a selection is, as the link popup reads it: one linked shape, or a card's group. */
+const cardOf = (selected: readonly OrderedExcalidrawElement[]) => {
+  const card = selected.find((el) => el.link);
+  return card &&
+    selected.every(
+      (el) => el === card || (el.customData?.card && el.groupIds[0] === card.groupIds[0]),
+    )
+    ? card
+    : undefined;
+};
 
 function BoardCanvasScene({ id }: { id: string }) {
   const navigate = useNavigate();
@@ -41,6 +52,11 @@ function BoardCanvasScene({ id }: { id: string }) {
   const theme = useSyncExternalStore(onWorn, worn);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [readingReference, setReadingReference] = useState(false);
+  const [adding, setAdding] = useState(false);
+  /** The card whose popup opened as it was selected, so a closed popup stays closed. */
+  const opened = useRef<string | null>(null);
+  /** Asks Board for what changed now, as the poll does. */
+  const pull = useRef<() => Promise<void>>();
   const previousZoom = useRef<number>();
   const [first, setFirst] = useState<BoardScene | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -184,6 +200,7 @@ function BoardCanvasScene({ id }: { id: string }) {
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     };
+    pull.current = ask;
     const every = setInterval(() => void ask(), ASK_MS);
     return () => {
       live = false;
@@ -202,6 +219,54 @@ function BoardCanvasScene({ id }: { id: string }) {
     };
   }, [save]);
 
+  // A card lands in the middle of what is in view, chosen, so it can be moved from there at once.
+  const addCard = async (picks: CardPick[], name: string) => {
+    setAdding(false);
+    if (!api) return;
+    const { scrollX, scrollY, zoom, width, height } = api.getAppState();
+    const one = picks.length === 1 ? picks[0]! : undefined;
+    // Below whatever already stands there, so a card never lands on another.
+    const x = Math.round(width / 2 / zoom.value - scrollX - 140);
+    let y = Math.round(height / 2 / zoom.value - scrollY - 50);
+    const standing = api.getSceneElements();
+    const covered = (top: number) =>
+      standing.some(
+        (el) => el.x < x + 280 && x < el.x + el.width && el.y < top + 110 && top < el.y + el.height,
+      );
+    for (let step = 0; step < 20 && covered(y); step++) y += 130;
+    const drawn = await call<{ created: Record<string, string> }>('board.write:draw', {
+      board: id,
+      ops: [
+        {
+          op: 'link',
+          key: 'card',
+          target: one ? one.target : picks.map((pick) => pick.target),
+          text: one ? one.text : name,
+          ...(one?.fact && { fact: one.fact }),
+          at: [x, y],
+        },
+      ],
+    }).catch((error: Error) => void setProblem(`Not added: ${error.message}`));
+    const card = drawn?.created.card;
+    for (let tries = 0; card && tries < 20; tries++) {
+      await pull.current?.();
+      const scene = api.getSceneElements();
+      const group = scene.find((el) => el.id === card)?.groupIds[0];
+      if (group) {
+        api.updateScene({
+          appState: {
+            selectedElementIds: Object.fromEntries(
+              scene.filter((el) => el.groupIds[0] === group).map((el) => [el.id, true]),
+            ),
+            selectedGroupIds: { [group]: true },
+          },
+        });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  };
+
   if (problem && !first) return <p className="pi-error board-loading">{problem}</p>;
   if (!first) return <p className="muted board-loading">Opening the board…</p>;
   return (
@@ -210,6 +275,13 @@ function BoardCanvasScene({ id }: { id: string }) {
         <p className="pi-error board-problem" role="alert">
           {problem}
         </p>
+      )}
+      {adding && (
+        <CardPicker
+          board={id}
+          close={() => setAdding(false)}
+          add={(picks, name) => void addCard(picks, name)}
+        />
       )}
       <Excalidraw
         excalidrawAPI={setApi}
@@ -241,7 +313,7 @@ function BoardCanvasScene({ id }: { id: string }) {
             selected.length > 0 &&
               selected.every(
                 (element) =>
-                  Boolean(element.link) ||
+                  Boolean(element.link || element.customData?.card) ||
                   (element.type === 'text' &&
                     Boolean(
                       elements.find((container) => container.id === element.containerId)?.link,
@@ -251,11 +323,17 @@ function BoardCanvasScene({ id }: { id: string }) {
           if (zoomChanged && appState.showHyperlinkPopup) {
             api?.updateScene({ appState: { showHyperlinkPopup: false } });
           }
+          // A card opens what it holds as it is chosen; the pointer need not find its edge first.
+          const card = cardOf(selected);
+          if (card && opened.current !== card.id && !appState.showHyperlinkPopup)
+            api?.updateScene({ appState: { showHyperlinkPopup: 'info' } });
+          opened.current = card?.id ?? null;
           scene.current = elements;
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);
         }}
+        renderToolbarEnd={() => <AddButton key="merv-add" onClick={() => setAdding(true)} />}
         renderHyperlinkDetails={(element, close) => (
           <BoardLinkDetails key={element.id} element={element} close={close} theme={theme} />
         )}

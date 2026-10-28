@@ -21,6 +21,39 @@ const LINE = 1.25;
 const CHAR = 0.65;
 /** What Excalidraw binds an arrow's end to. */
 const BINDABLE = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'frame']);
+/** The icon a card carries for what it opens: the app's own glyph for it, as 24-unit strokes. */
+const CARD_ICONS = {
+  board: 'M4.5 5h3v14h-3zM10.5 5h3v8h-3zM16.5 5h3v11h-3z',
+  page: 'M13 3H6.5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8zM13 3v5h5.5',
+  collection:
+    'M3.5 6.5a1 1 0 0 1 1-1h4.6l2 2h8.4a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z',
+  web: 'M10.5 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M13.5 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  record: 'M4 6.5l1.5 1.5 3-3M11 6.5h9M4 12.5l1.5 1.5 3-3M11 12.5h9M5.5 18.5h.01M11 18.5h9',
+};
+/** A card's title: at most 40 characters, in at most two lines of the card's width. */
+function cardTitle(text: string) {
+  const name = text.length > 40 ? `${clip(text, 39)}…` : text;
+  const title = wrap(name, 19).split('\n').slice(0, 2).join('\n');
+  return { name, title, height: 60 + 25 * title.split('\n').length };
+}
+/**
+ * Whether `part` is drawn as part of `card`: the card's parts stand in its own group, so a copy of
+ * a card (which Excalidraw gives a group of its own) holds its own parts.
+ */
+const partOf = (part: El, card: El) =>
+  part !== card &&
+  !!part.customData?.card &&
+  card.customData?.target !== undefined &&
+  !!card.groupIds?.[0] &&
+  part.groupIds?.[0] === card.groupIds[0];
+const cardKind = (target: string): keyof typeof CARD_ICONS =>
+  /^https?:/.test(target)
+    ? 'web'
+    : target.startsWith('board_')
+      ? 'board'
+      : target.startsWith('art_')
+        ? 'page'
+        : 'record';
 const DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 /** The whole fractional index after `key`'s, as Excalidraw steps one: … Zz, a0 … az, b00 … */
 function after(key: string): string | undefined {
@@ -236,6 +269,20 @@ export class Drawing {
     this.elements.set(el.id, el);
     this.changed.add(el.id);
     return el;
+  }
+  /** A pen's straight line through these points, as Excalidraw keeps one: at its box, unbound. */
+  private line(points: number[][], fields: Record<string, unknown>) {
+    const box = around(points);
+    return this.add('line', box, {
+      roughness: 0,
+      points: points.map(([x, y]) => [x! - box.x, y! - box.y]),
+      lastCommittedPoint: null,
+      startBinding: null,
+      endBinding: null,
+      startArrowhead: null,
+      endArrowhead: null,
+      ...fields,
+    });
   }
   private bind(container: El, kind: 'text' | 'arrow', id: string) {
     container.boundElements = [...(container.boundElements ?? []), { type: kind, id }];
@@ -602,7 +649,9 @@ export class Drawing {
       .filter((b: { type: string }) => b.type === 'text')
       .map((b: { id: string }) => this.elements.get(b.id))
       .filter(Boolean);
-    const held = el.type === 'frame' ? this.live().filter((o) => o.frameId === el.id) : [];
+    const held = this.live().filter(
+      (o) => (el.type === 'frame' && o.frameId === el.id) || partOf(o, el),
+    );
     return [...texts, ...held];
   }
   private remove(el: El) {
@@ -614,6 +663,7 @@ export class Drawing {
       if (other) this.remove(other);
     }
     for (const other of this.live()) {
+      if (partOf(other, el)) this.remove(other);
       if (other.frameId === el.id) {
         other.frameId = null;
         this.touch(other);
@@ -703,18 +753,56 @@ export class Drawing {
         );
       }
       case 'link': {
-        const web = /^https?:\/\//.test(op.target);
-        const el = this.shape('rectangle', `↗ ${op.text}`, this.fit(`↗ ${op.text}`, 280, 70), op, {
-          strokeColor: 'transparent',
-          backgroundColor: '#e7f5ff',
-          link: web ? op.target : `merv:${op.target}`,
-          customData: {
-            ...(this.agent && { by: 'agent' }),
-            target: op.target,
-            ...(op.details && { details: op.details }),
-          },
+        // A card: what it opens as one object in Excalidraw's own shapes, grouped so they move
+        // as one: the card, its kind's icon, one fact beside it and the title under them. A list
+        // of targets is one card that holds them all.
+        const targets = typeof op.target === 'string' ? [op.target] : op.target;
+        const kind = targets.length > 1 ? 'collection' : cardKind(targets[0]!);
+        const { name, title, height } = cardTitle(op.text);
+        const at = this.place({ width: 280, height }, op);
+        const by = this.agent ? { by: 'agent' } : {};
+        const groupIds = [elementId()];
+        const card = this.add('rectangle', at, {
+          frameId: at.frameId,
+          groupIds,
+          strokeColor: '#ced4da',
+          backgroundColor: '#ffffff',
+          strokeWidth: 1,
+          roughness: 0,
+          roundness: { type: 3 },
+          link: kind === 'web' ? targets[0] : `merv:${targets[0]}`,
+          customData: { ...by, target: op.target, ...(op.details && { details: op.details }) },
         });
-        return this.keyed(op.key, el);
+        const part = { frameId: at.frameId, groupIds, customData: { ...by, card: true } };
+        for (const stroke of strokesOf(CARD_ICONS[kind]))
+          this.line(
+            stroke.points.map(([x, y]) => [at.x + 16 + x * 0.75, at.y + 15 + y * 0.75]),
+            { ...part, strokeColor: '#495057', strokeWidth: 1.5 },
+          );
+        const fact =
+          op.fact ??
+          (kind === 'web'
+            ? new URL(targets[0]!).hostname
+            : { board: 'Board', page: 'File', collection: `${targets.length} items`, record: '' }[
+                kind
+              ]);
+        if (fact)
+          this.text({ x: at.x + 42, y: at.y + 16, ...measure(fact, 14) }, fact, 14, {
+            ...part,
+            strokeColor: '#868e96',
+          });
+        this.text(
+          { x: at.x + 16, y: at.y + 44, ...measure(title, FONT), width: 248 },
+          title,
+          FONT,
+          {
+            ...part,
+            originalText: name,
+            autoResize: false,
+            customData: { ...part.customData, title: true },
+          },
+        );
+        return this.keyed(op.key, card);
       }
       case 'arrow':
         return this.keyed(op.key, this.arrow(op.from, op.to, op.label, op.fontSize));
@@ -740,9 +828,21 @@ export class Drawing {
       case 'edit': {
         const el = this.find(op.id);
         const textOf =
-          el.type === 'text' ? el : this.carried(el).find((part) => part.containerId === el.id);
+          el.type === 'text'
+            ? el
+            : this.carried(el).find(
+                (part) => part.containerId === el.id || (partOf(part, el) && part.customData.title),
+              );
         if (op.text !== undefined) {
-          if (textOf) {
+          if (textOf?.customData?.title) {
+            // A card's title keeps the card's rule, and the card grows or shrinks to hold it.
+            const { name, title, height } = cardTitle(op.text);
+            Object.assign(textOf, { text: title, originalText: name, ...measure(title, FONT) });
+            textOf.width = 248;
+            el.height = height;
+            this.touch(textOf);
+            this.touch(el);
+          } else if (textOf) {
             const content =
               el.type === 'text' || el.type === 'arrow'
                 ? op.text
@@ -882,32 +982,14 @@ export class Drawing {
             // A painted shape is a closed outline.
             if (filled && (drawn[0]![0] !== drawn.at(-1)![0] || drawn[0]![1] !== drawn.at(-1)![1]))
               drawn.push([...drawn[0]!]);
-            const box = around(drawn);
-            const el = this.add('line', box, {
-              roughness: 0,
-              roundness: null,
-              points: drawn.map(([x, y]) => [x! - box.x, y! - box.y]),
+            const el = this.line(drawn, {
               strokeColor: paint(INKS, stroke.color ?? 'black'),
               backgroundColor: filled ? paint(PAINTS, stroke.fill!) : 'transparent',
               strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
               groupIds: [group],
               frameId: at.frameId,
-              lastCommittedPoint: null,
               customData: { ...(this.agent && { by: 'agent' }), sketch: group },
-              ...(filled
-                ? {
-                    startBinding: null,
-                    endBinding: null,
-                    startArrowhead: null,
-                    endArrowhead: null,
-                    polygon: true,
-                  }
-                : {
-                    startBinding: null,
-                    endBinding: null,
-                    startArrowhead: null,
-                    endArrowhead: null,
-                  }),
+              ...(filled && { polygon: true }),
             });
             first ??= el;
           }
@@ -983,16 +1065,25 @@ function layers(keys: string[], edges: { from: string; to: string }[]) {
 
 /** The board as its agent reads it: what each shape says and where, without Excalidraw's fields. */
 export function summarize(elements: BoardElement[]) {
-  const live = (elements as El[]).filter((el) => !el.isDeleted);
+  // A card's icon, fact and title are read as the card: one shape, its title its text.
+  const parts = (elements as El[]).filter((el) => !el.isDeleted && el.customData?.card);
+  const live = (elements as El[]).filter((el) => !el.isDeleted && !el.customData?.card);
   const byId = new Map(live.map((el) => [el.id, el]));
-  const said = (el: El) =>
+  const titles = new Map(
+    parts.filter((el) => el.customData.title).map((el) => [el.groupIds?.[0], el]),
+  );
+  const titleOf = (el: El) =>
+    el.customData?.target !== undefined ? titles.get(el.groupIds?.[0]) : undefined;
+  const said = (el: El): string | undefined =>
     el.type === 'text'
       ? (el.originalText ?? el.text)
-      : (el.boundElements ?? [])
-          .map((b: { id: string }) => byId.get(b.id))
-          .filter((t: El | undefined) => t?.type === 'text')
-          .map((t: El) => t.originalText ?? t.text)
-          .join(' ') || undefined;
+      : titleOf(el)
+        ? said(titleOf(el)!)
+        : (el.boundElements ?? [])
+            .map((b: { id: string }) => byId.get(b.id))
+            .filter((t: El | undefined) => t?.type === 'text')
+            .map((t: El) => t.originalText ?? t.text)
+            .join(' ') || undefined;
   const where = (el: El) => ({
     at: [Math.round(el.x), Math.round(el.y)],
     size: [Math.round(el.width), Math.round(el.height)],
@@ -1036,7 +1127,7 @@ export function summarize(elements: BoardElement[]) {
     }));
   // Strokes drawn as one sketch, or grouped by hand, read as one drawing.
   const drawings = new Map<string, El[]>();
-  for (const el of live.filter((e) => e.groupIds?.length || marks.includes(e))) {
+  for (const el of live.filter((e) => (e.groupIds?.length && !titleOf(e)) || marks.includes(e))) {
     const group = el.groupIds?.at(-1) ?? el.id;
     drawings.set(group, [...(drawings.get(group) ?? []), el]);
   }

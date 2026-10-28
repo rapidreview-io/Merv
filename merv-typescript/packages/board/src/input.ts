@@ -77,6 +77,15 @@ const edge = z.strictObject({
   label: text.optional(),
 });
 
+/** What a card opens: a Merv record's id, or a web address. */
+const opens = z.union([
+  id,
+  z
+    .string()
+    .url()
+    .max(2_000)
+    .refine((v) => /^https?:\/\//.test(v)),
+]);
 export const opSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('note'), key, text, color: color.optional(), ...place }).strict(),
   z.strictObject({
@@ -106,16 +115,11 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('link'),
     key,
-    /** A Merv record's id, or a web address. */
-    target: z.union([
-      id,
-      z
-        .string()
-        .url()
-        .max(2_000)
-        .refine((v) => /^https?:\/\//.test(v)),
-    ]),
+    /** A Merv record's id or a web address, or a list of them that one card holds. */
+    target: z.union([opens, z.array(opens).min(1).max(50)]),
     text,
+    /** The one short fact the card shows beside its icon; by default, what kind of thing it is. */
+    fact: z.string().trim().max(80).optional(),
     /** Optional readable content kept with the reference. Preview metadata is caller supplied. */
     details: z
       .strictObject({

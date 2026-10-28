@@ -5,8 +5,11 @@ import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element
 import { ArtifactBody } from './artifacts';
 import { MetricsCharts } from './metrics';
 import { useTool } from '../api';
+import { Icon } from '../icons';
 import { useReferences } from '../markdown';
 import { rowOf, useRows } from '../navigation';
+import { Link } from 'react-router-dom';
+import type { BoardSummary } from '@merv/board/models';
 import './board-link-details.css';
 
 /** The small, persisted payload of board.draw's link operation. No remote HTML is embedded. */
@@ -44,10 +47,16 @@ export function BoardLinkDetails({
   };
   const [expanded, setExpanded] = useState(false);
   const link = element.link ?? '';
-  const web = /^https?:\/\//i.test(link);
-  const artifactId = linkArtifactId(details.artifactId, link);
+  // A card that holds several things lists them; its link is only the first of them.
+  const target = element.customData?.target;
+  const members =
+    Array.isArray(target) && target.length > 1 && target.every((one) => typeof one === 'string')
+      ? (target as string[])
+      : undefined;
+  const web = !members && /^https?:\/\//i.test(link);
+  const artifactId = members ? undefined : linkArtifactId(details.artifactId, link);
   // An experiment's card shows its runs' curves, where the Metrics plugin keeps them.
-  const record = link.startsWith('merv:') ? link.slice(5) : '';
+  const record = !members && link.startsWith('merv:') ? link.slice(5) : '';
   const opens = useReferences(useMemo(() => (record ? [record] : []), [record])).get(record)?.to;
   const rows = useRows();
   const experiments = rowOf(rows, 'experiment')?.path;
@@ -172,7 +181,7 @@ export function BoardLinkDetails({
         />
       ) : (
         <>
-          {header('Reference')}
+          {header(members ? `${members.length} items` : 'Reference')}
 
           <div className="board-link-details-body">
             {!web && !artifactId && details.title && <h3>{details.title}</h3>}
@@ -193,7 +202,9 @@ export function BoardLinkDetails({
                 )}
               </a>
             )}
-            {charted ? (
+            {members ? (
+              <CardMembers targets={members} />
+            ) : charted ? (
               <MetricsCharts experimentId={record} compact={expanded ? 4 : 1} />
             ) : (
               !web &&
@@ -222,5 +233,51 @@ export function BoardLinkDetails({
         document.body,
       )}
     </>
+  );
+}
+
+/** What a card holds, each named as its record is and opening where it lives. */
+function CardMembers({ targets }: { targets: string[] }) {
+  const records = targets.filter((target) => !/^https?:/.test(target));
+  const names = useReferences(useMemo(() => records, [records.join()]));
+  // Boards are named by their own list; project.references does not know them.
+  const boards = useTool<{ boards: BoardSummary[] }>(
+    records.some((target) => target.startsWith('board_')) ? 'board.read' : null,
+    {},
+  ).data?.boards;
+  return (
+    <ul className="board-card-members">
+      {targets.map((target) => {
+        const board = boards?.find((b) => b.id === target);
+        const named =
+          names.get(target) ?? (board && { name: board.title, to: `/boards/${board.id}` });
+        const icon = /^https?:/.test(target)
+          ? 'link'
+          : target.startsWith('board_')
+            ? 'boards'
+            : target.startsWith('art_')
+              ? 'file'
+              : 'work';
+        const label = (
+          <>
+            <Icon name={icon} size={14} />
+            <span>{named?.name ?? target.replace(/^https?:\/\//, '')}</span>
+          </>
+        );
+        return (
+          <li key={target}>
+            {/^https?:/.test(target) ? (
+              <a href={target} target="_blank" rel="noopener noreferrer">
+                {label}
+              </a>
+            ) : named?.to ? (
+              <Link to={named.to}>{label}</Link>
+            ) : (
+              <span>{label}</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
