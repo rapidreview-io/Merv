@@ -151,6 +151,16 @@ export const piConfig = z.strictObject({
   modelApiKeyEnv: envVar
     .describe('Agent model calls · provider API key')
     .default('MERV_PI_MODEL_API_KEY'),
+  /** Claude models (ids beginning `claude-`) are Anthropic's, called under this key. */
+  anthropicApiKeyEnv: envVar
+    .describe('Agent model calls · Anthropic API key')
+    .default('MERV_PI_ANTHROPIC_API_KEY'),
+  /** The model that names conversations (MERV_PI_TITLE_MODEL); unset, the first catalog model
+   * that answers at effort none. */
+  titleModel: modelId.optional(),
+  /** The model a worker's question is investigated on (MERV_PI_QUESTION_MODEL), a catalog model;
+   * unset, the person's own pick. */
+  questionModel: modelId.optional(),
   /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
   dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
   /** How long a turn may go without progress: to reach its machine, then between any two signs

@@ -41,23 +41,12 @@ const expired = (grant: ModelRelayGrant) => !(Date.parse(grant.expiresAt) > Date
 /** Streamed frames rely on an authority read at most this old; an authority that stops answering
  *  ends the stream. */
 const authorityStaleMs = 5_000;
-/** The relay's own end of a stream it cut short, as the Responses API frames an error. */
-const interrupted = `event: error\ndata: ${JSON.stringify({
-  type: 'error',
-  code: 'relay_interrupted',
-  message: 'The model relay ended this call',
-})}\n\n`;
 /** How long after one authority read starts a streaming call starts the next (at once, where
  *  that read took longer): each re-reads the grant from the database, and reads that each take
  *  up to `authorityStaleMs` keep frames within it. */
 const authorityRecheckMs = 3_000;
-/** The Responses API's `usage`, as a finished call's last frame carries it. */
-type Usage = {
-  input_tokens?: unknown;
-  input_tokens_details?: { cached_tokens?: unknown } | null;
-  output_tokens?: unknown;
-  output_tokens_details?: { reasoning_tokens?: unknown } | null;
-};
+/** A call's usage, whichever provider reported it; `input` counts cached input too. */
+type Usage = { input: number; cached: number; output: number; reasoning: number };
 const tokens = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 /** A frame's data as JSON, or undefined where it is none. */
@@ -82,18 +71,127 @@ const failedFrame = (data: string) => {
 const providerCode = (data: string) => {
   const parsed = json(data);
   const errorOf = (value: unknown) => (value as { error?: { code?: unknown } } | null)?.error;
-  const raw = errorOf(parsed?.response)?.code ?? errorOf(parsed)?.code ?? parsed?.code;
+  // Anthropic names a failure by its error's type (`overloaded_error`).
+  const raw =
+    errorOf(parsed?.response)?.code ?? errorOf(parsed)?.code ?? parsed?.code ?? parsed?.error?.type;
   return typeof raw === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(raw) ? raw : 'upstream_failed';
 };
-const providerFailure = (data: string, failedResponse: boolean) => {
-  const code = providerCode(data);
-  const message = 'The model provider failed this call';
-  return failedResponse || json(data)?.type === 'response.failed'
-    ? `event: response.failed\ndata: ${JSON.stringify({
-        type: 'response.failed',
-        response: { status: 'failed', error: { code, message } },
-      })}\n\n`
-    : `event: error\ndata: ${JSON.stringify({ type: 'error', code, message })}\n\n`;
+const failureMessage = 'The model provider failed this call';
+/** How a call ended, as its terminal frame says, and the usage it reported. */
+interface Ending {
+  status: 'completed' | 'incomplete' | 'failed';
+  reason: 'max_output_tokens' | 'content_filter' | 'other' | null;
+  usage: Usage | null;
+}
+/** What differs between the providers' streams: where a call goes and under which key headers,
+ *  how one call's frames end it (`reader` reads them all, in order), and the relay's own
+ *  failure frames in the client's format. */
+interface Wire {
+  url: string;
+  auth(key: string): Record<string, string>;
+  reader(): (content: string, data: string) => Ending | undefined;
+  failure(data: string, failedResponse: boolean): string;
+  interrupted: string;
+}
+export const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const anthropicError = (type: string, message: string) =>
+  `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type, message } })}\n\n`;
+const wires: Record<NonNullable<ModelRelayConfig<ModelRelayGrant>['wire']>, Wire> = {
+  responses: {
+    url: RESPONSES_URL,
+    auth: (key) => ({ authorization: `Bearer ${key}` }),
+    reader: () => (content, data) => {
+      const status =
+        (/(?:^|\r?\n)event:\s*response\.(completed|incomplete|failed)\s*(?:\r?\n|$)/i.exec(
+          content,
+        )?.[1] ??
+          /^\{\s*"type"\s*:\s*"response\.(completed|incomplete|failed)"/.exec(data)?.[1]) as
+          Ending['status'] | undefined;
+      if (!status) return undefined;
+      const response = json(data)?.response;
+      const usage = response?.usage;
+      const reason = status === 'incomplete' && response?.incomplete_details?.reason;
+      return {
+        status,
+        reason:
+          status !== 'incomplete'
+            ? null
+            : reason === 'max_output_tokens' || reason === 'content_filter'
+              ? reason
+              : 'other',
+        usage:
+          usage && typeof usage === 'object'
+            ? {
+                input: tokens(usage.input_tokens),
+                cached: tokens(usage.input_tokens_details?.cached_tokens),
+                output: tokens(usage.output_tokens),
+                reasoning: tokens(usage.output_tokens_details?.reasoning_tokens),
+              }
+            : null,
+      };
+    },
+    failure: (data, failedResponse) => {
+      const code = providerCode(data);
+      return failedResponse || json(data)?.type === 'response.failed'
+        ? `event: response.failed\ndata: ${JSON.stringify({
+            type: 'response.failed',
+            response: { status: 'failed', error: { code, message: failureMessage } },
+          })}\n\n`
+        : `event: error\ndata: ${JSON.stringify({ type: 'error', code, message: failureMessage })}\n\n`;
+    },
+    // The relay's own end of a stream it cut short, as the Responses API frames an error.
+    interrupted: `event: error\ndata: ${JSON.stringify({
+      type: 'error',
+      code: 'relay_interrupted',
+      message: 'The model relay ended this call',
+    })}\n\n`,
+  },
+  anthropic: {
+    url: ANTHROPIC_MESSAGES_URL,
+    auth: (key) => ({ 'x-api-key': key, 'anthropic-version': '2023-06-01' }),
+    // Input arrives with message_start and output with each message_delta, both cumulative;
+    // message_stop ends the call, and an error frame fails it.
+    reader: () => {
+      let usage: Usage | null = null;
+      let stop: unknown;
+      return (_content, data) => {
+        const frame = json(data);
+        const counts =
+          frame?.type === 'message_start'
+            ? frame.message?.usage
+            : frame?.type === 'message_delta'
+              ? frame.usage
+              : undefined;
+        if (counts && typeof counts === 'object') {
+          const input =
+            tokens(counts.input_tokens) +
+            tokens(counts.cache_read_input_tokens) +
+            tokens(counts.cache_creation_input_tokens);
+          usage = {
+            input: Math.max(usage?.input ?? 0, input),
+            cached: Math.max(usage?.cached ?? 0, tokens(counts.cache_read_input_tokens)),
+            output: Math.max(usage?.output ?? 0, tokens(counts.output_tokens)),
+            reasoning: Math.max(
+              usage?.reasoning ?? 0,
+              tokens(counts.output_tokens_details?.thinking_tokens),
+            ),
+          };
+        }
+        if (frame?.type === 'message_delta') stop = frame.delta?.stop_reason;
+        // A failure partway through is billed what Anthropic counted before it.
+        if (frame?.type === 'error') return { status: 'failed', reason: null, usage };
+        if (frame?.type !== 'message_stop') return undefined;
+        const cut = stop === 'max_tokens' || stop === 'model_context_window_exceeded';
+        return {
+          status: cut || stop === 'refusal' ? 'incomplete' : 'completed',
+          reason: cut ? 'max_output_tokens' : stop === 'refusal' ? 'content_filter' : null,
+          usage,
+        };
+      };
+    },
+    failure: (data) => anthropicError(providerCode(data), failureMessage),
+    interrupted: anthropicError('relay_interrupted', 'The model relay ended this call'),
+  },
 };
 
 function limit(value: number | undefined, fallback = 0): number {
@@ -179,7 +277,7 @@ export interface RelayTuning {
   maxGrantEntries?: number;
 }
 
-/** Streams a worker's Responses call upstream under the provider key the worker never holds. */
+/** Streams a worker's model call upstream under the provider key the worker never holds. */
 export class ModelRelay<
   G extends ModelRelayGrant,
   N extends string = string,
@@ -194,6 +292,7 @@ export class ModelRelay<
   private readonly lanes = new Set<string>();
   private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
   private stopped = false;
+  private readonly wire: Wire;
 
   constructor(
     private readonly config: ModelRelayConfig<G, N, R>,
@@ -201,6 +300,7 @@ export class ModelRelay<
   ) {
     if (typeof config.providerKey !== 'function')
       throw new Error('Model relay requires a provider key source');
+    this.wire = wires[config.wire ?? 'responses'];
     // No output cap is added here: a feature's payload sets one where it wants it. A maximal
     // answer streams about 40 MB of events, and ends with frames that each repeat its whole
     // text; a call that falls silent for idleTimeoutMs ends at once.
@@ -342,13 +442,13 @@ export class ModelRelay<
       await validate();
       phase = 'upstream';
       const upstream = await interruptible(
-        (this.fetchImpl ?? fetch)(this.config.responsesUrl ?? RESPONSES_URL, {
+        (this.fetchImpl ?? fetch)(this.config.responsesUrl ?? this.wire.url, {
           method: 'POST',
           redirect: 'error',
           signal,
           headers: {
             ...this.config.headers?.(body),
-            authorization: `Bearer ${key}`,
+            ...this.wire.auth(key),
             'content-type': 'application/json',
           },
           body: JSON.stringify(body),
@@ -407,18 +507,19 @@ export class ModelRelay<
       let tail = '';
       let usage: Usage | null | undefined;
       let terminalReported = false;
+      const read = this.wire.reader();
       // Usage is kept the moment its frame arrives: a client may hang up right after it.
-      const keep = (data: string) => {
+      const keep = (ending: Ending) => {
         if (usage !== undefined) return;
-        usage = json(data)?.response?.usage ?? null;
-        if (usage && typeof usage === 'object')
+        usage = ending.usage;
+        if (usage)
           report((record) => this.config.onUsage?.(record, grant, reserved), {
             event: `${this.config.name}_relay_usage` as const,
             model: grant.model,
-            inputTokens: tokens(usage.input_tokens),
-            cachedTokens: tokens(usage.input_tokens_details?.cached_tokens),
-            outputTokens: tokens(usage.output_tokens),
-            reasoningTokens: tokens(usage.output_tokens_details?.reasoning_tokens),
+            inputTokens: usage.input,
+            cachedTokens: usage.cached,
+            outputTokens: usage.output,
+            reasoningTokens: usage.reasoning,
           });
       };
       while (true) {
@@ -436,27 +537,17 @@ export class ModelRelay<
           [held, heldBytes, from] = [[], 0, end];
           const content = frame.toString('utf8');
           const data = eventData(content);
-          const terminal =
-            /(?:^|\r?\n)event:\s*response\.(completed|incomplete|failed)\s*(?:\r?\n|$)/i.exec(
-              content,
-            )?.[1] ??
-            /^\{\s*"type"\s*:\s*"response\.(completed|incomplete|failed)"/.exec(data)?.[1];
-          if (terminal) {
-            keep(data);
+          const ending = read(content, data);
+          const terminal = ending?.status;
+          if (ending) {
+            keep(ending);
             if (!terminalReported) {
               terminalReported = true;
-              const reason =
-                terminal === 'incomplete' && json(data)?.response?.incomplete_details?.reason;
               report(this.config.onTerminal, {
                 event: `${this.config.name}_relay_terminal` as const,
                 model: grant.model,
-                status: terminal as 'completed' | 'incomplete' | 'failed',
-                incompleteReason:
-                  terminal !== 'incomplete'
-                    ? null
-                    : reason === 'max_output_tokens' || reason === 'content_filter'
-                      ? reason
-                      : 'other',
+                status: ending.status,
+                incompleteReason: ending.reason,
                 elapsedMs: Math.max(0, Date.now() - admittedAt),
               });
             }
@@ -468,10 +559,10 @@ export class ModelRelay<
             startStream();
             await writeChunk(
               res,
-              Buffer.from(providerFailure(data, terminal === 'failed')),
+              Buffer.from(this.wire.failure(data, terminal === 'failed')),
               signal,
             );
-            providerFailed = usage && typeof usage === 'object' ? 'settled' : 'unbilled';
+            providerFailed = usage ? 'settled' : 'unbilled';
             failedWith = providerCode(data);
             reject(502, 'upstream_failed');
           }
@@ -525,7 +616,7 @@ export class ModelRelay<
           refund: true as const,
         });
       if (failure.status !== 499 && !res.destroyed) {
-        if (res.headersSent) res.end(providerFailed ? undefined : interrupted);
+        if (res.headersSent) res.end(providerFailed ? undefined : this.wire.interrupted);
         else this.error(res, failure.status, failure.code);
       }
     } finally {

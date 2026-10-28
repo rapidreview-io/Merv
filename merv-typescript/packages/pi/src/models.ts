@@ -1,5 +1,8 @@
 /** Portable conversation read models, shared by the server and the browser. */
 import type { Data } from '@merv/contracts/data';
+/** Which provider serves a model: a Claude model is Anthropic's, every other one OpenAI's. */
+export const piProvider = (model: string): 'openai' | 'anthropic' =>
+  model.startsWith('claude-') ? 'anthropic' : 'openai';
 export interface PiModelConfig {
   id: string;
   label: string;

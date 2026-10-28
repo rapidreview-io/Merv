@@ -227,6 +227,8 @@ export interface ModelRelayConfig<
   route: string;
   token: RegExp;
   providerKey: () => string | Promise<string>;
+  /** The provider's streaming format: OpenAI Responses (the default) or Anthropic Messages. */
+  wire?: 'responses' | 'anthropic';
   /** Operator-selected Responses endpoint; defaults to OpenAI. */
   responsesUrl?: string;
   authority: {

@@ -94,6 +94,17 @@ runtime catalog in `MERV_FLEET_RUNTIMES`. Link and runtime availability are chec
   ```
   MERV_PI_MODELS=[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","effort":"low"},{"id":"gpt-6-luna","label":"GPT-6 Luna","effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","effort":"low"}]
   ```
+- **Claude models** (ids beginning `claude-`, such as `claude-haiku-5-5` and
+  `claude-opus-5-5`) are Anthropic's: the relay sends them to
+  `https://api.anthropic.com/v1/messages` under the key in `MERV_PI_ANTHROPIC_API_KEY` (or the
+  variable `MERV_PI_ANTHROPIC_API_KEY_ENV` names), never the OpenAI key. Claude always thinks
+  adaptively; the entry's `effort` sets Anthropic's effort, `none` and `low` both meaning `low`
+  (Claude Opus 5.5 cannot turn thinking off) and `medium` meaning `medium`. The render refuses a
+  catalog with a Claude model and no key: `Pi Anthropic key is unavailable`.
+- `MERV_PI_TITLE_MODEL` names the model that titles conversations (any id, Claude or OpenAI);
+  unset, the first catalog entry at effort `none`. `MERV_PI_QUESTION_MODEL` names the catalog
+  model a worker's question is investigated on; unset, the person's own pick. A person's new
+  conversations keep the model they last picked; only people who never picked get the first entry.
 - GPT-6.1 Sol requires `low` or higher reasoning; `none` is unsupported. Its API pricing is $2 input / $10 output per million tokens below the long-context threshold. The bundled worker keeps the existing Sol 272K working-context budget.
 - **Reasoning models only** (every GPT-5 and GPT-6 model): the worker asks for
   reasoning on any model, so a model without it fails every call. Astra runs at

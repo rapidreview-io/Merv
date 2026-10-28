@@ -20,7 +20,7 @@ import {
 import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
-import { piTitle, titleRequest } from './relay.js';
+import { piAsk, piTitle, titleAsk } from './relay.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
 import { profileGrants, requireGranted, restricted } from './profile-tools.js';
@@ -830,23 +830,26 @@ export class PiWorkerProtocol {
 
   /** Once, after the first answer: the model names a conversation still called the default. */
   private async name(id: string, [asked, ...answer]: PiMessage[]): Promise<void> {
-    const key = process.env[this.core.config.modelApiKeyEnv];
-    // A small call without reasoning, on the first model that answers at effort none.
-    const titler = this.core.config.models.find((model) => model.effort === 'none');
-    if (!key || !titler) return;
-    const body = titleRequest(
-      titler.id,
-      asked.text,
-      answer.map((message) => message.text).join('\n\n'),
-    );
+    const { config } = this.core;
+    // A small call on the title model, else on the first model that answers at effort none.
+    const titler = config.titleModel ?? config.models.find((model) => model.effort === 'none')?.id;
+    const request =
+      titler &&
+      piAsk(
+        config,
+        titleAsk(titler, asked.text, answer.map((message) => message.text).join('\n\n')),
+        15_000,
+      );
+    if (!request) return;
     // Charged to the person's Agent tokens as the relay charges a turn's calls: a day already
     // used up names nothing.
     const person = {
       userId: (await this.core.read((tx) => this.core.conversation(tx, id))).userId,
     };
-    const reserved = await this.core.tokens.reserve(person, body);
-    const { title, usage } = await piTitle(key, body, this.core.config);
+    const reserved = await this.core.tokens.reserve(person, request.body);
+    const { texts, usage } = await request.send();
     if (usage) await this.core.tokens.settle(usage, person, reserved);
+    const title = piTitle(texts);
     if (!title) return;
     const named = await this.core.state.transaction(async (tx) => {
       const conversation = await this.core.conversation(tx, id);

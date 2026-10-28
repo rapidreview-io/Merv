@@ -166,3 +166,96 @@ export function piTool(definition: ToolDescription): PiWork['tools'][number] | n
       }
     : null;
 }
+
+/** Anthropic's prompt-cache marker, which pi-ai puts on the system prompt, the last tool and the
+ * newest message. */
+const cacheControl = z
+  .strictObject({ type: z.literal('ephemeral'), ttl: z.enum(['5m', '1h']).optional() })
+  .optional();
+const anthropicText = z.strictObject({
+  type: z.literal('text'),
+  text,
+  cache_control: cacheControl,
+});
+// Only pictures the request carries: a URL or file source would have Anthropic fetch it.
+const anthropicImage = z.strictObject({
+  type: z.literal('image'),
+  source: z.strictObject({
+    type: z.literal('base64'),
+    media_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+    data: z
+      .string()
+      .max(1_400_000)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  }),
+  cache_control: cacheControl,
+});
+const anthropicBlock = z.discriminatedUnion('type', [
+  anthropicText,
+  anthropicImage,
+  z.strictObject({
+    type: z.literal('tool_use'),
+    id: identifier,
+    name: identifier,
+    input: z.record(json),
+    cache_control: cacheControl,
+  }),
+  z.strictObject({
+    type: z.literal('tool_result'),
+    tool_use_id: identifier,
+    content: z.union([text, z.array(z.union([anthropicText, anthropicImage])).max(16)]),
+    is_error: z.boolean().optional(),
+    cache_control: cacheControl,
+  }),
+  // Replayed verbatim from checkpoints, as Anthropic signed them.
+  z.strictObject({ type: z.literal('thinking'), thinking: text, signature: text }),
+  z.strictObject({ type: z.literal('redacted_thinking'), data: text }),
+]);
+
+/** A Claude call as the worker's pi-ai sends it: custom tools only, and nothing the relay does not
+ * set itself (thinking, effort, betas). */
+export const piAnthropicSchema = z.strictObject({
+  model: identifier,
+  max_tokens: z.number().int().min(16).max(128_000),
+  stream: z.literal(true),
+  system: z.array(anthropicText).max(8).optional(),
+  messages: z
+    .array(
+      z.strictObject({
+        role: z.enum(['user', 'assistant']),
+        content: z.union([text, z.array(anthropicBlock).min(1).max(256)]),
+      }),
+    )
+    .min(1)
+    .max(512),
+  tools: z
+    .array(
+      z.strictObject({
+        name: toolName,
+        description: text.optional(),
+        input_schema: z.record(json),
+        // Tool inputs stream as Claude writes them.
+        eager_input_streaming: z.boolean().optional(),
+        cache_control: cacheControl,
+      }),
+    )
+    .max(128)
+    .optional(),
+  // Claude Opus 5.5 refuses forced tool use.
+  tool_choice: z.strictObject({ type: z.enum(['auto', 'none']) }).optional(),
+  thinking: z.record(json).optional(),
+  output_config: z.record(json).optional(),
+});
+
+export function validPiAnthropicPayload(
+  payload: z.infer<typeof piAnthropicSchema>,
+  toolNames: string[],
+): boolean {
+  const allowed = new Set(toolNames);
+  const tools = payload.tools ?? [];
+  return (
+    tools.every((tool) => allowed.has(tool.name) && tool.input_schema.type === 'object') &&
+    new Set(tools.map((tool) => tool.name)).size === tools.length &&
+    !fetchesContent(payload)
+  );
+}

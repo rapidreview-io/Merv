@@ -9,9 +9,16 @@ import { sleep as wait } from '@merv/contracts/async';
 import { eventData } from '@merv/contracts/text';
 
 /** Provider codes that say "try again shortly", as the relay passes them on. */
-const TRANSIENT = /overloaded|rate_limit|server_error|service_unavailable|temporarily_unavailable/i;
-/** Frames that open a response before it says anything. */
-const OPENING = new Set(['response.created', 'response.in_progress', 'response.queued']);
+const TRANSIENT =
+  /overloaded|rate_limit|server_error|service_unavailable|temporarily_unavailable|^api_error$/i;
+/** Frames that open a response before it says anything (Anthropic's: message_start, ping). */
+const OPENING = new Set([
+  'response.created',
+  'response.in_progress',
+  'response.queued',
+  'message_start',
+  'ping',
+]);
 /** How much of a stream is held while deciding; an answer this far in is passed on as it is. */
 const PEEK_BYTES = 256 * 1024;
 
@@ -22,7 +29,12 @@ export interface RetryOptions {
   onRetry?: (attempt: number, code: string) => void;
 }
 
-type Frame = { type?: unknown; code?: unknown; response?: { error?: { code?: unknown } } };
+type Frame = {
+  type?: unknown;
+  code?: unknown;
+  error?: { type?: unknown };
+  response?: { error?: { code?: unknown } };
+};
 /** A frame's JSON data, or null when it holds none. */
 function frameJson(frame: string): Frame | null {
   try {
@@ -35,7 +47,11 @@ function frameJson(frame: string): Frame | null {
 /** The code of a frame that is a failure, or null for any other frame. */
 function failureCode(frame: string): string | null {
   const parsed = frameJson(frame);
-  if (parsed?.type === 'error') return typeof parsed.code === 'string' ? parsed.code : '';
+  if (parsed?.type === 'error') {
+    // Anthropic names a failure by its error's type.
+    const code = parsed.code ?? parsed.error?.type;
+    return typeof code === 'string' ? code : '';
+  }
   if (parsed?.type !== 'response.failed') return null;
   const code = parsed.response?.error?.code;
   return typeof code === 'string' ? code : '';
