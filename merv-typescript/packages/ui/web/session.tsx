@@ -132,7 +132,8 @@ function SignIn({
     begin('shared');
     setConfirming(false);
     try {
-      // A new account's confirmation link comes back to the app's root, as Google's sign-in does.
+      // The emailed link confirms the address and lands on this page, often in another tab that
+      // cannot finish the sign-in (the code's verifier stays in this one): so the person signs in.
       const result = joining
         ? await client.auth.signUp({
             email,
@@ -141,7 +142,10 @@ function SignIn({
           })
         : await client.auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
-      setConfirming(!result.data.session);
+      if (!result.data.session) {
+        setConfirming(true);
+        setJoining(false);
+      }
       setPassword('');
     } catch (error) {
       setError(message(error));
@@ -278,7 +282,7 @@ function SignIn({
             </form>
             {confirming && (
               <p className="signin-help" role="status">
-                Check {email} for a link to confirm your account.
+                Open the link sent to {email} to confirm it, then sign in here.
               </p>
             )}
             <div className="signin-or" role="separator">
