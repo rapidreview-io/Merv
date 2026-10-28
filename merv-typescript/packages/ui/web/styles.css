@@ -7815,12 +7815,45 @@ html:has(.board-page) body {
 .excalidraw .merv-rich-hyperlink:has(.board-card-members) > :not(.board-link-details) {
   display: none;
 }
-/* The + opens its search under the toolbar, in the middle, where the card will land. */
+/* The + opens its panel under the toolbar, in the middle, where the card will land: what to add
+   as tabs across it, then the kinds and the search over the list of what there is. */
 .board-add-panel {
   top: 64px;
   right: auto;
   left: 50%;
   transform: translateX(-50%);
+}
+.board-add-panel:focus {
+  outline: none;
+}
+.board-add-panel > .tabs {
+  display: flex;
+  padding: 0 var(--space-1);
+}
+/* Short enough that a collection's name and its Add stay on a phone's screen below it. */
+.board-add-panel .finder-list {
+  max-height: min(40vh, 440px);
+}
+.board-add-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.board-add-filters > .search {
+  flex: 1 1 160px;
+  display: flex;
+}
+.board-add-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.board-add-link > .input {
+  flex: 1 1 200px;
+  min-width: 0;
 }
 .board-add-check {
   flex: none;
@@ -7829,12 +7862,9 @@ html:has(.board-page) body {
   justify-content: center;
   width: 16px;
   height: 16px;
-  padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  background: none;
   color: var(--bg);
-  cursor: pointer;
 }
 .board-add-check.is-picked {
   border-color: var(--text);
