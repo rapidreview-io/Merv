@@ -851,6 +851,11 @@ header.page-lede {
 .search:focus-within {
   color: var(--text);
 }
+/* That glyph's ink and the caret are all a search field shows of holding the keys: no ring. */
+.search > .input:focus {
+  border-color: var(--line);
+  box-shadow: none;
+}
 .signin-card .search {
   flex: none;
 }
