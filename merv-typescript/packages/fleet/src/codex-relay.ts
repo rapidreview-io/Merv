@@ -233,7 +233,7 @@ const providerOutages = new Set([
 /** A call's end that is the relay's or its provider's, not the visit's: an outage or a stream
  *  cut short, the relay unable to judge or busy, or Main shutting down. A provider's refusal of
  *  the request itself (any other 4xx) is the visit's. */
-const relayFault = (record: ModelRelayFailure) =>
+export const relayFault = (record: ModelRelayFailure) =>
   ['upstream_failed', 'relay_unavailable', 'relay_timeout', 'relay_busy'].includes(record.code) &&
   // A failure the provider streamed is its outage only when it says so; a context overflow or
   // an invalid prompt is the request's own, however often the visit sends it.
@@ -365,7 +365,6 @@ export function codexModelRelay(
     maxRequestsPerGrant: 1000,
     // The relay's own fault is said of the visit, so Sessions does not count its close.
     onFailure: async (record, grant) => {
-      log(record);
       if (relayFault(record))
         await state.transaction((tx) => fault(tx, grant.id, record.code, new Date().toISOString()));
     },

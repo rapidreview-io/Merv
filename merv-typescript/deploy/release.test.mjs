@@ -460,6 +460,7 @@ test('cutover uses real Compose dotenv interpolation and shared raw overrides', 
       .replace('/etc/merv/typescript.env', join(dir, 'main.env'))
       .replace('/etc/sandboxes/shared.env', join(dir, 'shared.env'));
     writeFileSync(join(dir, 'compose.yml'), compose);
+    writeFileSync(join(dir, 'release.env'), 'MERV_RELEASE=test\n');
     const parsed = spawnSync('docker', ['compose', '-f', join(dir, 'compose.yml'), 'config', '--format', 'json'], {
       encoding: 'utf8', env: { ...process.env, MERV_TS_IMAGE: 'sha256:' + '1'.repeat(64) },
     });
@@ -468,6 +469,7 @@ test('cutover uses real Compose dotenv interpolation and shared raw overrides', 
     const control = config.services.control;
     assert.equal(control.environment.DATABASE_URL, 'postgres://user@database/main');
     assert.equal(control.environment.DATABASE_SCHEMA, 'native_main');
+    assert.equal(control.environment.MERV_RELEASE, 'test');
     // Compose serializes literal dollar signs doubled so its config can be read again.
     assert.equal(control.environment.OVERRIDE, '"raw $$LITERAL $${UNCHANGED}"');
     assert.equal(config.networks.legacy_database.name, 'deploy_default');
@@ -490,6 +492,15 @@ test('cutover uses real Compose dotenv interpolation and shared raw overrides', 
     assert.match(cutover, /< \/dev\/null/);
     assert.doesNotMatch(cutover, /--env-file|compose.* up/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('every release path names its release to Main before the first Compose call', () => {
+  const prebuilt = { build: 'b', revision: 'b'.repeat(40), archive: 'c'.repeat(64), receipt: 'd'.repeat(64) };
+  for (const extra of [{}, { retryImage: 'sha256:' + 'b'.repeat(64) }, { expectedImage: 'sha256:' + 'e'.repeat(64), prebuilt }]) {
+    const job = render('node:test', 'https://example.test', true)({ release: 'r1', archiveSha256: 'a'.repeat(64), ...extra });
+    const written = job.indexOf("printf 'MERV_RELEASE=%s\\n' 'r1' > source/deploy/release.env");
+    assert.ok(written > 0 && written < job.indexOf('docker compose'));
+  }
 });
 
 test('prestart retry retains immutable build and refuses any previous candidate startup', () => {

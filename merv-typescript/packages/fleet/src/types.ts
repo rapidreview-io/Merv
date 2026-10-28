@@ -38,6 +38,8 @@ export interface FleetAllocation {
   deadlineAt: string;
   /** When phase or intent last changed; retries and provider observations leave it alone. */
   updatedAt: string;
+  /** When its intent became stop, which a later phase change leaves alone. */
+  stoppedAt?: string;
   /** Set once stopping stalls: Fleet renews nothing after stop, so the provider lease has
    * ended any machine this allocation could hold by then, and the slot is freed. */
   releaseBy?: string;

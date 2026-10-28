@@ -180,8 +180,13 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     );
   }
 
-  async platformWork(since: string, tx?: Transaction): Promise<WorkflowPlatformWork[]> {
+  async platformWork(
+    since: string | readonly string[],
+    tx?: Transaction,
+  ): Promise<WorkflowPlatformWork[]> {
     this.assertOpen();
+    const ids = typeof since === 'string' ? undefined : since;
+    if (ids && !ids.length) return [];
     return await this.read(tx, async (tx) => {
       // As open() reads terminal states; the start is revision 0's move.
       const rows = await tx.all<
@@ -197,8 +202,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
           i.data_json::jsonb->'name' AS name,h.actor_id AS started_by,d.terminal @> to_jsonb(i.state) AS terminal
         FROM wf_instances i JOIN d ON d.name=i.workflow AND d.version=i.version
         LEFT JOIN wf_history h ON h.instance_id=i.id AND h.revision=0
-        WHERE NOT d.terminal @> to_jsonb(i.state) OR i.updated_at>? ORDER BY i.updated_at DESC,i.id`,
-        since,
+        WHERE ${ids ? `i.id IN (${ids.map(() => '?').join(',')})` : 'NOT d.terminal @> to_jsonb(i.state) OR i.updated_at>?'}
+        ORDER BY i.updated_at DESC,i.id`,
+        ...(ids ?? [since as string]),
       );
       const blockers = new Map<string, WorkflowProvidedBlocker[]>();
       for (const item of await readBlockers(tx, null))

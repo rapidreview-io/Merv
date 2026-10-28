@@ -6,6 +6,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
+import type { IssueReport } from '@merv/contracts/issues';
 import { type CodeFinding, type CodeAdmissionLimits, type CodeStoreOperation } from './protocol.js';
 import { lstat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -75,6 +76,8 @@ export interface CodeStoreHooks {
   quarantined(tx: Transaction, fence: WriterFence, operationId: string): Promise<void>;
   /** Runs with every maintenance pass, for what only time moves. */
   maintained?(): Promise<void>;
+  /** What went wrong where the store would otherwise swallow it (Issues). */
+  report(issue: IssueReport): void;
 }
 export interface OperationRow {
   id: string;

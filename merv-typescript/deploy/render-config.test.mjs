@@ -106,7 +106,7 @@ test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t
     MERV_PI_ENABLED: 'false',
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 13);
+  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 14);
   assert.ok(
     JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
   );
@@ -195,7 +195,7 @@ function renderer(t) {
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
       plugins:
-        'state scope scope-api blobs secrets identity api ui admin code code-work code-work-api sessions'
+        'state scope scope-api blobs secrets identity api ui admin code code-work code-work-api sessions issues'
           .split(' ')
           .map((id) => ({ id, name: id })),
     }),
@@ -214,7 +214,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 16);
+  assert.equal(config.plugins.length, 17);
   assert.equal(
     config.plugins.some((p) => p.id.startsWith('legacy-history')),
     false,
@@ -231,7 +231,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 19);
+  assert.equal(config.plugins.length, 20);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -773,6 +773,24 @@ test('invitation delivery is opt-in and renders credential names, never secret v
   assert.ok(!readFileSync(output, 'utf8').includes('private-directory-fixture'));
   assert.equal(plugin('scope-api').config.agentLogin, undefined);
   assert.equal(plugin('identity').config.directoryAdmin, undefined);
+});
+
+test('issue alerts name the Slack webhook only once one is installed, and never copy it', (t) => {
+  const { run, plugin, output } = renderer(t);
+  assert.equal(run({ MERV_ISSUES_SLACK_WEBHOOK: ' ' }).status, 0);
+  assert.deepEqual(plugin('issues'), { id: 'issues', name: 'issues' });
+  const webhook = 'https://hooks.slack.example/services/private-webhook-fixture';
+  assert.equal(run({ MERV_ISSUES_SLACK_WEBHOOK: webhook }).status, 0);
+  assert.deepEqual(plugin('issues'), {
+    id: 'issues',
+    name: 'issues',
+    config: {
+      alerts: {
+        slack: { webhookEnv: 'MERV_ISSUES_SLACK_WEBHOOK', publicOrigin: 'https://merv.example' },
+      },
+    },
+  });
+  assert.ok(!readFileSync(output, 'utf8').includes('private-webhook-fixture'));
 });
 
 test('OAuth is explicit, requires no email sender or admin directory key, and refuses old login deployment flags', (t) => {

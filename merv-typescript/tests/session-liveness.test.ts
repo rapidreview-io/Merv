@@ -1,4 +1,5 @@
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import type { IssueReport } from '@merv/contracts/issues';
 import {
   createService,
   MervError,
@@ -495,7 +496,7 @@ test('an offer that cannot be built is counted although its lease rolled back, b
   );
 });
 
-test('a server fault is logged and passed over for the backoff, never held, and only by its owner', async (t) => {
+test('a server fault is reported and passed over for the backoff, never held, and only by its owner', async (t) => {
   const f = await fixture(t, { maxLaunchFailures: 1 });
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.heartbeatRunner(f.owner, presence());
@@ -506,13 +507,11 @@ test('a server fault is logged and passed over for the backoff, never held, and 
     builds++;
     throw new TypeError('Cannot read the recipe');
   });
-  const logged: string[] = [];
-  const write = process.stderr.write.bind(process.stderr);
-  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array, ...rest: never[]) => {
-    if (String(chunk).includes('dispatch.offer_failed')) logged.push(String(chunk));
-    else return write(chunk, ...rest);
-    return true;
-  });
+  const logged: IssueReport[] = [];
+  f.sessions.issues = {
+    report: (issue) => void (issue.where === 'dispatch.offer_failed' && logged.push(issue)),
+    resolve() {},
+  };
   // Every poll is answered with the decision; the target is built once in the backoff.
   for (let poll = 0; poll < 5; poll++)
     assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto()), {
@@ -521,7 +520,7 @@ test('a server fault is logged and passed over for the backoff, never held, and 
     });
   assert.equal(builds, 1);
   assert.equal(logged.length, 1);
-  assert.equal(JSON.parse(logged[0]!).status, 500);
+  assert.deepEqual([logged[0]!.code, logged[0]!.status], ['unexpected', 500]);
   assert.deepEqual(await f.holds(), []);
   assert.deepEqual(await f.events('session.dispatch_held'), []);
   // Another owner's runner is not passed over by it.

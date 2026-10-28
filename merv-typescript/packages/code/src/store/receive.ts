@@ -652,8 +652,23 @@ export class CodeReceiver {
       );
       if (!changed.changes) return;
       // Findings in a final capture leave work nobody can hand over again: the unit waits.
-      if (upload?.kind === 'final' && findings)
+      if (upload?.kind === 'final' && findings) {
         await this.core.hooks.quarantined(tx, fenceOf(row, upload), row.id);
+        this.core.hooks.report({
+          class: 'platform',
+          where: 'code.capture_quarantined',
+          code: 'capture_quarantined',
+          key: upload.unitId,
+          level: 'severe',
+          subject: upload.sessionId,
+          refs: {
+            projectId: row.project_id,
+            instanceId: upload.unitId,
+            sessionId: upload.sessionId,
+            commandId: row.id,
+          },
+        });
+      }
       await this.core.state.appendEvent(tx, {
         projectId: row.project_id,
         actorId: payload.actorId,

@@ -21,6 +21,7 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { MervError, plain, sleep, type Caller, type Principal, type Scope } from '@merv/contracts';
+import { silent, type Issues } from '@merv/contracts/issues';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
   ApiCredential,
@@ -92,45 +93,6 @@ function send(res: ServerResponse, status: number, type: string, body: string | 
     ...(status === 401 && !res.hasHeader('www-authenticate') && { 'www-authenticate': 'Bearer' }),
   });
   res.end(body);
-}
-
-/** The one log point for server failures: primitive fields only, never the error's message,
- *  which may carry request values or connection details. */
-function logFailure(error: unknown, status: number, code: string, where: string): void {
-  if (status < 500) return;
-  const failure = (error ?? {}) as {
-    name?: unknown;
-    stack?: unknown;
-    cause?: Record<string, unknown>;
-  };
-  const cause = failure.cause ?? {};
-  process.stderr.write(
-    `${JSON.stringify({
-      event: 'api_error',
-      where,
-      status,
-      code,
-      name: String(failure.name),
-      at: String(failure.stack)
-        .split('\n')
-        .filter((line) => /^\s+at /.test(line))
-        .slice(0, 3)
-        .map((line) => line.trim()),
-      sqlstate: String(cause.sqlstate ?? ''),
-      table: String(cause.table ?? ''),
-      constraint: String(cause.constraint ?? ''),
-    })}\n`,
-  );
-}
-
-/** A JSON-RPC error that carries a MervError's code and status, and nothing internal. */
-function rpcError(error: unknown) {
-  const { status, error: body } = errorBody(error);
-  logFailure(error, status, body.code, 'mcp');
-  return Object.assign(new Error(body.message), {
-    code: status >= 500 ? -32603 : -32600,
-    data: body,
-  });
 }
 
 /** Where an agent is sent to connect: the agent-readable page where agent sign-in is mounted,
@@ -261,6 +223,7 @@ export class ApiServer {
   private readonly maxBodyBytes: number;
   private readonly drainMs: number;
   url?: string;
+  issues: Issues = silent;
 
   constructor(
     private readonly scope: Scope,
@@ -298,6 +261,22 @@ export class ApiServer {
     );
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
+  }
+
+  /** A server failure, unless the tool call already reported it or the server is stopping. */
+  private failed(error: unknown, status: number, code: string, where: string): void {
+    if (status < 500 || this.stopping || this.tools.reported?.has(error as object)) return;
+    this.issues.report({ class: 'platform', where: 'api_error', code, key: where, status, error });
+  }
+
+  /** A JSON-RPC error that carries a MervError's code and status, and nothing internal. */
+  private rpcError(error: unknown) {
+    const { status, error: body } = errorBody(error);
+    this.failed(error, status, body.code, 'mcp');
+    return Object.assign(new Error(body.message), {
+      code: status >= 500 ? -32603 : -32600,
+      data: body,
+    });
   }
 
   get publicOrigin(): string | undefined {
@@ -348,7 +327,10 @@ export class ApiServer {
           }
           // A response that failed part-way cannot be completed; end it rather than hang.
           else if (!res.writableEnded) res.destroy();
-          logFailure(error, status, body.code, `${req.method} ${pathOf(req)}`);
+          // Keyed by mount, so one fault across ids is one issue; no mount is no fault.
+          const mount = `/${pathOf(req).split('/')[1]}`;
+          if (this.mounts.get(mount))
+            this.failed(error, status, body.code, `${req.method} ${mount}`);
         }),
         new Promise((closed) => res.once('close', closed)),
       ]);
@@ -784,7 +766,7 @@ export class ApiServer {
         // MCP curates what a person's agent is offered; Merv's pages call /tools.
         return { tools: await this.tools.describe(caller, true) };
       } catch (error) {
-        throw rpcError(error);
+        throw this.rpcError(error);
       }
     });
     instance.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -808,7 +790,7 @@ export class ApiServer {
               content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }],
             });
       } catch (error) {
-        const { data } = rpcError(error);
+        const { data } = this.rpcError(error);
         return {
           isError: true,
           content: [{ type: 'text' as const, text: JSON.stringify({ error: data }) }],

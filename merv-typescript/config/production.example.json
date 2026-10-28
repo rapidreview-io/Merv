@@ -269,6 +269,11 @@
       }
     },
     {
+      "id": "issues",
+      "name": "@merv/issues",
+      "required": false
+    },
+    {
       "id": "domain-events",
       "name": "@merv/domain-events"
     },

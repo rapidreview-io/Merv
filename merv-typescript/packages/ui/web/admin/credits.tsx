@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { AdminCredits, CreditUse, PersonCredits } from '@merv/admin/models';
 import { useTool } from '../api';
 import {
@@ -14,13 +14,12 @@ import {
   cx,
   stamp,
   useHeadFocus,
-  useSidebarEscape,
   type Column,
 } from '../components';
-import { ListPage, Segments, openRow, typing, useListFilter } from '../list-filters';
+import { ListPage, Segments, openRow, useListFilter } from '../list-filters';
 import { day } from '../session';
 import { useRoomy } from '../theme';
-import { Head, None, count, fig, usePost } from './parts';
+import { Head, None, count, fig, useDrawer, usePost } from './parts';
 import { usd } from '../views/remote-fields';
 
 /** A row: the person, under the id a list filter keys it by (their `issuer|subject`). */
@@ -418,38 +417,13 @@ export function CreditsView() {
   // From everyone: a search that hides the open person leaves their drawer open.
   const person = everyone?.find((p) => p.id === openId);
   const close = () => setOpen(undefined);
-  useSidebarEscape(!!person, close);
-  // Closing hands the cursor back to the name that opened the drawer.
-  const last = useRef<string>();
-  useEffect(() => {
-    if (!openId && last.current)
-      [...document.querySelectorAll<HTMLElement>('.admin-name')]
-        .find((name) => name.dataset.person === last.current)
-        ?.focus();
-    last.current = openId;
-  }, [openId]);
-  // While it is open, ↑ and ↓ open the person above or below.
-  const rows = useRef(filter.rows);
-  rows.current = filter.rows;
-  useEffect(() => {
-    if (!openId) return;
-    const onKey = (event: KeyboardEvent) => {
-      const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
-      if (!step || event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
-      const next = rows.current[rows.current.findIndex((p) => p.id === openId) + step];
-      if (!next) return;
-      event.preventDefault();
-      setOpen(next.id);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [openId]);
+  useDrawer(filter.rows, openId, setOpen, '.admin-name');
   const columns: Column<Person>[] = [
     col('person', 'Person', (p) => (
       <button
         type="button"
         className="admin-name"
-        data-person={p.id}
+        data-id={p.id}
         aria-expanded={openId === p.id}
         aria-controls="admin-drawer"
         onClick={() => setOpen(openId === p.id ? undefined : p.id)}

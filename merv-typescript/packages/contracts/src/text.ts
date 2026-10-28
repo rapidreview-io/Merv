@@ -53,3 +53,14 @@ export const cleanText = (value: unknown, max: number): string =>
  */
 export const itemTitle = ({ id, title }: { id: string; title: string }) =>
   /[^\s\u0085]/.test(title) ? title : id;
+/**
+ * A bearer standing alone: Merv's (mi_/mk_/ms_ + 43 base64url, me_/mr_ + 64 hex), Pi's and Nisa's
+ * (pir_/piw_/rr_sk_), Sandboxes' (sbxt_), and provider keys (sk-…, hf_…, GitHub gh[pousr]_… and
+ * github_pat_…, AWS AKIA…); not inside a longer identifier (mcp__merv__…, max_…), but also right
+ * after a JSON escape such as \n or \u0022.
+ */
+export const bearer =
+  /(?:(?<![A-Za-z0-9_-])|(?<=\\(?:[nrtbf]|u[0-9a-fA-F]{4})))(?:m[iks]_[A-Za-z0-9_-]{43}|m[er]_[0-9a-f]{64}|(?:pi[rw]|rr_sk)_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sbxt_[A-Za-z0-9_-]{32,}|hf_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})(?![A-Za-z0-9_-])/;
+/** Words kept for an admin: cleaned, every bearer replaced, at most `max` characters. */
+export const redacted = (value: unknown, max: number) =>
+  clip(cleanText(value, 4 * max).replace(new RegExp(bearer.source, 'g'), '[redacted]'), max);

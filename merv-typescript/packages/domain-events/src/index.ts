@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { reporter, silent, type Issues } from '@merv/contracts/issues';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { types as nodeTypes } from 'node:util';
 import type { Context } from 'cordis';
@@ -31,6 +32,7 @@ const DRAIN_PASSES = 16;
 
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
+  issues: Issues = silent;
   private consumers = new Map<string, EventConsumer>();
   /** Registrations in flight, by consumer ID; close() joins them. */
   private registering = new Map<string, Promise<void>>();
@@ -244,6 +246,7 @@ export class DurableEvents implements DomainEvents {
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
         let attemptedCursor: number | undefined;
+        let attemptedEvent: number | undefined;
         try {
           const transaction = this.state.transaction(async (tx) => {
             const progress = await progressOf(tx, consumer.id);
@@ -259,7 +262,7 @@ export class DurableEvents implements DomainEvents {
               return false;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
-            const cursor = event.id;
+            const cursor = (attemptedEvent = event.id);
             const frame = { consumer, live: true };
             try {
               await this.handlerContext.run(frame, () => consumer.handle(event, tx));
@@ -301,6 +304,17 @@ export class DurableEvents implements DomainEvents {
               Date.now() + delay,
               consumer.id,
             );
+            // Standing while it fails: it resolves once the consumer has been quiet ten minutes.
+            this.issues.report({
+              class: 'platform',
+              where: 'consumer',
+              code,
+              key: consumer.id,
+              standing: true,
+              level: row.attempts + 1 >= 5 ? 'severe' : 'warn',
+              refs: attemptedEvent ? { eventIds: [attemptedEvent, attemptedEvent] } : undefined,
+              error: nodeTypes.isProxy(error) ? undefined : error,
+            });
           });
           break;
         }
@@ -353,7 +367,9 @@ export const domainEventsPlugin = {
   inject: ['state'],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
-      const events = await createService(new DurableEvents(ctx.state));
+      const events = await createService(
+        Object.assign(new DurableEvents(ctx.state), { issues: reporter(ctx) }),
+      );
       yield () => events.close();
       yield ctx.provide('domainEvents', events);
     });

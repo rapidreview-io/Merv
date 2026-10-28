@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import type { Issues } from '@merv/contracts/issues';
 import type { ScreenLook } from './types.js';
 import {
   check,
@@ -97,6 +98,10 @@ export class PiService implements Pi {
     this.hosts = new PiHosts(this.core);
     this.protocol = new PiWorkerProtocol(this.core, this.hosts);
     ({ config: this.config, streams: this.streams, tokens: this.tokens } = this.core);
+  }
+  /** Where Pi reports its interrupted turns and failed passes. */
+  set issues(issues: Issues) {
+    this.core.issues = issues;
   }
   readonly authenticateWorker: PiWorkerProtocol['authenticateWorker'] = (token) =>
     this.protocol.authenticateWorker(token);
@@ -783,7 +788,7 @@ export class PiService implements Pi {
   }
 
   /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it and
-   *  closes it with the mount. Its failure and usage records go to stderr. */
+   *  closes it with the mount. Its usage records go to stderr; Fleet reports its failures. */
   modelRelay(): ModelRelayHandle {
     const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
     return this.core.fleet.modelRelay(
@@ -796,7 +801,6 @@ export class PiService implements Pi {
           authorize: (token) => this.authorizeModel(token),
           validate: (grant) => this.validateModel(grant),
         },
-        onFailure: log,
         reserve: (grant, body) => this.core.tokens.reserve(grant, body),
         onUsage: async (record, grant, reserved) => {
           log(record);

@@ -114,6 +114,17 @@ test('durable graph transitions record exact command responses, history, and eve
     async () => await approval.transition(caller, { ...command, requestId: 'start-1' }),
     code('request_conflict'),
   );
+  // The platform reads exactly the units it names, ended or not, and none for no names.
+  await approval.start(caller, {
+    workflow: 'approval',
+    requestId: 'start-2',
+    data: { title: 'B' },
+  });
+  assert.deepEqual(
+    (await workflows.platformWork([initial.id])).map((u) => [u.id, u.name, u.terminal]),
+    [[initial.id, 'A', true]],
+  );
+  assert.deepEqual(await workflows.platformWork([]), []);
 });
 
 test('versions are pinned and changed declarations are rejected across restart', async (t) => {

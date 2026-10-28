@@ -4,6 +4,7 @@
  */
 import type { RunningPhrase } from '@merv/contracts/running';
 import type { UsageTotals } from '@merv/sessions/models';
+import type { IssueCase, IssueListed, IssueRow, SessionTrace } from '@merv/contracts/issue-models';
 
 /** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
 export interface AdminAttention {
@@ -133,4 +134,34 @@ export interface PersonCredits {
 /** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
 export interface AdminCredits {
   people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
+}
+
+type Named = { id: string; name: string };
+/** An issue with the projects its kept cases name, those Scope still knows. */
+export interface AdminIssueRow extends Omit<IssueRow, 'projects'> {
+  projects: Named[];
+}
+/** An issue as the page lists it: its hours of the last week and its newest case. */
+export interface AdminIssue extends AdminIssueRow {
+  hours: IssueListed['hours'];
+  latest: AdminIssueCase | null;
+}
+/** `GET /admin/issues`: one read for the page and the rail's count of open severe issues. */
+export interface AdminIssues {
+  rows: AdminIssue[];
+  open: number;
+  severe: number;
+  at: string;
+}
+/** One kept case, with its project where Scope still knows it, its agent's visit (Issues' pin,
+ *  else Sessions' read of it now) and the work that visit served, as Workflows names it. */
+export interface AdminIssueCase extends IssueCase {
+  project: Named | null;
+  visit: SessionTrace | null;
+  work: { id: string; kind: string; name: string; state: string; terminal: boolean } | null;
+}
+/** `GET /admin/issues/:id`, which `Download case` saves as it is. */
+export interface AdminIssueDetail {
+  issue: AdminIssueRow;
+  cases: AdminIssueCase[];
 }

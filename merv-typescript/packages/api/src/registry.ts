@@ -4,6 +4,7 @@ import { agentAudience, isAgentAudience } from './audience.js';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
+  digest,
   ellipsis,
   MervError,
   plain,
@@ -14,6 +15,7 @@ import {
   type Scope,
 } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
+import { silent, type IssueLevel, type Issues } from '@merv/contracts/issues';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { noun, nounActions, nounInput, presented } from './noun.js';
 import {
@@ -198,11 +200,35 @@ interface CatalogState {
   current: Set<Entry>;
   owned: Set<Entry>;
 }
+/** A caller kind's refusal, fresh each time: an error object is reported once. */
+const refusal = ({ code, message, status, details }: MervError) =>
+  new MervError(code, message, status, details);
 const namePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const namespace = '_';
 /** Identity, not provider: re-registering the same provider still retires calls it began. */
 type SessionRegistration = { provider: SessionToolPolicy };
+
+/** Refusals of what a session or policy withholds: an agent working against its grant. */
+const guarded = new Set([
+  'execution_tool_forbidden',
+  'execution_arguments_forbidden',
+  'execution_reference_unavailable',
+]);
+
+/** A mounted tool's own failure, as the code and status its JSON text names. */
+function mountedError(result: CallToolResult): [code: string, status?: number] {
+  try {
+    const first = result.content?.[0];
+    const inner = first?.type === 'text' ? JSON.parse(first.text)?.error : undefined;
+    return [
+      /^[a-z][a-z0-9_]{0,79}$/.test(inner?.code) ? inner.code : 'tool_error',
+      typeof inner?.status === 'number' ? inner.status : undefined,
+    ];
+  } catch {
+    return ['tool_error'];
+  }
+}
 
 /** Reserved even while a catalog is absent, so remote arguments keep their meaning. */
 export const isMountedToolName = (name: string): boolean => name.startsWith(namespace);
@@ -223,6 +249,8 @@ export class ToolRegistry implements Tools {
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
+  issues: Issues = silent;
+  readonly reported = new WeakSet<object>();
 
   constructor(
     private readonly scope: Pick<Scope, 'require'>,
@@ -654,7 +682,7 @@ export class ToolRegistry implements Tools {
     if (!kind) return undefined;
     const rules = this.callerRules.get(kind);
     if (!rules) throw new MervError('unavailable', `Tools are unavailable to ${kind} callers`, 503);
-    if (!rules.offers) throw rules.forbidden;
+    if (!rules.offers) throw refusal(rules.forbidden);
     return rules;
   }
 
@@ -923,7 +951,44 @@ export class ToolRegistry implements Tools {
     caller = structuredClone(caller);
     const logged = agent && !caller.session && !caller.conversation && this.log;
     const started = Date.now();
-    let identity: ToolIdentity | undefined;
+    let identity: (ToolIdentity & { invocationId?: string }) | undefined;
+    // Only a failure is reported, and only it hashes the arguments.
+    const report = (
+      code: string,
+      status: number | undefined,
+      level: IssueLevel,
+      error?: unknown,
+    ) => {
+      try {
+        this.issues.report({
+          class: 'tool',
+          // A name no tool answers to is the agent's own words: the subject's digest keeps it.
+          where: identity
+            ? `${identity.tool}${identity.action ? `:${identity.action}` : ''}`
+            : code === 'unknown_tool'
+              ? code
+              : name,
+          code,
+          status,
+          level,
+          subject: `${caller.session?.id ?? caller.conversation?.id ?? caller.actorId}:${digest([name, input]).slice(0, 16)}`,
+          refs: {
+            projectId: caller.projectId,
+            actorId: caller.actorId,
+            client,
+            sessionId: caller.session?.id,
+            threadId: caller.session?.threadId,
+            invocationId: identity?.invocationId,
+            conversationId: caller.conversation?.id,
+            commandId: caller.conversation?.commandId,
+            allocationId: caller.conversation?.runtimeId ?? caller.managed?.allocationId,
+          },
+          error,
+        });
+      } catch {
+        // Telemetry must never decide a call.
+      }
+    };
     const record = (errorCode: string) => {
       if (!logged) return;
       try {
@@ -949,12 +1014,25 @@ export class ToolRegistry implements Tools {
         }),
       );
       // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
-      const failed = (value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp)
-        ?.isError;
-      record(failed ? 'tool_error' : '');
+      const result = value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp;
+      record(result?.isError ? 'tool_error' : '');
+      if (result?.isError) report(...mountedError(result), 'notice');
       return value;
     } catch (error) {
-      record(error instanceof MervError ? error.code : 'internal_error');
+      const code = error instanceof MervError ? error.code : 'internal_error';
+      record(code);
+      // A nested call's failure stays the innermost call's one issue.
+      if (this.reported.has(error as object)) throw error;
+      const status = error instanceof MervError ? error.status : 500;
+      if (
+        !(error instanceof MervError && error.wait) &&
+        (agent || caller.session || caller.conversation || status >= 500)
+      ) {
+        const level =
+          status === 500 ? 'severe' : status > 500 || guarded.has(code) ? 'warn' : 'notice';
+        report(code, status, level, error);
+        if (error && typeof error === 'object') this.reported.add(error);
+      }
       throw error;
     }
   }
@@ -965,7 +1043,7 @@ export class ToolRegistry implements Tools {
     input: unknown,
     agent: boolean,
     admit: ToolAdmission | undefined,
-    seen: (identity: ToolIdentity) => void,
+    seen: (identity: ToolIdentity & { invocationId?: string }) => void,
   ): Promise<ToolInvocation> {
     const rules = this.rulesFor(caller);
     const resolved = this.resolve(name, input);
@@ -979,7 +1057,7 @@ export class ToolRegistry implements Tools {
     name = entry.name;
     if (entry.alias && !this.aliasesOpen && !caller.session)
       throw this.renamed(name, entry.alias, entry.alias.wrap(input));
-    if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
+    if (rules && !rules.offers!(entry.tool)) throw refusal(rules.forbidden);
     // Judge aliases by their target; writes retain their own permission checks.
     const became = entry.alias?.tool ?? (entry.definition as ToolDefinition).became;
     const judged = became ? this.entries.get(became) : entry;
@@ -1018,6 +1096,7 @@ export class ToolRegistry implements Tools {
         as: identity.as,
         args: identity.args,
       });
+      if (prepared) seen({ ...identity, invocationId: prepared.caller.session?.invocationId });
       // The original provider must release its reservation even after replacement.
       try {
         if (session) this.fence(session);

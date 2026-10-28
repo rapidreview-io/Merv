@@ -28,6 +28,7 @@ flowchart BT
     merv_fleet_ui["merv-fleet-ui"]
     merv_fleet_workflow["merv-fleet-workflow"]
     identity["identity"]
+    issues["issues"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
     legacyHistory["legacyHistory"]
@@ -196,6 +197,7 @@ flowchart BT
   merv_fleet_workflow --> api
   merv_fleet_workflow --> state
   merv_fleet_workflow --> tools
+  issues --> state
   knowledge --> state
   knowledge --> scope
   knowledge --> tasks

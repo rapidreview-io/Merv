@@ -6,6 +6,7 @@ import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
 import { credentialMigrations, credentialRoutes } from './credentials.js';
 import { creditRoutes } from './credits.js';
+import { issueRoutes } from './issues.js';
 import { platformRead } from './platform.js';
 import { adminWork } from './work.js';
 
@@ -74,6 +75,7 @@ export const adminPlugin = {
         'GET /admin/work': async () => await adminWork(env),
         ...credentialRoutes(env),
         ...creditRoutes(env),
+        ...issueRoutes(env),
         ...platformRead(env),
       };
       ctx.effect(() =>

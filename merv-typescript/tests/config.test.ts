@@ -44,6 +44,7 @@ test('default configuration includes session enforcement and API adds tool trans
       'workflows',
       'scope',
       'blobs',
+      'issues',
       'domain-events',
       'state',
     ],
@@ -51,7 +52,8 @@ test('default configuration includes session enforcement and API adds tool trans
   assert.ok(
     core.entries.every(
       (entry) =>
-        entry.required === (entry.id !== 'feed') && entry.disabled === (entry.id === 'feed'),
+        entry.required === !['feed', 'issues'].includes(entry.id) &&
+        entry.disabled === (entry.id === 'feed'),
     ),
   );
   assert.deepEqual(core.entries.find((entry) => entry.id === 'state')?.config, {
@@ -63,7 +65,7 @@ test('default configuration includes session enforcement and API adds tool trans
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 46, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 47, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -90,6 +92,7 @@ test('default configuration includes session enforcement and API adds tool trans
     'secrets-api': ['secrets'],
     'context-builder': ['state', 'scope', 'artifacts'],
     'domain-events': ['state'],
+    issues: ['state'],
   };
   for (const name of [
     'research',

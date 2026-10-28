@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { silent, swallowed, type Issues } from '@merv/contracts/issues';
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
@@ -86,6 +87,7 @@ export class CodeService implements Code {
   private releaseChanges?: () => void;
   private publicationTimer?: NodeJS.Timeout;
   private networkOperations = new Set<Promise<unknown>>();
+  issues: Issues = silent;
   private network<T>(operation: () => Promise<T>): Promise<T> {
     if (this.publicationClosed)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
@@ -196,6 +198,7 @@ export class CodeService implements Code {
           (await this.landing?.message(sql, projectId, key)) ??
           (await this.mergeMessage(sql, projectId, key)),
       });
+      bases.issues = this.issues;
       await bases.initialize();
       this.unitStore.bases = bases;
       this.baseStore = bases;
@@ -248,6 +251,7 @@ export class CodeService implements Code {
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
       this.submissions.start();
+      const failed = swallowed(this.issues, 'code_work.landing');
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
@@ -256,11 +260,11 @@ export class CodeService implements Code {
           await landing.tick();
           await this.publicationStore.syncDue(() => this.publicationClosed);
         })
-          .catch(() => undefined)
+          .catch(failed)
           .finally(() => (pass = undefined));
       }, 30_000);
       // What a restart left to land, including every acceptance from before landing existed.
-      void this.network(() => landing.tick()).catch(() => undefined);
+      void this.network(() => landing.tick()).catch(failed);
       this.publicationTimer.unref();
     } catch (error) {
       await this.close();

@@ -65,8 +65,8 @@ export const writes = (actor: Pick<Actor, 'role'>) => permits(actor.role, 'write
  * thread's conversation. Outside a session, no one.
  */
 export const useReadsAgents = () => {
-  const role = useContext(SessionContext)?.actor.role;
-  return role !== undefined && readsAgents(role);
+  const actor = useContext(SessionContext)?.actor;
+  return !!actor && readsAgents(actor);
 };
 /** The signed-in actor, where a page is drawn inside a session. */
 export const useActor = () => useContext(SessionContext)?.actor;

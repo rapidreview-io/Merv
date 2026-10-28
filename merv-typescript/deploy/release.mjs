@@ -165,6 +165,8 @@ mkdir -p ${UI_DIR}/assets
 cp -rn ui/assets/. ${UI_DIR}/assets/
 find ui -mindepth 1 -maxdepth 1 ! -name assets ! -name index.html -exec cp -r {} ${UI_DIR}/ \\;
 [ -e ${UI_DIR}/index.html ] || cp ui/index.html ${UI_DIR}/index.html
+# Main's release, a runtime env beside its compose file: the image stays the same.
+printf 'MERV_RELEASE=%s\\n' '${release}' > source/deploy/release.env
 # Trackio's image is built while the previous Main still serves: compose up then finds it.
 (cd source/deploy && MERV_TS_IMAGE="$IMAGE_ID" docker compose -f compose.yml build trackio) >> build.log 2>&1
 # A first deploy on a VM has no previous container, and so nothing to roll back to.

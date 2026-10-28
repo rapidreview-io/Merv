@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { accountRequest } from '../api';
-import { PageHeader, Word, col, cx, toneOf } from '../components';
+import { PageHeader, Word, col, cx, toneOf, useSidebarEscape } from '../components';
+import { typing } from '../list-filters';
 import { useCommand } from '../mutations';
 
 /** A POST to an /admin route (`path`, the rest its body), sent whole again on a retry: each
@@ -62,3 +63,46 @@ export const State = (props: { value: string; ended?: boolean; need?: string | f
     value={props.value}
   />
 );
+
+/** A list's drawer, open on the row `openId` names: Escape closes it, ↑ and ↓ open the row above
+ *  or below, and closing hands the cursor back to the `selector` control (by its `data-id`) that
+ *  opened it. */
+export function useDrawer<T extends { id: string }>(
+  rows: T[],
+  openId: string | undefined,
+  setOpen: (id?: string) => void,
+  selector: string,
+) {
+  useSidebarEscape(!!openId, () => setOpen(undefined));
+  const last = useRef<string>();
+  // Where the open row stands: one that left the list (resolved, or filtered out) goes on from there.
+  const at = useRef(-1);
+  const index = rows.findIndex((row) => row.id === openId);
+  if (index >= 0) at.current = index;
+  useEffect(() => {
+    if (!openId && last.current) {
+      const names = [...document.querySelectorAll<HTMLElement>(selector)];
+      (
+        names.find((name) => name.dataset.id === last.current) ??
+        names[Math.min(at.current, names.length - 1)]
+      )?.focus();
+    }
+    last.current = openId;
+  }, [openId, selector]);
+  const held = useRef(rows);
+  held.current = rows;
+  useEffect(() => {
+    if (!openId) return;
+    const onKey = (event: KeyboardEvent) => {
+      const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+      if (!step || event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
+      const index = held.current.findIndex((row) => row.id === openId);
+      const next = held.current[index >= 0 ? index + step : at.current + Math.min(step, 0)];
+      if (!next) return;
+      event.preventDefault();
+      setOpen(next.id);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [openId, setOpen]);
+}

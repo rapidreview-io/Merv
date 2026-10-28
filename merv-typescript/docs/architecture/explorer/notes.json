@@ -64,7 +64,7 @@
       "id": "foundation",
       "label": "Foundation",
       "caption": "Shared durable capabilities",
-      "members": ["state", "scope", "blobs", "domainEvents"],
+      "members": ["state", "scope", "blobs", "domainEvents", "issues"],
       "description": "State and Scope are the most shared dependencies. Blobs stores bytes without depending on State; Artifacts connects file metadata to those bytes. Domain Events reads durable events from State."
     },
     {
@@ -160,6 +160,10 @@
       "label": "Blobs",
       "purpose": "Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata."
     },
+    "issues": {
+      "label": "Issues",
+      "purpose": "Keeps what owners report going wrong (agent tool errors, agent questions, platform failures) as fingerprinted issues with sampled cases, and alerts severe ones to Slack. Owners look it up at each report; nothing injects it."
+    },
     "domainEvents": {
       "label": "Domain Events",
       "purpose": "Delivers durable events from State so consumers can react and recover without losing their place."
@@ -238,7 +242,7 @@
         "id": "authority",
         "label": "Authority & durable events",
         "purpose": "Turn primitives into project permissions, protected credentials and reliable events.",
-        "members": ["scope", "secrets", "domainEvents"]
+        "members": ["scope", "secrets", "domainEvents", "issues"]
       },
       {
         "id": "capabilities",

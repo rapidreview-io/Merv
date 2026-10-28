@@ -638,6 +638,22 @@ export interface State {
   /** nextEvent's id alone, for a reader that only asks whether one is due. */
   nextEventId(after: number, types: readonly string[]): Promise<number | undefined>;
   eventHead(tx?: Transaction): Promise<number>;
+  /** The flood scan's PK-range group-by: each (type, subject) with at least `atLeast` events
+   *  in (after, through], the 20 largest first. */
+  eventCounts(
+    after: number,
+    through: number,
+    atLeast: number,
+  ): Promise<
+    {
+      type: string;
+      subjectId: string;
+      projectId: string;
+      count: number;
+      first: number;
+      last: number;
+    }[]
+  >;
   onEventsCommitted(listener: () => void): () => void;
 }
 export interface EventConsumer {

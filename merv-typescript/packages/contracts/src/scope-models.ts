@@ -1,5 +1,7 @@
 /** A member's role in a project. */
 export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
+/** The actor every platform caller acts as: a reader that no actor row backs. */
+export const PLATFORM_ACTOR = 'actor_platform';
 
 /** Scope's people, projects and keys as the browser reads them; kept apart from the index so
  * browser-side models can name them. */

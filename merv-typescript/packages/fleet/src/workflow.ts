@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { issueCode, reporter, silent, swallowed, type Issues } from '@merv/contracts/issues';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -153,11 +154,6 @@ const refusedAs =
     if (error instanceof MervError && statuses.includes(error.status)) return value;
     throw error;
   };
-/** Messages may carry credentials; operators get the project and the finite code only. */
-const skipped = (projectId: string, error: unknown) => {
-  const code = error instanceof MervError ? error.code : 'unexpected';
-  process.stderr.write(`${JSON.stringify({ event: 'fleet.workflow_skipped', projectId, code })}\n`);
-};
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
@@ -168,6 +164,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   /** A step in progress survives a Main release: the restarted adapter takes its machine back. */
   readonly keepsRunning = true;
   readonly config: z.infer<typeof workflowConfig>;
+  issues: Issues = silent;
   /** The projects the last reconcile rented for. */
   private served = new Set<string>();
   /** Each project's review director actor, retained once made. */
@@ -265,11 +262,28 @@ export class FleetWorkflowAdapter implements FleetOwner {
       throw error;
     }
     this.timer = setInterval(() => {
-      void this.reconcile().catch(() => undefined);
+      void this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
     }, this.config.pollIntervalMs);
     this.timer.unref();
     // A missing model key leaves demand unserved, never the server down.
-    await this.reconcile().catch(() => undefined);
+    await this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
+  }
+  /** A project a pass passed over, which stands while every pass does: the next pass tries
+   *  again. A project without compute, or its person's cap, is their own. Messages may carry
+   *  credentials; an issue keeps the finite code only. */
+  private skipped(error: unknown, projectId: string) {
+    const code = issueCode(error);
+    this.issues.report({
+      class: 'platform',
+      where: 'fleet.workflow_skipped',
+      code,
+      level: ['sandbox_not_connected', 'fleet_compute_cap'].includes(code) ? 'notice' : 'warn',
+      subject: projectId,
+      key: projectId,
+      standing: true,
+      refs: { projectId },
+      error,
+    });
   }
   /** Revocation is fenced by each allocation's own source; a new director lets work finish. */
   private accepted(a: FleetAllocation): boolean {
@@ -612,7 +626,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       });
       return granted(row!);
     });
-    void this.reconcile().catch(() => undefined);
+    void this.reconcile().catch(swallowed(this.issues, 'fleet.reconcile'));
     return result;
   }
   /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
@@ -805,7 +819,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
               }
         served.set(projectId, wanted);
       } catch (error) {
-        skipped(projectId, error);
+        this.skipped(error, projectId);
         failed.add(projectId);
       }
     }
@@ -849,7 +863,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const a of active)
       if (a.intent === 'run' && !launched(a) && !failed.has(a.projectId) && !steps(a).length)
         await this.fleet.cancelOwned(this, a.id);
-    if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
     const running = active.filter((a) => a.intent === 'run');
     const covered = new Set(running.flatMap(steps));
     // A target Sessions says its item's hosts cannot take gets a host of its own, unless one is
@@ -858,14 +871,18 @@ export class FleetWorkflowAdapter implements FleetOwner {
       const hosts = running.filter((a) => a.projectId === projectId && steps(a).includes(id));
       if (hosts.every(launched)) covered.delete(id);
     }
-    let slots = Math.max(0, this.config.maxAgents - active.length);
+    // While paused nothing is rented, but exhausted streaks are still reported.
+    let slots =
+      paused && this.clock() - newestRefused < refusedRetryCooldownMs
+        ? 0
+        : Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
-    // Read only once some target reaches the streak check, so a full or covered pass reads none.
+    // Read only once some target reaches the streak check, so a covered pass reads none.
     let grants: Map<string, RetryGrant> | undefined;
     for (const { projectId, source, id } of queue) {
-      if (!slots || covered.has(id) || failed.has(projectId)) continue;
+      if (covered.has(id)) continue;
       const owner = workOwner(id);
       // Accepted: machines the retired per-step owner (`<instance>:<revision>`) rented do not count,
       // so work it exhausted gets one more two-rental window; grants index this list as it is.
@@ -878,6 +895,19 @@ export class FleetWorkflowAdapter implements FleetOwner {
         grants.get(grantKey(projectId, id))?.prior_allocations,
         since.get(grantKey(projectId, id)),
       );
+      // Hosted machines that never claim this work: re-reported each pass while it holds, however
+      // busy the pass.
+      if (unclaimed >= unclaimedAttemptLimit)
+        this.issues.report({
+          class: 'platform',
+          where: 'fleet.unclaimed',
+          code: 'unclaimed',
+          key: grantKey(projectId, id),
+          standing: true,
+          level: 'severe',
+          refs: { projectId, instanceId: id.slice(0, id.lastIndexOf(':')) },
+        });
+      if (!slots || failed.has(projectId)) continue;
       if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
@@ -917,15 +947,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
       } catch (error) {
         // A refusal, such as the payer's spend cap, passes over the project's other targets this
         // pass; only a project without a connection is no longer served.
-        skipped(projectId, error);
+        this.skipped(error, projectId);
         failed.add(projectId);
         if (error instanceof MervError && error.code === 'sandbox_not_connected')
           this.served.delete(projectId);
         continue;
       }
       covered.add(id);
-      slots--;
-      if (paused) break;
+      slots = paused ? 0 : slots - 1;
     }
   }
   /**
@@ -972,6 +1001,7 @@ export const fleetWorkflowPlugin = {
       Date.now,
       ctx.state,
     );
+    adapter.issues = reporter(ctx);
     await adapter.start();
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.

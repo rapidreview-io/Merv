@@ -1,4 +1,12 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import {
+  issueCode,
+  reporter,
+  silent,
+  swallowed,
+  type IssueReport,
+  type Issues,
+} from '@merv/contracts/issues';
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
 import type { SbxMerv } from '@sandboxes/merv-host';
@@ -34,6 +42,7 @@ import {
   migrationV6,
 } from './schema.js';
 import { ownLimits } from './model-ledger.js';
+import { relayFault } from './codex-relay.js';
 import { ModelRelay } from './model-relay.js';
 import { rentedWork } from './running.js';
 import type {
@@ -114,11 +123,6 @@ const walletRefused = (error: unknown) =>
     'sandbox_concurrency_exceeded',
     'sandbox_storage_cap_exceeded',
   ].includes(error.code);
-/** Provider and owner messages may carry credentials; operators get the finite code only. */
-const report = (event: string, a: FleetAllocation, error: unknown) => {
-  const code = error instanceof MervError ? error.code : 'unexpected';
-  process.stderr.write(`${JSON.stringify({ event, allocation: a.id, code })}\n`);
-};
 /** How long a capped request waits for its offer to list a price, as after a restart. */
 const unpricedMs = 600_000;
 /** How long after a restart owners have to register before their kinds' machines are judged. */
@@ -139,6 +143,7 @@ const usdLimits = ownLimits('fleet_usd_limits', 'usd');
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
   retries?: Fleet['retries'];
+  issues: Issues = silent;
   private readonly config: z.infer<typeof fleetConfig>;
   private readonly profiles;
   private readonly ready = new Map<string, Map<string, FleetMachine | null> | null | undefined>();
@@ -472,7 +477,7 @@ export class FleetService implements Fleet {
     await this.pending?.catch(() => undefined);
     const full = Date.now() >= this.fullAt;
     if (full) this.fullAt = Date.now() + this.config.pollIntervalMs;
-    const busy = await this.run(full).catch(() => false);
+    const busy = await this.run(full).catch(swallowed(this.issues, 'fleet.pass'));
     this.wake(busy ? Math.min(1000, this.config.pollIntervalMs / 5) : this.fullAt - Date.now());
   }
   registerOwner(kind: string, owner: FleetOwner): () => void {
@@ -574,6 +579,7 @@ export class FleetService implements Fleet {
     if (digest(a) === digest(before)) return;
     const moved = a.phase !== before.phase || a.intent !== before.intent;
     if (moved) a.updatedAt = this.time();
+    if (a.intent === 'stop' && before.intent !== 'stop') a.stoppedAt = a.updatedAt;
     await tx.run(
       'UPDATE fleet_allocations SET phase=?,data_json=? WHERE id=?',
       a.phase,
@@ -822,6 +828,21 @@ export class FleetService implements Fleet {
         ]);
       },
       onFailure: async (record, grant) => {
+        // What the provider did: a key it refuses is severe, its outage a warning a spike raises.
+        const rejected =
+          record.upstreamHttpStatus === 401 || record.providerCode === 'invalid_api_key';
+        if (
+          rejected ||
+          (['upstream_failed', 'relay_timeout'].includes(record.code) && relayFault(record))
+        )
+          this.issues.report({
+            class: 'platform',
+            where: 'fleet.relay',
+            code: record.providerCode ?? record.code,
+            key: `${config.name} ${keyEnv} ${record.model}`,
+            status: record.upstreamHttpStatus,
+            level: rejected ? 'severe' : 'warn',
+          });
         await Promise.all([
           config.onFailure?.(record, grant),
           record.code === 'upstream_failed' &&
@@ -896,8 +917,7 @@ export class FleetService implements Fleet {
         if (dropped(a) || unpriced(a)) {
           if (!dropped(a)) {
             a.error = 'runtime_refused';
-            if (this.seen(place(a)))
-              report('fleet.unpriced', a, new MervError('fleet_unpriced', 'No price is listed'));
+            if (this.seen(place(a))) this.report('fleet.unpriced', a, 'fleet_unpriced', 'severe');
           }
           a.intent = 'stop';
           a.phase = 'released';
@@ -975,9 +995,48 @@ export class FleetService implements Fleet {
         return;
       if (!current.runtime) current.adoptedAt = this.time();
       current.runtime = runtime;
+      if (runtime.state === 'stopped' && current.intent === 'run')
+        this.report('fleet.machine_gone', current, 'stopped', 'severe');
       current.phase =
         runtime.state === 'stopped' ? 'released' : current.intent === 'stop' ? 'releasing' : phase;
     });
+  }
+  /** Provider and owner messages may carry credentials; an issue keeps the finite code only. */
+  private report(
+    where: string,
+    a: FleetAllocation,
+    code: string,
+    level: IssueReport['level'],
+    more?: Pick<IssueReport, 'error' | 'key' | 'standing'>,
+  ) {
+    this.issues.report({
+      class: 'platform',
+      where,
+      code,
+      level,
+      subject: a.id,
+      ...more,
+      refs: {
+        projectId: a.projectId,
+        allocationId: a.id,
+        sandboxId: a.runtime?.sandboxId,
+        launchId: a.runtime?.launch?.launchId,
+        profileId: a.profileId,
+        runtimeRelease: this.profiles.find((p) => p.id === a.profileId)?.releaseId,
+        instanceId: rentedWork(a) ?? undefined,
+      },
+    });
+  }
+  /** Standing, re-reported each full pass while it holds: a stopped machine whose host never
+   *  acknowledges its shutdown, whatever its phase, or a request that waits too long. */
+  private watch(a: FleetAllocation): void {
+    const age = (at: string) => this.clock() - Date.parse(at);
+    const standing = { key: a.id, standing: true } as const;
+    const stopped = age(a.stoppedAt ?? a.updatedAt);
+    if (a.intent === 'stop' && a.shutdownRequired && !a.shutdownAcknowledged && stopped > 600_000)
+      this.report('fleet.stuck_releasing', a, 'releasing', 'severe', standing);
+    if (a.phase === 'queued' && age(a.createdAt) > 900_000)
+      this.report('fleet.queued', a, 'queued', 'warn', standing);
   }
   private async reconcile(full = true): Promise<boolean> {
     if (full)
@@ -985,6 +1044,7 @@ export class FleetService implements Fleet {
         this.ready.set(p, await this.read(p).catch(() => this.ready.get(p)));
     this.awake ||= full;
     const allocations = (await this.reserve()) ?? (await this.state.read((sql) => this.all(sql)));
+    if (full) allocations.forEach((a) => this.watch(a));
     await Promise.all(
       allocations
         .filter(
@@ -1003,7 +1063,6 @@ export class FleetService implements Fleet {
                 current.error = null;
               });
           } catch (error) {
-            report('fleet.retry', a, error);
             await this.update(a.id, (current) => {
               if (current.phase === 'released') return;
               // Cloudflare lists a new machine a second or two after making it, so its first
@@ -1030,7 +1089,11 @@ export class FleetService implements Fleet {
                   !(Date.parse(current.runtime?.leaseExpiresAt ?? '') > this.clock()))
               )
                 current.phase = 'uncertain';
-              if (!booting) current.failures++;
+              if (!booting) {
+                current.failures++;
+                const level = current.failures < 5 ? 'notice' : 'severe';
+                this.report('fleet.retry', a, issueCode(error), level, { error });
+              }
               if (current.error !== 'runtime_not_ready') current.error = 'runtime_unavailable';
               current.retryAt = new Date(
                 this.clock() + (booting ? 1000 : backoff(current.failures)),
@@ -1161,7 +1224,8 @@ export class FleetService implements Fleet {
           // Refusing the first attempt proves no machine exists: free the slot, do not retry.
           if (!first || !refused(error)) throw error;
           if (walletRefused(error)) refusal = 'wallet_refused';
-          report('fleet.refused', a, error);
+          const level = refusal === 'wallet_refused' ? 'notice' : 'severe';
+          this.report('fleet.refused', a, issueCode(error), level, { error });
         });
       if (handle) await this.observed(a, runtimeHandle(handle, null, this.clock()), 'provisioning');
       else
@@ -1190,7 +1254,7 @@ export class FleetService implements Fleet {
       (handle.state === 'failed' ||
         Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock())
     ) {
-      report('fleet.not_ready', a, new MervError('runtime_not_ready', 'Machine never ready'));
+      this.report('fleet.not_ready', a, 'runtime_not_ready', 'severe');
       if ((a.replaced ?? 0) + 1 >= readyAttempts)
         a = await this.update(a.id, (current) => {
           current.intent = 'stop';
@@ -1349,6 +1413,7 @@ export const fleetPlugin = {
   inject: ['state', 'scope', 'sbxMerv'],
   async apply(ctx: Context, config: FleetConfig) {
     const fleet = new FleetService(ctx.state, ctx.scope, ctx.sbxMerv, config);
+    fleet.issues = reporter(ctx);
     await fleet.initialize();
     ctx.effect(() => () => fleet.close());
     ctx.provide('fleet', fleet);

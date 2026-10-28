@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { swallowed } from '@merv/contracts/issues';
 import {
   check,
   newId,
@@ -327,6 +328,8 @@ export class PiHosts implements FleetOwner {
     tx: Transaction,
     command: PiCommandRecord,
     reason: PiInterruption,
+    /** The worker's own words for why, bounded by its schema. */
+    note?: string,
   ): Promise<void> {
     if (!active.has(command.status)) return;
     const conversation = await this.core.conversation(tx, command.conversationId);
@@ -340,6 +343,27 @@ export class PiHosts implements FleetOwner {
     command.completedAt = this.core.time();
     if (conversation.activeCommandId === command.id) conversation.activeCommandId = null;
     await this.core.saveCommand(tx, command);
+    if (reason !== 'cancelled')
+      this.core.issues.report({
+        class: 'platform',
+        where: 'pi.turn',
+        code: reason,
+        subject: conversation.id,
+        level:
+          reason === 'service_unavailable' || reason === 'checkpoint_unavailable'
+            ? 'severe'
+            : reason === 'wallet_refused' || reason === 'ambiguous_prompt'
+              ? 'notice'
+              : 'warn',
+        note,
+        refs: {
+          projectId: conversation.projectId,
+          conversationId: conversation.id,
+          commandId: command.id,
+          allocationId: command.runtimeId,
+          hostId: command.hostId,
+        },
+      });
     await this.core.saveConversation(tx, conversation);
     this.core.unsent.add(conversation.id);
   }
@@ -381,22 +405,24 @@ export class PiHosts implements FleetOwner {
   }
 
   private async reconcile(): Promise<void> {
-    const renter = await this.hostCaller().catch(() => undefined);
+    // A step that fails reads as nothing done; the next pass retries it.
+    const failed = swallowed(this.core.issues, 'pi.hosts');
+    const renter = await this.hostCaller().catch(failed);
     // Most passes find nothing to do: one read looks at every live host, and only a host with
-    // something due takes the writer lock. One host's failure leaves the others' passes alone;
-    // the next pass retries it.
-    const due = await this.core
-      .read(async (tx) => {
-        const ids: string[] = [];
-        for (const row of await tx.all<{ data_json: string }>(
-          "SELECT data_json FROM pi_hosts WHERE status='live'",
-        )) {
-          const host = decode<PiHostRecord>(row);
-          if (await this.settle(tx, host, renter, true).catch(() => false)) ids.push(host.id);
-        }
-        return ids;
-      })
-      .catch(() => []);
+    // something due takes the writer lock. One host's failure leaves the others' passes alone.
+    const due =
+      (await this.core
+        .read(async (tx) => {
+          const ids: string[] = [];
+          for (const row of await tx.all<{ data_json: string }>(
+            "SELECT data_json FROM pi_hosts WHERE status='live'",
+          )) {
+            const host = decode<PiHostRecord>(row);
+            if (await this.settle(tx, host, renter, true).catch(failed)) ids.push(host.id);
+          }
+          return ids;
+        })
+        .catch(failed)) ?? [];
     for (const id of due) {
       try {
         await this.core.state.transaction(async (tx) => {
@@ -405,8 +431,8 @@ export class PiHosts implements FleetOwner {
         });
         this.core.streams.wake(id);
         this.core.announce();
-      } catch {
-        /* retried on the next pass */
+      } catch (error) {
+        failed(error);
       }
     }
     // Fleet's progress is what open pages are waiting on: one read sees every live conversation.

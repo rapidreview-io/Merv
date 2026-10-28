@@ -411,7 +411,7 @@ async function attention(
         ? {
             code: 'model_interrupted',
             why: `The last ${last.length} visits of this work lost their model calls to the model relay or its provider (an outage, or a release of Main). Nothing counts that against the work, so it is offered again and again.`,
-            next: 'Look at the model relay and its provider: Main’s codex_relay_failure log lines say how its calls failed. Nothing here is held; the offers resume by themselves once it answers.',
+            next: 'Look at the model relay and its provider: its fleet.relay issue says how its calls failed. Nothing here is held; the offers resume by themselves once it answers.',
           }
         : {
             code: newest.deferral?.cause ?? 'preparation_deferred',

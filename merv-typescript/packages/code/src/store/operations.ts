@@ -1,4 +1,5 @@
 import { bootMaintenance } from '@merv/contracts/maintenance';
+import { swallowed } from '@merv/contracts/issues';
 import { initializeManagedProjects } from './managed.js';
 import {
   canonical,
@@ -83,8 +84,10 @@ export class CodeStore {
       await this.close();
       throw error;
     }
+    // A maintenance pass that failed: the next one retries it, and a failing tick is a loop.
+    const failed = swallowed(this.core.hooks, 'code.maintain');
     this.timer = setInterval(
-      () => void this.maintain().catch(() => {}),
+      () => void this.maintain().catch(failed),
       this.config.sweepSeconds * 1000,
     );
     this.timer.unref();
@@ -98,7 +101,7 @@ export class CodeStore {
         // has either committed or rolled back. No Git runs inside the barrier.
         await this.core.state.transaction(async () => {});
         await this.maintain(false);
-      })().catch(() => {});
+      })().catch(failed);
     }, 200);
     this.waker.unref();
   }
