@@ -183,6 +183,9 @@ export interface ModelRelayUsage<E extends string = string> {
   model: string;
   inputTokens: number;
   cachedTokens: number;
+  /** Input written to the provider's prompt cache (Anthropic's, billed at a premium); part of
+   *  inputTokens, absent where the provider reports none. */
+  cacheWriteTokens?: number;
   outputTokens: number;
   reasoningTokens: number;
   /** A zero record that returns the charge of a call the provider never took. */
@@ -227,6 +230,8 @@ export interface ModelRelayConfig<
   route: string;
   token: RegExp;
   providerKey: () => string | Promise<string>;
+  /** The provider's streaming format: OpenAI Responses (the default) or Anthropic Messages. */
+  wire?: 'responses' | 'anthropic';
   /** Operator-selected Responses endpoint; defaults to OpenAI. */
   responsesUrl?: string;
   authority: {

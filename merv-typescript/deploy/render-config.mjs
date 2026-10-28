@@ -372,6 +372,35 @@ if (piEnabled) {
   if (!/^[A-Za-z0-9_-]{32,200}$/.test(process.env[hostKeyEnv] ?? '')) {
     throw new Error(`Missing or invalid ${hostKeyEnv}`);
   }
+  // Checked as Main checks it, so a dry run catches what would stop Main; the older
+  // MERV_PI_MODEL is ignored.
+  const models =
+    process.env.MERV_PI_MODELS === undefined
+      ? undefined
+      : piModels(json('MERV_PI_MODELS'), 'MERV_PI_MODELS');
+  const modelName = (name) => {
+    const value = process.env[name];
+    if (value !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value)) {
+      throw new Error(`Invalid ${name}`);
+    }
+    return value;
+  };
+  const titleModel = modelName('MERV_PI_TITLE_MODEL');
+  const questionModel = modelName('MERV_PI_QUESTION_MODEL');
+  if (questionModel && !(models ?? []).some(({ id }) => id === questionModel)) {
+    throw new Error('MERV_PI_QUESTION_MODEL must be in MERV_PI_MODELS');
+  }
+  // Claude models are Anthropic's, called under their own key.
+  const anthropicApiKeyEnv =
+    process.env.MERV_PI_ANTHROPIC_API_KEY_ENV === undefined
+      ? 'MERV_PI_ANTHROPIC_API_KEY'
+      : envName('MERV_PI_ANTHROPIC_API_KEY_ENV');
+  if (
+    [...(models ?? []).map(({ id }) => id), titleModel].some((id) => id?.startsWith('claude-')) &&
+    !process.env[anthropicApiKeyEnv]?.trim()
+  ) {
+    throw new Error('Pi Anthropic key is unavailable');
+  }
   config.plugins.push(
     { id: 'pi-tools', name: '@merv/pi/tools' },
     { id: 'pi-api', name: '@merv/pi/api' },
@@ -388,11 +417,10 @@ if (piEnabled) {
         ...(process.env.MERV_PI_MODEL_ID_PREFIX && {
           modelIdPrefix: process.env.MERV_PI_MODEL_ID_PREFIX,
         }),
-        // Checked as Main checks it, so a dry run catches what would stop Main; the older
-        // MERV_PI_MODEL is ignored.
-        ...(process.env.MERV_PI_MODELS !== undefined && {
-          models: piModels(json('MERV_PI_MODELS'), 'MERV_PI_MODELS'),
-        }),
+        anthropicApiKeyEnv,
+        ...(models && { models }),
+        ...(titleModel && { titleModel }),
+        ...(questionModel && { questionModel }),
         baseUrl: origin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
         idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),

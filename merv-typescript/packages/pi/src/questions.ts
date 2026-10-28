@@ -16,10 +16,14 @@ export function questionResponder(pi: PiService, scope: Scope): QuestionResponde
     label: 'Pi',
     async start({ question, source, attach }) {
       const owner = await caller(source);
-      const conversation = await pi.create(owner, {
-        requestId: `question_${question.id}`,
-        title: `Worker question: ${clip(question.question, 100)}`,
-      });
+      const conversation = await pi.create(
+        owner,
+        {
+          requestId: `question_${question.id}`,
+          title: `Worker question: ${clip(question.question, 100)}`,
+        },
+        true,
+      );
       if (
         !(await attach({
           id: conversation.id,

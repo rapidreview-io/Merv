@@ -22,10 +22,12 @@ import {
   Type,
   type Model,
 } from '@earendil-works/pi-ai';
+import { streamSimple as streamAnthropic } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api/openai-responses';
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
 import { messageChars } from './limits.js';
+import { piProvider } from './models.js';
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import type {
   PiBootstrap,
@@ -385,10 +387,13 @@ async function executeTurn(
     : work.model === 'gpt-6.1-sol'
       ? OPENAI_MODELS['gpt-6-sol']
       : null;
+  // Claude's models are Anthropic's: they think adaptively at the relay's effort, and replay their
+  // signed thinking. They work within Sol's budget, not their 1M window, to keep context spend.
+  const claude = piProvider(work.model) === 'anthropic';
   // The bundled catalog predates 6.1 Sol. Keep Sol's 272K working budget until it knows the
   // new model, instead of treating it as an unknown 32K model or increasing context spend.
-  const contextWindow = known?.contextWindow ?? 32_000;
-  const maxTokens = known?.maxTokens ?? 32_000;
+  const contextWindow = claude ? 272_000 : (known?.contextWindow ?? 32_000);
+  const maxTokens = claude ? 64_000 : (known?.maxTokens ?? 32_000);
   // Before compaction the window held the model's longest answer (at most half of it) and, at 3
   // bytes a token, a margin under prose's 4 characters: what every call carries (instructions,
   // notes, tools), the turn's tool results and the history it restores. gpt-6-luna gives about
@@ -433,25 +438,41 @@ async function executeTurn(
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
-  await runtime.setRuntimeApiKey('openai', work.modelToken);
-  const model: Model<'openai-responses'> = {
-    id: work.model,
-    name: work.model,
-    api: 'openai-responses',
-    provider: 'openai',
-    baseUrl: work.modelBaseUrl,
-    reasoning: true,
-    input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow,
-    // The model's own maximum applies: an answer is sent no max_output_tokens. Pi reads 0 as none,
-    // so it never compacts to ask again for an answer the model stopped for length (its words already
-    // reached the person): that answer keeps its note, and the next call compacts if it is due.
-    maxTokens: 0,
-    // Every tool is sent with strict false: OpenAI reads a function without it as strict, which
-    // makes every optional input required and the model invent values for them.
-    compat: { supportsMaxOutputTokens: false, supportsStrictMode: true },
-  };
+  await runtime.setRuntimeApiKey(claude ? 'anthropic' : 'openai', work.modelToken);
+  const model: Model<'openai-responses' | 'anthropic-messages'> = claude
+    ? {
+        id: work.model,
+        name: work.model,
+        api: 'anthropic-messages',
+        provider: 'anthropic',
+        baseUrl: `${work.modelBaseUrl}/anthropic`,
+        reasoning: true,
+        input: ['text', 'image'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow,
+        // Anthropic requires a cap: the most an answer may write.
+        maxTokens,
+        // No mid-conversation effort or tool changes, whose betas the relay does not pass.
+        compat: { forceAdaptiveThinking: true, supportsTemperature: false },
+      }
+    : ({
+        id: work.model,
+        name: work.model,
+        api: 'openai-responses',
+        provider: 'openai',
+        baseUrl: work.modelBaseUrl,
+        reasoning: true,
+        input: ['text', 'image'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow,
+        // The model's own maximum applies: an answer is sent no max_output_tokens. Pi reads 0 as none,
+        // so it never compacts to ask again for an answer the model stopped for length (its words already
+        // reached the person): that answer keeps its note, and the next call compacts if it is due.
+        maxTokens: 0,
+        // Every tool is sent with strict false: OpenAI reads a function without it as strict, which
+        // makes every optional input required and the model invent values for them.
+        compat: { supportsMaxOutputTokens: false, supportsStrictMode: true },
+      } as Model<'openai-responses'>);
   const settings = SettingsManager.inMemory({
     compaction: { enabled: true, reserveTokens, keepRecentTokens },
     retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
@@ -614,10 +635,19 @@ async function executeTurn(
     sessionManager: manager,
     settingsManager: settings,
   });
-  const modelEndpoint = new URL('/pi-model/responses', work.modelBaseUrl);
+  const modelEndpoint = new URL(
+    claude ? '/pi-model/anthropic/v1/messages' : '/pi-model/responses',
+    work.modelBaseUrl,
+  );
   const relayFetch: typeof fetch = async (input, init) => {
     const outgoing = new Request(input, init);
-    if (outgoing.url !== modelEndpoint.href || outgoing.method !== 'POST')
+    // Anthropic's SDK marks its beta route with ?beta=true; the relay takes the one route.
+    const url = new URL(outgoing.url);
+    if (
+      url.origin + url.pathname !== modelEndpoint.href ||
+      !['', '?beta=true'].includes(url.search) ||
+      outgoing.method !== 'POST'
+    )
       throw new Error('Forbidden model destination');
     const body = await outgoing.text();
     // A Request's own signal stops following its source once that Request is collected.
@@ -644,26 +674,42 @@ async function executeTurn(
     );
   };
   session.agent.streamFunction = (_model, context, options) =>
-    // Only a summary asks for a cap (80% of the room set aside for it), which it is sent.
-    streamOpenAIResponses(
-      options?.maxTokens
-        ? { ...model, compat: { ...model.compat, supportsMaxOutputTokens: true } }
-        : model,
-      context,
-      {
-        maxTokens: options?.maxTokens,
-        signal: options?.signal,
-        reasoning: options?.reasoning,
-        // From the last call on, the model answers instead of asking for another.
-        toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
-        apiKey: work.modelToken,
-        fetch: relayFetch,
-        env: {},
-        cacheRetention: 'none',
-        maxRetries: 0,
-        transport: 'sse',
-      },
-    );
+    claude
+      ? streamAnthropic(model as Model<'anthropic-messages'>, context, {
+          ...(options?.maxTokens && { maxTokens: options.maxTokens }),
+          signal: options?.signal,
+          // The relay sets the effort; asking for one makes pi-ai think adaptively.
+          reasoning: 'low',
+          toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
+          apiKey: work.modelToken,
+          fetch: relayFetch,
+          // No betas: the relay passes none.
+          headers: { 'anthropic-beta': '' },
+          env: {},
+          // Each call resends the instructions and tools: Anthropic caches them for 5 minutes.
+          cacheRetention: 'short',
+          maxRetries: 0,
+        })
+      : // Only a summary asks for a cap (80% of the room set aside for it), which it is sent.
+        streamOpenAIResponses(
+          (options?.maxTokens
+            ? { ...model, compat: { ...model.compat, supportsMaxOutputTokens: true } }
+            : model) as Model<'openai-responses'>,
+          context,
+          {
+            maxTokens: options?.maxTokens,
+            signal: options?.signal,
+            reasoning: options?.reasoning,
+            // From the last call on, the model answers instead of asking for another.
+            toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
+            apiKey: work.modelToken,
+            fetch: relayFetch,
+            env: {},
+            cacheRetention: 'none',
+            maxRetries: 0,
+            transport: 'sse',
+          },
+        );
   // Where this turn's entries begin: compaction rewrites session.messages, never the entries.
   const begun = manager.getLeafId();
   // Once a summary fails, the turn tries no other and sends each call within the window it had

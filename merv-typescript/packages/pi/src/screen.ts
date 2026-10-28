@@ -8,7 +8,7 @@
  * that picture and answers the agent's question in words.
  */
 import { MervError, check } from '@merv/contracts';
-import { responses } from './relay.js';
+import type { PiAsk } from './relay.js';
 
 export interface ScreenShot {
   /** Where the page was: its path and query in the app, as the address bar showed it. */
@@ -83,35 +83,15 @@ const page = document.documentElement.getAttribute('data-merv-page-scroll');
 if (page) { const [y, x] = page.split(',').map(Number); window.scrollTo(x, y); }`;
 
 /** The request that has Pi's own model look at the picture and answer what the agent asked. */
-export const screenRequest = (model: string, question: string, picture: Buffer, path: string) => ({
+export const screenAsk = (
+  model: string,
+  question: string,
+  picture: Buffer,
+  path: string,
+): PiAsk => ({
   model,
-  reasoning: { effort: 'low' },
-  max_output_tokens: 1_500,
-  store: false,
-  input: [
-    {
-      role: 'user',
-      content: [
-        {
-          type: 'input_text',
-          text: `This is a screenshot of the Merv app as the person sees it now, at ${path}. Answer for their agent, which cannot see it: ${question || 'Describe what is on the screen.'}\nSay what is shown and where, quote the names, numbers and states visible, and say if something the question asks about is not on screen. No preamble.`,
-        },
-        {
-          type: 'input_image',
-          image_url: `data:image/jpeg;base64,${picture.toString('base64')}`,
-          detail: 'high',
-        },
-      ],
-    },
-  ],
+  effort: 'low',
+  maxTokens: 1_500,
+  image: picture,
+  text: `This is a screenshot of the Merv app as the person sees it now, at ${path}. Answer for their agent, which cannot see it: ${question || 'Describe what is on the screen.'}\nSay what is shown and where, quote the names, numbers and states visible, and say if something the question asks about is not on screen. No preamble.`,
 });
-
-/** That request, answered: the model's answer in words, '' when it gave none. */
-export async function describeScreen(
-  key: string,
-  body: ReturnType<typeof screenRequest>,
-  provider: { modelResponsesUrl?: string; modelIdPrefix?: string } = {},
-) {
-  const { texts, usage } = await responses(key, body, 60_000, provider);
-  return { text: texts.join('\n').trim(), usage };
-}

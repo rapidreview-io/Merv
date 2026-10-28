@@ -13,7 +13,7 @@ import {
 } from '@merv/contracts';
 import { randomBytes } from 'node:crypto';
 import { personKey } from '@merv/fleet/model-ledger';
-import type { ModelRelayHandle } from '@merv/fleet/types';
+import type { ModelRelayHandle, ModelRelayUsage } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
 import {
   createInput,
@@ -27,7 +27,7 @@ import {
   voiceInput,
   warmInput,
 } from './schema.js';
-import { piModelRelay } from './relay.js';
+import { piAnthropicRelay, piAsk, piModelRelay } from './relay.js';
 import { conversationRules } from './conversation-rules.js';
 import {
   profiledCreateInput,
@@ -38,7 +38,7 @@ import {
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
 import { drawRecord } from './record-look.js';
-import { describeScreen, renderScreen, screenRequest, type ScreenAnswer } from './screen.js';
+import { renderScreen, screenAsk, type ScreenAnswer } from './screen.js';
 import type {
   Pi,
   PiCommand,
@@ -49,7 +49,9 @@ import type {
   PiEvent,
   PiHostRecord,
   PiHostView,
+  PiModelCharge,
   PiPlatformTurn,
+  PiRelayGrant,
   PiShow,
   PiSnapshot,
 } from './types.js';
@@ -89,15 +91,15 @@ export class PiService implements Pi {
   private readonly protocol: PiWorkerProtocol;
   readonly config: PiCore['config'];
   readonly streams: PiCore['streams'];
-  /** Each person's Agent tokens today, which every model call of theirs is charged to. */
-  readonly tokens: PiCore['tokens'];
+  /** Each person's Agent spending today, which every model call of theirs is charged to. */
+  readonly spend: PiCore['spend'];
   private readonly disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
   constructor(...args: ConstructorParameters<typeof PiCore>) {
     this.core = new PiCore(...args);
     this.hosts = new PiHosts(this.core);
     this.protocol = new PiWorkerProtocol(this.core, this.hosts);
-    ({ config: this.config, streams: this.streams, tokens: this.tokens } = this.core);
+    ({ config: this.config, streams: this.streams, spend: this.spend } = this.core);
   }
   /** Where Pi reports its interrupted turns and failed passes. */
   set issues(issues: Issues) {
@@ -116,10 +118,10 @@ export class PiService implements Pi {
     await this.hosts.tick();
   };
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
-  readonly tokensUsed: PiCore['tokens']['used'] = (persons, from, to) =>
-    this.core.tokens.used(persons, from, to);
-  readonly setTokenLimit: PiCore['tokens']['setLimit'] = (person, tokens) =>
-    this.core.tokens.setLimit(person, tokens);
+  readonly spendUsed: PiCore['spend']['used'] = (persons, from, to) =>
+    this.core.spend.used(persons, from, to);
+  readonly setSpendLimit: PiCore['spend']['setLimit'] = (person, usd) =>
+    this.core.spend.setLimit(person, usd);
   async initialize(): Promise<void> {
     await this.core.credentials.initialize();
     await this.core.state.migrate('pi', piMigrations);
@@ -178,10 +180,12 @@ export class PiService implements Pi {
     return conversation;
   }
 
-  async create(caller: Caller, input: unknown): Promise<PiConversation> {
+  /** `investigating`: a worker's question, which runs on the question model where one is set. */
+  async create(caller: Caller, input: unknown, investigating = false): Promise<PiConversation> {
     this.core.ready();
     const value = parse(createInput, input);
-    return this.createConversation(caller, value);
+    const model = investigating ? this.core.config.questionModel : undefined;
+    return this.createConversation(caller, value, undefined, model);
   }
 
   /** Trusted server integration only: neither this method nor profile registration is a tool
@@ -199,6 +203,7 @@ export class PiService implements Pi {
     caller: Caller,
     value: { requestId: string; title: string },
     profile?: PiStoredProfile,
+    model?: string,
   ): Promise<PiConversation> {
     const creationHash = digest(profile ? { ...value, profile } : value);
     return this.core.state.transaction(async (tx) => {
@@ -231,7 +236,7 @@ export class PiService implements Pi {
         previousCheckpoint: null,
         model: profile
           ? this.core.profiles.get(profile).model.id
-          : this.core.model(await this.picked(tx, userId, caller.projectId)).id,
+          : this.core.model(model ?? (await this.picked(tx, userId, caller.projectId))).id,
         ...(profile && { profile }),
         source: await this.core.scope.delegationSource(caller, tx),
         createdAt: this.core.time(),
@@ -563,14 +568,15 @@ export class PiService implements Pi {
     const { model, userId } = await this.core.read((tx) =>
       this.core.conversation(tx, caller.conversation!.id),
     );
-    const key = process.env[this.config.modelApiKeyEnv];
-    check(key, 'pi_screen_unavailable', 'The screen could not be read', 503);
     const picture = await renderScreen(this.config.screen, shot);
-    // Charged to the person's Agent tokens as the relay charges a turn's calls.
-    const body = screenRequest(this.core.model(model).id, question, picture, shot.path);
-    const reserved = await this.core.tokens.reserve({ userId }, body);
-    const { text, usage } = await describeScreen(key, body, this.core.config);
-    if (usage) await this.core.tokens.settle(usage, { userId }, reserved);
+    const looker = this.core.model(model).id;
+    const request = piAsk(this.config, screenAsk(looker, question, picture, shot.path), 60_000);
+    check(request, 'pi_screen_unavailable', 'The screen could not be read', 503);
+    // Charged to the person's Agent spending as the relay charges a turn's calls.
+    const reserved = await this.core.spend.reserve({ userId }, looker, request.body);
+    const { texts, usage } = await request.send();
+    if (usage) await this.core.spend.settle(usage, { userId }, reserved);
+    const text = texts.join('\n').trim();
     check(text, 'pi_screen_unavailable', 'The screen could not be read', 502);
     return { page: shot.path, seen: text };
   }
@@ -791,24 +797,48 @@ export class PiService implements Pi {
    *  closes it with the mount. Its usage records go to stderr; Fleet reports its failures. */
   modelRelay(): ModelRelayHandle {
     const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
-    return this.core.fleet.modelRelay(
+    const { config } = this.core;
+    const shared = {
+      models: config.models,
+      authority: {
+        authorize: (token: string) => this.authorizeModel(token),
+        validate: (grant: PiRelayGrant) => this.validateModel(grant),
+      },
+      reserve: (grant: PiRelayGrant, body: Record<string, unknown>) =>
+        this.core.spend.reserve(grant, grant.model, body),
+      onUsage: async (record: ModelRelayUsage, grant: PiRelayGrant, reserved: PiModelCharge) => {
+        log(record);
+        await this.core.spend.settle(record, grant, reserved);
+      },
+    };
+    const openai = this.core.fleet.modelRelay(
       piModelRelay({
-        models: this.core.config.models,
-        responsesUrl: this.core.config.modelResponsesUrl,
-        modelIdPrefix: this.core.config.modelIdPrefix,
-        providerKey: () => process.env[this.core.config.modelApiKeyEnv] ?? '',
-        authority: {
-          authorize: (token) => this.authorizeModel(token),
-          validate: (grant) => this.validateModel(grant),
-        },
-        reserve: (grant, body) => this.core.tokens.reserve(grant, body),
-        onUsage: async (record, grant, reserved) => {
-          log(record);
-          await this.core.tokens.settle(record, grant, reserved);
-        },
+        ...shared,
+        responsesUrl: config.modelResponsesUrl,
+        modelIdPrefix: config.modelIdPrefix,
+        providerKey: () => process.env[config.modelApiKeyEnv] ?? '',
       }),
-      this.core.config.modelApiKeyEnv,
+      config.modelApiKeyEnv,
     );
+    const anthropic = this.core.fleet.modelRelay(
+      piAnthropicRelay({
+        ...shared,
+        providerKey: () => process.env[config.anthropicApiKeyEnv] ?? '',
+      }),
+      config.anthropicApiKeyEnv,
+    );
+    return {
+      handle: (req, res, request) =>
+        (req.url?.startsWith('/pi-model/anthropic/') ? anthropic : openai).handle(
+          req,
+          res,
+          request,
+        ),
+      close: () => {
+        openai.close();
+        anthropic.close();
+      },
+    };
   }
 
   async authorizeModel(token: string) {

@@ -267,12 +267,16 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(models) }).status, 0);
   const rendered = JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config;
   assert.deepEqual(rendered.models, models);
-  // An older env file's retired prices are dropped, not rendered.
+  // An entry's prices price its Agent spending; a price out of range is refused.
   const priced = models.map((model) => ({ ...model, inputUsdPerM: 1, outputUsdPerM: 2 }));
   assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(priced) }).status, 0);
   assert.deepEqual(
     JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config.models,
-    models,
+    priced,
+  );
+  assert.notEqual(
+    run({ ...pi, MERV_PI_MODELS: JSON.stringify([{ ...models[0], outputUsdPerM: -1 }]) }).status,
+    0,
   );
   assert.notEqual(run({ ...pi, MERV_PI_MODELS: 'gpt-6-sol' }).status, 0);
   const [luna] = models;
@@ -289,6 +293,44 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     assert.notEqual(refused.status, 0);
     assert.match(refused.stderr, /MERV_PI_MODELS/);
   }
+  // Claude models are Anthropic's, under their own key; Haiku names conversations and Sol answers
+  // workers' questions.
+  const claude = [
+    { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', effort: 'none' },
+    { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'medium' },
+  ];
+  const withClaude = {
+    ...pi,
+    MERV_PI_MODELS: JSON.stringify(claude),
+    MERV_PI_TITLE_MODEL: 'claude-haiku-5-5',
+    MERV_PI_QUESTION_MODEL: 'gpt-6.1-sol',
+  };
+  const keyless = run(withClaude);
+  assert.notEqual(keyless.status, 0);
+  assert.match(keyless.stderr, /Pi Anthropic key is unavailable/);
+  assert.equal(run({ ...withClaude, MERV_PI_ANTHROPIC_API_KEY: 'sk-ant-private' }).status, 0);
+  const withKey = JSON.parse(readFileSync(output));
+  assert.equal(JSON.stringify(withKey).includes('sk-ant-private'), false);
+  assert.deepEqual(
+    (({ anthropicApiKeyEnv, titleModel, questionModel, models: rendered }) => ({
+      anthropicApiKeyEnv,
+      titleModel,
+      questionModel,
+      rendered,
+    }))(withKey.plugins.find((p) => p.id === 'pi').config),
+    {
+      anthropicApiKeyEnv: 'MERV_PI_ANTHROPIC_API_KEY',
+      titleModel: 'claude-haiku-5-5',
+      questionModel: 'gpt-6.1-sol',
+      rendered: claude,
+    },
+  );
+  const stray = run({
+    ...withClaude,
+    MERV_PI_ANTHROPIC_API_KEY: 'sk-ant-private',
+    MERV_PI_QUESTION_MODEL: 'gpt-6-astra',
+  });
+  assert.match(stray.stderr, /MERV_PI_QUESTION_MODEL must be in MERV_PI_MODELS/);
   assert.equal(run({ ...pi, MERV_PI_MODEL: 'https://untrusted.example' }).status, 0);
   assert.equal(
     'models' in JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config,
@@ -431,6 +473,7 @@ test('Pi rents its machines from one catalog and defers host link readiness to F
   assert.deepEqual(plugin('pi').config, {
     secretEnv: 'PI_PRIVATE_SECRET',
     modelApiKeyEnv: 'PI_PROVIDER_KEY',
+    anthropicApiKeyEnv: 'MERV_PI_ANTHROPIC_API_KEY',
     baseUrl: 'https://merv.example',
     turnTimeoutSeconds: 300,
     idleTimeoutSeconds: 600,
