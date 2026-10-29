@@ -2952,22 +2952,21 @@ pre.math--source {
 }
 
 /* Sign-in and project chooser: the only pages without the shell. --------- */
+/* The column hangs from a fixed height, a little above the middle, so it neither floats low on a
+   tall screen nor jumps as a list in it grows. */
 .signin {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: var(--space-5);
+  padding: clamp(24px, 18vh, 200px) var(--space-5) var(--space-5);
 }
 /* One narrow column on the ground, in the rail's own type: the wordmark, the
    title, the fields. Nothing is boxed, and a button spans the column it ends. */
 .signin-card {
   width: min(360px, 100%);
 }
-/* The chooser is a list that grows, so it hangs from a fixed height rather than
-   floating at the centre and jumping as the search narrows it. */
 .signin--projects {
-  align-items: flex-start;
   padding-top: clamp(24px, 12vh, 120px);
 }
 .signin--projects .signin-card {
@@ -3004,6 +3003,49 @@ pre.math--source {
 }
 .signin-switch:hover {
   color: var(--text);
+}
+/* The way in by key belongs to machines and local actors, so it waits in the page's corner. */
+.signin-corner {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+}
+/* The wordmark and what the page does, on one line; the verb is also the switch to its twin. */
+.signin-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+}
+.signin-head > h1 {
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--faint);
+}
+.signin-head > h1::before {
+  content: '/';
+  margin-right: var(--space-2);
+  color: var(--line-strong);
+}
+.signin-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.signin-mode > svg {
+  opacity: 0.5;
+}
+.signin-mode:hover {
+  color: var(--text);
+}
+.signin-mode:hover > svg {
+  opacity: 1;
 }
 /* The consent an agent client opens: the one page that is a card, because here the card is the
    object — a request held up to be approved. The facts are fields, the grants a list, the rest a
@@ -3142,19 +3184,26 @@ pre.math--source {
   flex: 1;
   border-top: 1px solid var(--line);
 }
-/* A field with a word of its own at its end: the password's Show. */
+/* A field with controls of its own at its end: the password's Show and the arrow that sends. */
 .input-end {
   position: relative;
   display: block;
 }
 .input-end > .input {
-  padding-right: 60px;
+  padding-right: 96px;
 }
-.input-end-btn {
+.input-end-tools {
   position: absolute;
   top: 50%;
   right: 4px;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.input-end-btn {
+  display: inline-flex;
+  align-items: center;
   padding: 4px 8px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -3165,6 +3214,11 @@ pre.math--source {
 }
 .input-end-btn:hover {
   color: var(--text);
+  background: var(--bg-soft);
+}
+.input-end-send {
+  padding: 6px;
+  color: var(--muted);
   background: var(--bg-soft);
 }
 .chooser-top {

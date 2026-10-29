@@ -35,6 +35,7 @@ import {
   type AccountSession,
 } from './api';
 import { Failure, Field, SearchField, relativeTime } from './components';
+import { Icon } from './icons';
 import { browserAuth, setAuthMode, signedInEmail, type AuthConfiguration } from './auth';
 
 export type { Actor, Project, Account } from './api';
@@ -105,10 +106,12 @@ function SignIn({
   const [shown, setShown] = useState(false);
   // A key is how machines and local actors come in; a person is offered it only on asking.
   const [keyed, setKeyed] = useState(false);
+  // The title is the switch between signing in and making an account: the fields are the same.
+  const [joining, setJoining] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
   const refusal = useId();
-  const secret = useId();
   const credential = useRef<HTMLFormElement>(null);
   // A refused credential brings the page back with its field emptied: the cursor goes
   // back into it, and the field names the refusal as what is wrong with it.
@@ -127,9 +130,22 @@ function SignIn({
     event.preventDefault();
     if (!client) return;
     begin('shared');
+    setConfirming(false);
     try {
-      const result = await client.auth.signInWithPassword({ email, password });
+      // The emailed link confirms the address and lands on this page, often in another tab that
+      // cannot finish the sign-in (the code's verifier stays in this one): so the person signs in.
+      const result = joining
+        ? await client.auth.signUp({
+            email,
+            password,
+            options: { emailRedirectTo: `${window.location.origin}/ui/` },
+          })
+        : await client.auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
+      if (!result.data.session) {
+        setConfirming(true);
+        setJoining(false);
+      }
       setPassword('');
     } catch (error) {
       setError(message(error));
@@ -191,35 +207,59 @@ function SignIn({
       </button>
     </form>
   );
+  const person = client && !keyed;
+  const verb = person && joining ? 'Sign up' : 'Sign in';
   return (
     <main className="signin">
       <section className="signin-card">
-        <div className="signin-wordmark">merv</div>
-        <h1 className="signin-title">Sign in</h1>
-        {client && !keyed && (
+        <header className="signin-head">
+          <span className="signin-wordmark">merv</span>
+          <h1>
+            {person ? (
+              <button
+                type="button"
+                className="signin-mode"
+                title={joining ? 'Switch to sign in' : 'Switch to sign up'}
+                onClick={() => {
+                  setJoining(!joining);
+                  setConfirming(false);
+                  setError(undefined);
+                }}
+              >
+                {verb}
+                <Icon name="chevrons" size={12} />
+              </button>
+            ) : (
+              verb
+            )}
+          </h1>
+        </header>
+        {person && (
           <>
             <form onSubmit={passwordSignIn} className="identity-form">
-              <Field
-                label="Email"
+              <input
+                className="input"
                 type="email"
+                placeholder="Email"
+                aria-label="Email"
                 autoComplete="username"
                 autoFocus
                 required
                 value={email}
-                onChange={setEmail}
+                onChange={(event) => setEmail(event.target.value)}
               />
-              <label htmlFor={secret}>
-                Password
-                <span className="input-end">
-                  <input
-                    id={secret}
-                    className="input"
-                    type={shown ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
+              <span className="input-end">
+                <input
+                  className="input"
+                  type={shown ? 'text' : 'password'}
+                  placeholder={joining ? 'Choose a password' : 'Password'}
+                  aria-label="Password"
+                  autoComplete={joining ? 'new-password' : 'current-password'}
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <span className="input-end-tools">
                   <button
                     type="button"
                     className="input-end-btn"
@@ -228,17 +268,28 @@ function SignIn({
                   >
                     {shown ? 'Hide' : 'Show'}
                   </button>
+                  <button
+                    type="submit"
+                    className="input-end-btn input-end-send"
+                    aria-label={joining ? 'Create account' : 'Sign in'}
+                    title={joining ? 'Create account' : 'Sign in'}
+                    disabled={busy}
+                  >
+                    <Icon name="arrow-right" />
+                  </button>
                 </span>
-              </label>
-              <button className="btn btn--primary" disabled={busy} type="submit">
-                {busy ? 'Signing in…' : 'Sign in'}
-              </button>
+              </span>
             </form>
+            {confirming && (
+              <p className="signin-help" role="status">
+                Open the link sent to {email} to confirm it, then sign in here.
+              </p>
+            )}
             <div className="signin-or" role="separator">
               or
             </div>
             <button
-              className="btn"
+              className="btn btn--primary"
               disabled={busy}
               type="button"
               onClick={() => void googleSignIn()}
@@ -247,16 +298,17 @@ function SignIn({
             </button>
           </>
         )}
-        {(!client || keyed) && local}
+        {!person && local}
         <Failure message={error} id={refusal} />
-        <footer className="signin-foot">
-          <SigninHost />
-          {client && (
-            <button type="button" className="signin-switch" onClick={() => setKeyed(!keyed)}>
-              {keyed ? 'Use email' : 'Use a key'}
-            </button>
-          )}
-        </footer>
+        {client && (
+          <button
+            type="button"
+            className="signin-switch signin-corner"
+            onClick={() => setKeyed(!keyed)}
+          >
+            {keyed ? 'Use email' : 'Use a key'}
+          </button>
+        )}
       </section>
     </main>
   );
