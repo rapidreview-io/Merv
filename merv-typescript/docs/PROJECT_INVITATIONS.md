@@ -2,7 +2,7 @@
 
 Settings → Members → Invite member sends an email through Resend. The backend resolves the email to an existing Supabase account through the shared `lookup_user_for_share` RPC. Accounts that do not exist must sign up first; this flow does not create Supabase users or send Supabase authentication invitations.
 
-Invitations create no actor, project membership, project visibility or usage allowance. The invited person signs in and explicitly accepts or declines on the project chooser. An invitation link is only a navigation hint, never a bearer credential. The matching Supabase issuer and subject are required even with the link. Invitations expire after seven days. Operators can revoke them; retiring the inviter's operator membership also withdraws their pending invitations. Acceptance is atomic, retryable and audited, and never revives a removed membership on replay.
+Invitations create no actor, project membership, project visibility or usage allowance. The invited person signs in and explicitly accepts or declines on the project chooser, which a new tab or sign-in opens instead of the last project while an invitation is pending. An invitation link is only a navigation hint, never a bearer credential. The matching Supabase issuer and subject are required even with the link. Invitations expire after seven days. Operators can revoke them; retiring the inviter's operator membership also withdraws their pending invitations. Acceptance is atomic, retryable and audited, and never revives a removed membership on replay.
 
 The HTTP account-ID add-member path now returns `invitation_required`. Internal provisioning and migration helpers remain available. Existing memberships and role changes are unchanged.
 
