@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { currentToken, projectSelection, useScopeVersion } from '../api';
+import { currentToken, projectSelection, readOnly, useScopeVersion } from '../api';
 import { Ago, relativeTime } from '../components';
 import { Icon } from '../icons';
 import { MarkdownPieces, useRecordNames } from '../markdown';
@@ -21,6 +21,7 @@ import { useMenu } from '../record-picker';
 import { useConversation, type Conversation } from './pi-conversation';
 import { useVoice, VoicePanel, type Voice } from './pi-voice';
 import { useScreenAnswer } from './pi-screen';
+import { toolTransport } from './pi-transport';
 import { Floating } from './pi-dock';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
@@ -119,6 +120,15 @@ export function PiProvider({ children }: { children: ReactNode }) {
     }),
     [],
   );
+  // Signing in to a project starts the person's agent machine there, before Pi is opened; unused,
+  // it stops after the idle timeout like any warmed machine.
+  useEffect(() => {
+    if (!readOnly())
+      void toolTransport.warm?.(
+        null,
+        globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      );
+  }, []);
   const voice = useVoice(open.live ? pi : null);
   // What the agent asks of the screen is answered by whatever page the person is on.
   const shown = useScreenAnswer(open.live ? pi : null);
