@@ -1,4 +1,4 @@
-import { call } from '../api';
+import { call, projectSelection } from '../api';
 import type { StreamSource } from '../event-stream';
 import type { PiConversation, PiSnapshot } from '@merv/pi/models';
 
@@ -22,6 +22,10 @@ export interface PiTransport {
   warm?(id: string | null, requestId: string): Promise<PiSnapshot | null>;
 }
 
+/** Warms without a conversation in flight, by project: sign-in's and the Agent page's share one,
+ *  or each would find no empty conversation and make its own. */
+const warming = new Map<string, Promise<PiSnapshot | null>>();
+
 /** The Agent page's transport: Pi's tools, as the signed-in person in the selected project. */
 export const toolTransport: PiTransport = {
   voice: (id, sdp) => call<{ sdp: string }>('pi.voice', { id, sdp }),
@@ -32,8 +36,15 @@ export const toolTransport: PiTransport = {
   events: (id) => `/pi/${encodeURIComponent(id)}/events`,
   create: (requestId) => call<PiConversation>('pi.create', { requestId }),
   // Starts the person's machine quietly: it never holds up a question.
-  warm: (id, requestId) =>
-    call<PiSnapshot>('pi.warm', { requestId, ...(id ? { conversationId: id } : {}) }).catch(
-      () => null,
-    ),
+  warm: (id, requestId) => {
+    const start = () =>
+      call<PiSnapshot>('pi.warm', { requestId, ...(id ? { conversationId: id } : {}) }).catch(
+        () => null,
+      );
+    if (id) return start();
+    const project = projectSelection() ?? '';
+    const pending = warming.get(project) ?? start().finally(() => warming.delete(project));
+    warming.set(project, pending);
+    return pending;
+  },
 };
