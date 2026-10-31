@@ -11,7 +11,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { Drawing } from './elements.js';
+import { bounds, Drawing, rectOf } from './elements.js';
 import {
   drawSchema,
   elementSchema,
@@ -443,7 +443,13 @@ export class BoardService implements Board {
       const merged = changed.length
         ? await this.merge(caller, board, changed, 'draw', tx)
         : { board, accepted: 0 };
-      return { board: merged.board, created: drawing.created, changed: merged.accepted };
+      const region = bounds(changed.map(rectOf));
+      return {
+        board: merged.board,
+        created: drawing.created,
+        changed: merged.accepted,
+        ...(region && { region }),
+      };
     });
   }
 }

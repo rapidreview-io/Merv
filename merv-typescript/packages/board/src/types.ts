@@ -9,6 +9,8 @@ export interface BoardDrawn {
   board: BoardSummary;
   created: Record<string, string>;
   changed: number;
+  /** Where the call's changes stand, for those watching; no answer to the agent carries it. */
+  region?: { x: number; y: number; width: number; height: number };
 }
 
 /** An image already stored, for an image operation: tools turn its source into this first. */

@@ -7878,6 +7878,11 @@ html:has(.board-page) body {
 .board-reveal.is-dark {
   filter: invert(93%) hue-rotate(180deg);
 }
+/* An agent shows as a cursor on the board alone: Excalidraw would list it as a person too. */
+.board-canvas .excalidraw .UserList__wrapper,
+.board-canvas .excalidraw .UserList-Wrapper {
+  display: none;
+}
 .board-history {
   position: absolute;
   z-index: 4;

@@ -37,6 +37,7 @@ import { placeOf } from './pi-screen';
 import { BoardLinkDetails } from './board-link-details';
 import { AddButton, CardPicker, type CardPick } from './board-add';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
+import { BoardPresence } from './board-presence';
 import { BoardReplay } from './board-replay';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
@@ -122,6 +123,7 @@ function BoardCanvasScene({ id }: { id: string }) {
   const known = useRef(new Map<string, number>());
   const revision = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const cursors = useRef<unknown>();
   const saving = useRef<Promise<void> | null>(null);
   /** The shapes as Excalidraw last drew them, read after it unmounts and empties its own scene. */
   const scene = useRef<readonly OrderedExcalidrawElement[]>([]);
@@ -135,6 +137,8 @@ function BoardCanvasScene({ id }: { id: string }) {
   /** Shows what others drew, as they drew it, on a canvas above the board. */
   const player = useRef<Player>();
   const reveal = useRef<HTMLCanvasElement>(null);
+  /** Shows where agents are on the board, as Excalidraw shows collaborators. */
+  const presence = useRef<BoardPresence>();
 
   useEffect(() => {
     let live = true;
@@ -246,7 +250,13 @@ function BoardCanvasScene({ id }: { id: string }) {
       BEHIND_MS,
     );
     player.current = made;
-    return () => made.stop();
+    const here = new BoardPresence(api);
+    presence.current = here;
+    made.pen = here.pen;
+    return () => {
+      made.stop();
+      here.stop();
+    };
   }, [api]);
   // Under a replay, what others draw lands as it comes, to be there on return.
   useEffect(() => {
@@ -280,6 +290,7 @@ function BoardCanvasScene({ id }: { id: string }) {
         }
       }
       asking = false;
+      if (live && scene?.looking) presence.current?.heard(scene.looking);
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
       if (busy(api)) return;
       revision.current = scene.board.revision;
@@ -457,9 +468,16 @@ function BoardCanvasScene({ id }: { id: string }) {
           scene.current = elements;
           files.current = held;
           bring?.(elements, held);
+          // A cursor moving changes no shape, and must not put off the save of one that did.
+          const moved = appState.collaborators !== cursors.current;
+          cursors.current = appState.collaborators;
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
+          if (moved && timer.current) return;
           clearTimeout(timer.current);
-          timer.current = setTimeout(() => void save(), SAVE_MS);
+          timer.current = setTimeout(() => {
+            timer.current = undefined;
+            void save();
+          }, SAVE_MS);
         }}
         renderToolbarEnd={() => <AddButton key="merv-add" onClick={() => setAdding(true)} />}
       >

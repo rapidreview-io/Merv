@@ -1,6 +1,6 @@
 import { isBoardCollaborationTool } from '@merv/contracts/tool-policy';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { agentAudience, isAgentAudience } from './audience.js';
+import { agentAudience, agentClient, isAgentAudience } from './audience.js';
 import type { View } from '@merv/contracts/board-view';
 import {
   check,
@@ -1009,9 +1009,11 @@ export class ToolRegistry implements Tools {
     };
     try {
       const value = await agentAudience.run(agent || isAgentAudience(caller), () =>
-        this.run(name, caller, input, agent, admit, (seen) => {
-          identity = seen;
-        }),
+        agentClient.run(client, () =>
+          this.run(name, caller, input, agent, admit, (seen) => {
+            identity = seen;
+          }),
+        ),
       );
       // A mounted tool's own failure is returned, not thrown, and is a failure all the same.
       const result = value.format === 'mcp' ? (value.value as CallToolResult) : value.mcp;

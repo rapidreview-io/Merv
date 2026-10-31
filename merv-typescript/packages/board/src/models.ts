@@ -40,6 +40,18 @@ export interface BoardScene {
   elements: BoardElement[];
   /** A shape deleted after `since` was purged (30 days on): `elements` is every live shape. */
   whole?: true;
+  /** Where agents were on this board in the last moments, for the page to show. */
+  looking?: BoardLooking[];
+}
+
+/** Where an agent last looked or drew on a board. It is no record: nothing keeps it. */
+export interface BoardLooking {
+  actor: string;
+  name: string;
+  region: { x: number; y: number; width: number; height: number };
+  at: number;
+  /** It drew there, so a stroke being traced there is its own. */
+  drew?: true;
 }
 
 /**
