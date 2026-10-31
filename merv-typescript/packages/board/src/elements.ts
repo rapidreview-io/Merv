@@ -8,11 +8,13 @@ import { randomBytes } from 'node:crypto';
 import { clip, MervError } from '@merv/contracts';
 import { COLORS, INKS, PAINTS, paint, type DrawOp } from './input.js';
 import { strokesOf } from './path.js';
-import type { BoardElement } from './types.js';
+import type { BoardElement, PlacedImage } from './types.js';
 
 type El = BoardElement & Record<string, any>;
 type Rect = { x: number; y: number; width: number; height: number };
 const GAP = 40;
+/** How wide a new image stands, unless asked or smaller. */
+const IMAGE_WIDTH = 640;
 /** The most places tried inside a frame before it grows to take a shape. */
 const SPOTS = 10_000;
 const FONT = 20;
@@ -20,7 +22,7 @@ const LINE = 1.25;
 /** Roughly how wide a character of the hand-drawn font is, for a font size of one. */
 const CHAR = 0.65;
 /** What Excalidraw binds an arrow's end to. */
-const BINDABLE = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'frame']);
+const BINDABLE = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'frame', 'image']);
 /** The icon a card carries for what it opens: the app's own glyph for it, as 24-unit strokes. */
 const CARD_ICONS = {
   board: 'M4.5 5h3v14h-3zM10.5 5h3v8h-3zM16.5 5h3v11h-3z',
@@ -696,7 +698,7 @@ export class Drawing {
     this.created[key] = el.id;
   }
 
-  apply(op: DrawOp) {
+  apply(op: DrawOp, file?: PlacedImage) {
     switch (op.op) {
       case 'note': {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
@@ -996,6 +998,25 @@ export class Drawing {
         if (first && op.key) this.created[op.key] = group;
         return;
       }
+      case 'image': {
+        if (!file) throw new MervError('board_image_source', 'This image was not stored', 400);
+        const { artifactId, page, region, alt } = op;
+        const width = op.width ?? Math.min(IMAGE_WIDTH, file.width);
+        const at = this.place({ width, height: (width * file.height) / file.width }, op);
+        const el = this.add('image', at, {
+          fileId: file.fileId,
+          status: 'saved',
+          scale: [1, 1],
+          crop: null,
+          strokeColor: 'transparent',
+          customData: {
+            ...(this.agent && { by: 'agent' }),
+            ...(alt && { alt }),
+            source: { artifactId, ...(page && { page }), ...(region && { region }) },
+          },
+        });
+        return this.keyed(op.key, el);
+      }
     }
   }
   /** Every shape this call changed, as it now stands. */
@@ -1121,6 +1142,8 @@ export function summarize(elements: BoardElement[]) {
       ...(said(el) && { text: said(el) }),
       ...(el.customData?.target && { target: el.customData.target }),
       ...(el.customData?.details && { details: el.customData.details }),
+      ...(el.customData?.alt && { alt: el.customData.alt }),
+      ...(el.customData?.source && { source: el.customData.source }),
       ...(el.frameId && { frame: el.frameId }),
       ...(el.customData?.by === 'agent' && { by: 'agent' }),
       ...where(el),

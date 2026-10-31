@@ -19,6 +19,10 @@ if (existsSync(new URL('index.html', uiSource))) {
   cpSync(uiSource, uiDestination, { recursive: true });
 }
 
+const pdfBundleDest = new URL('../dist/packages/artifacts/dist/pdf.js', import.meta.url);
+mkdirSync(dirname(fileURLToPath(pdfBundleDest)), { recursive: true });
+copyFileSync(new URL('../packages/artifacts/dist/pdf.js', import.meta.url), pdfBundleDest);
+
 const boardBundle = new URL('../packages/board/dist/renderer.js', import.meta.url);
 const boardBundleDest = new URL('../dist/packages/board/dist/renderer.js', import.meta.url);
 mkdirSync(dirname(fileURLToPath(boardBundleDest)), { recursive: true });

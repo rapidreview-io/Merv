@@ -175,6 +175,27 @@ export const opSchema = z.discriminatedUnion('op', [
     size: z.enum(['s', 'm', 'l', 'native']).optional(),
     ...place,
   }),
+  z.strictObject({
+    op: z.literal('image'),
+    key,
+    /** An image artifact, or a PDF artifact with the page to take. */
+    artifactId: z.string().regex(/^art_[A-Za-z0-9_-]{1,190}$/),
+    page: z.number().int().min(1).optional(),
+    /** The part to crop, in the coordinates artifact.read look reports for that page or image. */
+    region: z
+      .strictObject({
+        x: z.number().finite().min(0).max(100_000),
+        y: z.number().finite().min(0).max(100_000),
+        width: z.number().min(1).max(100_000),
+        height: z.number().min(1).max(100_000),
+      })
+      .optional(),
+    /** What it shows, in a few words: what board.read get says of it. */
+    alt: z.string().trim().min(1).max(200).refine(visible).optional(),
+    /** Its width on the board, its height following. */
+    width: z.number().finite().min(20).max(4_000).optional(),
+    ...place,
+  }),
 ]);
 export type DrawOp = z.infer<typeof opSchema>;
 export const drawSchema = z.strictObject({

@@ -32,6 +32,7 @@ import type {
   BoardHistory,
   BoardScene,
   BoardSummary,
+  PlacedImage,
 } from './types.js';
 import { MOST_IMAGE_BYTES, stacked } from './models.js';
 export type * from './types.js';
@@ -413,7 +414,7 @@ export class BoardService implements Board {
       return { mediaType: imageType(row.content)!, content: row.content };
     });
   }
-  async draw(caller: Caller, value: DrawInput): Promise<BoardDrawn> {
+  async draw(caller: Caller, value: DrawInput, images: PlacedImage[] = []): Promise<BoardDrawn> {
     caller = this.open(caller);
     const input = parse(drawSchema, value);
     check(
@@ -435,7 +436,9 @@ export class BoardService implements Board {
         await this.elements(board.id, undefined, tx),
         !!caller.conversation,
       );
-      for (const op of input.ops) drawing.apply(op);
+      const waiting = [...images];
+      for (const op of input.ops)
+        drawing.apply(op, op.op === 'image' ? waiting.shift() : undefined);
       const changed = drawing.result();
       const merged = changed.length
         ? await this.merge(caller, board, changed, 'draw', tx)

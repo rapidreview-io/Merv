@@ -5,7 +5,7 @@ local PostgreSQL 17 database. Tests create and clean up isolated schemas. Run
 `npm run test:deploy` for release, rollback and hosted-runner checks. Browser
 component tests use the existing DOM harness; the experiment report integration
 also needs Chromium (`npx playwright-core install chromium`). Tool compatibility
-rendering needs `npm run build:board-renderer` once in a fresh checkout. Linux process and
+and PDF rendering need `npm run build:board-renderer` once in a fresh checkout. Linux process and
 root-only isolation checks run only on the matching platform.
 
 ## Runtime target
