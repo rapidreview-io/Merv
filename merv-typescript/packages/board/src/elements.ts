@@ -30,10 +30,10 @@ const CARD_ICONS = {
   web: 'M10.5 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M13.5 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   record: 'M4 6.5l1.5 1.5 3-3M11 6.5h9M4 12.5l1.5 1.5 3-3M11 12.5h9M5.5 18.5h.01M11 18.5h9',
 };
-/** A card's title: at most 40 characters, in at most two lines of the card's width. */
+/** A card's title: at most 40 characters, in as many lines of the card's width as that takes. */
 function cardTitle(text: string) {
   const name = text.length > 40 ? `${clip(text, 39)}…` : text;
-  const title = wrap(name, 19).split('\n').slice(0, 2).join('\n');
+  const title = wrap(name, 19);
   return { name, title, height: 60 + 25 * title.split('\n').length };
 }
 /**
