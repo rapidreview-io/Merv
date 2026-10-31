@@ -56,8 +56,13 @@ const [MOST_OUTCOMES, OUTCOME_CHARS, SENDS_KEPT] = [50, 200_000, 20];
 /** An outcome's row as a line; Postgres may answer a BIGINT as text. */
 const outcomeLine = (row: { id: string; revision: number; record: string }) =>
   ({ id: row.id, revision: Number(row.revision), ...JSON.parse(row.record) }) as OutcomeLine;
-const lineOf = ({ text: _text, createdBy: _by, updatedBy: _last, ...line }: Outcome): OutcomeLine =>
-  line;
+const lineOf = ({
+  text: _text,
+  createdBy: _by,
+  updatedBy: _last,
+  writer: _writer,
+  ...line
+}: Outcome): OutcomeLine => line;
 /** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
 const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
@@ -515,7 +520,7 @@ export class BoardService implements Board {
       return await this.held(caller, boardId, outcomeId, tx);
     });
   }
-  async writeOutcome(caller: Caller, value: OutcomeInput): Promise<OutcomeLine> {
+  async writeOutcome(caller: Caller, value: OutcomeInput, writer?: string): Promise<OutcomeLine> {
     caller = this.open(caller);
     const input = parse(outcomeSchema, value);
     check(
@@ -588,13 +593,15 @@ export class BoardService implements Board {
         );
         const name = input.title ?? before.title;
         if (input.outcome && text === before.text && name === before.title) return before;
+        const { writer: _was, ...kept } = before;
         const next = {
-          ...before,
+          ...kept,
           title: name,
           text,
           revision: before.revision + 1,
           updatedBy: caller.actorId,
           updatedAt: at,
+          ...(writer && { writer }),
         };
         await this.keepOutcome(next, tx, input.board);
         await recorded(this.state, tx, caller, 'board.outcome', input.board, {
@@ -604,6 +611,21 @@ export class BoardService implements Board {
         return next;
       })
       .then(lineOf);
+  }
+  /** A draft nobody wants, as it stood when they said so. What was sent from it stays in Files. */
+  async deleteOutcome(caller: Caller, boardId: string, outcomeId: string, revision: number) {
+    caller = this.open(caller);
+    await this.state.transaction(async (tx) => {
+      await this.editable(caller, tx);
+      const outcome = await this.held(caller, boardId, outcomeId, tx);
+      check(
+        outcome.revision === revision,
+        'board_outcome_conflict',
+        `Expected revision ${revision}, found ${outcome.revision}: it has changed since`,
+        409,
+      );
+      await tx.run('DELETE FROM board_outcomes WHERE board_id=? AND id=?', boardId, outcomeId);
+    });
   }
   async outcomeSent(caller: Caller, value: OutcomeSentInput): Promise<OutcomeLine> {
     caller = this.open(caller);

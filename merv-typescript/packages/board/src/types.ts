@@ -74,7 +74,8 @@ export interface Board {
   /** One of a board's outcomes with its text; `scene` lists them. */
   outcome(caller: Caller, board: string, id: string): Promise<Outcome>;
   /** Creates an outcome, or changes one: edits apply at any revision, content only at its own. */
-  writeOutcome(caller: Caller, input: OutcomeInput): Promise<OutcomeLine>;
+  writeOutcome(caller: Caller, input: OutcomeInput, writer?: string): Promise<OutcomeLine>;
+  deleteOutcome(caller: Caller, board: string, outcome: string, revision: number): Promise<void>;
   /** Notes the file frozen from an outcome; its revision stays, so an unchanged resend is the same. */
   outcomeSent(caller: Caller, input: OutcomeSentInput): Promise<OutcomeLine>;
 }

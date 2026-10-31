@@ -268,7 +268,7 @@ export class Player {
         files: this.stage.files?.(drawn) ?? {},
         exportPadding: ROOM,
         appState: { exportBackground: false, exportWithDarkMode: false },
-        getDimensions: (width, height) => ({
+        getDimensions: (width: number, height: number) => ({
           width: Math.ceil(width * scale),
           height: Math.ceil(height * scale),
           scale,

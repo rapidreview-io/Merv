@@ -1,8 +1,12 @@
 /**
  * What an outcome's pane reckons with text (views/board-outcome.tsx). The person's typing reaches
  * Board as one hunk, in the paper's contract: a find occurring exactly once, and what replaces it.
- * Whatever else moved the text meanwhile, that same hunk is applied to it on the page.
+ * Whatever else moved the text meanwhile, that same hunk is applied to it on the page, and what
+ * then differs reaches the editor as the fewest changes, so nothing else in it moves.
  */
+
+/** How far apart two changes must stand, in characters, to be told apart within a line. */
+const APART = 8;
 
 /** How much two texts share at each end. */
 const edges = (a: string, b: string) => {
@@ -50,6 +54,18 @@ export function rebased(base: string, mine: string, theirs: string): string {
   if (mine === base || mine === theirs) return theirs;
   if (theirs === base) return mine;
   if (!base) return `${theirs}\n\n${mine}`;
+  // Apart, even in one paragraph, each stands where it was made. Touching, neither can say which
+  // characters are whose, so the lines decide below.
+  const [a, b] = [spanOf(base, mine), spanOf(base, theirs)];
+  const [first, second] = a.from <= b.from ? [a, b] : [b, a];
+  if (second.from - first.to >= APART)
+    return (
+      base.slice(0, first.from) +
+      first.insert +
+      base.slice(first.to, second.from) +
+      second.insert +
+      base.slice(second.to)
+    );
   const { find, replace } = hunkOf(base, mine)!;
   const at = theirs.indexOf(find);
   if (at >= 0 && at === theirs.lastIndexOf(find))
@@ -61,16 +77,88 @@ export function rebased(base: string, mine: string, theirs: string): string {
   return `${lead}${replace}\n\n${theirs.slice(after).replace(/^\n+/, '')}`;
 }
 
-/** Where a caret stands once `was` has become `now`: text before it moves it, text after does not. */
-export function caretAfter(was: string, now: string, at: number): number {
-  const { head, tail } = edges(was, now);
-  if (at <= head) return at;
-  if (at >= was.length - tail) return at + now.length - was.length;
-  // Changes on both sides of it: it stays with the words around it, while they stand.
-  const before = was.slice(Math.max(0, at - 40), at);
-  const found = now.indexOf(before + was.slice(at, at + 40));
-  return found < 0 ? now.length - tail : found + before.length;
+export interface Span {
+  from: number;
+  to: number;
+  insert: string;
 }
+/** The one stretch of `a` that turns it into `b`. */
+const spanOf = (a: string, b: string): Span => {
+  const { head, tail } = edges(a, b);
+  return { from: head, to: a.length - tail, insert: b.slice(head, b.length - tail) };
+};
+/** Past this many lines or words each way, a change is one stretch: a rewrite has nothing to keep. */
+const MOST_PIECES = 1500;
+
+/**
+ * What turned `a` into `b`, as few and as small as lines let it be told: words added on either side
+ * of a caret leave it where it is, which one stretch from the first change to the last would not.
+ */
+export function hunksBetween(a: string, b: string): Span[] {
+  if (a === b) return [];
+  const { head, tail } = edges(a, b);
+  // Whole lines, each with its own newline: what is the same line is the same string.
+  const start = head ? a.lastIndexOf('\n', head - 1) + 1 : 0;
+  const lines = (text: string) => {
+    const end = tail ? text.indexOf('\n', text.length - tail) : -1;
+    return text.slice(start, end < 0 ? text.length : end + 1).split(/(?<=\n)/);
+  };
+  const [was, now] = [lines(a), lines(b)];
+  if (was.length > MOST_PIECES || now.length > MOST_PIECES) return [spanOf(a, b)];
+  // Within what differs, word by word: two changes in one paragraph are two changes.
+  return changesIn(was, now, start).flatMap((hunk) => {
+    const cut = spanOf(a.slice(hunk.from, hunk.to), hunk.insert);
+    const [from, to] = [hunk.from + cut.from, hunk.from + cut.to];
+    const [gone, come] = [words(a.slice(from, to)), words(cut.insert)];
+    return gone.length > MOST_PIECES || come.length > MOST_PIECES || !to || from === to
+      ? [{ from, to, insert: cut.insert }]
+      : changesIn(gone, come, from).map((part) => {
+          const edge = spanOf(a.slice(part.from, part.to), part.insert);
+          return { from: part.from + edge.from, to: part.from + edge.to, insert: edge.insert };
+        });
+  });
+}
+const words = (text: string) => text.split(/(?<=\s)(?=\S)|(?<=\S)(?=\s)/);
+
+/** What differs between two lists of pieces, by their longest common run, at offsets from `at`. */
+function changesIn(was: string[], now: string[], at: number): Span[] {
+  const [n, m] = [was.length, now.length];
+  // Read from the end, so that the walk below goes forward.
+  const common = new Uint16Array((n + 1) * (m + 1));
+  const cell = (i: number, j: number) => i * (m + 1) + j;
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      common[cell(i, j)] =
+        was[i] === now[j]
+          ? common[cell(i + 1, j + 1)]! + 1
+          : Math.max(common[cell(i + 1, j)]!, common[cell(i, j + 1)]!);
+  const spans: Span[] = [];
+  let [i, j] = [0, 0];
+  const same = () => i < n && j < m && was[i] === now[j];
+  while (i < n || j < m) {
+    if (same()) {
+      at += was[i++]!.length;
+      j++;
+      continue;
+    }
+    const [from, added] = [at, [] as string[]];
+    while ((i < n || j < m) && !same()) {
+      if (j < m && (i >= n || common[cell(i, j + 1)]! >= common[cell(i + 1, j)]!))
+        added.push(now[j++]!);
+      else at += was[i++]!.length;
+    }
+    spans.push({ from, to: at, insert: added.join('') });
+  }
+  return spans;
+}
+
+/** The document's own title: the words of the heading it opens with, where it opens with one. */
+export const openingTitle = (text: string) =>
+  /^\s*# +([^\n]*)/.exec(text)?.[1]?.replace(/\s+#*\s*$/, '') || null;
+
+/** The fixed sentence that asks Pi for a first draft, as the person could say it; the note says which. */
+export const draftAsk = (kind: string) =>
+  `Draft ${kind} from this board, in the outcome open beside it. Name it, and write one section a call.`;
 
 export interface Handoff {
   projectId: string;

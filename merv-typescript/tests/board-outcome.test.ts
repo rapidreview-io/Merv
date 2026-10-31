@@ -3,7 +3,6 @@ import test from 'node:test';
 import type { Caller } from '@merv/contracts';
 import { httpApp } from './fixtures/app.js';
 import {
-  caretAfter,
   deepLink,
   handoffInline,
   handoffPrompt,
@@ -96,6 +95,24 @@ test('an outcome is written by edits at any revision, and whole only at its own'
   assert.equal('text' in line!, false, 'the poll carries no text');
 });
 
+test('an outcome says which agent last wrote it, and can be deleted', async (t) => {
+  const { board, owner, id } = await fixture(t);
+  const made = await board.writeOutcome(owner, { board: id, title: 'P', content: 'a' }, 'Pi');
+  const outcome = { board: id, outcome: made.id };
+  assert.equal((await board.outcome(owner, id, made.id)).writer, 'Pi');
+  assert.ok(!('writer' in made), 'the line the page polls does not carry it');
+  await board.writeOutcome(owner, { ...outcome, edits: [{ find: 'a', replace: 'b' }] });
+  assert.equal((await board.outcome(owner, id, made.id)).writer, undefined, 'a person wrote last');
+  await assert.rejects(
+    board.deleteOutcome(owner, id, made.id, 1),
+    coded('board_outcome_conflict'),
+    'what was written since the person last saw it stays',
+  );
+  await board.deleteOutcome(owner, id, made.id, 2);
+  await assert.rejects(board.outcome(owner, id, made.id), coded('not_found'));
+  await assert.rejects(board.deleteOutcome(owner, id, made.id, 2), coded('not_found'));
+});
+
 test('a send leaves the revision, and the same send is one entry', async (t) => {
   const { board, owner, id } = await fixture(t);
   const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'text' });
@@ -132,6 +149,20 @@ test('an outcome stays in its project', async (t) => {
     }),
     coded('not_found'),
   );
+});
+
+test('the passage a person has selected is read by its offsets', async (t) => {
+  const { owner, id, tool } = await fixture(t);
+  const write = await tool('board.write', owner, {
+    action: 'outcome',
+    outcome: { board: id, title: 'P', content: 'First sentence. Second sentence.' },
+  });
+  const { outcome } = write as unknown as { outcome: { id: string } };
+  const read = (await tool('board.read', owner, {
+    action: 'outcome',
+    outcome: { board: id, outcome: outcome.id, passage: { from: 16, to: 32 } },
+  })) as unknown as { passage: string };
+  assert.equal(read.passage, 'Second sentence.');
 });
 
 test('freezing an unchanged outcome twice gives the same file through the tools', async (t) => {
@@ -204,14 +235,6 @@ test('typing survives what the agent writes, elsewhere or over it', () => {
   assert.equal(rebased(base, base, below), below, 'nothing typed takes what came');
   assert.equal(rebased(base, mine, base), mine, 'nothing came keeps what was typed');
   assert.equal(rebased('', 'mine', 'theirs'), 'theirs\n\nmine', 'nobody is lost in an empty text');
-});
-
-test('the caret stays with the words it stood in', () => {
-  const was = 'first line\nsecond';
-  assert.equal(caretAfter(was, `${was}\nthird`, 5), 5, 'text after it leaves it');
-  assert.equal(caretAfter(was, `top\n${was}`, 5), 9, 'text before it moves it');
-  assert.equal(caretAfter(was, 'first LINE\nsecond', 7), 10, 'within what changed, to its end');
-  assert.equal(caretAfter('abc', 'XabcY', 2), 3, 'changes on both sides leave it among its words');
 });
 
 test('the handoff prompt names everything, and fits a deep link', () => {

@@ -17,7 +17,7 @@ export const createInput = z.strictObject({
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
 const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 const shapes = String.raw`[\w-]+(?:,[\w-]+)*(?:,\+\d+ more)?`;
-const pointed = String.raw`selected ${shapes}|pointer at \(-?\d+,-?\d+\)(?: near [\w-]+)?|circled ${shapes}`;
+const pointed = String.raw`selected ${shapes}|pointer at \(-?\d+,-?\d+\)(?: near [\w-]+)?|circled ${shapes}|outcome [\w-]+(?: chars \d+-\d+)?`;
 /** What a person's board page says they point at, and nothing else: ids and numbers in this form. */
 const pointingNote = new RegExp(
   String.raw`^\[board [\w-]+(?:: (?:${pointed})(?:; (?:${pointed}))*)?\]$`,
