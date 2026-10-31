@@ -20,6 +20,42 @@ export const inView = (rect: Rect, view: Rect) =>
   rect.x + rect.width <= view.x + view.width &&
   rect.y + rect.height <= view.y + view.height;
 
+/** A camera as Excalidraw keeps it: the board's offset in the view, and the zoom. */
+export interface Camera {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+}
+/** How far inside the clear part of the view a followed shape stands, on the screen. */
+const MARGIN = 48;
+/** The zoom at which a place just fits the clear part of the view. */
+export const zoomToFit = (place: Rect, clear: Rect) =>
+  Math.min(
+    (clear.width - 2 * MARGIN) / (place.width || 1),
+    (clear.height - 2 * MARGIN) / (place.height || 1),
+  );
+/**
+ * The camera nearest this one that shows all of a place in the clear part of the view (in screen
+ * pixels): no move if it is in sight, the least pan if it fits, otherwise zoomed out far enough
+ * and centred on it. It never zooms in.
+ */
+export function cameraFor(place: Rect, clear: Rect, now: Camera): Camera {
+  const zoom = Math.max(0.1, Math.min(now.zoom, zoomToFit(place, clear)));
+  const scroll = (scrollAt: number, at: number, size: number, from: number, room: number) => {
+    const [start, end] = [from / zoom - scrollAt, (from + room) / zoom - scrollAt];
+    const edge = MARGIN / zoom;
+    if (zoom < now.zoom) return (from + room / 2) / zoom - at - size / 2;
+    if (at - edge < start) return from / zoom - at + edge;
+    if (at + size + edge > end) return (from + room) / zoom - at - size - edge;
+    return scrollAt;
+  };
+  return {
+    zoom,
+    scrollX: scroll(now.scrollX, place.x, place.width, clear.x, clear.width),
+    scrollY: scroll(now.scrollY, place.y, place.height, clear.y, clear.height),
+  };
+}
+
 /**
  * Where something of this size lands: to the right of what is chosen, level with its top, or with
  * nothing chosen in the middle of the view; and where that is taken, the first free place below it.

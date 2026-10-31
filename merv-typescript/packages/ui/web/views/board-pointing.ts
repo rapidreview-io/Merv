@@ -19,6 +19,7 @@ type Shape = {
   containerId?: string | null;
   customData?: { card?: boolean; target?: unknown };
   updated?: number;
+  angle?: number;
 };
 type Spot = { x: number; y: number };
 
@@ -36,6 +37,12 @@ const boxOf = (el: Shape) => {
   const [x, y] = [Math.min(...xs), Math.min(...ys)];
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 };
+/** Where a spot on the board falls in a shape's own frame, the shape turned back about its middle. */
+const unturned = (spot: Spot, box: ReturnType<typeof boxOf>, angle = 0): Spot => {
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  const [dx, dy, cos, sin] = [spot.x - cx, spot.y - cy, Math.cos(angle), Math.sin(angle)];
+  return { x: cx + dx * cos + dy * sin, y: cy - dx * sin + dy * cos };
+};
 /** A freehand stroke that comes back near where it began, around something of a size. */
 const closed = ({ type, points }: Shape) => {
   if (type !== 'freedraw' || !points || points.length < 8) return false;
@@ -45,7 +52,9 @@ const closed = ({ type, points }: Shape) => {
   return size >= 30 && Math.hypot(last[0] - first[0], last[1] - first[1]) <= size * 0.3;
 };
 /** Whether a spot on the board is inside a stroke's outline. */
-const within = (spot: Spot, { x, y, points }: Shape) => {
+const within = (at: Spot, stroke: Shape) => {
+  const { x, y, points } = stroke;
+  const spot = unturned(at, boxOf(stroke), stroke.angle);
   let inside = false;
   for (const [i, a] of points!.entries()) {
     const b = points!.at(i - 1)!;
@@ -99,9 +108,10 @@ export function pointingNote(input: {
     const near = others
       .map((el) => {
         const box = boxOf(el);
+        const spot = unturned(input.pointer!, box, el.angle);
         const away = Math.hypot(
-          Math.max(box.x - x, 0, x - box.x - box.width),
-          Math.max(box.y - y, 0, y - box.y - box.height),
+          Math.max(box.x - spot.x, 0, spot.x - box.x - box.width),
+          Math.max(box.y - spot.y, 0, spot.y - box.y - box.height),
         );
         return { el, away, area: box.width * box.height };
       })
@@ -130,6 +140,8 @@ export class BoardPointing {
   private resting?: ReturnType<typeof setTimeout>;
   /** Strokes that are nobody's fresh circle: others drew them, or a message already went after. */
   private others = new Set<string>();
+  /** The shapes the last note was made from. */
+  private noted: readonly Shape[] = [];
   constructor(
     private api: ExcalidrawImperativeAPI,
     private board: string,
@@ -147,20 +159,23 @@ export class BoardPointing {
   note = () => {
     const { selectedElementIds, zoom } = this.api.getAppState();
     const now = Date.now();
-    const shapes = this.api.getSceneElements() as readonly Shape[];
-    const note = pointingNote({
+    this.noted = this.api.getSceneElements() as readonly Shape[];
+    return pointingNote({
       board: this.board,
-      shapes,
+      shapes: this.noted,
       selected: selectedElementIds,
       ...(this.rest && now - this.rest.at < POINTER_MS && { pointer: this.rest }),
       reach: NEAR_PX / zoom.value,
       others: this.others,
       now,
     });
-    // Said once: a circle goes with one message, and so does a pointer the hand has since left.
-    this.landed(shapes);
+  };
+  /** Said once: a circle goes with one message, and so does a pointer the hand has since left. */
+  said = () => {
+    const standing = new Set(this.api.getSceneElements().map((el) => el.id));
+    this.others = new Set([...this.others].filter((id) => standing.has(id)));
+    this.landed(this.noted);
     if (!onCanvas()) this.rest = undefined;
-    return note;
   };
   stop() {
     clearTimeout(this.resting);
