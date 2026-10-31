@@ -481,6 +481,11 @@
           "readOnly": true
         },
         {
+          "name": "board.outcome.sent",
+          "description": "Note the file frozen from an outcome as the person sent it on.",
+          "readOnly": false
+        },
+        {
           "name": "board.save",
           "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
           "readOnly": false
@@ -521,6 +526,11 @@
           "name": "board.history",
           "description": "A board's history in order, a page at a time after a revision (the page's replay reads this).",
           "readOnly": true
+        },
+        {
+          "name": "board.outcome.sent",
+          "description": "Note the file frozen from an outcome as the person sent it on.",
+          "readOnly": false
         },
         {
           "name": "board.save",

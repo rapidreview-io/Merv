@@ -34,8 +34,37 @@ export interface BoardElement {
   [field: string]: Json | undefined;
 }
 
+/** One way an outcome left the board: the file frozen from it at a revision of it. */
+export interface OutcomeSent {
+  at: string;
+  how: 'claude' | 'copy' | 'fleet';
+  artifactId: string;
+  revision: number;
+}
+
+/** An outcome without its text: what the page polls and what board.read lists. */
+export interface OutcomeLine {
+  id: string;
+  title: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  sent: OutcomeSent[];
+}
+
+/**
+ * What a board led to: a titled Markdown draft that a person and their agent edit side by side.
+ * Saving is implicit, so it has no history of its own; each send freezes a file, and those are it.
+ */
+export interface Outcome extends OutcomeLine {
+  text: string;
+  createdBy: string;
+  updatedBy: string;
+}
+
 export interface BoardScene {
   board: BoardSummary;
+  outcomes: OutcomeLine[];
   /** Every live shape, or with `since` every shape changed after that revision, deleted ones too. */
   elements: BoardElement[];
   /** A shape deleted after `since` was purged (30 days on): `elements` is every live shape. */

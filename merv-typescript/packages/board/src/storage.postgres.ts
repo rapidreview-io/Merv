@@ -26,4 +26,9 @@ CREATE INDEX board_elements_file ON board_elements(file_id) WHERE file_id IS NOT
 CREATE TABLE board_history(board_id TEXT NOT NULL,revision BIGINT NOT NULL,actor_id TEXT NOT NULL,began_at TEXT NOT NULL,kind TEXT NOT NULL,shapes TEXT NOT NULL,PRIMARY KEY(board_id,revision));
 CREATE TABLE board_history_files(project_id TEXT NOT NULL,file_id TEXT NOT NULL,PRIMARY KEY(project_id,file_id));
 `,
+  // A board's outcomes: titled drafts, mutable, each with a revision. The text stands apart from the
+  // record, because the page asks for every record of the board each poll.
+  5: `
+CREATE TABLE board_outcomes(board_id TEXT NOT NULL,id TEXT NOT NULL,revision BIGINT NOT NULL,record TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(board_id,id));
+`,
 };

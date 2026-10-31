@@ -117,7 +117,10 @@ const PICTURE_WIDTH = 640;
 const CARD = { width: 280, height: 110 };
 const PICTURE_SHAPE = 0.75;
 
-function BoardCanvasScene({ id }: { id: string }) {
+/** `onOutcomes` hears what each poll says of the board's outcomes. */
+type CanvasProps = { id: string; onOutcomes?(lines: BoardScene['outcomes']): void };
+
+function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -289,6 +292,7 @@ function BoardCanvasScene({ id }: { id: string }) {
         () => null,
       );
       if (scene) {
+        onOutcomes?.(scene.outcomes);
         try {
           await ensureBoardFonts(scene.elements);
         } catch (error) {
@@ -617,6 +621,6 @@ function BoardCanvasScene({ id }: { id: string }) {
 }
 
 /** A different board gets separate refs, pending saves, and first-scene state. */
-export default function BoardCanvas({ id }: { id: string }) {
-  return <BoardCanvasScene key={id} id={id} />;
+export default function BoardCanvas({ id, onOutcomes }: CanvasProps) {
+  return <BoardCanvasScene key={id} id={id} onOutcomes={onOutcomes} />;
 }
