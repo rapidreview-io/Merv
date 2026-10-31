@@ -17,7 +17,6 @@ import {
   useSyncExternalStore,
   type ComponentProps,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
@@ -126,14 +125,13 @@ const PICTURE_WIDTH = 640;
 const CARD = { width: 280, height: 110 };
 const PICTURE_SHAPE = 0.75;
 
-/** `onOutcomes` hears what each poll says of the board's outcomes; `head` is where its line ends. */
+/** `onOutcomes` hears what each poll says of the board's outcomes. */
 type CanvasProps = {
   id: string;
   onOutcomes?(lines: BoardScene['outcomes']): void;
-  head?: HTMLElement | null;
 };
 
-function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
+function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -328,12 +326,22 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
     };
   }, [api, id]);
   // Under a replay, what others draw lands as it comes, to be there on return.
+  const wasReplaying = useRef(false);
   useEffect(() => {
     if (!player.current) return;
     if (replaying) player.current.finish();
+    // Pressing Play is a hand on the board: the view is no longer the agent's to move.
+    if (replaying) follow.current?.release();
     player.current.instant = replaying;
-    // Back from one, the focus is on the board again, as a paste needs it.
-    if (!replaying) focusBoard();
+    // Back from one, the focus is on the board again, as a paste needs it, unless it has moved on.
+    const focused = document.activeElement;
+    if (
+      !replaying &&
+      wasReplaying.current &&
+      (!focused || focused === document.body || focused.closest('.board-canvas'))
+    )
+      focusBoard();
+    wasReplaying.current = replaying;
   }, [replaying]);
 
   // What others drew since the revision in hand: played in the order they drew it, around what the
@@ -702,53 +710,33 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
       {api && <BoardProposal api={api} />}
-      {replaying ? (
-        <BoardReplay id={id} editor={editor} close={() => setReplaying(false)} />
-      ) : (
-        <BoardTalk
-          doing={() => {
-            const said = presence.current?.doing();
-            return {
-              ...said,
-              playing: !!player.current?.waiting && (said?.drewMs ?? Infinity) < BEHIND_MS,
-              waiting: api && busy(api) ? waiting.current + (player.current?.waiting ?? 0) : 0,
-            };
-          }}
-          following={() => !!follow.current?.following}
-          jump={() => {
-            follow.current?.resume(presence.current?.doing().region);
-            focusBoard();
-          }}
-          stepIn={() => player.current?.hurry()}
+      <BoardTalk
+        doing={() => {
+          const said = presence.current?.doing();
+          return {
+            ...said,
+            playing: !!player.current?.waiting && (said?.drewMs ?? Infinity) < BEHIND_MS,
+            waiting: api && busy(api) ? waiting.current + (player.current?.waiting ?? 0) : 0,
+          };
+        }}
+        following={() => !!follow.current?.following}
+        jump={() => {
+          follow.current?.resume(presence.current?.doing().region);
+          focusBoard();
+        }}
+        stepIn={() => player.current?.hurry()}
+      />
+      {api && (drawnOn || first.board.revision > 0) && (
+        <BoardReplay
+          id={id}
+          live={api}
+          editor={editor}
+          free={() => !busy(api)}
+          settle={save}
+          revision={() => revision.current}
+          mode={setReplaying}
         />
       )}
-      {head &&
-        (drawnOn || first.board.revision > 0) &&
-        !replaying &&
-        createPortal(
-          <button
-            type="button"
-            className="btn-text"
-            title="History on: project members can replay this board, erased work too."
-            onClick={() => {
-              clearTimeout(timer.current);
-              timer.current = undefined;
-              // Excalidraw hears some keys from anywhere, and acts on what is selected.
-              api?.updateScene({
-                appState: {
-                  selectedElementIds: {},
-                  selectedGroupIds: {},
-                  selectedLinearElement: null,
-                },
-                captureUpdate: CaptureUpdateAction.NEVER,
-              });
-              void save().then(() => setReplaying(true));
-            }}
-          >
-            Replay
-          </button>,
-          head,
-        )}
     </div>
   );
 }
