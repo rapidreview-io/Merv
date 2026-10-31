@@ -39,6 +39,10 @@
       "name": "@merv/board/tools"
     },
     {
+      "id": "board-links",
+      "name": "@merv/board/links"
+    },
+    {
       "id": "board-ui",
       "name": "@merv/board/ui",
       "required": false

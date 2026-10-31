@@ -9,16 +9,17 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import type { Outcome, OutcomeLine, OutcomeSent } from '@merv/board/models';
 import { type ApiError, call, readOnly, safely } from '../api';
-import { Ago, useMoreMenu, useSidebarEscape } from '../components';
+import { useMoreMenu, useSidebarEscape } from '../components';
 import { Icon } from '../icons';
 import { pathOf, useRows } from '../navigation';
 import { useSession, writes } from '../session';
 import { useRoomy } from '../theme';
 import { useAgent } from './pi';
 import { pointPassage } from './board-pointing';
+import { SendControl, WorkLine, type Way } from './board-outcome-send';
 import type { HandReport } from './board-outcome-hand';
 import type { OutcomeEditor } from './board-outcome-editor';
 import {
@@ -41,11 +42,6 @@ const MOST_RETRY_MS = 15_000;
 const JUST_WRITTEN_MS = 10_000;
 /** What a blank outcome is called until someone names it. */
 const UNTITLED = 'Untitled';
-const HOW: Record<OutcomeSent['how'], string> = {
-  claude: 'Sent to Claude Code',
-  copy: 'Prompt copied',
-  fleet: 'Sent to Fleet',
-};
 const loadEditor = () => import('./board-outcome-editor');
 const newest = (lines: OutcomeLine[]) =>
   [...lines].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).at(-1);
@@ -87,6 +83,12 @@ export function useOutcomes(board: string, first: OutcomeLine[] | undefined) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const pushed = useRef(false);
+  /** Whether the pane has just come up, rather than gone over to another outcome. */
+  const up = useRef(false);
+  const arriving = !up.current;
+  useEffect(() => {
+    up.current = !!shown;
+  }, [shown]);
   const open = (id: string) => {
     if (shown) shut.current.add(shown);
     shut.current.delete(id);
@@ -113,9 +115,12 @@ export function useOutcomes(board: string, first: OutcomeLine[] | undefined) {
     const last = newest(lines);
     return last ? open(last.id) : fresh();
   };
+  /** Struck from the list at once: the word that opens the pane must not go to it before the poll. */
+  const gone = (id: string) =>
+    setPolled((held) => (held ?? first ?? []).filter((line) => line.id !== id));
   /** Gone, and the pane goes on to the next one there is. */
   const dropped = (id: string) => {
-    setPolled((held) => (held ?? first ?? []).filter((line) => line.id !== id));
+    gone(id);
     const next = newest(lines.filter((line) => line.id !== id));
     shut.current.add(id);
     if (next) show(next.id, true);
@@ -126,7 +131,20 @@ export function useOutcomes(board: string, first: OutcomeLine[] | undefined) {
     if (full) setFull(false);
     else if (!document.activeElement?.closest('.board-canvas')) close();
   });
-  return { lines, shown, full, setFull, report, open, close, toggle, fresh, dropped };
+  return {
+    lines,
+    shown,
+    full,
+    setFull,
+    report,
+    open,
+    close,
+    toggle,
+    fresh,
+    gone,
+    dropped,
+    arriving,
+  };
 }
 type Place = ReturnType<typeof useOutcomes>;
 
@@ -152,7 +170,8 @@ const copying = async (text: Promise<string>) => {
   const blob = text.then((value) => new Blob([value], { type: 'text/plain' }));
   await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
 };
-const version = (line: OutcomeLine) => `${line.revision}/${line.sent.at(-1)?.at}`;
+const version = (line: OutcomeLine) =>
+  `${line.revision}/${line.sent.at(-1)?.at}/${line.sent.filter((one) => one.taskId).length}`;
 type Frozen = { artifactId: string; revision: number };
 
 /** What a tab holds of a text it has not yet saved, so that nothing typed dies with the tab. */
@@ -163,50 +182,6 @@ const keep = (key: string, base: string, text: string) =>
 const forget = (key: string) => safely(() => localStorage.removeItem(key));
 const kept = (key: string): { base: string; text: string } | null =>
   safely(() => JSON.parse(localStorage.getItem(key) ?? 'null'), null);
-
-/** The way to the frozen files of an outcome: how it last went, and every send behind that. */
-function Sends({
-  sent,
-  revision,
-  files,
-}: {
-  sent: OutcomeSent[];
-  revision: number;
-  files?: string;
-}) {
-  const last = sent.at(-1);
-  if (!last) return null;
-  const file = (one: OutcomeSent) =>
-    files ? (
-      <Link to={`${files}/${one.artifactId}`} target="_blank">
-        View file
-      </Link>
-    ) : null;
-  const line = (one: OutcomeSent) => (
-    <>
-      {HOW[one.how]} · <Ago at={one.at} />
-      {files && ' · '}
-      {file(one)}
-    </>
-  );
-  const earlier = sent.slice(0, -1).reverse();
-  return (
-    <div className="board-outcome-sends">
-      {line(last)}
-      {last.revision !== revision && ' · changed since'}
-      {!!earlier.length && (
-        <details>
-          <summary>Earlier</summary>
-          <ul>
-            {earlier.map((one) => (
-              <li key={`${one.how}${one.at}`}>{line(one)}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </div>
-  );
-}
 
 /** The drag that makes the pane wider or narrower, kept for this browser. */
 const WIDTH = 'merv:outcome-width';
@@ -271,7 +246,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   const titleBox = useRef<HTMLInputElement>(null);
   const [problem, setProblem] = useState('');
   const [hand, setHand] = useState<HandReport | null>(null);
-  const [note, setNote] = useState<'copied' | 'asked' | 'open' | ''>('');
+  const [note, setNote] = useState<'copied' | 'open' | ''>('');
   const noteTimer = useRef<ReturnType<typeof setTimeout>>();
   /** A word on the document's top line, for a moment. */
   const say = (words: typeof note, ms = SAID_MS) => {
@@ -468,7 +443,10 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
           board,
           outcome: id,
           expectedRevision: was.revision,
-        }).catch(() => undefined);
+        }).then(
+          () => place.gone(id),
+          () => undefined,
+        );
       else void push();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -500,7 +478,8 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     const main = box.closest('.board-plane')?.querySelector('.board-main');
     const watch = new ResizeObserver(() => {
       const beside = !!main && (main as HTMLElement).offsetWidth > 0;
-      root.setProperty('--outcome-pane', beside ? `${box.offsetWidth}px` : '0px');
+      // With the gutter either side of the sheet.
+      root.setProperty('--outcome-pane', beside ? `${box.offsetWidth + 16}px` : '0px');
     });
     watch.observe(box);
     return () => {
@@ -584,19 +563,19 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       if (file) await mark('copy', file);
       say('copied');
     });
-  /** What Pi is to be told once its conversation stands, and what comes of it having been said. */
-  const [asking, setAsking] = useState<{ words: string; then?(): Promise<void> } | null>(null);
+  /** What Pi is to be told once its conversation stands. */
+  const [asking, setAsking] = useState<{ words: string } | null>(null);
   const askedDraft = useRef(false);
+  const [refused, setRefused] = useState(false);
   const fleet = () =>
     act(async () => {
       const frozen = await freeze();
       if (!frozen) return;
+      setRefused(false);
+      // Noted first: the task may come at any moment after the ask, and it finds its send by this.
+      await mark('fleet', frozen);
       setAsking({
         words: `Create a task from outcome ${id} on board ${board}: derive its checks from the document and name the frozen file ${frozen.artifactId} in its goal, to read first.`,
-        then: async () => {
-          await mark('fleet', frozen).catch(() => undefined);
-          say('asked');
-        },
       });
       agent?.start();
     });
@@ -610,12 +589,11 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   useEffect(() => {
     if (!asking || !pi || !listed) return;
     setAsking(null);
-    void pi.send(asking.words).then(async (said) => {
-      if (!said) {
-        askedDraft.current = false;
-        return setProblem('Not sent: Pi is busy or unavailable. Try again then.');
-      }
-      await asking.then?.();
+    void pi.send(asking.words).then((said) => {
+      if (said) return;
+      askedDraft.current = false;
+      setRefused(true);
+      setProblem('Not sent: Pi is busy or unavailable. Try again then.');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asking, listed]);
@@ -640,16 +618,26 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     );
   };
 
+  const arrived = useRef(place.arriving);
   const more = useMoreMenu();
+  const SENDS: Record<Way, () => Promise<void>> = { fleet, claude: open, copy };
+  const ways: Way[] = keeps
+    ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
+    : ['copy'];
   const sent = record?.sent ?? [];
-  const blocked = !hasText || sending;
   const showsTitle = !titled;
   const named = title ?? (record?.title === UNTITLED ? '' : (record?.title ?? line?.title ?? ''));
   const files = pathOf(rows, 'artifacts');
   const offerDraft = member && agent && !hasText && !hand;
   return (
     // data-draft: Escape is the pane's while it stands, not the way out of the board.
-    <aside className="board-outcome" aria-label="Outcome" data-draft ref={pane}>
+    <aside
+      className="board-outcome"
+      aria-label="Outcome"
+      data-draft
+      data-arriving={arrived.current ? '' : undefined}
+      ref={pane}
+    >
       {!place.full && <Grip pane={pane} />}
       <header className="board-outcome-head">
         <button type="button" className="btn-text board-outcome-back" onClick={place.close}>
@@ -668,57 +656,19 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
               </button>
             ))}
         </div>
-        {note && (
-          <span className="board-outcome-said" role="status">
-            {note === 'copied' && 'Copied'}
-            {note === 'asked' && 'Asked Pi'}
-            {note === 'open' && (
-              <>
-                Not opened?{' '}
-                <button type="button" className="btn-text" onClick={() => void copy()}>
-                  Copy prompt
-                </button>
-              </>
-            )}
-          </span>
-        )}
         <span className="running-ends board-outcome-ends">
-          {hasText && keeps && roomy && (
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={blocked}
-              onClick={() => void open()}
-            >
-              Open in Claude Code
-            </button>
-          )}
-          {hasText && !(keeps && roomy) && (
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={blocked}
-              onClick={() => void copy()}
-            >
-              Copy prompt
-            </button>
+          {hasText && (
+            <SendControl
+              ways={ways}
+              quiet={sent.at(-1)?.revision === record?.revision}
+              busy={sending}
+              said={note === 'copied' ? 'Copied' : undefined}
+              go={(way) => void SENDS[way]()}
+            />
           )}
           {member &&
             more.menu(
               <>
-                {hasText &&
-                  keeps &&
-                  roomy &&
-                  more.item('Copy prompt', () => {
-                    more.close();
-                    void copy();
-                  })}
-                {hasText &&
-                  keeps &&
-                  more.item('Send to Fleet', () => {
-                    more.close();
-                    void fleet();
-                  })}
                 {more.item('New outcome', () => {
                   more.close();
                   void place.fresh().catch((error: Error) => setProblem(error.message));
@@ -778,7 +728,16 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       {lead &&
         createPortal(
           <>
-            <Sends sent={sent} revision={record?.revision ?? 0} files={files} />
+            <WorkLine
+              sent={sent}
+              revision={record?.revision ?? 0}
+              files={files}
+              thinking={busy || !!asking}
+              refused={refused}
+              unsure={note === 'open'}
+              copy={() => void copy()}
+              {...(keeps && !!agent && { again: () => void fleet() })}
+            />
             {showsTitle && (
               <input
                 ref={titleBox}

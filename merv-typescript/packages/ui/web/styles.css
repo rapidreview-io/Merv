@@ -7920,8 +7920,8 @@ html:has(.board-page) body {
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
-  --doc-pad: 36px;
-  --doc-measure: 660px;
+  --doc-pad: 40px;
+  --doc-measure: 620px;
 }
 .board-plane[data-full] .board-main,
 .board-outcome-back {
@@ -7934,8 +7934,42 @@ html:has(.board-page) body {
         clamp(420px, calc(100% - 740px), 760px)
       );
   }
+  /* A sheet set down beside the board; the gutter of page around it is what says so. */
+  .board-plane[data-outcome]:not([data-full]) {
+    background: var(--bg);
+  }
   .board-plane:not([data-full]) .board-outcome {
-    border-left: 1px solid var(--line);
+    margin: 8px;
+    border-radius: 12px;
+    box-shadow:
+      0 0 0 1px var(--line),
+      0 1px 2px rgba(16, 24, 40, 0.04),
+      0 12px 32px rgba(16, 24, 40, 0.06);
+  }
+  :root[data-theme='dark'] .board-plane:not([data-full]) .board-outcome {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 12px 32px rgba(0, 0, 0, 0.45);
+  }
+  .board-plane:not([data-full]) .board-outcome-doc {
+    overflow: clip;
+    border-radius: 0 0 12px 12px;
+  }
+  .board-outcome[data-arriving] {
+    animation: board-outcome-sets 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@keyframes board-outcome-sets {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-outcome[data-arriving],
+  .board-send,
+  .board-outcome-work {
+    animation: none !important;
   }
 }
 @container board (max-width: 899.98px) {
@@ -7998,15 +8032,62 @@ html:has(.board-page) body {
   flex: none;
   align-items: center;
 }
-.board-outcome-said {
-  flex: none;
-  font-size: var(--text-sm);
-  color: var(--muted);
-  white-space: nowrap;
+.board-send {
+  position: relative;
+  display: flex;
+  gap: 1px;
+  margin-right: var(--space-2);
+  animation: board-outcome-arrive 180ms ease-out;
 }
-.board-outcome-ends .btn--primary {
+.board-send > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg-elev);
+  font: 500 13px/1 var(--font-body);
   white-space: nowrap;
-  animation: board-outcome-arrive 240ms ease-out;
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+.board-send > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 82%, var(--bg-elev));
+}
+.board-send > button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+.board-send svg {
+  width: 13px;
+  height: 13px;
+  transform: rotate(90deg);
+}
+.board-send > button:has(+ .board-send-more) {
+  border-radius: 6px 0 0 6px;
+}
+.board-send > .board-send-more {
+  padding: 0 6px;
+  border-radius: 0 6px 6px 0;
+}
+.board-send[data-quiet] > button {
+  background: none;
+  color: var(--muted);
+}
+.board-send[data-quiet] > button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.board-send .file-menu-panel {
+  width: 240px;
+}
+.board-send .file-menu-item small {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--faint);
 }
 @keyframes board-outcome-arrive {
   from {
@@ -8080,37 +8161,78 @@ html:has(.board-page) body {
 }
 /* The page's top: how it was last sent, its title, and the first thing to say on an empty one. */
 .board-outcome-lead {
+  position: relative;
   padding-block: var(--space-5) 0;
 }
-.board-outcome-sends {
-  margin-bottom: var(--space-3);
-  font-size: var(--text-sm);
+.board-outcome-work {
+  margin-bottom: 20px;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--faint);
+  animation: board-outcome-arrive 180ms ease-out;
 }
-.board-outcome-sends a {
+.board-outcome-work :is(a, button) {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  cursor: pointer;
 }
-.board-outcome-sends a:hover {
+.board-outcome-work :is(a, button):hover:not(:disabled) {
   color: var(--text);
 }
-.board-outcome-sends details {
-  display: inline;
-  margin-left: var(--space-1);
+.board-outcome-work :is(a, button:not(.board-work-open)) {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
 }
-.board-outcome-sends summary {
-  display: inline;
-  cursor: pointer;
-  list-style: none;
+.board-outcome-work b {
+  font-weight: 500;
+  color: var(--muted);
 }
-.board-outcome-sends summary::before {
-  content: '· ';
+.board-outcome-work i {
+  font-style: normal;
+  color: var(--ghost);
 }
-.board-outcome-sends ul {
+.board-outcome-work p {
   margin: var(--space-1) 0 0;
-  padding: 0;
-  list-style: none;
+  color: var(--muted);
+}
+.board-outcome-work .board-work-open {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  text-align: left;
+}
+.board-work-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-top: 6.5px;
+  background: var(--ghost);
+}
+.board-outcome-work[data-state='working'] .board-work-dot {
+  background: var(--supports);
+  animation: cm-hand-breathe 1.6s ease-in-out infinite;
+}
+.board-outcome-work[data-state='asks'] .board-work-dot {
+  background: var(--refutes);
+}
+.board-outcome-work[data-state='asks'] b {
+  color: var(--text);
+}
+.board-outcome-work .thread-compose {
+  margin-top: var(--space-2);
+  align-items: center;
+}
+.board-outcome-work .thread-compose .textarea {
+  resize: none;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
 }
 .board-outcome-title {
   display: block;
@@ -8120,7 +8242,7 @@ html:has(.board-page) body {
   border: 0;
   outline: 0;
   background: transparent;
-  font: 650 30px/1.25 var(--font-body);
+  font: 600 28px/1.2 var(--font-body);
   letter-spacing: -0.015em;
   color: var(--text);
   text-overflow: ellipsis;
@@ -8131,7 +8253,7 @@ html:has(.board-page) body {
 .board-outcome-start {
   position: absolute;
   z-index: 1;
-  max-width: inherit;
+  inset-inline: 0;
   margin: 2px 0 0;
   color: var(--faint);
   pointer-events: none;
@@ -8158,9 +8280,9 @@ html:has(.board-page) body {
   padding-top: 0.5em;
 }
 .board-outcome-doc .cm-title {
-  font-size: 30px;
-  font-weight: 650;
-  line-height: 1.25;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.015em;
   padding-top: 0;
 }
