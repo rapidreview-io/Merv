@@ -35,24 +35,25 @@ export const zoomToFit = (place: Rect, clear: Rect) =>
     (clear.height - 2 * MARGIN) / (place.height || 1),
   );
 /**
- * The camera nearest this one that shows all of a place in the clear part of the view (in screen
- * pixels): no move if it is in sight, the least pan if it fits, otherwise zoomed out far enough
- * and centred on it. It never zooms in.
+ * Where the camera stands to show all of a place in the clear part of the view (in screen pixels):
+ * this one if it already does, as near as `near` allows or half that; otherwise on it, at the nearest
+ * zoom that shows it. Centred, so what comes next is likely still in view and no second move is due.
  */
-export function cameraFor(place: Rect, clear: Rect, now: Camera): Camera {
-  const zoom = Math.max(0.1, Math.min(now.zoom, zoomToFit(place, clear)));
-  const scroll = (scrollAt: number, at: number, size: number, from: number, room: number) => {
-    const [start, end] = [from / zoom - scrollAt, (from + room) / zoom - scrollAt];
-    const edge = MARGIN / zoom;
-    if (zoom < now.zoom) return (from + room / 2) / zoom - at - size / 2;
-    if (at - edge < start) return from / zoom - at + edge;
-    if (at + size + edge > end) return (from + room) / zoom - at - size - edge;
-    return scrollAt;
+export function framing(place: Rect, clear: Rect, now: Camera, near = now.zoom): Camera {
+  const fit = zoomToFit(place, clear);
+  const keeps = now.zoom <= fit && now.zoom * 2 >= Math.min(near, fit);
+  const zoom = keeps ? now.zoom : Math.max(0.1, Math.min(near, fit));
+  const view = {
+    x: (clear.x + MARGIN) / zoom - now.scrollX,
+    y: (clear.y + MARGIN) / zoom - now.scrollY,
+    width: (clear.width - 2 * MARGIN) / zoom,
+    height: (clear.height - 2 * MARGIN) / zoom,
   };
+  if (keeps && inView(place, view)) return now;
   return {
     zoom,
-    scrollX: scroll(now.scrollX, place.x, place.width, clear.x, clear.width),
-    scrollY: scroll(now.scrollY, place.y, place.height, clear.y, clear.height),
+    scrollX: (clear.x + clear.width / 2) / zoom - place.x - place.width / 2,
+    scrollY: (clear.y + clear.height / 2) / zoom - place.y - place.height / 2,
   };
 }
 

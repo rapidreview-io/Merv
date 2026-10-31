@@ -2,7 +2,9 @@
  * The second Excalidraw's side of a board's replay (board-replay.tsx): its clock, what stands at
  * that point, and each frame's work. The clock is the master, and hands the player one unit as it
  * reaches it, to trace in the time the timeline gave it. The camera is the board's own, which this
- * moves only while nobody else does.
+ * moves only while nobody else does, and never by travelling: all of a chunk of work is framed before
+ * its first stroke, so the ink moves and the view does not. The view changes in one dissolve, with
+ * the pen lifted, when what comes next would be out of it; never under a hand on the scrubber.
  */
 import { CaptureUpdateAction, restoreElements } from '@excalidraw/excalidraw';
 import type {
@@ -13,9 +15,11 @@ import type {
 } from '@excalidraw/excalidraw/types';
 import type { BoardChange, BoardElement } from '@merv/board/models';
 import type { BoardFilm } from './board-film';
-import { clearView, imageBringer, Player, restored, type Stage } from './board-player';
+import { framing, zoomToFit, type Rect } from './board-place';
+import { clearView, dissolve, imageBringer, Player, restored, type Stage } from './board-player';
 import {
   landedBy,
+  openingOf,
   timelineOf,
   toneOf,
   widened,
@@ -24,22 +28,17 @@ import {
   type Unit,
 } from './board-timeline';
 
-/** How long the tape runs back before it plays, and the camera's move back to where it was. */
-const REWIND_MS = 650;
-export const CAMERA_MS = 500;
+/** How long the tape runs back before it plays, and how long it then stays, showing how it stood. */
+const [REWIND_MS, OPENING_MS] = [650, 450];
+/** How long the clock waits for the eye after the view changed. */
+const SETTLE_MS = 350;
 /**
- * The camera holds all that has been drawn so far, as near as that allows and no nearer than a
- * board's own size, and eases at this pace (a time constant) as the drawing outgrows it. So the
- * picture is seen growing from its first mark, filling the view, and going back over it brings the
- * view back in. It tells the board's own camera at this pace, for the zoom it shows and for a
- * person's hand to start from what they see.
+ * How far out it holds a stretch of work together before splitting it, and the nearest it goes, on a
+ * view this wide or wider. A phone holds as much of the board, or it would change view every few
+ * seconds and swing in on each small stroke.
  */
-const [CAMERA_EASE_MS, CAMERA_TELL_MS] = [380, 120];
-/** Under a hand it keeps up, so what the hand brought back is in view at once. */
-const DRAGGED_EASE_MS = 120;
-/** Past this many units a moving camera costs too much, and it holds the whole board throughout. */
-const LONG_FILM = 1500;
-/** Past this many shapes standing, what is drawn is only scaled while the camera moves. */
+const [LEAST_ZOOM, WIDE_VIEW, NEAREST_NARROW] = [0.3, 1000, 0.4];
+/** Past this many shapes standing, what is drawn is only scaled while a hand moves the camera. */
 const SCALED_ABOVE = 200;
 /** How many of what it told the board's camera it remembers, while that takes them up. */
 const TOLD_KEPT = 8;
@@ -77,29 +76,12 @@ const asState = ({ scrollX, scrollY, zoom }: Camera) => ({
   zoom: { value: zoom as never },
 });
 
-/**
- * A share of the way from one camera to another: its middle in a straight line and its zoom evenly
- * in ratio, so what is on screen does not swing out to one side on the way. Close enough, it arrives.
- */
-const closer = (from: Camera, to: Camera, share: number, width: number, height: number): Camera => {
-  if (
-    Math.abs(to.zoom - from.zoom) < 0.0005 &&
-    Math.abs(to.scrollX - from.scrollX) * from.zoom < 0.5 &&
-    Math.abs(to.scrollY - from.scrollY) * from.zoom < 0.5
-  )
-    return to;
-  const zoom = from.zoom * (to.zoom / from.zoom) ** share;
-  const middle = (camera: Camera, size: number, scroll: number) => size / 2 / camera.zoom - scroll;
-  const go = (size: number, a: number, b: number) => {
-    const [start, end] = [middle(from, size, a), middle(to, size, b)];
-    return size / 2 / zoom - (start + (end - start) * share);
-  };
-  return {
-    zoom,
-    scrollX: go(width, from.scrollX, to.scrollX),
-    scrollY: go(height, from.scrollY, to.scrollY),
-  };
-};
+const rectOf = ([x, y, right, bottom]: Reach): Rect => ({
+  x,
+  y,
+  width: right - x,
+  height: bottom - y,
+});
 /** A version of a shape as the scene holds it, measured as the board measures it. */
 export const restoreOne = (raw: BoardElement, holder?: BoardElement): Shape | undefined =>
   raw.type === 'text'
@@ -138,11 +120,9 @@ export class Projection {
   private lookedAt = 0;
   private looking = false;
   private player: Player;
-  private goal?: { from: Camera; to: Camera; start: number; ms: number };
   /** The camera as this last left the board's, and as the second Excalidraw last showed it. */
   private set: Camera;
   private shown: Camera;
-  private toldAt = 0;
   /** What the board's camera was lately told, which it takes a moment to take up. */
   private told: Camera[];
   private moved = false;
@@ -151,8 +131,11 @@ export class Projection {
   private touched = false;
   /** Whether the board is itself again, whose camera this now only follows. */
   private resting = false;
-  /** While a hand drags through it, the view takes in what it passes, and does not chase it. */
-  private dragged?: Reach;
+  /** While a hand drags through it, the view stays. */
+  private dragged = false;
+  /** The units before this are in the view as it was framed; and the clock waits until `still`. */
+  private framedTo = 0;
+  private still = 0;
   private entered: Camera;
   private tag?: {
     x: number;
@@ -168,7 +151,7 @@ export class Projection {
   constructor(
     private live: ExcalidrawImperativeAPI,
     private screen: ExcalidrawImperativeAPI,
-    canvas: HTMLCanvasElement,
+    private canvas: HTMLCanvasElement,
     public line: Timeline,
     public film: BoardFilm<Shape>,
     private pictures: BoardElement[],
@@ -243,9 +226,6 @@ export class Projection {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.player.stop();
-    // A slow last frame never leaves the camera short of where it was going.
-    if (this.goal) this.setCamera(this.goal.to);
-    this.goal = undefined;
   }
   private paint() {
     this.screen.updateScene({
@@ -253,26 +233,24 @@ export class Projection {
       captureUpdate: CaptureUpdateAction.NEVER,
     });
   }
-  /** Runs back to the start, with the whole board in view, and plays. */
+  /** Runs back to where it opens, and plays. */
   rewind() {
     this.player.stop();
     this.landing = 0;
     this.playing = false;
-    if (calm()) {
-      this.seek(0);
-      this.play();
-    } else {
+    if (calm()) this.open();
+    else {
       this.waiting = SHOW_FRAMES;
       this.starting = true;
     }
     this.hooks.changed();
   }
-  private move(to: Camera, ms: number) {
-    const from = cameraOf(this.live);
-    if (sameCamera(from, to)) return;
-    if (calm() || !ms) return this.setCamera(to);
-    this.goal = { from, to, start: performance.now(), ms };
-    this.run();
+  /** The board as it stood just before the last chunk of work, framed for it, and then it plays. */
+  private open() {
+    this.seek(openingOf(this.line));
+    this.frameFrom(this.next);
+    this.still = performance.now() + OPENING_MS;
+    this.play();
   }
   private setCamera(camera: Camera) {
     this.set = camera;
@@ -308,16 +286,20 @@ export class Projection {
     this.next = this.film.at;
     this.paint();
     this.hooks.place(this.at);
-    const reach = this.line.units[this.film.at - 1]?.reach;
-    if (this.dragged && reach) this.dragged = widened(this.dragged, reach);
+    this.framedTo = 0;
   }
   grab() {
     this.pause();
-    this.dragged = this.reach() ?? [0, 0, 0, 0];
+    this.dragged = true;
     this.hooks.changed();
   }
   drop() {
-    this.dragged = undefined;
+    this.dragged = false;
+    this.settle();
+  }
+  /** The playhead has stopped somewhere: the view comes to what is there, if it is not in it. */
+  settle() {
+    this.frameFrom(Math.max(0, Math.min(this.next, this.line.units.length) - 1));
   }
   /** Steps through history by its own steps: its changes as they came. */
   step(by: number) {
@@ -327,34 +309,31 @@ export class Projection {
     const to = steps.filter((start) => start <= shown).length - 1 + by;
     this.pause();
     this.seek(to < 0 ? 0 : to >= steps.length ? length : steps[to]! + 0.5);
+    this.settle();
   }
-  /** It is over: the board is itself again, and the camera goes back unless it was moved. */
+  /** It is over: the board is itself again under this as it fades, its camera as it was unless moved. */
   rest() {
     this.playing = false;
     this.rewinding = this.waiting = 0;
     this.starting = false;
-    this.dragged = undefined;
+    this.dragged = false;
     this.resting = true;
     this.player.stop();
     this.tag = undefined;
     this.showTag();
-    if (!this.touched) {
-      this.setCamera(this.shown);
-      this.move(this.entered, CAMERA_MS);
-    }
+    if (!this.touched) this.setCamera(this.entered);
     this.hooks.changed();
   }
   /** The person's hand went to the camera: nothing of this may be told over it. */
   handOn() {
     this.touched = true;
-    this.goal = undefined;
   }
   /** Picked up again after it ended. */
   again() {
     this.entered = this.set = cameraOf(this.live);
     this.told = [this.set];
-    this.goal = undefined;
     this.touched = this.resting = false;
+    this.steer();
   }
   /** Others drew more: it goes on the end, and the playhead stays with what it was showing. */
   private longer(changes: BoardChange[]) {
@@ -376,6 +355,7 @@ export class Projection {
     // However many land in a frame, it is painted once.
     let painting = false;
     while (this.next < units.length && units[this.next]!.start <= this.at) {
+      if (this.next >= this.framedTo && this.frameFrom(this.next)) break;
       const unit = units[this.next++]!;
       const fit = unit.ms / this.speed;
       if (fit < LEAST_TRACE_MS) {
@@ -390,7 +370,7 @@ export class Projection {
         this.player.add(unit.shapes);
       }
     }
-    if (this.at >= length) {
+    if (this.at >= length && this.next >= units.length) {
       this.player.finish();
       this.landing = 0;
       this.film.seek(units.length);
@@ -448,19 +428,19 @@ export class Projection {
       this.rewinding = now;
     }
     if (!this.resting) this.closeDialogs();
-    this.steer(now, played);
+    this.steer();
     if (this.rewinding) {
       const share = Math.min(1, (now - this.rewinding) / REWIND_MS);
-      this.at = this.line.length * (1 - ease(share));
+      const opening = openingOf(this.line);
+      this.at = opening + (this.line.length - opening) * (1 - ease(share));
       this.film.seek(landedBy(this.line, this.at));
       this.paint();
       if (share >= 1) {
         this.rewinding = 0;
-        this.seek(0);
-        this.play();
+        this.open();
       }
       this.hooks.place(this.at);
-    } else if (this.playing) {
+    } else if (this.playing && now >= this.still) {
       this.at += played * this.speed;
       this.feed();
       this.hooks.place(this.at);
@@ -490,73 +470,50 @@ export class Projection {
       if (api === this.live) this.hooks.refused();
     }
   }
-  /** All the board drawn on as far as the tape has got, the stroke in the pen too. */
-  private reach() {
-    const { units } = this.line;
-    return (this.dragged ?? units[Math.max(this.film.at, this.next) - 1]?.reach) as
-      Reach | undefined;
+  /**
+   * Frames the work from this unit to the end of its chunk, or as much of it as reads held together,
+   * and says whether the view had to change for it. Only the pen is lifted when it does.
+   */
+  private frameFrom(from: number) {
+    const { units, chunks } = this.line;
+    const first = units[from];
+    if (!first || this.touched || this.resting || this.dragged) return false;
+    const clear = clearView(this.live);
+    clear.height -= this.hooks.below();
+    const end = chunks.find((chunk) => from >= chunk.first && from < chunk.end)?.end ?? from + 1;
+    const wide = Math.min(1, clear.width / WIDE_VIEW);
+    const least = Math.max(0.1, LEAST_ZOOM * wide);
+    let reach = first.reach;
+    let to = from + 1;
+    for (; to < end; to++) {
+      const wider = widened(reach, units[to]!.reach);
+      if (zoomToFit(rectOf(wider), clear) < least) break;
+      reach = wider;
+    }
+    this.framedTo = to;
+    const now = cameraOf(this.live);
+    const camera = framing(rectOf(reach), clear, now, Math.max(NEAREST_NARROW, wide));
+    if (sameCamera(camera, now)) return false;
+    this.player.finish();
+    this.landing = 0;
+    this.film.seek(this.next);
+    this.paint();
+    dissolve(this.canvas.parentElement);
+    this.setCamera(camera);
+    this.steer();
+    this.still = performance.now() + SETTLE_MS;
+    return true;
   }
-  /** Where the camera would be to hold that. */
-  private holding(): Camera | undefined {
-    const { units } = this.line;
-    const whole = calm() || units.length > LONG_FILM;
-    const [x1, y1, x2, y2] = whole ? units.at(-1)!.reach : (this.reach() ?? []);
-    if (x1 === undefined) return undefined;
-    const { x, y, width, height } = clearView(this.live);
-    const room = height - this.hooks.below();
-    const zoom = Math.max(
-      0.1,
-      Math.min(1, Math.min(width / (x2! - x1 || 1), room / (y2! - y1! || 1)) * 0.9),
-    );
-    return {
-      zoom,
-      scrollX: (x + width / 2) / zoom - (x1 + x2!) / 2,
-      scrollY: (y + room / 2) / zoom - (y1! + y2!) / 2,
-    };
-  }
-  /** The camera, each frame: the person's if they took it, or else the drawing's. */
-  private steer(now: number, played: number) {
+  /** The camera, each frame: the person's if they took it; or else as set, this one held as it fades. */
+  private steer() {
     const live = cameraOf(this.live);
     if (!this.told.some((camera) => sameCamera(camera, live))) {
       // Not moved from here: the person's hand is on it.
       this.touched = true;
-      this.goal = undefined;
       this.set = live;
       this.told = [live];
     }
-    const { goal } = this;
-    if (goal) {
-      const share = Math.min(1, (now - goal.start) / goal.ms);
-      const part = ease(share);
-      const go = (from: number, to: number) => from + (to - from) * part;
-      this.setCamera({
-        scrollX: go(goal.from.scrollX, goal.to.scrollX),
-        scrollY: go(goal.from.scrollY, goal.to.scrollY),
-        zoom: go(goal.from.zoom, goal.to.zoom),
-      });
-      if (share >= 1) this.goal = undefined;
-    }
-    let next = this.touched ? live : this.set;
-    const aim = this.touched || this.resting ? undefined : this.holding();
-    if (aim) {
-      const { width, height } = this.live.getAppState();
-      next = calm()
-        ? aim
-        : closer(
-            this.shown,
-            aim,
-            1 - Math.exp(-played / (this.dragged ? DRAGGED_EASE_MS : CAMERA_EASE_MS)),
-            width,
-            height,
-          );
-      if (
-        !sameCamera(next, this.set) &&
-        (sameCamera(next, aim) || now - this.toldAt > CAMERA_TELL_MS)
-      ) {
-        this.toldAt = now;
-        this.setCamera(next);
-      }
-    }
+    const next = this.touched ? live : this.resting ? this.shown : this.set;
     const moved = !sameCamera(next, this.shown);
     const background = this.live.getAppState().viewBackgroundColor;
     if (moved || this.moved || background !== this.background) {

@@ -5,6 +5,7 @@ import { BoardFilm } from '../packages/ui/web/views/board-film.js';
 import {
   landedBy,
   momentAt,
+  openingOf,
   profileOf,
   timelineOf,
   toneOf,
@@ -137,7 +138,7 @@ test('a board older than history starts as it stood and says it does not know ho
   assert.deepEqual(line.units[0]!.reach, [0, 0, 100, 60]);
 });
 
-test('reach only grows, erased work too, and goes by a stroke’s points', () => {
+test('a unit reaches as far as it goes, erased work too, by a stroke’s points', () => {
   const backward = box('b', 1, {
     type: 'line',
     x: 100,
@@ -152,8 +153,8 @@ test('reach only grows, erased work too, and goes by a stroke’s points', () =>
     change(1, [backward]),
     change(2, [box('a', 2, { x: 200, y: 0, isDeleted: true })]),
   ]);
-  assert.deepEqual(line.units[1]!.reach, [50, 0, 300, 130]);
-  assert.deepEqual(line.units[2]!.reach, [50, 0, 300, 130]);
+  assert.deepEqual(line.units[1]!.reach, [50, 100, 100, 130]);
+  assert.deepEqual(line.units[2]!.reach, [200, 0, 300, 60]);
 });
 
 test('a turned shape reaches as far as it turns', () => {
@@ -161,6 +162,72 @@ test('a turned shape reaches as far as it turns', () => {
   const [x1, y1, x2, y2] = timelineOf([change(0, [thin])]).units[0]!.reach;
   assert.ok(Math.abs(x1 - 190) < 1e-6 && Math.abs(x2 - 210) < 1e-6, `${x1} ${x2}`);
   assert.ok(Math.abs(y1 + 190) < 1e-6 && Math.abs(y2 - 210) < 1e-6, `${y1} ${y2}`);
+});
+
+const work = (i: number, minutes: number, actorId: string, kind: 'draw' | 'save', size = 900) => ({
+  revision: i + 1,
+  actorId,
+  at: new Date(Date.UTC(2026, 9, 1) + minutes * 60_000).toISOString(),
+  kind,
+  shapes: [box(`s${i}`, 1, { width: size, height: size })],
+});
+const startOfChange = (line: ReturnType<typeof timelineOf>, step: number) =>
+  line.units.find((unit) => unit.step === step)!.start;
+
+test('a replay opens at the last chunk of agent work, whatever people did after it', () => {
+  const line = timelineOf([
+    work(0, 0, 'a', 'draw'),
+    work(1, 1, 'a', 'draw'),
+    work(2, 2, 'me', 'save'),
+    work(3, 3, 'b', 'draw'),
+    work(4, 4, 'b', 'draw'),
+    work(5, 4.5, 'b', 'draw'),
+    work(6, 5, 'me', 'save'),
+  ]);
+  assert.equal(line.chunks.length, 4);
+  assert.equal(openingOf(line), startOfChange(line, 3));
+});
+
+test('a long silence ends a chunk; a pause for thought does not', () => {
+  const thought = timelineOf([work(0, 0, 'a', 'draw'), work(1, 4, 'a', 'draw')]);
+  assert.equal(thought.chunks.length, 1);
+  const away = timelineOf([
+    work(0, 0, 'a', 'draw'),
+    work(1, 6, 'a', 'draw'),
+    work(2, 6.1, 'a', 'draw'),
+    work(3, 6.2, 'a', 'draw'),
+  ]);
+  assert.equal(openingOf(away), startOfChange(away, 1));
+});
+
+test('with no agent work a replay opens at the last chunk of a person’s', () => {
+  const line = timelineOf([
+    work(0, 0, 'me', 'save'),
+    work(1, 60, 'me', 'save'),
+    work(2, 60.1, 'me', 'save'),
+    work(3, 60.2, 'me', 'save'),
+  ]);
+  assert.equal(openingOf(line), startOfChange(line, 1));
+});
+
+test('a chunk too short to read takes in the one before it', () => {
+  const steps = Array.from({ length: 30 }, (_, i) => work(i, i / 10, 'a', 'draw'));
+  const line = timelineOf([...steps, work(30, 3.1, 'me', 'save'), work(31, 3.2, 'b', 'draw', 1)]);
+  assert.ok(openingOf(line) < startOfChange(line, 31));
+  assert.ok(line.length - openingOf(line) >= 2000 * 0.9);
+});
+
+test('a board older than history opens at what came after it, or at the start with nothing after', () => {
+  const before = {
+    revision: 5,
+    actorId: 'x',
+    at: at(0),
+    kind: 'before' as const,
+    shapes: [box('old')],
+  };
+  const line = timelineOf([before, work(1, 1, 'a', 'draw')]);
+  assert.equal(openingOf(line), startOfChange(line, 1));
+  assert.equal(openingOf(timelineOf([before])), 0);
 });
 
 test('the film moves either way and comes back to the very same objects', () => {

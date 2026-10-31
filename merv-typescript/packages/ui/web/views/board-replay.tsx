@@ -25,13 +25,13 @@ import { typing } from '../list-filters';
 import { BoardFilm } from './board-film';
 import { ensureBoardFonts } from './board-fonts';
 import { clearView } from './board-player';
-import { CAMERA_MS, picturesOf, Projection, restoreOne, type Shape } from './board-projection';
+import { picturesOf, Projection, restoreOne, type Shape } from './board-projection';
 import { Scrubber, whenOf, type ScrubberControl } from './board-scrubber';
 import { timelineOf, type Timeline } from './board-timeline';
 import { useActorNames } from './people';
 
-/** How long the scrubber stays once now is reached, to be picked up again. */
-const LINGER_MS = 1400;
+/** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
+const [LINGER_MS, SINK_MS] = [1400, 560];
 const SPEEDS = [1, 2, 4];
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
@@ -177,8 +177,7 @@ export function BoardReplay({
   const sink = useCallback(() => {
     clearTimeout(ending.current);
     setPhase('sinking');
-    // Once the scrubber has sunk and the camera is back.
-    ending.current = setTimeout(off, CAMERA_MS + 60);
+    ending.current = setTimeout(off, SINK_MS);
   }, [off]);
   /** Back to the board: it is the board again at once, and the scrubber goes after it. */
   const leave = useCallback(
@@ -380,6 +379,7 @@ export function BoardReplay({
         take();
         projection.pause();
         projection.seek(0);
+        projection.settle();
       } else if (key === 'End') {
         take();
         reaching.current();
@@ -538,9 +538,9 @@ export function BoardReplay({
             dropped={(now) => {
               if (!holding.current) return;
               holding.current = false;
+              if (now) return leave(false);
               shown.current?.drop();
-              if (now) leave(false);
-              else if (resume.current) shown.current?.play();
+              if (resume.current) shown.current?.play();
             }}
           />
           <div className="board-scrub-ends">

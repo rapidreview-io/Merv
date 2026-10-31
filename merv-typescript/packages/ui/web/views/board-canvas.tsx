@@ -301,7 +301,8 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const hand = new BoardPointing(api, id);
     hand.landed(first?.elements ?? []);
     pointing.current = hand;
-    const camera = new BoardFollow(api);
+    const board = reveal.current.parentElement!.querySelector(':scope > .excalidraw')!;
+    const camera = new BoardFollow(api, board);
     follow.current = camera;
     const unpoint = pointWith({
       note() {
@@ -312,7 +313,6 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       },
       said: hand.said,
     });
-    const board = reveal.current.parentElement!.querySelector(':scope > .excalidraw')!;
     const hands = ['pointerdown', 'wheel', 'keydown', 'gesturestart'];
     for (const kind of hands)
       board.addEventListener(kind, camera.release, { capture: true, passive: true });
