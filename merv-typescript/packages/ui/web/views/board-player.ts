@@ -188,7 +188,8 @@ export class Player {
     readonly stage: Stage,
     private canvas: HTMLCanvasElement,
     private behind: number,
-    private rate = 1,
+    /** Replay moves this to the speed it plays at. */
+    public rate = 1,
   ) {
     this.speed = rate;
   }
