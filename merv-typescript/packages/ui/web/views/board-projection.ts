@@ -324,7 +324,7 @@ export class Projection {
     const { steps, length, units } = this.line;
     // From what the board shows, and not a stroke still in the pen.
     const shown = units[this.film.at - 1]?.start ?? -1;
-    const to = steps.findLastIndex((start) => start <= shown) + by;
+    const to = steps.filter((start) => start <= shown).length - 1 + by;
     this.pause();
     this.seek(to < 0 ? 0 : to >= steps.length ? length : steps[to]! + 0.5);
   }
