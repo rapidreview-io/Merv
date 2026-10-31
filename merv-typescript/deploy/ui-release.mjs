@@ -91,6 +91,11 @@ const release = `${stamp}-${head.slice(0, 8)}-ui`;
 console.log(JSON.stringify({ release, server: server[1], files: changed.length }));
 if (args['dry-run']) process.exit(0);
 
+// The checkout's commit is current but its install may not be: dependency patches come from npm ci.
+execFileSync('npm', ['ci', '--no-audit', '--no-fund'], {
+  cwd: root,
+  stdio: ['ignore', 'ignore', 'inherit'],
+});
 execFileSync('npm', ['run', 'build:ui'], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
 const dist = join(root, 'packages/ui/dist');
 const assets = [
