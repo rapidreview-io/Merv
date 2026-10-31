@@ -52,6 +52,9 @@ export interface PiCommandRecord extends PiCommand {
   /** The project context (Tools.context) fixed when this turn was first served. Source material,
    * not instructions. */
   context?: string;
+  /** What the person's page said they pointed at as they sent this: it opens the turn's context,
+   * and neither their words nor what the page shows of the turn holds it. */
+  pointing?: string;
   /** Trusted profile instructions fixed at first serve. Default conversations use Pi's guide. */
   instructions?: string;
   /** What a turn served before context was generic kept as its paper; never served again. */

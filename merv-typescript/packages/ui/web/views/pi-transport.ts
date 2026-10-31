@@ -22,6 +22,16 @@ export interface PiTransport {
   warm?(id: string | null, requestId: string): Promise<PiSnapshot | null>;
 }
 
+/** What the page in view says the person is pointing at, read as each message of theirs goes. */
+let pointing: (() => string | undefined) | undefined;
+let pointed: { commandId: string; note: string | undefined } | undefined;
+export const pointWith = (read: () => string | undefined) => {
+  pointing = read;
+  return () => {
+    if (pointing === read) pointing = undefined;
+  };
+};
+
 /** Warms without a conversation in flight, by project: sign-in's and the Agent page's share one,
  *  or each would find no empty conversation and make its own. */
 const warming = new Map<string, Promise<PiSnapshot | null>>();
@@ -31,7 +41,12 @@ export const toolTransport: PiTransport = {
   voice: (id, sdp) => call<{ sdp: string }>('pi.voice', { id, sdp }),
   list: () => call<PiConversation[]>('pi.list'),
   snapshot: (id) => call<PiSnapshot>('pi.snapshot', { id }),
-  send: (id, input) => call('pi.send', { id, ...input }),
+  send: (id, input) => {
+    // A retry goes with what it first pointed at, wherever the hand has gone since.
+    if (pointed?.commandId !== input.commandId)
+      pointed = { commandId: input.commandId, note: pointing?.() };
+    return call('pi.send', { id, ...input, pointing: pointed.note });
+  },
   stop: (id) => call<PiSnapshot>('pi.stop', { id }),
   events: (id) => `/pi/${encodeURIComponent(id)}/events`,
   create: (requestId) => call<PiConversation>('pi.create', { requestId }),

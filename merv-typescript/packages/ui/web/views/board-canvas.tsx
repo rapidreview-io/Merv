@@ -34,9 +34,11 @@ import { ensureBoardFonts } from './board-fonts';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
+import { pointWith } from './pi-transport';
 import { BoardLinkDetails } from './board-link-details';
 import { AddButton, CardPicker, type CardPick } from './board-add';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
+import { BoardPointing } from './board-pointing';
 import { BoardPresence } from './board-presence';
 import { BoardReplay } from './board-replay';
 
@@ -139,6 +141,8 @@ function BoardCanvasScene({ id }: { id: string }) {
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();
+  /** Gathers what the person points at, to go with what they say to Pi. */
+  const pointing = useRef<BoardPointing>();
 
   useEffect(() => {
     let live = true;
@@ -243,6 +247,7 @@ function BoardCanvasScene({ id }: { id: string }) {
     const land = (shapes: BoardElement[]) => {
       for (const el of shapes)
         known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
+      pointing.current?.landed(shapes);
     };
     const made = new Player(
       stageOf(api, () => busy(api), land),
@@ -253,11 +258,17 @@ function BoardCanvasScene({ id }: { id: string }) {
     const here = new BoardPresence(api);
     presence.current = here;
     made.pen = here.pen;
+    const hand = new BoardPointing(api, id);
+    hand.landed(first?.elements ?? []);
+    pointing.current = hand;
+    const unpoint = pointWith(hand.note);
     return () => {
       made.stop();
       here.stop();
+      hand.stop();
+      unpoint();
     };
-  }, [api]);
+  }, [api, id]);
   // Under a replay, what others draw lands as it comes, to be there on return.
   useEffect(() => {
     if (!player.current) return;
@@ -437,6 +448,7 @@ function BoardCanvasScene({ id }: { id: string }) {
         // Excalidraw takes a paste only with the focus inside it: the page is the board, so at once.
         autoFocus
         generateIdForFile={nameImage}
+        onPointerUpdate={({ pointer, button }) => pointing.current?.moved(pointer, button)}
         initialData={{
           elements: restored(first.elements, true),
         }}
