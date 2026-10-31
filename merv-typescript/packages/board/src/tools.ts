@@ -37,7 +37,20 @@ const getSchema = z.strictObject({
   region: z.strictObject({ x: place, y: place, width: place, height: place }).optional(),
 });
 const sceneSchema = z.object({ id, since: z.number().int().safe().min(0).optional() }).strict();
-const outcomeReadSchema = z.strictObject({ board: id, outcome: id.optional() });
+const outcomeReadSchema = z.strictObject({
+  board: id,
+  outcome: id.optional(),
+  passage: z
+    .strictObject({ from: z.number().int().min(0), to: z.number().int().min(0) })
+    .optional(),
+});
+const outcomeDeleteSchema = z.strictObject({
+  board: id,
+  outcome: id,
+  expectedRevision: z.number().int().min(0),
+});
+/** Said apart from the guide, which says the same of a board's own pointing. */
+const passageGuide = `The note may also say outcome o: the outcome open beside the board, and with chars a-b the passage of it they have selected, whose words board.read outcome gives with passage {from: a, to: b}.`;
 const historySchema = z.object({ id, after: z.number().int().safe().min(0).optional() }).strict();
 /** The most image bytes one look draws; a closer look at the rest brings them in. */
 const LOOK_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -66,13 +79,17 @@ export const boardToolsPlugin = {
     // Where each agent last was on each board: in this process, as cameras are, since Main is one
     // process (deploy/compose.yml) and a restart loses nothing a person would miss.
     const looking = new Map<string, BoardLooking & { board: string }>();
-    const seen = (caller: Caller, board: string, region: Region, drew?: true) => {
-      if (!isAgentAudience(caller)) return;
-      const name = caller.conversation
+    const writerName = (caller: Caller) => {
+      if (!isAgentAudience(caller)) return undefined;
+      return caller.conversation
         ? 'Pi'
         : caller.session
           ? 'Worker'
           : nameOf(agentClient.getStore());
+    };
+    const seen = (caller: Caller, board: string, region: Region, drew?: true) => {
+      const name = writerName(caller);
+      if (!name) return;
       const key = `${board}:${caller.actorId}:${name}`;
       looking.delete(key);
       const { x, y, width, height } = region;
@@ -86,7 +103,7 @@ export const boardToolsPlugin = {
       });
       if (looking.size > 1000) looking.delete(looking.keys().next().value!);
     };
-    ctx.effect(() => ctx.tools.contributeInstructions(guide));
+    ctx.effect(() => ctx.tools.contributeInstructions(`${guide} ${passageGuide}`));
     // An image's bytes go between the page and Board here: a tool's JSON could not carry 10 MiB.
     // Each request answers to the caller's membership, and no link stands in for it.
     ctx.inject(['api'], (ctx) => {
@@ -254,7 +271,12 @@ export const boardToolsPlugin = {
             input: outcomeReadSchema,
             handler: async (caller: Caller, input: z.infer<typeof outcomeReadSchema>) =>
               input.outcome
-                ? { outcome: await board.outcome(caller, input.board, input.outcome) }
+                ? await board.outcome(caller, input.board, input.outcome).then((outcome) => ({
+                    outcome,
+                    ...(input.passage && {
+                      passage: outcome.text.slice(input.passage.from, input.passage.to),
+                    }),
+                  }))
                 : {
                     outcomes: (await board.scene(caller, input.board, Number.MAX_SAFE_INTEGER))
                       .outcomes,
@@ -293,7 +315,11 @@ export const boardToolsPlugin = {
               "Create or change a board's outcome: a titled Markdown document (a plan, a PRD, a prompt) a person edits beside the board as you write it; it opens for them as you do. Without outcome it creates one, with title and optional content. With outcome: edits [{find, replace}], each find quoting text that occurs exactly once, apply in turn at any revision, so what the person is typing elsewhere survives; content replaces the whole text only at exactly expectedRevision; title renames. Write one section a call, each next one by an edit whose find is the last words so far. Returns id, title and revision; board.read outcome reads the text.",
             input: outcomeSchema,
             handler: async (caller: Caller, input: z.input<typeof outcomeSchema>) => {
-              const { id, title, revision } = await board.writeOutcome(caller, input);
+              const { id, title, revision } = await board.writeOutcome(
+                caller,
+                input,
+                writerName(caller),
+              );
               return { outcome: { id, title, revision } };
             },
           },
@@ -344,6 +370,15 @@ export const boardToolsPlugin = {
         inputSchema: setSchema,
         handler: async (caller: Caller, { id: boardId, ...change }: z.infer<typeof setSchema>) =>
           await board.set(caller, boardId, change),
+      },
+      {
+        name: 'board.outcome.delete',
+        description: 'Delete an outcome of a board; the files sent from it stay.',
+        inputSchema: outcomeDeleteSchema,
+        // Page alone: an agent's mistake must not take a person's draft.
+        uiOnly: true,
+        handler: async (caller: Caller, input: z.infer<typeof outcomeDeleteSchema>) =>
+          await board.deleteOutcome(caller, input.board, input.outcome, input.expectedRevision),
       },
       {
         name: 'board.outcome.sent',

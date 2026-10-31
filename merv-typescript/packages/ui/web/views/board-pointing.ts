@@ -76,6 +76,8 @@ export function pointingNote(input: {
   /** Shapes whose closed strokes are not this person's new circles. */
   others: ReadonlySet<string>;
   now: number;
+  /** The passage selected in an outcome: `outcome o chars a-b`. */
+  passage?: string;
 }) {
   const live = input.shapes.filter((el) => !el.isDeleted);
   const byId = new Map(live.map((el) => [el.id, el]));
@@ -128,8 +130,16 @@ export function pointingNote(input: {
   );
   const inside = list(circled);
   if (inside) said.push(`circled ${inside}`);
+  if (input.passage) said.push(input.passage);
   return `[board ${input.board}${said.length ? `: ${said.join('; ')}` : ''}]`;
 }
+
+/** The passage selected in the outcome open beside the board, which goes along in the same note. */
+type Passage = { note(): string | undefined; said(): void };
+let passage: Passage | undefined;
+export const pointPassage = (hand: Passage | undefined) => {
+  passage = hand;
+};
 
 /** Excalidraw hears nothing of a pointer that has left its canvas, so it is asked. */
 const onCanvas = () => !!document.querySelector('.excalidraw__canvas.interactive:hover');
@@ -168,6 +178,7 @@ export class BoardPointing {
       reach: NEAR_PX / zoom.value,
       others: this.others,
       now,
+      ...(passage?.note() && { passage: passage.note() }),
     });
   };
   /** Said once: a circle goes with one message, and so does a pointer the hand has since left. */
@@ -176,6 +187,7 @@ export class BoardPointing {
     this.others = new Set([...this.others].filter((id) => standing.has(id)));
     this.landed(this.noted);
     if (!onCanvas()) this.rest = undefined;
+    passage?.said();
   };
   stop() {
     clearTimeout(this.resting);

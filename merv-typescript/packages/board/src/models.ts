@@ -60,6 +60,8 @@ export interface Outcome extends OutcomeLine {
   text: string;
   createdBy: string;
   updatedBy: string;
+  /** The agent that last wrote it, as a page names it; none when a person did. */
+  writer?: string;
 }
 
 export interface BoardScene {

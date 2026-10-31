@@ -7910,12 +7910,14 @@ html:has(.board-page) body {
   container: board / inline-size;
 }
 .board-outcome {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
-  --pad: var(--page-pad-x);
+  --doc-pad: 36px;
+  --doc-measure: 660px;
 }
 .board-plane[data-full] .board-main,
 .board-outcome-back {
@@ -7923,17 +7925,19 @@ html:has(.board-page) body {
 }
 @container board (min-width: 900px) {
   .board-plane[data-outcome]:not([data-full]) {
-    grid-template-columns: minmax(0, 1fr) clamp(400px, 38%, 640px);
+    grid-template-columns: minmax(0, 1fr) var(
+        --outcome-width,
+        clamp(420px, calc(100% - 740px), 760px)
+      );
   }
   .board-plane:not([data-full]) .board-outcome {
     border-left: 1px solid var(--line);
-    --pad: var(--space-4);
-    --measure: 100%;
   }
 }
 @container board (max-width: 899.98px) {
   .board-plane[data-outcome] .board-main,
-  .board-outcome-ends {
+  .board-outcome-size,
+  .board-outcome-grip {
     display: none;
   }
   .board-outcome-back {
@@ -7941,75 +7945,502 @@ html:has(.board-page) body {
     white-space: nowrap;
   }
 }
+/* The Agent's window stands to the side of the pane, where what it writes can be seen. */
+.pi-dock:not([style]) {
+  right: calc(var(--space-4) + var(--outcome-pane, 0px));
+}
+.board-outcome-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.board-outcome-grip:hover,
+.board-outcome-grip:active {
+  background: var(--line-strong);
+}
 .board-outcome-head {
-  padding: var(--space-2) var(--pad);
-  border-bottom: 1px solid var(--line);
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.board-outcome-line,
-.board-outcome-acts {
-  display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) var(--space-3);
-  min-width: 0;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--motion-fast);
 }
-.board-outcome-line {
-  flex-wrap: nowrap;
+/* Words pass under the head only once there are words to pass under it. */
+.board-outcome[data-scrolled] .board-outcome-head {
+  border-bottom-color: var(--line-soft);
 }
-.board-outcome-title {
+.board-outcome-tabs.tabs--strip {
+  box-shadow: none;
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.board-outcome-tabs button {
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-outcome-ends {
+  flex: none;
+  align-items: center;
+}
+.board-outcome-said {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.board-outcome-ends .btn--primary {
+  white-space: nowrap;
+  animation: board-outcome-arrive 240ms ease-out;
+}
+@keyframes board-outcome-arrive {
+  from {
+    opacity: 0;
+  }
+}
+.board-outcome-problem {
+  flex: none;
+  margin: 0 var(--space-4) var(--space-2);
+  font-size: var(--text-sm);
+}
+.board-outcome-ask {
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-soft);
+  border-radius: var(--radius-md);
+}
+.board-outcome-doc {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  --ink: var(--text);
+  --li: 1.5em;
+}
+.board-outcome-doc .cm-editor {
+  height: 100%;
+  background: transparent;
+  color: var(--ink);
+}
+.board-outcome-doc .cm-editor.cm-focused {
+  outline: 0;
+}
+/* The scroller holds the page's top above the words, and scrolls them both. */
+.board-outcome-doc .cm-scroller {
+  display: block !important;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  font: 400 16px/1.65 var(--font-body);
+}
+.board-outcome-doc .cm-content,
+.board-outcome-lead {
+  margin-inline: max(var(--doc-pad), calc((100% - var(--doc-measure)) / 2));
+}
+.board-outcome-doc .cm-content {
+  padding-block: 0 45vh;
+  caret-color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.board-outcome-doc .cm-line {
+  padding: 0;
+}
+.board-outcome-doc .cm-cursor,
+.board-outcome-doc .cm-dropCursor {
+  border-left: 2px solid var(--text);
+}
+.board-outcome-doc .cm-selectionBackground,
+.board-outcome-doc
+  .cm-editor.cm-focused
+  > .cm-scroller
+  > .cm-selectionLayer
+  .cm-selectionBackground,
+.board-outcome-doc .cm-content ::selection {
+  background: var(--select);
+}
+.board-outcome-doc
+  .cm-editor.cm-focused
+  > .cm-scroller
+  > .cm-selectionLayer
+  .cm-selectionBackground {
+  background: rgba(var(--active-rgb), 0.2);
+}
+/* The page's top: how it was last sent, its title, and the first thing to say on an empty one. */
+.board-outcome-lead {
+  padding-block: var(--space-5) 0;
+}
+.board-outcome-sends {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--faint);
+}
+.board-outcome-sends a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.board-outcome-sends a:hover {
+  color: var(--text);
+}
+.board-outcome-sends details {
+  display: inline;
+  margin-left: var(--space-1);
+}
+.board-outcome-sends summary {
+  display: inline;
+  cursor: pointer;
+  list-style: none;
+}
+.board-outcome-sends summary::before {
+  content: '· ';
+}
+.board-outcome-sends ul {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.board-outcome-title {
+  display: block;
+  width: 100%;
+  margin: 0 0 var(--space-2);
   padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
-  font-family: inherit;
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: inherit;
+  font: 650 30px/1.25 var(--font-body);
+  letter-spacing: -0.015em;
+  color: var(--text);
   text-overflow: ellipsis;
 }
-.board-outcome-said {
-  margin-left: auto;
-  font-size: var(--text-sm);
-  white-space: nowrap;
+.board-outcome-title::placeholder {
+  color: var(--ghost);
 }
-.board-outcome-tabs {
-  overflow-x: auto;
+.board-outcome-start {
+  position: absolute;
+  z-index: 1;
+  max-width: inherit;
+  margin: 2px 0 0;
+  color: var(--faint);
+  pointer-events: none;
 }
-.board-outcome-tabs button {
-  white-space: nowrap;
-}
-.board-outcome-problem {
-  margin: var(--space-2) var(--pad) 0;
-}
-/* Its column takes the width; the words keep their measure, read or being written. */
-.board-outcome-body {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  padding: var(--space-4) max(var(--pad), calc((100% - var(--measure, 68ch)) / 2));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  outline: 0;
-}
-.board-outcome-read {
-  cursor: text;
-}
-.board-outcome-text {
-  display: block;
-  resize: none;
-  border: 0;
-  background: transparent;
-  color: inherit;
+.board-outcome-start button {
+  pointer-events: auto;
   font: inherit;
-  line-height: 1.6;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
 }
-.board-outcome-text[hidden] {
-  display: none;
+.board-outcome-start button:hover {
+  text-decoration-color: currentColor;
+}
+/* The document as it reads. */
+.board-outcome-doc .cm-h {
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+.board-outcome-doc .cm-h1 {
+  font-size: 26px;
+  line-height: 1.3;
+  padding-top: 0.5em;
+}
+.board-outcome-doc .cm-title {
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  padding-top: 0;
+}
+.board-outcome-doc .cm-h2 {
+  font-size: 21px;
+  line-height: 1.35;
+  padding-top: 0.6em;
+}
+.board-outcome-doc .cm-h3 {
+  font-size: 17px;
+  line-height: 1.4;
+  padding-top: 0.4em;
+}
+.board-outcome-doc :is(.cm-h4, .cm-h5, .cm-h6) {
+  font-size: 15px;
+  color: var(--muted);
+}
+.board-outcome-doc .cm-blank {
+  font-size: 16px;
+  line-height: 0.85;
+}
+.board-outcome-doc .cm-gone {
+  font-size: 0;
+  white-space: nowrap;
+}
+.board-outcome-doc .cm-mark,
+.board-outcome-doc .cm-hang {
+  color: var(--ghost);
+  font-weight: 400;
+}
+/* A heading's hashes hang in the margin, so its words do not move when the caret comes. */
+.board-outcome-doc .cm-hang {
+  display: inline-block;
+  box-sizing: border-box;
+  width: calc(var(--hang) * 1ch);
+  margin-left: calc(var(--hang) * -1ch);
+  font: 400 13px/1 var(--font-mono);
+  letter-spacing: 0;
+  white-space: pre;
+}
+.board-outcome-doc .cm-strong {
+  font-weight: 650;
+}
+.board-outcome-doc .cm-em {
+  font-style: italic;
+}
+.board-outcome-doc .cm-del {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.board-outcome-doc .cm-inline-code {
+  padding: 1px 4px;
+  font: 0.88em var(--font-mono);
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+}
+.board-outcome-doc .cm-link {
+  color: var(--active);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--active) 40%, transparent);
+  text-underline-offset: 2px;
+}
+.board-outcome-doc .cm-quote {
+  padding-left: 1em;
+  color: var(--muted);
+  border-left: 2px solid var(--line-strong);
+}
+.board-outcome-doc .cm-li-slot {
+  display: inline-block;
+  width: var(--li);
+  text-indent: 0;
+  white-space: pre;
+}
+.board-outcome-doc .cm-li-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.board-outcome-doc .cm-li-dot {
+  position: relative;
+  height: 1em;
+  vertical-align: -0.1em;
+}
+.board-outcome-doc .cm-li-dot::before {
+  content: '';
+  position: absolute;
+  top: 0.42em;
+  left: 0.4em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.board-outcome-doc .cm-check {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  vertical-align: -0.1em;
+  accent-color: var(--active);
+}
+.board-outcome-doc .cm-done {
+  color: var(--faint);
+}
+.board-outcome-doc .cm-code {
+  padding-inline: 12px;
+  font: 13.5px/1.55 var(--font-mono);
+  background: var(--bg-soft);
+}
+.board-outcome-doc .cm-code-top {
+  padding-top: 10px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+.board-outcome-doc .cm-code-bottom {
+  padding-bottom: 10px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+.board-outcome-doc .cm-code-top.cm-code-bottom {
+  border-radius: var(--radius-md);
+}
+.board-outcome-doc .cm-fence-off {
+  height: 10px;
+  padding-block: 0;
+  overflow: hidden;
+  color: transparent;
+  line-height: 0;
+  font-size: 0;
+}
+.board-outcome-doc .cm-hr {
+  position: relative;
+  color: transparent;
+}
+.board-outcome-doc .cm-hr::after {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px solid var(--line-strong);
+}
+.board-outcome-doc .cm-table-source {
+  font: 13.5px/1.6 var(--font-mono);
+  color: var(--muted);
+}
+.board-outcome-doc .cm-table-box {
+  overflow-x: auto;
+  padding-block: 2px;
+  scrollbar-width: thin;
+}
+.board-outcome-doc .cm-table-box table {
+  border-collapse: collapse;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.board-outcome-doc .cm-table-box :is(th, td) {
+  padding: 6px 16px 6px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+.board-outcome-doc .cm-table-box th {
+  font-weight: 600;
+  border-bottom-color: var(--line-strong);
+}
+.board-outcome-doc .cm-table-box code {
+  font: 0.88em var(--font-mono);
+}
+/* A selection's few tools, on demand. */
+.board-outcome-doc .cm-bubble {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font: 13px/1 var(--font-body);
+}
+.cm-bubble button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.cm-bubble button:hover {
+  background: var(--hover);
+}
+.cm-bubble .is-strong {
+  font-weight: 700;
+}
+.cm-bubble .is-em {
+  font-style: italic;
+}
+.cm-bubble .is-ask {
+  margin-left: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-weight: 550;
+}
+/* Another hand on the page. */
+.board-outcome-doc .cm-unwritten {
+  color: transparent;
+  text-decoration-color: transparent;
+}
+.board-outcome-doc .cm-unwritten * {
+  color: transparent;
+  background: transparent;
+  visibility: hidden;
+}
+.board-outcome-doc .cm-drying {
+  opacity: 0.55;
+}
+.board-outcome-doc .cm-hands {
+  z-index: 2;
+  pointer-events: none;
+}
+.board-outcome-doc .cm-hand {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--active);
+  border-radius: 1px;
+}
+/* Its name goes along just past the caret, where the words it has yet to write are still unseen. */
+.board-outcome-doc .cm-hand-name {
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  transform: translateY(-50%);
+  padding: 0 5px;
+  font: 500 11px/16px var(--font-body);
+  letter-spacing: 0;
+  color: #fff;
+  background: var(--active-fill);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.board-outcome-doc .cm-hand.is-flipped .cm-hand-name {
+  top: auto;
+  right: -1px;
+  bottom: 100%;
+  left: auto;
+  transform: none;
+}
+.board-outcome-doc .cm-hand.is-resting {
+  animation: cm-hand-breathe 1.6s ease-in-out infinite;
+}
+@keyframes cm-hand-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-outcome-doc .cm-hand.is-resting {
+    animation: none;
+  }
+}
+.board-outcome-away {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  padding: 4px var(--space-3);
+  font: 13px/1.5 var(--font-body);
+  color: var(--text);
+  white-space: nowrap;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+@container board (max-width: 639.98px) {
+  .board-outcome {
+    --doc-pad: var(--space-4);
+  }
+  /* No margin to hang in: the marks stand in the line. */
+  .board-outcome-doc .cm-hang {
+    width: auto;
+    margin-left: 0;
+  }
 }
 .board-loading {
   padding: var(--space-4) var(--page-pad-x);
