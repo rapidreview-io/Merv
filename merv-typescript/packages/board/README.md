@@ -10,11 +10,11 @@ Board keeps a project's whiteboards: unlimited boards per project, for ideas. Pe
 
 Board requires State and Scope and nothing else. A card that links to a task, an experiment, a file or a paper keeps only that record's id (`merv:<id>`, or a web address); the page names and opens it through `project.read` (`references`), as a link in any text is, so Board reads nothing of other plugins and none of them knows boards exist. Its row declares `opens: 'board_'`, so a board's id opens on its page wherever it is named.
 
-| Entry               | Requires     | Adds                                                                                                                                                                      |
-| ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@merv/board`       | State, Scope | Boards, their shapes and revisions; `board.created`, `board.changed` and `board.set` events                                                                               |
-| `@merv/board/tools` | Board, Tools | `board.read` (list, get, look) and `board.write` (draw) for agents, a short guide paragraph; `board.scene`, `board.save` and `board.set` for the page only (`tier: 'ui'`) |
-| `@merv/board/ui`    | Board, UI    | The Board row under Research                                                                                                                                              |
+| Entry               | Requires     | Adds                                                                                                                                                                                                             |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@merv/board`       | State, Scope | Boards, their shapes, images and revisions; `board.created`, `board.changed` and `board.set` events                                                                                                              |
+| `@merv/board/tools` | Board, Tools | `board.read` (list, get, look) and `board.write` (draw) for agents, a short guide paragraph; `board.scene`, `board.save` and `board.set` for the page only (`tier: 'ui'`); `/board-images` when the API is there |
+| `@merv/board/ui`    | Board, UI    | The Board row under Research                                                                                                                                                                                     |
 
 ## The agent's tools
 
@@ -22,7 +22,15 @@ Board requires State and Scope and nothing else. A card that links to a task, an
 
 ## What a board keeps
 
-Rectangles, ellipses, diamonds, text, arrows, lines, freehand strokes and frames. Images, embeds and iframes are refused: a board keeps no files and loads nothing from elsewhere. A link is a web address, a Merv record or an in-app path. A board holds at most 5,000 live shapes; a page saves at most 500 shapes a call. A deleted shape is kept 30 days, so a page that missed its deletion still learns of it; after that the board's next change purges it (at most 500 a change), and a page asking for what changed since before a purged deletion is handed every live shape, marked `whole`, in place of the changes. Archived boards leave the list and stay retained. Everyone in the project can read and write boards, including readers, reviewers and all Fleet worker roles. Drawing is shared collaboration outside frozen workflow grants; it does not grant code, artifact or research-record writes. Work visits still require a live lease and acknowledge pending messages; inquiry visits require live session and source authority. Project isolation and revocation checks apply to every edit.
+Rectangles, ellipses, diamonds, text, arrows, lines, freehand strokes, frames and images. Embeds and iframes are refused: a board loads nothing from elsewhere. A link is a web address, a Merv record or an in-app path. A board holds at most 5,000 live shapes; a page saves at most 500 shapes a call. A deleted shape is kept 30 days, so a page that missed its deletion still learns of it; after that the board's next change purges it (at most 500 a change), and a page asking for what changed since before a purged deletion is handed every live shape, marked `whole`, in place of the changes. Archived boards leave the list and stay retained. Everyone in the project can read and write boards, including readers, reviewers and all Fleet worker roles. Drawing is shared collaboration outside frozen workflow grants; it does not grant code, artifact or research-record writes. Work visits still require a live lease and acknowledge pending messages; inquiry visits require live session and source authority. Project isolation and revocation checks apply to every edit.
+
+## Images
+
+A person adds an image by pasting it, dropping it on the canvas or with Excalidraw's image tool. PNG, JPEG, WebP and GIF, up to 10 MiB each; the page says why anything else is refused, and Board refuses it again by the bytes themselves (never SVG, which can carry script). Excalidraw shrinks what it is given to 1,440 pixels on its longest side and draws a GIF's first frame, so that is what is kept.
+
+The bytes go to `PUT /board-images/<file>` before the shape is saved, and every page brings them back from `GET /board-images/<file>`: both answer to the bearer's membership of the project, on every request, with nothing cached and no link to pass on; a platform administrator reading the project is not shown them. They live in Board's own `board_images` table, under the project and the name Excalidraw gives the file (the hash of the file as chosen), so the same file is kept once per project and Board needs no plugin beyond State and Scope. A tool's JSON cannot carry them, so `@merv/board/tools` mounts these routes when the API is there.
+
+Bytes last as long as a shape can name them, on any board of the project, a deleted one's 30 days included. When a change purges a shape, what no shape of the project names any more goes too, with anything stored over 30 days ago and never drawn. An agent cannot add an image: `board.read` (`get`) says one is there, with its place and size, and `look` draws it, each under the same membership. A look draws at most 32 MiB of images; past that the rest are placeholders until a closer look.
 
 ## Direct visual feedback
 

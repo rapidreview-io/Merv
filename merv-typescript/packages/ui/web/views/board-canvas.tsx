@@ -2,8 +2,10 @@
  * One board's canvas: Excalidraw, kept in step with Board. What the person draws is saved a moment
  * after they stop, as the shapes whose version Board has not seen; what anyone else (a colleague,
  * the agent) drew arrives by asking for what changed after the revision in hand, and is merged in
- * shape by shape as Excalidraw reconciles. Excalidraw's fonts are served from this app, never a
- * CDN; images and embeds are off, since a board keeps no files and loads nothing from elsewhere.
+ * shape by shape as Excalidraw reconciles. An image's bytes reach Board before its shape does, and
+ * each page brings in the bytes of what it is handed, under the same project membership.
+ * Excalidraw's fonts are served from this app, never a CDN; embeds are off, since a board loads
+ * nothing from elsewhere.
  */
 import '@excalidraw/excalidraw/index.css';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -12,16 +14,18 @@ import {
   CaptureUpdateAction,
   Excalidraw,
   getCommonBounds,
+  getDataURL,
   MainMenu,
+  newElementWith,
   WelcomeScreen,
   reconcileElements,
   restoreElements,
 } from '@excalidraw/excalidraw';
-import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
-import { stacked, type BoardScene } from '@merv/board/models';
-import { call } from '../api';
+import { MOST_IMAGE_BYTES, stacked, type BoardScene } from '@merv/board/models';
+import { accountRequest, type ApiError, call } from '../api';
 import { ensureBoardFonts } from './board-fonts';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
@@ -32,9 +36,39 @@ import { AddButton, CardPicker, type CardPick } from './board-add';
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
 /** The shapes Board keeps; anything else stays on this page only. */
-const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame'.split(' '));
+const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame image'.split(' '));
 const SAVE_MS = 600;
 const ASK_MS = 1500;
+/** What a person may add, told at once; Board checks the bytes again. */
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+/**
+ * Excalidraw asks for a file's name before it reads the file, and shows what is thrown as its own
+ * error. Answering nothing leaves it to name the file by its hash, as it does by default.
+ */
+const nameImage = (file: File): string => {
+  if (!IMAGE_TYPES.has(file.type))
+    throw new Error('A board takes PNG, JPEG, WebP and GIF images, and this is none of them.');
+  if (file.size > MOST_IMAGE_BYTES)
+    throw new Error(
+      `This image is ${(file.size / 1024 / 1024).toFixed(1)} MiB; a board takes up to 10 MiB.`,
+    );
+  return undefined as never;
+};
+/** The file a shape shows, if it is an image with its file chosen. */
+const fileOf = (el: OrderedExcalidrawElement) => (el.type === 'image' ? el.fileId : null);
+const imageAt = (fileId: string) => `/board-images/${encodeURIComponent(fileId)}`;
+/**
+ * Whether Excalidraw is adding an image: it holds that very shape, and restoring the scene now
+ * would replace it, or drop it as too small to see, so what others drew waits until it is placed.
+ */
+const addingImage = (api: ExcalidrawImperativeAPI) => {
+  const { pendingImageElementId, newElement } = api.getAppState();
+  return (
+    !!pendingImageElementId ||
+    newElement?.type === 'image' ||
+    api.getSceneElements().some((el) => el.type === 'image' && !el.fileId)
+  );
+};
 /** The card a selection is, as the link popup reads it: one linked shape, or a card's group. */
 const cardOf = (selected: readonly OrderedExcalidrawElement[]) => {
   const card = selected.find((el) => el.link);
@@ -67,6 +101,10 @@ function BoardCanvasScene({ id }: { id: string }) {
   const saving = useRef<Promise<void> | null>(null);
   /** The shapes as Excalidraw last drew them, read after it unmounts and empties its own scene. */
   const scene = useRef<readonly OrderedExcalidrawElement[]>([]);
+  const files = useRef<BinaryFiles>({});
+  /** The files Board holds, as far as this page knows, and those asked of it, once each. */
+  const onBoard = useRef(new Set<string>());
+  const asked = useRef(new Set<string>());
 
   useEffect(() => {
     let live = true;
@@ -87,20 +125,62 @@ function BoardCanvasScene({ id }: { id: string }) {
   const save = useCallback(async () => {
     await saving.current;
     const changed = scene.current.filter(
-      (el) => KEPT.has(el.type) && known.current.get(el.id) !== el.version,
+      (el) =>
+        KEPT.has(el.type) &&
+        known.current.get(el.id) !== el.version &&
+        (el.type !== 'image' || (el.fileId && el.width)),
     );
     if (!changed.length) return;
     const run = (async () => {
-      for (let at = 0; at < changed.length; at += 500) {
-        const part = changed.slice(at, at + 500);
+      // An image's bytes go first, so nobody is ever handed a shape Board cannot show them.
+      const unsent = new Set<FileId | null>();
+      for (const fileId of new Set(changed.filter((el) => !el.isDeleted).map(fileOf))) {
+        const held = fileId && !onBoard.current.has(fileId) && files.current[fileId];
+        if (!held) continue;
+        const raw = Uint8Array.from(atob(held.dataURL.split(',')[1]!), (c) => c.charCodeAt(0));
+        await accountRequest(imageAt(fileId), { method: 'PUT', raw, scoped: true }).then(
+          () => onBoard.current.add(fileId),
+          (error: ApiError) => {
+            unsent.add(fileId);
+            // Board will not take it, so its shape goes; anything else is tried at the next save.
+            if (error.status === 413 || error.status === 415)
+              api?.updateScene({
+                elements: scene.current.map((el) =>
+                  fileOf(el) === fileId ? newElementWith(el, { isDeleted: true }) : el,
+                ),
+                appState: { errorMessage: error.message },
+                captureUpdate: CaptureUpdateAction.NEVER,
+              });
+            else setProblem(`Image not added: ${error.message}`);
+          },
+        );
+      }
+      const ready = changed.filter((el) => !unsent.has(fileOf(el)));
+      for (let at = 0; at < ready.length; at += 500) {
+        const part = ready.slice(at, at + 500);
         await call('board.save', { id, elements: part });
         for (const el of part) known.current.set(el.id, el.version);
       }
-      setProblem(null);
+      if (!unsent.size) setProblem(null);
     })().catch((error: Error) => setProblem(`Not saved: ${error.message}`));
     saving.current = run;
     await run;
-  }, [id]);
+  }, [id, api]);
+
+  // An image on the board that this page has not got: its shape shows a placeholder until it comes.
+  const bring = (fileId: FileId) => {
+    asked.current.add(fileId);
+    accountRequest<Blob>(imageAt(fileId), { scoped: true, bytes: true })
+      .then(async (blob) => {
+        const dataURL = await getDataURL(blob);
+        onBoard.current.add(fileId);
+        api?.addFiles([{ id: fileId, mimeType: blob.type as never, dataURL, created: Date.now() }]);
+      })
+      // Refused or gone, it stays a placeholder; anything else is asked again at the next change.
+      .catch(
+        (error: ApiError) => [403, 404].includes(error.status) || asked.current.delete(fileId),
+      );
+  };
 
   // A board opens with all of it in view, zoomed out as far as that takes and never in; with
   // ?focus=<shape or frame id> it opens on that part, large enough to read.
@@ -136,7 +216,7 @@ function BoardCanvasScene({ id }: { id: string }) {
     if (!api) return;
     let disposed = false;
     const measure = () => {
-      if (disposed) return;
+      if (disposed || addingImage(api)) return;
       api.updateScene({
         elements: restoreElements(api.getSceneElementsIncludingDeleted(), null, {
           refreshDimensions: true,
@@ -175,6 +255,7 @@ function BoardCanvasScene({ id }: { id: string }) {
       }
       asking = false;
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
+      if (addingImage(api)) return;
       revision.current = scene.board.revision;
       // Never repair bindings here: these are only the shapes that changed, and a box whose text
       // did not change would lose it.
@@ -285,11 +366,13 @@ function BoardCanvasScene({ id }: { id: string }) {
       )}
       <Excalidraw
         excalidrawAPI={setApi}
+        // Excalidraw takes a paste only with the focus inside it: the page is the board, so at once.
+        autoFocus
         theme={theme}
         aiEnabled={false}
         validateEmbeddable={false}
+        generateIdForFile={nameImage}
         UIOptions={{
-          tools: { image: false },
           canvasActions: {
             loadScene: false,
             saveToActiveFile: false,
@@ -303,7 +386,7 @@ function BoardCanvasScene({ id }: { id: string }) {
             repairBindings: true,
           }),
         }}
-        onChange={(elements: readonly OrderedExcalidrawElement[], appState) => {
+        onChange={(elements: readonly OrderedExcalidrawElement[], appState, held) => {
           const zoomChanged =
             previousZoom.current !== undefined && previousZoom.current !== appState.zoom.value;
           previousZoom.current = appState.zoom.value;
@@ -329,6 +412,11 @@ function BoardCanvasScene({ id }: { id: string }) {
             api?.updateScene({ appState: { showHyperlinkPopup: 'info' } });
           opened.current = card?.id ?? null;
           scene.current = elements;
+          files.current = held;
+          for (const el of elements) {
+            const fileId = el.isDeleted ? null : fileOf(el);
+            if (fileId && !held[fileId] && !asked.current.has(fileId)) bring(fileId);
+          }
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);

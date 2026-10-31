@@ -14,4 +14,10 @@ UPDATE board_elements SET deleted_at=to_char(now() AT TIME ZONE 'UTC','YYYY-MM-D
 CREATE INDEX board_elements_deleted ON board_elements(board_id,deleted_at) WHERE deleted;
 ALTER TABLE boards ADD COLUMN purged BIGINT NOT NULL DEFAULT 0;
 `,
+  // The bytes of the images on a project's boards, and which file each image shape shows.
+  3: `
+CREATE TABLE board_images(project_id TEXT NOT NULL,file_id TEXT NOT NULL,content BYTEA NOT NULL,stored_at TEXT NOT NULL,PRIMARY KEY(project_id,file_id));
+ALTER TABLE board_elements ADD COLUMN file_id TEXT;
+CREATE INDEX board_elements_file ON board_elements(file_id) WHERE file_id IS NOT NULL;
+`,
 };

@@ -1,5 +1,8 @@
 import type { Json } from '@merv/contracts/data';
 
+/** The most bytes one image holds. */
+export const MOST_IMAGE_BYTES = 10 * 1024 * 1024;
+
 /** One whiteboard of a project, without what is drawn on it. */
 export interface BoardSummary {
   id: string;

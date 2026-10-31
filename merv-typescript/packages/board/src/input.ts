@@ -184,7 +184,7 @@ export const drawSchema = z.strictObject({
 });
 export type DrawInput = z.input<typeof drawSchema>;
 
-/** Shapes a page may save. Images, embeds and iframes load outside the board, and are not taken. */
+/** Shapes a page may save. Embeds and iframes load outside the board, and are not taken. */
 const DRAWN = [
   'rectangle',
   'ellipse',
@@ -194,7 +194,19 @@ const DRAWN = [
   'line',
   'freedraw',
   'frame',
+  'image',
 ] as const;
+/** The name Excalidraw gives an image's file: the hash of what the person chose. */
+export const fileIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
+/** What an image's own bytes say it is, whatever it claims. No SVG: it can carry script. */
+const IMAGE_MARKS = [
+  [/^\x89PNG\r\n\x1a\n/, 'image/png'],
+  [/^\xff\xd8\xff/, 'image/jpeg'],
+  [/^GIF8[79]a/, 'image/gif'],
+  [/^RIFF.{4}WEBP/s, 'image/webp'],
+] as const;
+export const imageType = (bytes: Buffer) =>
+  IMAGE_MARKS.find(([mark]) => mark.test(bytes.subarray(0, 12).toString('latin1')))?.[1];
 const link = z
   .string()
   .max(2_000)
@@ -213,12 +225,14 @@ export const elementSchema = z
     width: z.number().finite(),
     height: z.number().finite(),
     link,
+    fileId: fileIdSchema.nullish(),
     // A line's points are drawn into the picture an agent looks at, so they are numbers only.
     points: z.array(z.tuple([z.number().finite(), z.number().finite()])).optional(),
     boundElements: z.array(z.object({ id: z.string(), type: z.string() }).passthrough()).nullish(),
     groupIds: z.array(z.string()).optional(),
   })
   .passthrough()
+  .refine((el) => el.type !== 'image' || el.fileId, 'An image names its file')
   // Every read of a board holds all of it; an agent's longest sketch stroke is about 150 KiB.
   .refine((el) => jsonBytes(el) <= 256 * 1024, 'A shape is at most 256 KiB');
 export const saveSchema = z.strictObject({ id, elements: z.array(elementSchema).min(1).max(500) });
