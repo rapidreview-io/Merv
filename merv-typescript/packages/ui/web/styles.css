@@ -8004,6 +8004,39 @@ html:has(.board-page) body {
 .board-reveal.is-dark {
   filter: invert(93%) hue-rotate(180deg);
 }
+/* Keep or dismiss what an agent proposed, above it while it is selected. */
+.board-proposal {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -100%);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 32px #00000016;
+}
+.board-proposal > button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.board-proposal > button:hover {
+  background: var(--bg-soft);
+}
+/* An agent shows as a cursor on the board alone: Excalidraw would list it as a person too. */
+.board-canvas .excalidraw .UserList__wrapper,
+.board-canvas .excalidraw .UserList-Wrapper {
+  display: none;
+}
 .board-history {
   position: absolute;
   z-index: 4;

@@ -92,6 +92,7 @@ export const publicCommand = (record: PiCommandRecord): PiCommand => {
     tools: _tools,
     notes: _notes,
     context: _context,
+    pointing: _pointing,
     instructions: _instructions,
     projectPaper: _paper,
     calledAt: _called,

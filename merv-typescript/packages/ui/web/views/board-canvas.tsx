@@ -37,10 +37,14 @@ import { useCurrent } from '../mutations';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
+import { pointWith } from './pi-transport';
 import { BoardLinkDetails } from './board-link-details';
 import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
 import { inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
+import { BoardPointing } from './board-pointing';
+import { BoardPresence } from './board-presence';
+import { BoardProposal } from './board-proposal';
 import { BoardReplay } from './board-replay';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
@@ -142,6 +146,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const known = useRef(new Map<string, number>());
   const revision = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const cursors = useRef<unknown>();
   const saving = useRef<Promise<void> | null>(null);
   /** The shapes as Excalidraw last drew them, read after it unmounts and empties its own scene. */
   const scene = useRef<readonly OrderedExcalidrawElement[]>([]);
@@ -155,6 +160,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   /** Shows what others drew, as they drew it, on a canvas above the board. */
   const player = useRef<Player>();
   const reveal = useRef<HTMLCanvasElement>(null);
+  /** Shows where agents are on the board, as Excalidraw shows collaborators. */
+  const presence = useRef<BoardPresence>();
+  /** Gathers what the person points at, to go with what they say to Pi. */
+  const pointing = useRef<BoardPointing>();
   const focusBoard = () =>
     reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
 
@@ -261,6 +270,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const land = (shapes: BoardElement[]) => {
       for (const el of shapes)
         known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
+      pointing.current?.landed(shapes);
     };
     const made = new Player(
       stageOf(api, () => busy(api), land),
@@ -268,8 +278,20 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       BEHIND_MS,
     );
     player.current = made;
-    return () => made.stop();
-  }, [api]);
+    const here = new BoardPresence(api);
+    presence.current = here;
+    made.pen = here.pen;
+    const hand = new BoardPointing(api, id);
+    hand.landed(first?.elements ?? []);
+    pointing.current = hand;
+    const unpoint = pointWith(hand.note);
+    return () => {
+      made.stop();
+      here.stop();
+      hand.stop();
+      unpoint();
+    };
+  }, [api, id]);
   // Under a replay, what others draw lands as it comes, to be there on return.
   useEffect(() => {
     if (!player.current) return;
@@ -302,6 +324,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         }
       }
       asking = false;
+      if (live && scene?.looking) presence.current?.heard(scene.looking);
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
       if (busy(api)) return;
       revision.current = scene.board.revision;
@@ -535,6 +558,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         // Excalidraw takes a paste only with the focus inside it: the page is the board, so at once.
         autoFocus
         generateIdForFile={nameImage}
+        onPointerUpdate={({ pointer, button }) => pointing.current?.moved(pointer, button)}
         initialData={{
           elements: restored(first.elements, true),
         }}
@@ -548,7 +572,9 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
             selected.length > 0 &&
               selected.every(
                 (element) =>
-                  Boolean(element.link || element.customData?.card) ||
+                  Boolean(
+                    element.link || element.customData?.card || element.customData?.proposed,
+                  ) ||
                   (element.type === 'text' &&
                     Boolean(
                       elements.find((container) => container.id === element.containerId)?.link,
@@ -566,9 +592,16 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
           scene.current = elements;
           files.current = held;
           bring?.(elements, held);
+          // A cursor moving changes no shape, and must not put off the save of one that did.
+          const moved = appState.collaborators !== cursors.current;
+          cursors.current = appState.collaborators;
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
+          if (moved && timer.current) return;
           clearTimeout(timer.current);
-          timer.current = setTimeout(() => void save(), SAVE_MS);
+          timer.current = setTimeout(() => {
+            timer.current = undefined;
+            void save();
+          }, SAVE_MS);
         }}
         renderToolbarEnd={() => <AddButton key="merv-add" onClick={openPanel} />}
       >
@@ -587,6 +620,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         </WelcomeScreen>
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
+      {api && <BoardProposal api={api} />}
       {replaying ? (
         <BoardReplay id={id} editor={editor} close={() => setReplaying(false)} />
       ) : (

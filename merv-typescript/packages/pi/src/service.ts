@@ -409,8 +409,9 @@ export class PiService implements Pi {
 
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.core.ready();
-    // The model only guards the send: a retry is the same message whatever the page showed.
-    const { model, ...value } = parse(sendInput, input);
+    // The model only guards the send, and what the page points at only goes with it: a retry is
+    // the same message whatever the page showed.
+    const { model, pointing, ...value } = parse(sendInput, input);
     const renter = await this.hosts.hostCaller();
     const { command, hostId } = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
@@ -468,6 +469,7 @@ export class PiService implements Pi {
         machine: slot.machine,
         status: queued ? 'waiting' : 'starting',
         messages: [{ role: 'user', text: value.text }],
+        ...(pointing && { pointing }),
         outcomes: [],
         error: null,
         createdAt: this.core.time(),

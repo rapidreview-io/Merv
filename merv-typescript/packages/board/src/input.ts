@@ -77,6 +77,8 @@ const edge = z.strictObject({
   label: text.optional(),
 });
 
+/** A guess for the person to keep or dismiss: faint and dashed, one group a call (elements.ts). */
+const proposed = z.boolean().optional();
 /** What a card opens: a Merv record's id, or a web address. */
 const opens = z.union([
   id,
@@ -87,7 +89,9 @@ const opens = z.union([
     .refine((v) => /^https?:\/\//.test(v)),
 ]);
 export const opSchema = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('note'), key, text, color: color.optional(), ...place }).strict(),
+  z
+    .object({ op: z.literal('note'), key, text, color: color.optional(), proposed, ...place })
+    .strict(),
   z.strictObject({
     op: z.literal('box'),
     key,
@@ -101,6 +105,7 @@ export const opSchema = z.discriminatedUnion('op', [
     fontSize: z.number().finite().min(8).max(96).optional(),
     shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
     color: color.optional(),
+    proposed,
     ...place,
   }),
   z.strictObject({
@@ -110,6 +115,7 @@ export const opSchema = z.discriminatedUnion('op', [
     text,
     size: z.enum(['s', 'm', 'l']).optional(),
     fontSize: z.number().finite().min(8).max(96).optional(),
+    proposed,
     ...place,
   }),
   z.strictObject({
@@ -173,6 +179,7 @@ export const opSchema = z.discriminatedUnion('op', [
     key,
     strokes: z.array(stroke).min(1).max(80),
     size: z.enum(['s', 'm', 'l', 'native']).optional(),
+    proposed,
     ...place,
   }),
   z.strictObject({

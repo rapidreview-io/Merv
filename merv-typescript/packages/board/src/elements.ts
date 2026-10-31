@@ -13,6 +13,8 @@ import type { BoardElement, PlacedImage } from './types.js';
 type El = BoardElement & Record<string, any>;
 type Rect = { x: number; y: number; width: number; height: number };
 const GAP = 40;
+/** How faint what an agent proposes stands until the person keeps it. */
+const PROPOSED_OPACITY = 45;
 /** How wide a new image stands, unless asked or smaller. */
 const IMAGE_WIDTH = 640;
 /** The most places tried inside a frame before it grows to take a shape. */
@@ -135,6 +137,9 @@ export class Drawing {
   readonly elements = new Map<string, El>();
   readonly changed = new Set<string>();
   readonly created: Record<string, string> = {};
+  /** The group of what this call proposes: one guess, kept or dismissed whole. */
+  proposal?: string;
+  private proposing = false;
   /** Where shapes stand, frames apart: a shape goes beside another inside a frame. */
   private occupied: Rect[] = [];
   private frames: Rect[] = [];
@@ -268,6 +273,13 @@ export class Drawing {
       ...(this.agent ? { customData: { by: 'agent' } } : {}),
       ...fields,
     };
+    if (this.proposing)
+      Object.assign(el, {
+        opacity: PROPOSED_OPACITY,
+        strokeStyle: 'dashed',
+        groupIds: [...el.groupIds, (this.proposal ??= elementId())],
+        customData: { ...el.customData, proposed: true },
+      });
     this.elements.set(el.id, el);
     this.changed.add(el.id);
     return el;
@@ -699,6 +711,7 @@ export class Drawing {
   }
 
   apply(op: DrawOp, file?: PlacedImage) {
+    this.proposing = 'proposed' in op && !!op.proposed;
     switch (op.op) {
       case 'note': {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
@@ -1146,6 +1159,7 @@ export function summarize(elements: BoardElement[]) {
       ...(el.customData?.source && { source: el.customData.source }),
       ...(el.frameId && { frame: el.frameId }),
       ...(el.customData?.by === 'agent' && { by: 'agent' }),
+      ...(el.customData?.proposed && { proposed: true }),
       ...where(el),
     }));
   // Strokes drawn as one sketch, or grouped by hand, read as one drawing.
@@ -1159,6 +1173,8 @@ export function summarize(elements: BoardElement[]) {
     for (const label of live)
       if (label.type === 'text' && owners.has(label.containerId) && !parts.includes(label))
         parts.push(label);
+    // A shape alone in its group (a proposal's label) has already been said.
+    if (parts.length === 1 && !marks.includes(parts[0]!)) continue;
     const box = bounds(parts.map(rectOf))!;
     const first = parts[0]!;
     shapes.push({
@@ -1167,6 +1183,7 @@ export function summarize(elements: BoardElement[]) {
       ...(parts.length > 1 && { strokes: parts.length }),
       ...(first.frameId && { frame: first.frameId }),
       ...(first.customData?.by === 'agent' && { by: 'agent' }),
+      ...(first.customData?.proposed && { proposed: true }),
       ...where(box as El),
     } as (typeof shapes)[number]);
   }

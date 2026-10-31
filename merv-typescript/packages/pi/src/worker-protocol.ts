@@ -234,7 +234,9 @@ export class PiWorkerProtocol {
         clip(
           profile
             ? ((await profile.context?.({ binding: conversation.profile!, caller })) ?? '')
-            : await this.core.tools.context(caller),
+            : [command.pointing, await this.core.tools.context(caller)]
+                .filter(Boolean)
+                .join('\n\n'),
           32_000,
         ) || undefined;
       // The offered list is fixed for the turn: a claim served again keeps it, and the model

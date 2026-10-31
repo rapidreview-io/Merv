@@ -16,11 +16,18 @@ export const createInput = z.strictObject({
 });
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
 const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
+const shapes = String.raw`[\w-]+(?:,[\w-]+)*(?:,\+\d+ more)?`;
+const pointed = String.raw`selected ${shapes}|pointer at \(-?\d+,-?\d+\)(?: near [\w-]+)?|circled ${shapes}`;
+/** What a person's board page says they point at, and nothing else: ids and numbers in this form. */
+const pointingNote = new RegExp(
+  String.raw`^\[board [\w-]+(?:: (?:${pointed})(?:; (?:${pointed}))*)?\]$`,
+);
 /** pi.send; `model` is the one the page shows, which must still be the conversation's. */
 export const sendInput = z.strictObject({
   commandId: id,
   text: z.string().trim().min(1).max(32_000),
   model: modelId.optional(),
+  pointing: z.string().max(1_300).regex(pointingNote).optional(),
 });
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
