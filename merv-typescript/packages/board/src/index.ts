@@ -38,6 +38,7 @@ import type {
   BoardSummary,
   Outcome,
   OutcomeLine,
+  OutcomeSent,
   PlacedImage,
 } from './types.js';
 import { MOST_IMAGE_BYTES, penMs, penUnits, stacked } from './models.js';
@@ -54,7 +55,8 @@ const [HISTORY_PAGE, HISTORY_BYTES] = [100, 2_000_000];
 /** The most outcomes one board holds, the characters one holds, and the sends it remembers. */
 const [MOST_OUTCOMES, OUTCOME_CHARS, SENDS_KEPT] = [50, 200_000, 20];
 /** An outcome's row as a line; Postgres may answer a BIGINT as text. */
-const outcomeLine = (row: { id: string; revision: number; record: string }) =>
+type OutcomeRow = { id: string; revision: number; record: string };
+const outcomeLine = (row: OutcomeRow) =>
   ({ id: row.id, revision: Number(row.revision), ...JSON.parse(row.record) }) as OutcomeLine;
 const lineOf = ({
   text: _text,
@@ -646,6 +648,23 @@ export class BoardService implements Board {
       await this.keepOutcome(next, tx, input.board);
       return lineOf(next);
     });
+  }
+  async taskMade(projectId: string, taskId: string, files: string[], tx: Transaction) {
+    for (const file of files)
+      for (const row of await tx.all<OutcomeRow & { board_id: string; text: string }>(
+        `SELECT o.board_id,o.id,o.revision,o.record,o.text FROM board_outcomes o JOIN boards b ON b.id=o.board_id
+          WHERE b.project_id=? AND strpos(o.record,?)>0`,
+        projectId,
+        file,
+      )) {
+        const outcome = { ...outcomeLine(row), text: row.text } as Outcome;
+        // The first task to name it is what the send became; a later one merely mentions it.
+        const made = (one: OutcomeSent) =>
+          one.how === 'fleet' && one.artifactId === file && !one.taskId;
+        if (!outcome.sent.some(made)) continue;
+        const sent = outcome.sent.map((one) => (made(one) ? { ...one, taskId } : one));
+        await this.keepOutcome({ ...outcome, sent }, tx, row.board_id);
+      }
   }
 }
 

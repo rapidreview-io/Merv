@@ -26,6 +26,7 @@ test('default configuration includes session enforcement and API adds tool trans
       'research',
       'paper',
       'reports',
+      'board-links',
       'board',
       'reflections',
       'knowledge',
@@ -65,7 +66,7 @@ test('default configuration includes session enforcement and API adds tool trans
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 47, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 48, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',

@@ -241,6 +241,8 @@ export async function createTask(
       await recorded(ctx.state, tx, caller, 'task.created', workflow.id, {
         briefId: brief.id,
         evidenceVersion: 2,
+        // The files its goal names, for whoever handed them on to learn what became of them.
+        files: input.goal.match(/\bart_[\w-]+/g) ?? [],
       });
       const task = await ctx.hydrate(caller, await ctx.row(tx, caller, workflow.id), tx);
       // Render what every work context embeds, or the task could never begin. A session's

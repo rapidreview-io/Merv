@@ -260,7 +260,7 @@
         "id": "domain",
         "label": "Domain & agent capabilities",
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
-        "members": ["paper", "reports", "board", "reviews", "codeWork", "pi"]
+        "members": ["paper", "reports", "board", "merv-board-links", "reviews", "codeWork", "pi"]
       },
       {
         "id": "work",

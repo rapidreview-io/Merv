@@ -267,3 +267,34 @@ test('the handoff prompt names everything, and fits a deep link', () => {
   const inline = handoffInline(handoff, 'The whole plan.');
   assert.ok(inline.endsWith('The whole plan.') && !inline.includes('art_'));
 });
+
+test('a send to Fleet learns its task from the first task whose goal names its file', async (t) => {
+  const { board, owner, id, tool, f } = await fixture(t);
+  const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'Do it.' });
+  const artifactId = 'art_frozen-1';
+  const send = (how: 'fleet' | 'copy') =>
+    board.outcomeSent(owner, { board: id, outcome: made.id, how, artifactId, revision: 1 });
+  await send('copy');
+  await send('fleet');
+  const task = (goal: string) =>
+    tool('task.write:create', owner, {
+      title: 'Plan',
+      goal,
+      checks: ['Done'],
+      requestId: goal,
+    }) as Promise<{ id: string }>;
+  const sends = async () => {
+    await f.domainEvents.drain();
+    return (await board.outcome(owner, id, made.id)).sent;
+  };
+  await task('Nothing to read here.');
+  assert.ok((await sends()).every((one) => !one.taskId));
+  const first = await task(`Read ${artifactId} first.`);
+  const linked = await sends();
+  assert.equal(linked.find((one) => one.how === 'fleet')?.taskId, first.id);
+  assert.equal(linked.find((one) => one.how === 'copy')?.taskId, undefined, 'only what Fleet took');
+  await task(`See also ${artifactId}.`);
+  assert.equal((await sends()).find((one) => one.how === 'fleet')?.taskId, first.id, 'the first');
+  await send('fleet');
+  assert.equal((await sends()).find((one) => one.how === 'fleet')?.taskId, undefined, 'sent anew');
+});

@@ -1,4 +1,4 @@
-import type { Caller } from '@merv/contracts';
+import type { Caller, Transaction } from '@merv/contracts';
 import type { DrawInput, OutcomeInput, OutcomeSentInput } from './input.js';
 import type {
   BoardElement,
@@ -78,6 +78,8 @@ export interface Board {
   deleteOutcome(caller: Caller, board: string, outcome: string, revision: number): Promise<void>;
   /** Notes the file frozen from an outcome; its revision stays, so an unchanged resend is the same. */
   outcomeSent(caller: Caller, input: OutcomeSentInput): Promise<OutcomeLine>;
+  /** A new task names these files: the sends to Fleet that froze them have become it. */
+  taskMade(projectId: string, taskId: string, files: string[], tx: Transaction): Promise<void>;
 }
 
 declare module 'cordis' {

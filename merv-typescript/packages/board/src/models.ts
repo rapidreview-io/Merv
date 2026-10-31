@@ -40,6 +40,8 @@ export interface OutcomeSent {
   how: 'claude' | 'copy' | 'fleet';
   artifactId: string;
   revision: number;
+  /** The task a send to Fleet became, once one names the file (`@merv/board/links`). */
+  taskId?: string;
 }
 
 /** An outcome without its text: what the page polls and what board.read lists. */

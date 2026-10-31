@@ -58,6 +58,7 @@
           "paper",
           "reports",
           "board",
+          "merv-board-links",
           "reviews",
           "codeWork",
           "pi"
@@ -200,6 +201,11 @@
     "upward": [],
     "peers": [
       {
+        "from": "merv-board-links",
+        "to": "board",
+        "optional": false
+      },
+      {
         "from": "codeWork",
         "to": "reviews",
         "optional": false
@@ -316,6 +322,7 @@
       "caption": "Discovered in source",
       "members": [
         "merv-admin",
+        "merv-board-links",
         "codeWork",
         "customerExperiments",
         "fleet",
@@ -511,6 +518,25 @@
           "readOnly": false
         }
       ]
+    },
+    {
+      "plugin": "merv-board-links",
+      "source": "packages/board/src/links.ts",
+      "provides": [],
+      "requires": [
+        "board",
+        "domainEvents"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-board-links",
+      "group": "other",
+      "owner": "merv-board-links",
+      "label": "merv-board-links",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
     },
     {
       "plugin": "merv-board-tools",
@@ -2784,6 +2810,16 @@
       "optional": false
     },
     {
+      "from": "merv-board-links",
+      "to": "board",
+      "optional": false
+    },
+    {
+      "from": "merv-board-links",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
       "from": "merv-board-tools",
       "to": "board",
       "optional": false
@@ -4120,10 +4156,10 @@
     }
   ],
   "counts": {
-    "plugins": 88,
+    "plugins": 89,
     "providers": 40,
-    "adapters": 48,
-    "dependencies": 283
+    "adapters": 49,
+    "dependencies": 285
   },
   "network": [
     {

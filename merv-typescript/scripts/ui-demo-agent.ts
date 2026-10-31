@@ -96,6 +96,17 @@ function drafted(asked: string, note: string): Step[] {
 }
 function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[] {
   if (/^Draft /.test(asked)) return drafted(asked, note);
+  const file = /^Create a task from outcome .*?(art_[\w-]+)/.exec(asked)?.[1];
+  if (file)
+    return [
+      act('task.write', 'create', {
+        title: 'Retrieval ablation',
+        goal: `Read ${file} first, then do as it says.`,
+        checks: ['Done as the file says'],
+        requestId: `demo-agent-${randomUUID()}`,
+      }),
+      { say: 'I created the task, and a Fleet worker will take it up.' },
+    ];
   if (/pause/i.test(asked)) return dispatch(false);
   // A drawing in many small calls, to watch and to step in on.
   if (/\bin steps\b/i.test(asked)) {
