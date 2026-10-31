@@ -594,6 +594,8 @@ export class BoardService implements Board {
     const input = parse(outcomeSentSchema, value);
     return await this.state.transaction(async (tx) => {
       await this.editable(caller, tx);
+      // Whoever may keep a file: a reader, who may edit the board, sends nothing in anyone's name.
+      await this.scope.require(caller, 'write', tx);
       const outcome = await this.held(caller, input.board, input.outcome, tx);
       const { board: _board, outcome: _outcome, ...sent } = input;
       const others = outcome.sent.filter(

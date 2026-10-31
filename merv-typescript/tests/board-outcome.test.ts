@@ -31,7 +31,7 @@ async function fixture(t: test.TestContext) {
   const made = await board.create(owner, 'Sketch');
   const tool = (name: string, who: Caller, input: unknown) =>
     f.app.ctx.tools.call(name, who, input) as Promise<never>;
-  return { board, owner, stranger: caller(stranger), id: made.id, tool };
+  return { board, owner, stranger: caller(stranger), id: made.id, tool, f: f.app.ctx };
 }
 const coded = (code: string) => (error: { code?: string }) => error.code === code;
 
@@ -111,8 +111,17 @@ test('a send leaves the revision, and the same send is one entry', async (t) => 
 });
 
 test('an outcome stays in its project', async (t) => {
-  const { board, owner, stranger, id } = await fixture(t);
+  const { board, owner, stranger, id, f } = await fixture(t);
   const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'text' });
+  const reader = await f.scope.credentials.issueActor(owner, { name: 'R', role: 'reader' });
+  await assert.rejects(
+    board.outcomeSent(
+      { ...owner, actorId: reader.actor.id, credentialId: reader.credential.id },
+      { board: id, outcome: made.id, how: 'copy', artifactId: 'art_forged', revision: 1 },
+    ),
+    coded('forbidden'),
+    'a reader notes no send',
+  );
   await assert.rejects(board.outcome(stranger, id, made.id), coded('not_found'));
   await assert.rejects(
     board.writeOutcome(stranger, {
@@ -168,12 +177,11 @@ test('what was typed becomes one hunk whose find occurs once', () => {
   ] as const) {
     const hunk = hunkOf(saved, draft)!;
     assert.equal(apply(saved, hunk), draft, JSON.stringify([saved, draft]));
-    assert.equal(/[\ud800-\udbff]$/.test(hunk.find), false, 'no surrogate pair is parted');
   }
   assert.equal(hunkOf('', 'first'), null, 'an empty text has nothing to find');
 });
 
-test('typing survives what the agent writes elsewhere, and wins where it clashes', () => {
+test('typing survives what the agent writes, elsewhere or over it', () => {
   const base = 'Intro\n\nThe rate is 10.\n\nEnd';
   const mine = 'Intro\n\nThe rate is 12.\n\nEnd';
   const below = `${base}\n\nNext paragraph.`;
@@ -182,10 +190,16 @@ test('typing survives what the agent writes elsewhere, and wins where it clashes
   assert.equal(rebased('Goal: 10', 'Goal: 12', 'Goal: 10\n\nThen more.'), 'Goal: 12\n\nThen more.');
   // Two edits by the agent around the typing keep both.
   assert.equal(rebased(base, mine, `Lead\n\n${base}\n\nTail`), `Lead\n\n${mine}\n\nTail`);
-  // The agent rewrote the sentence being typed in: the person's stands.
+  // A stray digit is not what was changed: the whole line is, and it no longer stands.
+  assert.deepEqual(hunkOf('Rate: 10', 'Rate: 12'), { find: 'Rate: 10', replace: 'Rate: 12' });
   assert.equal(
-    rebased('A\n\nThe rate is 10.\n\nZ', 'A\n\nThe rate is 12.\n\nZ', 'A\n\nRates vary.\n\nZ'),
-    'A\n\nThe rate is 12.\n\nZ',
+    rebased('Rate: 10', 'Rate: 12', 'Rate: 11\nCount: 0'),
+    'Rate: 12\n\nRate: 11\nCount: 0',
+  );
+  // The agent rewrote the sentence being typed in and wrote around it: all of it stands.
+  assert.equal(
+    rebased('A\n\nRate 10\n\nZ', 'A\n\nRate 12\n\nZ', 'Intro\n\nA\n\nRate 11\n\nZ\n\nEnd'),
+    'Intro\n\nA\n\nRate 12\n\nRate 11\n\nZ\n\nEnd',
   );
   assert.equal(rebased(base, base, below), below, 'nothing typed takes what came');
   assert.equal(rebased(base, mine, base), mine, 'nothing came keeps what was typed');
@@ -197,13 +211,14 @@ test('the caret stays with the words it stood in', () => {
   assert.equal(caretAfter(was, `${was}\nthird`, 5), 5, 'text after it leaves it');
   assert.equal(caretAfter(was, `top\n${was}`, 5), 9, 'text before it moves it');
   assert.equal(caretAfter(was, 'first LINE\nsecond', 7), 10, 'within what changed, to its end');
+  assert.equal(caretAfter('abc', 'XabcY', 2), 3, 'changes on both sides leave it among its words');
 });
 
 test('the handoff prompt names everything, and fits a deep link', () => {
   const ids = { projectId: `prj_${'p'.repeat(40)}`, boardId: `board_${'b'.repeat(40)}` };
   const handoff = {
     ...ids,
-    title: `Plan\u0007\n${'é'.repeat(198)}`,
+    title: `Plan"\u0007\n${'é'.repeat(198)}`,
     origin: 'https://example.test',
   };
   const artifact = `art_${'a'.repeat(40)}`;
@@ -220,6 +235,7 @@ test('the handoff prompt names everything, and fits a deep link', () => {
     assert.ok(prompt.includes(part), part);
   assert.equal(/[\u0000-\u0009\u000b-\u001f]/.test(prompt), false);
   assert.equal(prompt.split('\n').length, 6, 'a title stays on its line');
+  assert.ok(prompt.includes(`("Plan'  é`), 'and in its quotes');
   assert.ok(prompt.length <= 5000, 'Claude Code takes q up to 5,000 characters');
   const link = deepLink(prompt);
   const url = new URL(link);

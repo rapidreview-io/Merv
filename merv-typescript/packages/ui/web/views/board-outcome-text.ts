@@ -4,35 +4,38 @@
  * Whatever else moved the text meanwhile, that same hunk is applied to it on the page.
  */
 
-/** How much two texts share at each end, never parting a surrogate pair. */
+/** How much two texts share at each end. */
 const edges = (a: string, b: string) => {
   const most = Math.min(a.length, b.length);
   let head = 0;
   while (head < most && a[head] === b[head]) head++;
-  if (head && /[\ud800-\udbff]/.test(a[head - 1]!)) head--;
   let tail = 0;
   while (tail < most - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  if (tail && /[\udc00-\udfff]/.test(a[a.length - tail]!)) tail--;
   return { head, tail };
 };
 
 /**
- * What turned `saved` into `draft`, widened a line at a time until its find occurs once. Null
- * where there is nothing to find, as in an empty text.
+ * What turned `saved` into `draft`, as whole lines, so that its find names the sentence and never
+ * a stray digit, widened a line at a time until it occurs once. Null in an empty text, where there
+ * is nothing to find.
  */
 export function hunkOf(saved: string, draft: string) {
+  if (!saved) return null;
   const { head, tail } = edges(saved, draft);
-  let [from, to] = [head, saved.length - tail];
+  const lineEnd = (at: number) => {
+    const end = saved.indexOf('\n', at);
+    return end < 0 ? saved.length : end;
+  };
+  let from = head ? saved.lastIndexOf('\n', head - 1) + 1 : 0;
+  let to = lineEnd(saved.length - tail);
   const once = () => {
     const find = saved.slice(from, to);
     return !!find && saved.indexOf(find) === saved.lastIndexOf(find);
   };
   while (!once() && (from || to < saved.length)) {
     from = from > 1 ? saved.lastIndexOf('\n', from - 2) + 1 : 0;
-    const end = saved.indexOf('\n', to + 1);
-    to = end < 0 ? saved.length : end;
+    to = lineEnd(to + 1);
   }
-  if (!saved) return null;
   return {
     find: saved.slice(from, to),
     replace: draft.slice(from, draft.length - (saved.length - to)),
@@ -40,9 +43,8 @@ export function hunkOf(saved: string, draft: string) {
 }
 
 /**
- * `mine`, written against `base`, on what the text has become. Where the same words were changed
- * both ways the last hunk wins, which is the person's: it is what they are looking at, and what
- * the other wrote elsewhere stays.
+ * `mine`, written against `base`, on what the text has become. Where the same lines were changed
+ * both ways, both stand, the person's first, for them to settle: nobody's words go unsaid.
  */
 export function rebased(base: string, mine: string, theirs: string): string {
   if (mine === base || mine === theirs) return theirs;
@@ -52,21 +54,22 @@ export function rebased(base: string, mine: string, theirs: string): string {
   const at = theirs.indexOf(find);
   if (at >= 0 && at === theirs.lastIndexOf(find))
     return theirs.slice(0, at) + replace + theirs.slice(at + find.length);
-  const [m, t] = [edges(base, mine), edges(base, theirs)];
-  const from = Math.min(m.head, t.head);
-  const after = Math.min(m.tail, t.tail);
-  return (
-    theirs.slice(0, from) +
-    mine.slice(from, mine.length - after) +
-    theirs.slice(theirs.length - after)
-  );
+  // After the nearest line above that still stands, or else at the top.
+  const above = base.slice(0, base.indexOf(find)).trimEnd().split('\n').at(-1)!;
+  const after = above && theirs.includes(above) ? theirs.indexOf(above) + above.length + 2 : 0;
+  const lead = theirs.slice(0, after).padEnd(after, '\n');
+  return `${lead}${replace}\n\n${theirs.slice(after).replace(/^\n+/, '')}`;
 }
 
 /** Where a caret stands once `was` has become `now`: text before it moves it, text after does not. */
 export function caretAfter(was: string, now: string, at: number): number {
   const { head, tail } = edges(was, now);
   if (at <= head) return at;
-  return at >= was.length - tail ? at + now.length - was.length : now.length - tail;
+  if (at >= was.length - tail) return at + now.length - was.length;
+  // Changes on both sides of it: it stays with the words around it, while they stand.
+  const before = was.slice(Math.max(0, at - 40), at);
+  const found = now.indexOf(before + was.slice(at, at + 40));
+  return found < 0 ? now.length - tail : found + before.length;
 }
 
 export interface Handoff {
@@ -75,8 +78,9 @@ export interface Handoff {
   title: string;
   origin: string;
 }
-/** A title stays on its line of the prompt, and a deep link refuses control characters in it. */
-const named = (title: string) => title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+/** A title stays on its line and in its quotes, and a deep link refuses control characters. */
+const named = (title: string) =>
+  title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replaceAll('"', "'");
 const foot = (origin: string) =>
   `Ask me only what the plan leaves open.\nNo Merv tools? ${origin}/ui/settings/keys explains \`claude mcp add\`.`;
 

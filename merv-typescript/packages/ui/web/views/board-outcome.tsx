@@ -200,11 +200,17 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     const change = hunk ? { edits: [hunk] } : { content: sent, expectedRevision: was.revision };
     try {
       await call('board.write:outcome', { board, outcome: id, ...change });
+      // Held now, so that a read failing next does not leave this hunk to be sent again.
+      saved.current = { ...was, text: sent };
       setProblem('');
       await reread(sent);
     } catch (error) {
-      if ((error as ApiError).code !== 'board_outcome_conflict') throw error;
-      await reread(was.text);
+      const { code, status } = error as ApiError;
+      const conflict = code === 'board_outcome_conflict';
+      // With no answer it may be in: what Board holds decides, as a conflict does.
+      if (saved.current === was && (conflict || !status || code.startsWith('http_')))
+        await reread(was.text);
+      if (!conflict) throw error;
     }
   };
   const push = () => {
@@ -255,17 +261,15 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     await push();
     const now = saved.current!;
     if (text.current !== now.text) throw new Error('what you typed is not saved yet');
-    const { revision } = now;
-    const held = now.sent.find((was) => was.revision === revision);
-    if (held) return { artifactId: held.artifactId, revision };
     if (!keeps) return null;
+    // Asked of Artifacts each time, never taken from what a send noted: this is what they see.
     const file = await call<{ id: string }>('artifact.write:create', {
       title: now.title,
       content: now.text,
       mediaType: 'text/markdown',
-      requestId: `${now.id}:${revision}`,
+      requestId: `${now.id}:${now.revision}`,
     });
-    return { artifactId: file.id, revision };
+    return { artifactId: file.id, revision: now.revision };
   };
   type Frozen = { artifactId: string; revision: number };
   const mark = async (how: OutcomeSent['how'], frozen: Frozen) => {
@@ -296,7 +300,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
         ),
       );
       const file = await frozen;
-      if (file && keeps) await mark('copy', file);
+      if (file) await mark('copy', file);
       say('Copied');
     });
   /** What Pi is to be told once its conversation stands: the same sentence the person could say. */
