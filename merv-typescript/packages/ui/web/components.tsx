@@ -720,7 +720,10 @@ export function useDismiss(
     const away = (event: Event) => {
       if (event instanceof KeyboardEvent) {
         if (event.key !== 'Escape') return;
-        if (claims) event.preventDefault();
+        if (claims) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
       } else if (box.current?.contains(event.target as Node)) return;
       shut();
     };
