@@ -229,6 +229,47 @@ test('a page past its time or its memory is ended from outside', async (t) => {
   );
 });
 
+test('a look shows every frame and what each holds, not only what no frame holds', async (t) => {
+  const f = await fixture(t);
+  const box = (key: string, x: number) => ({
+    op: 'box',
+    key,
+    text: '',
+    at: [x, 0],
+    width: 200,
+    height: 200,
+    color: '#0000ff',
+  });
+  const { board } = await f.draw(f.owner, {
+    title: 'Frames',
+    ops: [
+      box('a', 0),
+      box('b', 400),
+      box('c', 800),
+      { op: 'frame', title: 'One', holds: ['a'] },
+      { op: 'frame', title: 'Two', holds: ['b'] },
+    ],
+  });
+  const { image, viewport } = (await f.tools.call('board.read:look', f.owner, {
+    board: board.id,
+    look: undefined,
+  })) as {
+    image: { data: string };
+    viewport: { x: number; y: number; width: number; height: number };
+  };
+  for (const x of [100, 500, 900])
+    assert.ok(
+      isBlue(
+        await colorAt(
+          image.data,
+          (x - viewport.x) / viewport.width,
+          (100 - viewport.y) / viewport.height,
+        ),
+      ),
+      `the box at ${x} is drawn`,
+    );
+});
+
 test('a PDF page is seen as an image, a region of it in more detail', async (t) => {
   const f = await fixture(t);
   const paper = await f.file('paper.pdf', pdf([words('One'), BLUE]));
@@ -354,6 +395,8 @@ test('a crop of a PDF page goes on a board and shows in its look', async (t) => 
   assert.deepEqual([image.width, image.height], [640, 320]);
   assert.deepEqual(image.customData, {
     by: 'agent',
+    changedBy: 'agent',
+    key: 'fig',
     alt: 'Figure 1',
     source: { artifactId: paper.id, page: 2, region },
   });

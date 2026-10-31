@@ -97,8 +97,7 @@ export class BoardRenderer {
         {
           fonts: fonts as { data: string; range?: string; family: string }[],
           text: elements
-            .filter((e) => e.type === 'text')
-            .map((e) => e.text ?? '')
+            .map((e) => (e.type === 'text' ? e.text : e.type === 'frame' ? e.name : '') ?? '')
             .join(''),
         },
       );

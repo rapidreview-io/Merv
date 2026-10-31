@@ -72,8 +72,19 @@ export function nounInput(actions: NounActions, legacy?: NounDefinition['legacy'
           fatal: true,
         });
     const given = input[action];
-    if (given && typeof given === 'object' && !Array.isArray(given)) return value;
-    if (given === undefined && shapes[action]!.optional) return { ...input, [action]: {} };
+    const nested = given && typeof given === 'object' && !Array.isArray(given);
+    if (nested || (given === undefined && shapes[action]!.optional)) {
+      // A field left beside the action's object rather than in it.
+      for (const key of Object.keys(input))
+        if (key !== 'action' && !Object.hasOwn(shapes, key) && shapes[action]!.names.includes(key))
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `"${key}" goes inside "${action}": {"action":"${action}","${action}":{"${key}":…}}`,
+            fatal: true,
+          });
+      return nested ? value : { ...input, [action]: {} };
+    }
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: [action],

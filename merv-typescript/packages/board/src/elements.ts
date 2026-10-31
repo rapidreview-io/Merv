@@ -11,7 +11,8 @@ import { strokesOf } from './path.js';
 import type { BoardElement, PlacedImage } from './types.js';
 
 type El = BoardElement & Record<string, any>;
-type Rect = { x: number; y: number; width: number; height: number };
+type Point = { x: number; y: number };
+type Rect = Point & { width: number; height: number };
 const GAP = 40;
 /** How faint what an agent proposes stands until the person keeps it. */
 const PROPOSED_OPACITY = 45;
@@ -117,7 +118,7 @@ const overlaps = (a: Rect, b: Rect, margin = 20) =>
   b.y < a.y + a.height + margin;
 const center = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
 /** Where the line from a shape's centre toward `to` leaves its box. */
-export function shapeEdge(r: Rect & { type?: string }, to: { x: number; y: number }) {
+function shapeEdge(r: Rect & { type?: string }, to: Point) {
   const c = center(r);
   const dx = to.x - c.x;
   const dy = to.y - c.y;
@@ -140,6 +141,11 @@ export class Drawing {
   /** The group of what this call proposes: one guess, kept or dismissed whole. */
   proposal?: string;
   private proposing = false;
+  /** The keys earlier calls gave, kept on their shapes: the topmost holds a key used again. */
+  private readonly keys = new Map<string, string>();
+  /** What this call put somewhere, and whether by `at`, which checks nothing. */
+  private readonly landing = new Map<string, boolean>();
+  private exactly = false;
   /** Where shapes stand, frames apart: a shape goes beside another inside a frame. */
   private occupied: Rect[] = [];
   private frames: Rect[] = [];
@@ -152,6 +158,8 @@ export class Drawing {
     private readonly agent: boolean,
   ) {
     for (const element of existing) this.elements.set(element.id, element as El);
+    for (const el of this.live())
+      if (el.customData?.key) this.keys.set(el.customData.key, el.customData.sketch ?? el.id);
     this.survey();
     this.rebind();
     const box = bounds([...this.occupied, ...this.frames]);
@@ -191,11 +199,18 @@ export class Drawing {
     return [...this.elements.values()].filter((el) => !el.isDeleted);
   }
   private survey(except: ReadonlySet<El> = new Set()) {
-    const standing = this.live().filter(
-      (el) => !el.containerId && el.type !== 'arrow' && !except.has(el),
+    // An arrow occupies its path, and what is moving takes its arrows along.
+    const moving = new Set([...except].map((el) => el.id));
+    const gone = (el?: El) =>
+      !!el && (except.has(el) || (el.type === 'arrow' && ends(el).some((id) => moving.has(id))));
+    const standing = this.live().filter((el) => {
+      const on = this.elements.get(el.containerId);
+      return !gone(el) && !gone(on) && (!el.containerId || on?.type === 'arrow');
+    });
+    this.occupied = standing.flatMap((el) =>
+      el.type === 'frame' ? [] : el.type === 'arrow' ? pathOf(el) : [rectOf(el)],
     );
-    this.occupied = standing.filter((el) => el.type !== 'frame').map(rectOf);
-    this.frames = standing.filter((el) => el.type === 'frame').map(rect);
+    this.frames = standing.filter((el) => el.type === 'frame').map(rectOf);
   }
   /** A fractional index after every shape the board has, so what is drawn stands on top. */
   private index(): string {
@@ -209,8 +224,11 @@ export class Drawing {
     return (this.top = (this.top ? after(this.top) : 'a0') ?? `${this.top}V`);
   }
   /** A shape this call keyed, or one already on the board; anything else is refused by name. */
+  private named(ref: string) {
+    return this.created[ref] ?? (this.elements.has(ref) ? ref : this.keys.get(ref)) ?? ref;
+  }
   private group(ref: string, includeDeleted = false): El[] {
-    const id = this.created[ref] ?? ref;
+    const id = this.named(ref);
     if (this.elements.has(id)) return []; // Explicit element IDs always address one element.
     const members = [...this.elements.values()].filter(
       (e) => (includeDeleted || !e.isDeleted) && e.groupIds?.includes(id),
@@ -234,9 +252,13 @@ export class Drawing {
         'This is a group handle. Use move, delete, frame holds, near, or board.read look focus; edit and arrow require an individual element ID.',
         400,
       );
-    const element = this.elements.get(this.created[ref] ?? ref);
+    const element = this.elements.get(this.named(ref));
     if (!element || element.isDeleted)
-      throw new MervError('board_shape_not_found', `No shape "${ref}" on this board`, 400);
+      throw new MervError(
+        'board_shape_not_found',
+        `No shape "${ref}" on this board: name one by an id from board.read or a key you gave`,
+        400,
+      );
     return element;
   }
   private touch(el: El) {
@@ -246,6 +268,7 @@ export class Drawing {
     this.changed.add(el.id);
   }
   private add(type: string, at: Rect, fields: Record<string, unknown> = {}): El {
+    const customData = { ...(this.agent && { by: 'agent' }), ...(fields.customData as object) };
     const el: El = {
       id: elementId(),
       type,
@@ -270,8 +293,8 @@ export class Drawing {
       updated: Date.now(),
       link: null,
       locked: false,
-      ...(this.agent ? { customData: { by: 'agent' } } : {}),
       ...fields,
+      ...(Object.keys(customData).length && { customData }),
     };
     if (this.proposing)
       Object.assign(el, {
@@ -282,7 +305,11 @@ export class Drawing {
       });
     this.elements.set(el.id, el);
     this.changed.add(el.id);
+    this.landed(el);
     return el;
+  }
+  private landed(el: El) {
+    this.landing.set(el.id, this.exactly);
   }
   /** A pen's straight line through these points, as Excalidraw keeps one: at its box, unbound. */
   private line(points: number[][], fields: Record<string, unknown>) {
@@ -455,9 +482,11 @@ export class Drawing {
       };
       const sides = [...new Set([side ?? 'right', 'right', 'below', 'left', 'above'] as const)];
       const taken = this.taken(size);
-      // Outward from the shape ring by ring, its asked side first: the nearest room there is.
-      for (let ring = 0; !at && ring <= 25; ring++)
-        for (const name of sides) {
+      // Outward from the shape ring by ring: an asked side keeps its first rings to itself, then
+      // the nearest room there is.
+      for (let step = side ? -7 : 0; !at && step <= 25; step++) {
+        const ring = Math.max(step, step + 7 * +(step < 0));
+        for (const name of step < 0 ? [side!] : sides) {
           const from = beside[name];
           const spots: { x: number; y: number }[] = [];
           for (let dx = -ring; dx <= ring; dx++)
@@ -474,6 +503,7 @@ export class Drawing {
             break;
           }
         }
+      }
       at ??= { ...beside[side ?? 'right'], ...size };
       // It joins the frame only inside it: Excalidraw cuts members, a sketch wholly, at its edge.
       const frame = this.elements.get(target.frameId);
@@ -507,7 +537,7 @@ export class Drawing {
     const at = this.place(size, where);
     const el = this.add(kind, at, {
       frameId: at.frameId,
-      customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'box' },
+      customData: { semanticKind: 'box' },
       strokeColor:
         fields.backgroundColor && fields.backgroundColor !== 'transparent'
           ? 'transparent'
@@ -519,33 +549,33 @@ export class Drawing {
     return el;
   }
   /**
-   * An arrow drawn again between its ends: each end on a shape it is bound to meets that shape's
-   * edge, and an end bound to nothing (Excalidraw binds no pen stroke) stays where it was.
+   * An arrow's ends drawn again: each end on a shape it is bound to meets that shape's edge, and
+   * an end bound to nothing (Excalidraw binds no pen stroke) stays where it was. The bends a person
+   * gave it between them stay.
    */
   private route(arrow: El, ends: { from?: El; to?: El } = {}) {
     const from = ends.from ?? this.elements.get(arrow.startBinding?.elementId);
     const to = ends.to ?? this.elements.get(arrow.endBinding?.elementId);
-    const points = (arrow.points ?? []) as [number, number][];
-    const free = {
-      start: { x: arrow.x + (points[0]?.[0] ?? 0), y: arrow.y + (points[0]?.[1] ?? 0) },
-      end: { x: arrow.x + (points.at(-1)?.[0] ?? 0), y: arrow.y + (points.at(-1)?.[1] ?? 0) },
-    };
+    const points = ((arrow.points ?? []) as [number, number][]).map(([x, y]) => ({
+      x: arrow.x + x,
+      y: arrow.y + y,
+    }));
+    const free = { start: points[0] ?? arrow, end: points.at(-1) ?? arrow };
+    const bends = points.slice(1, -1);
     if (!from && !to) return;
-    const start = from
-      ? shapeEdge({ ...rectOf(from), type: from.type }, to ? center(rectOf(to)) : free.end)
-      : free.start;
+    const edge = (el: El, toward: Point) => shapeEdge({ ...rectOf(el), type: el.type }, toward);
+    const start = from ? edge(from, bends[0] ?? (to ? center(rectOf(to)) : free.end)) : free.start;
     const end = to
-      ? shapeEdge({ ...rectOf(to), type: to.type }, from ? center(rectOf(from)) : free.start)
+      ? edge(to, bends.at(-1) ?? (from ? center(rectOf(from)) : free.start))
       : free.end;
+    const path = [start, ...bends, end].map(({ x, y }) => [x, y]);
+    const { width, height } = around(path);
     Object.assign(arrow, {
       x: start.x,
       y: start.y,
-      points: [
-        [0, 0],
-        [end.x - start.x, end.y - start.y],
-      ],
-      width: Math.abs(end.x - start.x),
-      height: Math.abs(end.y - start.y),
+      points: path.map(([x, y]) => [x! - start.x, y! - start.y]),
+      width,
+      height,
     });
     for (const bound of arrow.boundElements ?? []) {
       const text = this.elements.get(bound.id);
@@ -614,7 +644,7 @@ export class Drawing {
           {
             frameId: area.frameId,
             strokeColor: node.color ? 'transparent' : '#868e96',
-            customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'box' },
+            customData: { semanticKind: 'box' },
             roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
             ...(node.color && { backgroundColor: paint(COLORS, node.color) }),
           },
@@ -652,10 +682,37 @@ export class Drawing {
       },
     );
     this.route(el, { from, to });
+    this.occupied.push(...pathOf(el));
     if (BINDABLE.has(from.type)) this.bind(from, 'arrow', el.id);
     if (BINDABLE.has(to.type)) this.bind(to, 'arrow', el.id);
     if (label) this.label(el, label, fontSize);
     return el;
+  }
+  /** The arrows joined to these shapes, drawn again to meet them where they now stand. */
+  private reroute(shapes: El[]) {
+    const ids = new Set(shapes.map((el) => el.id));
+    for (const arrow of this.live())
+      if (arrow.type === 'arrow' && ends(arrow).some((id) => ids.has(id))) {
+        this.route(arrow);
+        this.touch(arrow);
+      }
+  }
+  /** A shape grown, as it was at creation, to hold its new words. */
+  private refit(el: El, content: string, size = FONT) {
+    if (!['rectangle', 'ellipse', 'diamond'].includes(el.type)) return;
+    // A note stays its width; a box takes the width it would be made with, if that is wider.
+    const width =
+      el.customData?.semanticKind === 'box'
+        ? Math.max(el.width, Math.min(320, measure(content, size).width + 50))
+        : el.width;
+    const padding = size === FONT ? 40 : 10;
+    const { height } = this.fit(content, width, el.height, el.type, size, padding);
+    if (width === el.width && height === el.height) return;
+    Object.assign(el, { width, height });
+    this.touch(el);
+    this.landed(el);
+    this.reroute([el]);
+    this.survey();
   }
   /** What moves with a shape: its own text, and a frame's shapes. */
   private carried(el: El): El[] {
@@ -708,16 +765,18 @@ export class Drawing {
     if (this.created[key])
       throw new MervError('board_key_repeated', `Key "${key}" is used twice`, 400);
     this.created[key] = el.id;
+    el.customData = { ...el.customData, key };
   }
 
   apply(op: DrawOp, file?: PlacedImage) {
     this.proposing = 'proposed' in op && !!op.proposed;
+    this.exactly = 'at' in op && !!op.at;
     switch (op.op) {
       case 'note': {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
           backgroundColor: paint(COLORS, op.color ?? 'yellow'),
           strokeColor: 'transparent',
-          customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'note' },
+          customData: { semanticKind: 'note' },
         });
         return this.keyed(op.key, el);
       }
@@ -775,7 +834,6 @@ export class Drawing {
         const kind = targets.length > 1 ? 'collection' : cardKind(targets[0]!);
         const { name, title, height } = cardTitle(op.text);
         const at = this.place({ width: 280, height }, op);
-        const by = this.agent ? { by: 'agent' } : {};
         const groupIds = [elementId()];
         const card = this.add('rectangle', at, {
           frameId: at.frameId,
@@ -786,9 +844,9 @@ export class Drawing {
           roughness: 0,
           roundness: { type: 3 },
           link: kind === 'web' ? targets[0] : `merv:${targets[0]}`,
-          customData: { ...by, target: op.target, ...(op.details && { details: op.details }) },
+          customData: { target: op.target, ...(op.details && { details: op.details }) },
         });
-        const part = { frameId: at.frameId, groupIds, customData: { ...by, card: true } };
+        const part = { frameId: at.frameId, groupIds, customData: { card: true } };
         for (const stroke of strokesOf(CARD_ICONS[kind]))
           this.line(
             stroke.points.map(([x, y]) => [at.x + 16 + x * 0.75, at.y + 15 + y * 0.75]),
@@ -837,9 +895,8 @@ export class Drawing {
         if (!box) this.occupied.pop();
         return this.keyed(op.key, frame);
       }
-      case 'flow': {
+      case 'flow':
         return this.flowFitted(op);
-      }
       case 'edit': {
         const el = this.find(op.id);
         const textOf =
@@ -858,6 +915,7 @@ export class Drawing {
             this.touch(textOf);
             this.touch(el);
           } else if (textOf) {
+            this.refit(el, op.text, textOf.fontSize ?? FONT);
             const content =
               el.type === 'text' || el.type === 'arrow'
                 ? op.text
@@ -875,11 +933,28 @@ export class Drawing {
             });
             if (textOf.containerId) centre(textOf, el);
             this.touch(textOf);
-          } else if (el.type !== 'frame') this.label(el, op.text);
+          } else if (el.type !== 'frame') {
+            this.refit(el, op.text);
+            this.label(el, op.text);
+          }
           if (el.type === 'frame') {
             el.name = op.text;
             this.touch(el);
           }
+        }
+        if (op.reverse) {
+          if (el.type !== 'arrow')
+            throw new MervError('board_not_an_arrow', `"${op.id}" is not an arrow`, 400);
+          const points = [...((el.points ?? []) as [number, number][])].reverse();
+          const [x, y] = points[0] ?? [0, 0];
+          Object.assign(el, {
+            x: el.x + x,
+            y: el.y + y,
+            points: points.map(([px, py]) => [px - x, py - y]),
+            startBinding: el.endBinding,
+            endBinding: el.startBinding,
+          });
+          this.touch(el);
         }
         if (op.ink) {
           el.strokeColor = paint(INKS, op.ink);
@@ -899,53 +974,21 @@ export class Drawing {
       }
       case 'move': {
         const group = this.group(op.id);
-        if (group.length) {
-          if (!op.near && !op.in && !op.at) return;
-          this.survey(new Set(group));
-          const box = bounds(group.map(rectOf))!;
-          const at = this.place(box, op),
-            dx = at.x - box.x,
-            dy = at.y - box.y;
-          for (const part of group) {
-            part.x += dx;
-            part.y += dy;
-            if (op.in) part.frameId = at.frameId;
-            this.touch(part);
-          }
-          const ids = new Set(group.map((e) => e.id));
-          for (const arrow of this.live())
-            if (
-              arrow.type === 'arrow' &&
-              [arrow.startBinding?.elementId, arrow.endBinding?.elementId].some((id) => ids.has(id))
-            ) {
-              this.route(arrow);
-              this.touch(arrow);
-            }
-          return;
-        }
-        const el = this.find(op.id);
+        const moved = group.length ? group : [this.find(op.id)];
         if (!op.near && !op.in && !op.at) return;
-        this.survey(new Set([el, ...this.carried(el)]));
-        const at = this.place(el, op);
-        const dx = at.x - el.x;
-        const dy = at.y - el.y;
-        for (const part of [el, ...this.carried(el)]) {
-          part.x += dx;
-          part.y += dy;
+        const parts = group.length ? group : [moved[0]!, ...this.carried(moved[0]!)];
+        this.survey(new Set(parts));
+        const box = bounds(moved.map(rectOf))!;
+        const at = this.place(box, op);
+        for (const part of parts) {
+          part.x += at.x - box.x;
+          part.y += at.y - box.y;
+          if (op.in) part.frameId = at.frameId;
           this.touch(part);
         }
-        if (op.in) {
-          el.frameId = at.frameId;
-          for (const part of this.carried(el)) part.frameId = at.frameId;
-        }
-        for (const arrow of this.live())
-          if (
-            arrow.type === 'arrow' &&
-            [arrow.startBinding?.elementId, arrow.endBinding?.elementId].includes(el.id)
-          ) {
-            this.route(arrow);
-            this.touch(arrow);
-          }
+        moved.forEach((part) => this.landed(part));
+        this.reroute(moved);
+        this.survey();
         return;
       }
       case 'delete':
@@ -956,7 +999,7 @@ export class Drawing {
             for (const part of group) this.remove(part);
             continue;
           }
-          const gone = this.elements.get(this.created[ref] ?? ref);
+          const gone = this.elements.get(this.named(ref));
           if (!gone?.isDeleted) this.remove(this.find(ref));
         }
         return;
@@ -1003,7 +1046,7 @@ export class Drawing {
               strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
               groupIds: [group],
               frameId: at.frameId,
-              customData: { ...(this.agent && { by: 'agent' }), sketch: group },
+              customData: { sketch: group, ...(op.key && { key: op.key }) },
               ...(filled && { polygon: true }),
             });
             first ??= el;
@@ -1023,7 +1066,6 @@ export class Drawing {
           crop: null,
           strokeColor: 'transparent',
           customData: {
-            ...(this.agent && { by: 'agent' }),
             ...(alt && { alt }),
             source: { artifactId, ...(page && { page }), ...(region && { region }) },
           },
@@ -1032,16 +1074,98 @@ export class Drawing {
       }
     }
   }
-  /** Every shape this call changed, as it now stands. */
+  /** Every shape this call changed, as it now stands, marked with whose hand changed it last. */
   result(): El[] {
-    return [...this.changed].map((id) => this.elements.get(id)!);
+    return [...this.changed].map((id) => {
+      const el = this.elements.get(id)!;
+      if (this.agent) el.customData = { ...el.customData, changedBy: 'agent' };
+      else if (el.customData?.changedBy) delete el.customData.changedBy;
+      return el;
+    });
+  }
+  /**
+   * Where this call's shapes landed, by key or id, and what stands under them: not a shape's own
+   * label, strokes or arrows, nor a frame, which holds what is in it.
+   */
+  report() {
+    const names = [...this.keys, ...Object.entries(this.created)];
+    const nameOf = new Map(names.map(([key, id]) => [id, key]));
+    const whole = (el: El): string => el.customData?.sketch ?? el.id;
+    const shown = (el: El) => nameOf.get(whole(el)) ?? whole(el);
+    const standing = this.live().filter(
+      (el) => !el.containerId && !el.customData?.card && el.type !== 'frame',
+    );
+    const landings = new Map<string, El[]>();
+    for (const id of this.landing.keys()) {
+      const el = this.elements.get(id)!;
+      if (el.isDeleted || el.containerId || el.customData?.card || el.type === 'arrow') continue;
+      landings.set(shown(el), [...(landings.get(shown(el)) ?? []), el]);
+    }
+    const placed: Record<string, number[]> = {};
+    const under: Record<string, string[]> = {};
+    const exact: string[] = [];
+    // A bound on the work, which only a board of vast crossing paths can reach.
+    let room = 20_000_000;
+    for (const [name, els] of landings) {
+      const box = bounds(els.map(rectOf))!;
+      placed[name] = [box.x, box.y, box.width, box.height].map(Math.round);
+      const mine = els[0]!.type === 'frame' ? [] : els.flatMap(pathOf);
+      const hit = standing.filter(
+        (other) =>
+          whole(other) !== whole(els[0]!) &&
+          !els.some((el) => ends(other).includes(el.id)) &&
+          meets(box, rectOf(other)) &&
+          (room -= mine.length * MARKS) > 0 &&
+          pathOf(other).some((part) => mine.some((own) => meets(own, part))),
+      );
+      if (!hit.length) continue;
+      under[name] = [...new Set(hit.map(shown))];
+      if (els.some((el) => this.landing.get(el.id))) exact.push(name);
+    }
+    return {
+      placed,
+      ...(Object.keys(under).length && { overlaps: under }),
+      ...(exact.length && {
+        note: `${exact.join(', ')} landed on another shape: at places exactly and checks nothing, while near finds room beside a shape.`,
+      }),
+    };
   }
 }
 
-const rect = (el: Rect): Rect => ({ x: el.x, y: el.y, width: el.width, height: el.height });
+const meets = (a: Rect, b: Rect) => overlaps(a, b, 0);
+/** The shapes an arrow joins. */
+const ends = (el: El): string[] => [el.startBinding?.elementId, el.endBinding?.elementId];
+/** The smallest mark along a path, and the most a path takes: a longer one has wider marks. */
+const [MARK, MARKS] = [20, 40];
+/** What a shape takes up: a line, unless filled, as marks along its path; any other its box. */
+function pathOf(el: El): Rect[] {
+  if (!Array.isArray(el.points) || el.polygon) return [rectOf(el)];
+  const points = (el.points as [number, number][]).map(([x, y]) => [el.x + x, el.y + y] as const);
+  const legs = points.map((to, i) => [points[i - 1] ?? to, to] as const);
+  const lengths = legs.map(([[ax, ay], [bx, by]]) => Math.hypot(bx - ax, by - ay));
+  const side = Math.max(MARK, lengths.reduce((sum, length) => sum + length, 0) / MARKS);
+  const mark = (x: number, y: number) => ({
+    x: x - side / 2,
+    y: y - side / 2,
+    width: side,
+    height: side,
+  });
+  const marks: Rect[] = [];
+  let next = 0;
+  legs.forEach(([[ax, ay], [bx, by]], i) => {
+    const length = lengths[i]!;
+    for (; next <= length; next += side) {
+      const at = length ? next / length : 0;
+      marks.push(mark(ax + (bx - ax) * at, ay + (by - ay) * at));
+    }
+    next -= length;
+  });
+  return points.length ? [...marks, mark(...points.at(-1)!)] : marks;
+}
 /** Where a shape stands, a line or a pen stroke by the points it passes through. */
 export function rectOf(el: El): Rect {
-  if (!Array.isArray(el.points) || !el.points.length) return rect(el);
+  if (!Array.isArray(el.points) || !el.points.length)
+    return { x: el.x, y: el.y, width: el.width, height: el.height };
   return around((el.points as [number, number][]).map(([x, y]) => [el.x + x, el.y + y]));
 }
 /** Where an operation puts what it makes. */
@@ -1072,8 +1196,12 @@ export function bounds(rects: Rect[]): Rect | undefined {
 const around = (points: number[][]) =>
   bounds(points.map(([x, y]) => ({ x: x!, y: y!, width: 0, height: 0 })))!;
 function arrowMiddle(arrow: El) {
-  const [, end] = arrow.points as [number, number][];
-  return { x: arrow.x + (end?.[0] ?? 0) / 2, y: arrow.y + (end?.[1] ?? 0) / 2 };
+  const points = arrow.points as [number, number][];
+  const [a, b] = [points[(points.length - 1) >> 1], points[points.length >> 1]];
+  return {
+    x: arrow.x + ((a?.[0] ?? 0) + (b?.[0] ?? 0)) / 2,
+    y: arrow.y + ((a?.[1] ?? 0) + (b?.[1] ?? 0)) / 2,
+  };
 }
 /** Text moved to stand centred on a shape: on an arrow's middle, on any other shape's centre. */
 function centre(text: El, on: El) {
@@ -1097,8 +1225,10 @@ function layers(keys: string[], edges: { from: string; to: string }[]) {
   return depth;
 }
 
+/** What a read asks for: words and a place to look for, and what changed since it last read. */
+export type Asked = { text?: string; region?: Rect; changed?: BoardElement[] };
 /** The board as its agent reads it: what each shape says and where, without Excalidraw's fields. */
-export function summarize(elements: BoardElement[]) {
+export function summarize(elements: BoardElement[], { text, region, changed }: Asked = {}) {
   // A card's icon, fact and title are read as the card: one shape, its title its text.
   const parts = (elements as El[]).filter((el) => !el.isDeleted && el.customData?.card);
   const live = (elements as El[]).filter((el) => !el.isDeleted && !el.customData?.card);
@@ -1118,7 +1248,7 @@ export function summarize(elements: BoardElement[]) {
             .filter((t: El | undefined) => t?.type === 'text')
             .map((t: El) => t.originalText ?? t.text)
             .join(' ') || undefined;
-  const where = (el: El) => ({
+  const where = (el: Rect) => ({
     at: [Math.round(el.x), Math.round(el.y)],
     size: [Math.round(el.width), Math.round(el.height)],
   });
@@ -1184,13 +1314,41 @@ export function summarize(elements: BoardElement[]) {
       ...(first.frameId && { frame: first.frameId }),
       ...(first.customData?.by === 'agent' && { by: 'agent' }),
       ...(first.customData?.proposed && { proposed: true }),
-      ...where(box as El),
+      ...where(box),
     } as (typeof shapes)[number]);
   }
+  // Who changed each entry last, whichever of its parts it was: its label, its strokes, its card's.
+  const whose = new Map<string, string>();
+  const gone = new Map<string, string>();
+  const standing = new Set(live.map((el) => el.customData?.sketch ?? el.id));
+  const newest = ((changed ?? []) as El[]).toSorted((a, b) => (a.updated ?? 0) - (b.updated ?? 0));
+  for (const el of newest) {
+    const who = el.customData?.changedBy === 'agent' ? 'agent' : 'person';
+    // What is gone is named and no more: a person's erased work is not for reading.
+    const whole = el.customData?.sketch ?? el.id;
+    if (el.isDeleted && !el.containerId && !el.customData?.card && !standing.has(whole))
+      gone.set(whole, who);
+    for (const id of [el.containerId ?? el.id, el.groupIds?.at(-1)]) if (id) whose.set(id, who);
+  }
+  const wanted = text?.toLowerCase();
+  const asked = <T extends { id: string; at?: number[]; size?: number[] }>(entries: T[]) =>
+    entries.flatMap((entry) => {
+      const el = byId.get(entry.id);
+      const who = whose.get(entry.id) ?? (el?.customData?.target && whose.get(el.groupIds?.[0]));
+      const { text: words, title, label, alt } = entry as Record<string, unknown>;
+      const said = [words, title, label, alt].join(' ').toLowerCase();
+      const [x = 0, y = 0] = entry.at ?? [];
+      const [width = 0, height = 0] = entry.size ?? [];
+      if ((changed && !who) || (wanted && !said.includes(wanted))) return [];
+      if (region && !meets(entry.at ? { x, y, width, height } : rectOf(el!), region)) return [];
+      return [who ? { ...entry, changedBy: who } : entry];
+    });
+  const [kept, joining] = [asked(shapes), asked(arrows)];
   return {
-    frames,
-    shapes: shapes.slice(0, 600),
-    arrows: arrows.slice(0, 600),
-    ...(shapes.length > 600 || arrows.length > 600 ? { truncated: true } : {}),
+    frames: asked(frames),
+    shapes: kept.slice(0, 600),
+    arrows: joining.slice(0, 600),
+    ...(changed && { deleted: [...gone].map(([id, changedBy]) => ({ id, changedBy })) }),
+    ...(kept.length > 600 || joining.length > 600 ? { truncated: true } : {}),
   };
 }

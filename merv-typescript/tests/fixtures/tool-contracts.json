@@ -765,10 +765,10 @@
         "board": "$board"
       },
       "owner": {
-        "ok": ["arrows", "board", "frames", "shapes"]
+        "ok": ["arrows", "board", "frames", "shapes", "since"]
       },
       "reader": {
-        "ok": ["arrows", "board", "frames", "shapes"]
+        "ok": ["arrows", "board", "frames", "shapes", "since"]
       }
     },
     "board.look": {
@@ -793,7 +793,7 @@
         ]
       },
       "owner": {
-        "ok": ["board", "changed", "created"]
+        "ok": ["board", "changed", "created", "placed"]
       },
       "reader": {
         "status": 403,

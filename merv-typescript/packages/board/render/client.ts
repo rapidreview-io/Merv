@@ -1,10 +1,12 @@
 import { exportToBlob, restoreElements, getCommonBounds } from '@excalidraw/excalidraw';
 import { stacked } from '@merv/board/models';
-window.sceneBounds = (scene, focus) => {
-  const live = restoreElements(stacked(scene.elements), null, {
+const restored = (scene) =>
+  restoreElements(stacked(scene.elements), null, {
     refreshDimensions: true,
     repairBindings: true,
   }).filter((e) => !e.isDeleted);
+window.sceneBounds = (scene, focus) => {
+  const live = restored(scene);
   let selected = live;
   if (focus) {
     const named = live.find((e) => e.id === focus);
@@ -24,10 +26,28 @@ window.sceneBounds = (scene, focus) => {
   return { x, y, width: right - x, height: bottom - y };
 };
 window.renderViewport = async (scene, area) => {
-  const elements = restoreElements(stacked(scene.elements), null, {
-    refreshDimensions: true,
-    repairBindings: true,
-  }).filter((e) => !e.isDeleted);
+  // The camera is a frame, which shows no other frame or what another holds: here a frame is drawn
+  // as a box with its name over it, and what it holds as loose shapes.
+  const elements = restored(scene).flatMap((e) =>
+    e.type !== 'frame'
+      ? [{ ...e, frameId: null }]
+      : restoreElements(
+          [
+            { ...e, type: 'rectangle', strokeColor: '#adb5bd', strokeWidth: 1, roughness: 0 },
+            {
+              id: `${e.id}:name`,
+              type: 'text',
+              x: e.x,
+              y: e.y - 22,
+              text: e.name ?? 'Frame',
+              fontSize: 14,
+              strokeColor: '#868e96',
+            },
+          ],
+          null,
+          { refreshDimensions: true },
+        ),
+  );
   const [frame] = restoreElements(
     [
       {

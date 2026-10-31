@@ -321,6 +321,9 @@ export class BoardService implements Board {
       ).map((row) => [row.element_id, JSON.parse(row.record) as BoardElement]),
     );
     const kept = [...latest.values()].filter((shape) => newer(shape, stored.get(shape.id)));
+    // A page's save is a person's hand, whichever last drew the shape it holds.
+    if (kind === 'save')
+      for (const { customData } of kept) delete (customData as { changedBy?: string })?.changedBy;
     if (!kept.length) return { board, accepted: 0 };
     // A shape new to the board, or brought back from deletion, counts against the cap.
     const added = kept.filter(
@@ -428,7 +431,12 @@ export class BoardService implements Board {
       return { mediaType: imageType(row.content)!, content: row.content };
     });
   }
-  async draw(caller: Caller, value: DrawInput, images: PlacedImage[] = []): Promise<BoardDrawn> {
+  async draw(
+    caller: Caller,
+    value: DrawInput,
+    images: PlacedImage[] = [],
+    agent = !!caller.conversation,
+  ): Promise<BoardDrawn> {
     caller = this.open(caller);
     const input = parse(drawSchema, value);
     check(
@@ -446,10 +454,7 @@ export class BoardService implements Board {
         await this.write(board, tx);
         await recorded(this.state, tx, caller, 'board.set', board.id, { title: board.title });
       }
-      const drawing = new Drawing(
-        await this.elements(board.id, undefined, tx),
-        !!caller.conversation,
-      );
+      const drawing = new Drawing(await this.elements(board.id, undefined, tx), agent);
       const waiting = [...images];
       for (const op of input.ops)
         drawing.apply(op, op.op === 'image' ? waiting.shift() : undefined);
@@ -463,6 +468,7 @@ export class BoardService implements Board {
         created: drawing.created,
         changed: merged.accepted,
         ...(drawing.proposal && { proposal: drawing.proposal }),
+        ...drawing.report(),
         ...(region && { region }),
       };
     });
