@@ -448,6 +448,7 @@ export class BoardService implements Board {
         board: merged.board,
         created: drawing.created,
         changed: merged.accepted,
+        ...(drawing.proposal && { proposal: drawing.proposal }),
         ...(region && { region }),
       };
     });

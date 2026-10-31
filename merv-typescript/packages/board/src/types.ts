@@ -9,6 +9,8 @@ export interface BoardDrawn {
   board: BoardSummary;
   created: Record<string, string>;
   changed: number;
+  /** The group of what the call proposed, to move or delete it whole. */
+  proposal?: string;
   /** Where the call's changes stand, for those watching; no answer to the agent carries it. */
   region?: { x: number; y: number; width: number; height: number };
 }

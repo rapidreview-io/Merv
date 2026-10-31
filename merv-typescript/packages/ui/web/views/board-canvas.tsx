@@ -40,6 +40,7 @@ import { AddButton, CardPicker, type CardPick } from './board-add';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
 import { BoardPointing } from './board-pointing';
 import { BoardPresence } from './board-presence';
+import { BoardProposal } from './board-proposal';
 import { BoardReplay } from './board-replay';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
@@ -462,7 +463,9 @@ function BoardCanvasScene({ id }: { id: string }) {
             selected.length > 0 &&
               selected.every(
                 (element) =>
-                  Boolean(element.link || element.customData?.card) ||
+                  Boolean(
+                    element.link || element.customData?.card || element.customData?.proposed,
+                  ) ||
                   (element.type === 'text' &&
                     Boolean(
                       elements.find((container) => container.id === element.containerId)?.link,
@@ -508,6 +511,7 @@ function BoardCanvasScene({ id }: { id: string }) {
         </WelcomeScreen>
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
+      {api && <BoardProposal api={api} />}
       {replaying ? (
         <BoardReplay id={id} editor={editor} close={() => setReplaying(false)} />
       ) : (

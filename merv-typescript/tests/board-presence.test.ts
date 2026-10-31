@@ -183,3 +183,85 @@ test('the pointing note says what is selected, near and circled, in ids alone', 
       .success,
   );
 });
+
+test('what a call proposes is one faint, dashed group, reported until the person keeps it', async (t) => {
+  const f = await fixture(t);
+  const { tools } = f.app.ctx;
+  const drawn = (await tools.call('board.write:draw', f.owner, {
+    board: f.made.id,
+    ops: [
+      { op: 'box', key: 'plain', text: 'Mine', at: [0, 0] },
+      {
+        op: 'sketch',
+        key: 'guess',
+        proposed: true,
+        at: [400, 0],
+        strokes: [{ path: 'M0 0 L100 0' }, { path: 'M0 40 L100 40' }],
+      },
+      { op: 'box', key: 'label', text: 'beaker?', proposed: true, near: 'guess', side: 'below' },
+    ],
+  })) as { proposal: string; created: Record<string, string> };
+  assert.ok(drawn.proposal);
+  const scene = async () =>
+    ((await tools.call('board.scene', f.owner, { id: f.made.id })) as BoardScene).elements;
+  const shapes = await scene();
+  const proposed = shapes.filter((el) => (el.customData as { proposed?: true })?.proposed);
+  // The two strokes, the box and its label.
+  assert.equal(proposed.length, 4);
+  for (const el of proposed) {
+    assert.equal(el.opacity, 45);
+    assert.equal(el.strokeStyle, 'dashed');
+    assert.equal((el.groupIds as string[]).at(-1), drawn.proposal);
+  }
+  const plain = shapes.find((el) => el.id === drawn.created.plain)!;
+  assert.equal(plain.opacity, 100);
+  assert.deepEqual(plain.groupIds, []);
+
+  const read = async () =>
+    (await tools.call('board.read:get', f.owner, { board: f.made.id })) as {
+      shapes: { id: string; proposed?: true }[];
+    };
+  const said = (await read()).shapes;
+  assert.deepEqual(
+    said
+      .filter((s) => s.proposed)
+      .map((s) => s.id)
+      .sort(),
+    [drawn.created.label, drawn.proposal].sort(),
+  );
+  assert.equal(said.find((s) => s.id === drawn.created.plain)!.proposed, undefined);
+
+  // Kept, as the page keeps it: an ordinary edit, saved like any other.
+  await f.app.ctx.board.save(
+    f.owner,
+    f.made.id,
+    proposed.map(({ customData: _, ...el }) => ({
+      ...el,
+      opacity: 100,
+      strokeStyle: 'solid',
+      version: el.version + 1,
+    })) as never,
+  );
+  assert.ok((await read()).shapes.every((s) => !s.proposed));
+
+  // Dismissed by the agent's own hand, by the group its answer named.
+  const again = (await tools.call('board.write:draw', f.owner, {
+    board: f.made.id,
+    ops: [
+      { op: 'note', text: 'kettle?', proposed: true, at: [0, 400] },
+      { op: 'text', text: 'or a pot?', proposed: true, at: [0, 600] },
+    ],
+  })) as { proposal: string };
+  await tools.call('board.write:draw', f.owner, {
+    board: f.made.id,
+    ops: [{ op: 'delete', ids: [again.proposal] }],
+  });
+  assert.ok(!(await scene()).some((el) => (el.groupIds as string[]).includes(again.proposal)));
+
+  // A call that proposes nothing names no proposal.
+  const none = await tools.call('board.write:draw', f.owner, {
+    board: f.made.id,
+    ops: [{ op: 'text', text: 'plain', proposed: false, at: [0, 800] }],
+  });
+  assert.equal((none as { proposal?: string }).proposal, undefined);
+});
