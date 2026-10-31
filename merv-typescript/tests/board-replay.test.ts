@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Caller } from '@merv/contracts';
 import type { BoardElement } from '@merv/board';
 import { boardAt, stacked, type BoardChange } from '@merv/board/models';
+import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { httpApp } from './fixtures/app.js';
 
 const PNG = Buffer.from(
@@ -384,6 +385,16 @@ test('no agent is offered history, in any tool', async (t) => {
   const listed = await f.app.ctx.tools.describe(f.owner, true);
   assert.ok(!listed.some((tool) => tool.name === 'board.history'));
   assert.doesNotMatch(f.app.ctx.tools.instructions(), /board\.history/);
+  // A Pi conversation is refused it by name too.
+  f.app.ctx.tools.registerCallerRules('conversation', conversationRules);
+  await assert.rejects(
+    f.app.ctx.tools.call(
+      'board.history',
+      { ...f.owner, conversation: { id: 'conversation_1', commandId: 'c' } } as never,
+      { id: f.made.id },
+    ),
+    { code: 'tool_forbidden' },
+  );
   // Pages are.
   assert.ok(
     (await f.app.ctx.tools.describe(f.owner)).some((tool) => tool.name === 'board.history'),

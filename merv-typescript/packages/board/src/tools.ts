@@ -182,6 +182,8 @@ export const boardToolsPlugin = {
           "A board's history in order, a page at a time after a revision (the page's replay reads this).",
         inputSchema: historySchema,
         readOnly: true,
+        // Unlike what the page reads beside it, no leased worker or conversation may have this.
+        uiOnly: true,
         handler: async (caller: Caller, input: z.infer<typeof historySchema>) =>
           await board.history(caller, input.id, input.after),
       },

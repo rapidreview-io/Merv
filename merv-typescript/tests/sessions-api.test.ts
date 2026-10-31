@@ -955,6 +955,12 @@ for (const role of ['producer', 'reviewer'] as const) {
     const client = await f.connect(issued.secret);
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     assert.ok(names.includes('board.draw'));
+    assert.ok(names.includes('board.scene'));
+    assert.ok(!names.includes('board.history'));
+    assert.equal(
+      errorCode(await client.callTool({ name: 'board.history', arguments: { id: 'board_x' } })),
+      'tool_forbidden',
+    );
     for (const name of ['board.draw', 'board.write']) {
       const input = { title: `${role} shared sketch`, ops: [{ op: 'note', text: 'Shared idea' }] };
       const result = await client.callTool({
