@@ -149,7 +149,7 @@ jobs:
 
       - name: Prepare Chromium for the report integration test
         run: |
-          if node scripts/test-shard.mjs ${{ matrix.shard }} 2 | grep -Eq '^tests/(experiments|tool-compat)\.test\.ts$'; then
+          if node scripts/test-shard.mjs ${{ matrix.shard }} 2 | grep -Eq '^tests/(experiments|tool-compat|board-figures)\.test\.ts$'; then
             npm run build:board-renderer
             npx playwright-core install --with-deps chromium
           fi

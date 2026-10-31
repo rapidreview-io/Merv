@@ -54,10 +54,16 @@ flowchart LR
 
 Artifacts is the evidence layer under research work: the research plugins and Reviews hold only artifact ids, and Artifacts holds the bytes and checks the caller's project on every read. A personal agent begins a large upload with `artifact.write` (`upload_begin`), sends a `PUT` to the signed URL, then `artifact.write` (`upload_complete`) verifies the bytes and retains the artifact.
 
+## Reading a PDF
+
+`artifact.read` reads a PDF artifact of up to 16 MiB (its media type says so or its title ends in `.pdf`) without a shell. `text` answers its text with page numbers: `{artifactId, page?, pages?}`, 10 pages at a time (at most 20) and at most 64,000 characters; `noText` names the pages with none, `next` is where to go on, and a page too long for an answer is `cut`. A scanned or image-only PDF is refused as `pdf_no_text`, naming the pages; encrypted and malformed ones as `pdf_encrypted` and `pdf_malformed`. `look` with `page` shows that page as an image, in pixels of the whole page at 1,600 on its longest side; `view` takes `fit`, `region`, `pan` and `zoom` as it does for an image, from the whole picture since a look has no camera, and a closer look at a page is drawn afresh up to four times over.
+
+A PDF is untrusted data: PDF.js runs in a page of the offline Chromium Reports and Boards use, never in the server, under a policy forbidding eval and any fetch, with no scripts of the PDF run, no XFA and only text and JPEG pixels leaving. It is held to 30 seconds and to 2 GiB across the browser's processes, measured from outside every 200 ms because a page cannot count its decoders and canvases, so what is reached in that time can run over by a little; either closes the page. An image inside it past 64 megapixels is left out. `pdfjs-dist` is a build input only: `npm run build:board-renderer` bundles it into `dist/pdf.js`, which `postbuild` copies beside the compiled package, so `npm prune --omit=dev` removes it and production needs no copy. CMaps and standard fonts are not bundled: a PDF that leans on them for CJK text or unembedded fonts may read or draw poorly.
+
 ## Surface
 
 - Service `ctx.artifacts`: `create`, `get`, `getMany`, `getAll` (any number of ids), `list` (optionally by `sessions`), `executionOutputs` (what the calling session worker created), `read` (bytes in the row), `readStored` (also a collection member, fetched from its provider, and a range of a file above the inline limit up to 16 MiB, each verified against its SHA-256), `download`, `downloadFiles` (links to up to 100 members at once), `createCollection`, the `upload*` steps, `registerFileProvider`, and `registerReadRule`: an owner's rule over what a session worker may read (Reflections withholds the other lenses' reports from a lens's agent while its wave reflects).
-- Tools (`@merv/artifacts/tools`): `artifact.read` (list, get, content, download, storage) and `artifact.write` (create, upload_begin, upload_resume, upload_complete).
+- Tools (`@merv/artifacts/tools`): `artifact.read` (list, get, content, download, storage, text, look) and `artifact.write` (create, upload_begin, upload_resume, upload_complete).
 - Row (`@merv/artifacts/ui`): Files, at `/artifacts`.
 - A unit's Artifacts tab (`@merv/artifacts/unit-files`, pure): `unitFiles` reads the files a record names and the newest its sessions made in two statements; `unitFileList` lists each once under the role its owner (Tasks, Experiments) names, at the stage the record stood in.
 - Client (`@merv/artifacts/upload-client`): the `artifact-upload` CLI command's uploader.

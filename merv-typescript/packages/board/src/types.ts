@@ -11,6 +11,13 @@ export interface BoardDrawn {
   changed: number;
 }
 
+/** An image already stored, for an image operation: tools turn its source into this first. */
+export interface PlacedImage {
+  fileId: string;
+  width: number;
+  height: number;
+}
+
 export interface Board {
   list(caller: Caller): Promise<BoardSummary[]>;
   scene(caller: Caller, id: string, since?: number): Promise<BoardScene>;
@@ -37,8 +44,9 @@ export interface Board {
   ): Promise<{ fileId: string; mediaType: string; size: number }>;
   /** An image's bytes, to a member of the project that stored them. */
   image(caller: Caller, fileId: string): Promise<{ mediaType: string; content: Buffer }>;
-  /** Draws an agent's operations (input.ts), placed by Board, on one board or a new one. */
-  draw(caller: Caller, input: DrawInput): Promise<BoardDrawn>;
+  /** Draws an agent's operations (input.ts), placed by Board, on one board or a new one;
+   *  `images` holds what each image operation places, in order. */
+  draw(caller: Caller, input: DrawInput, images?: PlacedImage[]): Promise<BoardDrawn>;
 }
 
 declare module 'cordis' {
