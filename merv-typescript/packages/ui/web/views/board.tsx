@@ -12,6 +12,7 @@ import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { BackLink } from '../trail';
 import { useSession } from '../session';
 import { useActorNames } from './people';
+import { OutcomePane, OutcomeWord, useOutcomes } from './board-outcome';
 import type { ViewProps } from './index';
 
 const Canvas = lazy(() => import('./board-canvas'));
@@ -140,20 +141,32 @@ function BoardPage({ row }: ViewProps) {
   const read = useTool<BoardScene>('board.scene', { id, since: MAX }, { every: 10000 });
   const [editing, setEditing] = useState(false);
   const board = read.data?.board;
+  const outcomes = useOutcomes(id, read.data?.outcomes);
   useEffect(() => {
     if (board) document.title = `${board.title} · Merv`;
   }, [board]);
   if (!board) return <PageLoad {...read} back={{ to: row.path, label: 'Boards' }} />;
+  const { shown, full } = outcomes;
   return (
     <div className="board-page">
-      <header className="file-page-head board-page-head">
-        <BackLink home={row.path} label="Boards" />
-        <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
-        <BoardMenu board={board} rename={() => setEditing(true)} />
-      </header>
-      <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>
-        <Canvas key={board.id} id={board.id} />
-      </Suspense>
+      <div
+        className="board-plane"
+        data-outcome={shown ? '' : undefined}
+        data-full={shown && full ? '' : undefined}
+      >
+        <div className="board-main">
+          <header className="file-page-head board-page-head">
+            <BackLink home={row.path} label="Boards" />
+            <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
+            <OutcomeWord place={outcomes} />
+            <BoardMenu board={board} rename={() => setEditing(true)} />
+          </header>
+          <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>
+            <Canvas key={board.id} id={board.id} onOutcomes={outcomes.report} />
+          </Suspense>
+        </div>
+        {shown && <OutcomePane key={shown} board={board.id} place={outcomes} />}
+      </div>
     </div>
   );
 }

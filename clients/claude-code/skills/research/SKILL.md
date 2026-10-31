@@ -56,7 +56,7 @@ same actions through their granted flat tools, `experiment.get_state` and `workf
 ## The paper comes first
 
 If any of the four Problem sections (problem, scope, goals, constraints) is empty and you may
-write the paper, start no other work: interview the person a few pointed questions at a time,
+write the paper, start no other research work (a board or its outcome is fine): interview the person a few pointed questions at a time,
 then write the sections with `paper.write` (patch, kind problem). Never invent this content. When the
 person changes the objective, scope or constraints, update the Problem the same way before
 creating work that relies on the change.

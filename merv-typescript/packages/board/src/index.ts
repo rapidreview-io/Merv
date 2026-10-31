@@ -18,10 +18,14 @@ import {
   fileIdSchema,
   id,
   imageType,
+  outcomeSchema,
+  outcomeSentSchema,
   parse,
   setSchema,
   title,
   type DrawInput,
+  type OutcomeInput,
+  type OutcomeSentInput,
 } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 import type {
@@ -32,6 +36,8 @@ import type {
   BoardHistory,
   BoardScene,
   BoardSummary,
+  Outcome,
+  OutcomeLine,
   PlacedImage,
 } from './types.js';
 import { MOST_IMAGE_BYTES, stacked } from './models.js';
@@ -45,6 +51,13 @@ const [KEEP_MS, PURGE] = [30 * 86_400_000, 500];
 const [STEP_MS, STEP_BYTES] = [5_000, 1_000_000];
 /** The most steps of history one read answers, and the bytes past which it stops. */
 const [HISTORY_PAGE, HISTORY_BYTES] = [100, 2_000_000];
+/** The most outcomes one board holds, the characters one holds, and the sends it remembers. */
+const [MOST_OUTCOMES, OUTCOME_CHARS, SENDS_KEPT] = [50, 200_000, 20];
+/** An outcome's row as a line; Postgres may answer a BIGINT as text. */
+const outcomeLine = (row: { id: string; revision: number; record: string }) =>
+  ({ id: row.id, revision: Number(row.revision), ...JSON.parse(row.record) }) as OutcomeLine;
+const lineOf = ({ text: _text, createdBy: _by, updatedBy: _last, ...line }: Outcome): OutcomeLine =>
+  line;
 /** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
 const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
@@ -127,7 +140,8 @@ export class BoardService implements Board {
       // A deletion purged after `since` can no longer be named, so that reader is told it all.
       const whole = since !== undefined && since < purged;
       const elements = await this.elements(board.id, whole ? undefined : since, tx);
-      return whole ? { board, elements, whole } : { board, elements };
+      const outcomes = await this.lines(board.id, tx);
+      return whole ? { board, outcomes, elements, whole } : { board, outcomes, elements };
     });
   }
   async history(caller: Caller, boardId: string, after = 0): Promise<BoardHistory> {
@@ -451,6 +465,155 @@ export class BoardService implements Board {
         ...(drawing.proposal && { proposal: drawing.proposal }),
         ...(region && { region }),
       };
+    });
+  }
+  private async lines(boardId: string, tx: Transaction) {
+    const rows = await tx.all<{ id: string; revision: number; record: string }>(
+      'SELECT id,revision,record FROM board_outcomes WHERE board_id=?',
+      boardId,
+    );
+    return rows
+      .map((row) => outcomeLine(row))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  /** One outcome of a board this caller's project holds. */
+  private async held(caller: Caller, boardId: string, outcomeId: string, tx: Transaction) {
+    await this.summary(caller, boardId, tx);
+    const row = await tx.get<{ id: string; revision: number; record: string; text: string }>(
+      'SELECT id,revision,record,text FROM board_outcomes WHERE board_id=? AND id=?',
+      boardId,
+      parse(id, outcomeId),
+    );
+    check(row, 'not_found', 'Outcome not found', 404);
+    return { ...outcomeLine(row), text: row.text } as Outcome;
+  }
+  private async keepOutcome(outcome: Outcome, tx: Transaction, boardId: string) {
+    const { id, revision, text, ...record } = outcome;
+    await tx.run(
+      `INSERT INTO board_outcomes(board_id,id,revision,record,text) VALUES(?,?,?,?,?)
+       ON CONFLICT(board_id,id) DO UPDATE SET revision=excluded.revision,record=excluded.record,text=excluded.text`,
+      boardId,
+      id,
+      revision,
+      JSON.stringify(record),
+      text,
+    );
+  }
+  async outcome(caller: Caller, boardId: string, outcomeId: string): Promise<Outcome> {
+    caller = this.open(caller);
+    return await forRead(this.state, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return await this.held(caller, boardId, outcomeId, tx);
+    });
+  }
+  async writeOutcome(caller: Caller, value: OutcomeInput): Promise<OutcomeLine> {
+    caller = this.open(caller);
+    const input = parse(outcomeSchema, value);
+    check(
+      input.content === undefined || !input.edits,
+      'invalid_board_input',
+      'An outcome takes content, which replaces it whole, or edits, which change part of it, not both',
+    );
+    return await this.state
+      .transaction(async (tx) => {
+        await this.editable(caller, tx);
+        await this.summary(caller, input.board, tx);
+        const at = now();
+        let before: Outcome;
+        if (input.outcome) before = await this.held(caller, input.board, input.outcome, tx);
+        else {
+          check(input.title, 'invalid_board_input', 'A new outcome needs a title');
+          check(
+            !input.edits,
+            'invalid_board_input',
+            'A new outcome has nothing to edit: give content',
+          );
+          const held = await tx.get<{ n: number }>(
+            'SELECT COUNT(*)::int AS n FROM board_outcomes WHERE board_id=?',
+            input.board,
+          );
+          check(
+            (held?.n ?? 0) < MOST_OUTCOMES,
+            'board_full',
+            `A board holds at most ${MOST_OUTCOMES} outcomes`,
+            409,
+          );
+          before = {
+            id: newId('outcome'),
+            title: input.title,
+            revision: 0,
+            text: '',
+            createdBy: caller.actorId,
+            createdAt: at,
+            updatedBy: caller.actorId,
+            updatedAt: at,
+            sent: [],
+          };
+        }
+        let text = before.text;
+        if (input.content !== undefined) {
+          if (input.outcome)
+            check(
+              input.expectedRevision === before.revision,
+              'board_outcome_conflict',
+              `Expected revision ${input.expectedRevision ?? 'none'}, found ${before.revision}: read the outcome again with board.read outcome and change it with edits [{find, replace}], or resend content with expectedRevision ${before.revision}`,
+              409,
+            );
+          text = input.content;
+        }
+        for (const [edit, { find, replace }] of (input.edits ?? []).entries()) {
+          const found = text.indexOf(find);
+          const repeated = found >= 0 && text.includes(find, found + 1);
+          check(
+            found >= 0 && !repeated,
+            'board_outcome_conflict',
+            `Edit ${edit + 1} finds ${JSON.stringify(find.slice(0, 80))} ${repeated ? 'more than once, so quote more of the text around it' : 'nowhere'} in outcome ${before.id} revision ${before.revision}${edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once, as board.read outcome returns it`,
+            409,
+          );
+          text = text.slice(0, found) + replace + text.slice(found + find.length);
+        }
+        check(
+          text.length <= OUTCOME_CHARS,
+          'invalid_board_input',
+          `An outcome holds at most ${OUTCOME_CHARS} characters; this would hold ${text.length}`,
+        );
+        const name = input.title ?? before.title;
+        if (input.outcome && text === before.text && name === before.title) return before;
+        const next = {
+          ...before,
+          title: name,
+          text,
+          revision: before.revision + 1,
+          updatedBy: caller.actorId,
+          updatedAt: at,
+        };
+        await this.keepOutcome(next, tx, input.board);
+        await recorded(this.state, tx, caller, 'board.outcome', input.board, {
+          outcome: next.id,
+          revision: next.revision,
+        });
+        return next;
+      })
+      .then(lineOf);
+  }
+  async outcomeSent(caller: Caller, value: OutcomeSentInput): Promise<OutcomeLine> {
+    caller = this.open(caller);
+    const input = parse(outcomeSentSchema, value);
+    return await this.state.transaction(async (tx) => {
+      await this.editable(caller, tx);
+      // Whoever may keep a file: a reader, who may edit the board, sends nothing in anyone's name.
+      await this.scope.require(caller, 'write', tx);
+      const outcome = await this.held(caller, input.board, input.outcome, tx);
+      const { board: _board, outcome: _outcome, ...sent } = input;
+      const others = outcome.sent.filter(
+        (was) => was.how !== sent.how || was.artifactId !== sent.artifactId,
+      );
+      const next = {
+        ...outcome,
+        sent: [...others, { at: now(), ...sent }].slice(-SENDS_KEPT),
+      };
+      await this.keepOutcome(next, tx, input.board);
+      return lineOf(next);
     });
   }
 }

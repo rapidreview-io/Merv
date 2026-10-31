@@ -1,6 +1,13 @@
 import type { Caller } from '@merv/contracts';
-import type { DrawInput } from './input.js';
-import type { BoardElement, BoardHistory, BoardScene, BoardSummary } from './models.js';
+import type { DrawInput, OutcomeInput, OutcomeSentInput } from './input.js';
+import type {
+  BoardElement,
+  BoardHistory,
+  BoardScene,
+  BoardSummary,
+  Outcome,
+  OutcomeLine,
+} from './models.js';
 
 export type * from './models.js';
 
@@ -51,6 +58,12 @@ export interface Board {
   /** Draws an agent's operations (input.ts), placed by Board, on one board or a new one;
    *  `images` holds what each image operation places, in order. */
   draw(caller: Caller, input: DrawInput, images?: PlacedImage[]): Promise<BoardDrawn>;
+  /** One of a board's outcomes with its text; `scene` lists them. */
+  outcome(caller: Caller, board: string, id: string): Promise<Outcome>;
+  /** Creates an outcome, or changes one: edits apply at any revision, content only at its own. */
+  writeOutcome(caller: Caller, input: OutcomeInput): Promise<OutcomeLine>;
+  /** Notes the file frozen from an outcome; its revision stays, so an unchanged resend is the same. */
+  outcomeSent(caller: Caller, input: OutcomeSentInput): Promise<OutcomeLine>;
 }
 
 declare module 'cordis' {

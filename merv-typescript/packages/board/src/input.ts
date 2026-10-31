@@ -270,5 +270,32 @@ export const setSchema = z.strictObject({
   archived: z.boolean().optional(),
 });
 
+/** Postgres text holds no NUL. */
+const outcomeText = z.string().refine((value) => !value.includes('\0'), 'Text holds no NUL');
+export const outcomeSchema = z.strictObject({
+  board: id,
+  /** Without it, a new outcome, which needs a title. */
+  outcome: id.optional(),
+  title: title.optional(),
+  /** The whole text: at exactly expectedRevision, or to begin a new outcome. */
+  content: outcomeText.optional(),
+  /** In turn at any revision, each find occurring exactly once in the text before it. */
+  edits: z
+    .array(z.strictObject({ find: z.string().min(1), replace: outcomeText }))
+    .min(1)
+    .max(50)
+    .optional(),
+  expectedRevision: z.number().int().safe().min(1).optional(),
+});
+export type OutcomeInput = z.input<typeof outcomeSchema>;
+export const outcomeSentSchema = z.strictObject({
+  board: id,
+  outcome: id,
+  how: z.enum(['claude', 'copy', 'fleet']),
+  artifactId: z.string().regex(/^art_[A-Za-z0-9_-]{1,190}$/),
+  revision: z.number().int().safe().min(1),
+});
+export type OutcomeSentInput = z.input<typeof outcomeSentSchema>;
+
 export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>
   parsed(schema, value, 'invalid_board_input', { nodes: 200_000, depth: 10, bytes: 4_000_000 });
