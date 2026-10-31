@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-10-27",
+  "snapshot": "2026-10-31",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
   "pluginCount": 88,
   "serviceProviders": 40,
@@ -10,10 +10,10 @@
   "apiEntries": 47,
   "serverPlugins": 87,
   "machinePlugins": 1,
-  "directDependencyCount": 282,
-  "optionalDependencyCount": 22,
+  "directDependencyCount": 283,
+  "optionalDependencyCount": 23,
   "directConsumers": {
-    "api": 14,
+    "api": 15,
     "artifacts": 15,
     "blobs": 3,
     "board": 2,
@@ -178,7 +178,9 @@
         "board",
         "tools"
       ],
-      "optional": [],
+      "optional": [
+        "api"
+      ],
       "kind": "tools",
       "runtime": "server",
       "defaultConfiguration": true
