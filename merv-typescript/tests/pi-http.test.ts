@@ -121,6 +121,7 @@ function fixture(t: TestContext, rotateMs?: number) {
       await pi.authorizeStream(selected, id);
       return { conversation: { id }, commands: [], ...streams.snapshot(id) };
     },
+    heardSince: async () => ({}),
     ...Object.fromEntries(
       ['next', 'begin', 'tool', 'progress', 'complete', 'fail'].map((action) => [
         action,

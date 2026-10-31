@@ -12,3 +12,6 @@ export const messageChars = 2_000_000;
 /** A turn's one ceiling once claimed: the model's maximum answer takes under an hour even at 40
  * tokens a second. A turn that stops making progress ends long before (turnTimeoutSeconds). */
 export const turnCeilingMs = 3 * 60 * 60_000;
+
+/** What a change the model asked for before it heard the person answers instead of being made. */
+export const notRun = 'The person just spoke: read what they said, then decide.';

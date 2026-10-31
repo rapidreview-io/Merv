@@ -108,8 +108,11 @@ export const outcome = z.strictObject({
   input: z.record(z.unknown()),
   output: z.unknown(),
 });
+/** How many of what the person said during a turn its worker has; a worker that omits it hears none. */
+export const heardInput = z.number().int().min(0).max(1000).optional();
 export const completionInput = commandInput
   .extend({
+    heard: heardInput,
     messages: z.array(message).min(1).max(128),
     outcomes: z.array(outcome).max(64),
     checkpoint: z.string().min(1).max(2_000_000),

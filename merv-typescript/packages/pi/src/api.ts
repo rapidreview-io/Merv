@@ -93,7 +93,10 @@ export class PiHttp {
     check(!this.closed, 'pi_unavailable', 'Worker connection closed', 503);
     const action = match[1] as 'next' | 'tool' | 'begin' | 'progress' | 'complete' | 'fail';
     if (action === 'next') return await this.pi.next(token, input, this.holdMs);
-    if (action === 'tool') return { result: await this.pi.tool(token, input) };
+    if (action === 'tool') {
+      const result = await this.pi.tool(token, input);
+      return { result, ...(await this.pi.heardSince(input)) };
+    }
     return await this.pi[action](token, input);
   };
 

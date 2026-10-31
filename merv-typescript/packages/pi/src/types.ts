@@ -41,6 +41,10 @@ export interface PiCommandRecord extends PiCommand {
   inputHash: string;
   workerId: string | null;
   resultHash: string | null;
+  /** What the person said while the turn ran, in order, each kept also among its messages. The
+   * worker asks with how many it has, gives each to the model at its next chance, and ends by saying
+   * how many it took: what it never took opens a turn of its own, so no word is lost. */
+  heard?: { id: string; text: string; pointing?: string }[];
   /** switch_machine was offered with this turn's claim: a claim served again offers it again. */
   canMove?: true;
   /** The native names this turn offers, fixed at its first serve: its relay grant names exactly
@@ -220,6 +224,8 @@ export interface PiCompletion {
   outcomes: PiToolOutcome[];
   checkpoint: string;
   checkpointHash: string;
+  /** How many of what the person said meanwhile (PiCommandRecord.heard) reached the model. */
+  heard?: number;
 }
 export interface Pi {
   create(caller: Caller, input: unknown): Promise<PiConversation>;
@@ -275,6 +281,8 @@ export interface PiRuntime extends Pi {
   /** Holds up to `holdMs` for work before answering `work: null`. */
   next(token: string, input: unknown, holdMs?: number): Promise<PiNextReply>;
   tool(token: string, input: unknown): Promise<unknown>;
+  /** What the person said during a worker's turn, since what its call says it has. */
+  heardSince(input: unknown): Promise<{ heard?: string[] }>;
   begin(token: string, input: unknown): Promise<{ apply: boolean }>;
   progress(token: string, input: unknown): Promise<{ accepted: true }>;
   complete(token: string, input: unknown): Promise<{ saved: boolean }>;

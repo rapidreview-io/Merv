@@ -14,11 +14,13 @@ import {
   failInput,
   completionInput,
   defaultTitle,
+  heardInput,
   nextInput,
   switchMachineInput,
 } from './schema.js';
+import { personInterrupts } from '@merv/api/audience';
 import { decodeCheckpoint } from './checkpoint.js';
-import { messageChars, turnCeilingMs } from './limits.js';
+import { messageChars, notRun, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piAsk, piTitle, titleAsk } from './relay.js';
 import { fit } from './fit.js';
@@ -200,6 +202,8 @@ export class PiWorkerProtocol {
         checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
       }
       const turn = { conversationId: conversation.id, commandId: command.id, workerId };
+      // What was said to a turn taken up again is still to be heard.
+      if (command.heard?.length) this.core.spoken.add(`${conversation.id}:${command.id}`);
       const { actor } = await this.core.read((tx) => this.bound(token, turn, tx));
       const caller = conversationCaller(conversation, command);
       const profile = conversation.profile && this.core.profiles.get(conversation.profile);
@@ -282,7 +286,8 @@ export class PiWorkerProtocol {
       this.core.streams.changed(conversation.id, command.id);
       const model = this.core.conversationModel(conversation, command);
       return {
-        command: publicCommand(command),
+        // The worker's prompt; what the person said since comes as it does at any other time.
+        command: { ...publicCommand(command), messages: command.messages.slice(0, 1) },
         checkpoint,
         model: model.id,
         modelBaseUrl: `${this.core.apiOrigin}/pi-model`,
@@ -508,7 +513,11 @@ export class PiWorkerProtocol {
   async tool(token: string, input: unknown): Promise<unknown> {
     const value = parse(
       commandInput
-        .extend({ name: z.string().min(1).max(128), input: z.record(z.unknown()) })
+        .extend({
+          name: z.string().min(1).max(128),
+          input: z.record(z.unknown()),
+          heard: heardInput,
+        })
         .strict(),
       input,
     );
@@ -540,6 +549,16 @@ export class PiWorkerProtocol {
       });
     }
     const key = `${conversation.id}:${command.id}`;
+    const registered = this.core.tools.tool(value.name);
+    // The person has just spoken, and the model has not heard yet: it makes no change meanwhile.
+    if (
+      value.heard !== undefined &&
+      (command.heard?.length ?? 0) > value.heard &&
+      registered &&
+      !registered.readOnly &&
+      registered.reads?.(value.input) !== true
+    )
+      return { notRun };
     const call = digest([value.name, value.input]);
     const refused = this.core.refusals.get(key)?.get(call);
     const refuse = (code: string) =>
@@ -558,7 +577,6 @@ export class PiWorkerProtocol {
         current.calledAt ??= this.core.time();
         await this.core.saveCommand(tx, current);
       });
-    const registered = this.core.tools.tool(value.name);
     this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.core.report(
@@ -573,10 +591,20 @@ export class PiWorkerProtocol {
           ? 'Reading'
           : 'Making a change',
     );
+    const listening = new AbortController();
+    this.core.listening.set(key, listening);
+    // Said since this call was read: it hears that as it would if it were already waiting.
+    if ((await this.heardSince(value)).heard) listening.abort('said');
     const result = await (
       value.name === 'machine.switch'
         ? this.switchMachine(conversation, command, value.input)
-        : this.core.tools.call(value.name, conversationCaller(conversation, command), value.input)
+        : personInterrupts.run(listening.signal, () =>
+            this.core.tools.call(
+              value.name,
+              conversationCaller(conversation, command),
+              value.input,
+            ),
+          )
     )
       .catch(async (error: unknown) => {
         // A turn that ended, or whose person lost access here, ends with its call; any other
@@ -597,10 +625,25 @@ export class PiWorkerProtocol {
           : { error: { code: 'tool_failed', message: 'The tool failed unexpectedly' } };
       })
       .finally(() => {
+        if (this.core.listening.get(key) === listening) this.core.listening.delete(key);
         this.touch(key);
         this.core.report(conversation.id, command.id, 'thinking');
       });
     return fit(value.name, result);
+  }
+  /** All the person has said during this turn, if the worker has not got all of it. */
+  async heardSince(input: unknown): Promise<{ heard?: string[] }> {
+    const { conversationId, commandId, heard } = input as {
+      conversationId: string;
+      commandId: string;
+      heard?: number;
+    };
+    if (heard === undefined || !this.core.spoken.has(`${conversationId}:${commandId}`)) return {};
+    const said = await this.core.read((tx) => this.core.command(tx, conversationId, commandId));
+    const all = said.heard ?? [];
+    return all.length > heard
+      ? { heard: all.map(({ text, pointing }) => (pointing ? `${pointing}\n\n${text}` : text)) }
+      : {};
   }
   /** switch_machine: the agent starts a move without asking (T2), within the move rules and only
    * to a machine its person may pick here. The new machine serves later turns once ready. */
@@ -632,12 +675,13 @@ export class PiWorkerProtocol {
     return result;
   }
 
-  async progress(token: string, input: unknown): Promise<{ accepted: true }> {
+  async progress(token: string, input: unknown): Promise<{ accepted: true; heard?: string[] }> {
     const value = parse(
       commandInput
         .extend({
           // Older workers omit this; current workers retain it across a batch's retries.
           sequence: z.number().int().positive().safe().optional(),
+          heard: heardInput,
           events: z
             .array(
               z.object({ type: z.enum(['text', 'progress']), text: z.string().max(8192) }).strict(),
@@ -672,7 +716,7 @@ export class PiWorkerProtocol {
     if (value.sequence !== undefined) {
       const live = this.core.live.get(id);
       if (live?.progress?.commandId === value.commandId && live.progress.sequence >= value.sequence)
-        return { accepted: true };
+        return { accepted: true, ...(await this.heardSince(value)) };
       this.core.live.set(id, {
         ...live,
         progress: { commandId: value.commandId, sequence: value.sequence },
@@ -695,7 +739,7 @@ export class PiWorkerProtocol {
       this.core.live.set(id, { ...live, streamed: { commandId: value.commandId, text } });
       this.core.report(id, value.commandId, 'writing');
     }
-    return { accepted: true };
+    return { accepted: true, ...(await this.heardSince(value)) };
   }
 
   async complete(token: string, input: unknown): Promise<{ saved: boolean }> {
@@ -753,8 +797,11 @@ export class PiWorkerProtocol {
         'Turn result changed on replay',
         409,
       );
+      // What the person said comes back where the model heard it, as they said it.
+      const heard = command.heard ?? [];
+      const heardBack = value.messages.filter((message) => message.role !== 'assistant');
       check(
-        value.messages.every((message) => message.role === 'assistant'),
+        heardBack.length <= Math.min(heard.length, value.heard ?? 0),
         'pi_result_invalid',
         'Worker results must contain assistant messages',
       );
@@ -770,7 +817,15 @@ export class PiWorkerProtocol {
         'Turn result contains an unsupported tool',
       );
       if (!command.resultHash) {
-        command.messages.push(...value.messages);
+        let back = 0;
+        command.messages = [
+          command.messages[0]!,
+          ...value.messages.map((message) =>
+            message.role === 'assistant' ? message : { ...message, text: heard[back++]!.text },
+          ),
+          // Said since the worker last asked; opens a turn of its own if it stays unheard.
+          ...heard.slice(value.heard ?? 0).map(({ text }) => ({ role: 'user' as const, text })),
+        ];
         command.outcomes = outcomes;
         command.resultHash = resultHash;
         command.status = 'saving';
@@ -800,32 +855,64 @@ export class PiWorkerProtocol {
       this.core.streams.changed(value.conversationId, value.commandId);
       return { saved: false };
     }
-    const first = await this.core.state.transaction(async (tx) => {
-      if (await replayed(tx)) return false;
-      const { conversation, command } = await this.bound(token, value, tx);
-      check(
-        command.status === 'saving' &&
-          command.resultHash === resultHash &&
-          digest(conversation.checkpoint) === digest(retained.conversation.checkpoint),
-        'pi_checkpoint_conflict',
-        'Conversation changed while saving its checkpoint',
-        409,
-      );
-      const first =
-        !conversation.profile && !conversation.checkpoint && conversation.title === defaultTitle;
-      conversation.previousCheckpoint = conversation.checkpoint;
-      conversation.checkpoint = { ...stored, commandId: command.id };
-      conversation.activeCommandId = null;
-      command.status = 'completed';
-      command.error = null;
-      command.completedAt = this.core.time();
-      await this.core.saveCommand(tx, command);
-      await this.core.saveConversation(tx, conversation);
-      await this.hosts.quiet(tx, command.hostId);
-      return first;
+    const renter = await this.hosts.hostCaller().catch(() => null);
+    let opening = false;
+    let next: string | undefined;
+    const finish = (openNext: boolean) =>
+      this.core.state.transaction(async (tx) => {
+        if (await replayed(tx)) return false;
+        const { conversation, command } = await this.bound(token, value, tx);
+        check(
+          command.status === 'saving' &&
+            command.resultHash === resultHash &&
+            digest(conversation.checkpoint) === digest(retained.conversation.checkpoint),
+          'pi_checkpoint_conflict',
+          'Conversation changed while saving its checkpoint',
+          409,
+        );
+        const first =
+          !conversation.profile && !conversation.checkpoint && conversation.title === defaultTitle;
+        conversation.previousCheckpoint = conversation.checkpoint;
+        conversation.checkpoint = { ...stored, commandId: command.id };
+        conversation.activeCommandId = null;
+        command.status = 'completed';
+        command.error = null;
+        command.completedAt = this.core.time();
+        // What the person said too late for this answer is the next turn's question, in the same
+        // breath, so that nothing they say or stop meanwhile finds no turn. Those words stand last
+        // in this one; if no turn can start, they stay there.
+        const unheard = (command.heard ?? []).slice(value.heard ?? 0);
+        const opens = openNext && renter && unheard.length > 0;
+        if (opens)
+          command.messages = command.messages.filter(
+            ({ role, text }, at, all) =>
+              at < all.length - unheard.length ||
+              role !== 'user' ||
+              !unheard.some((one) => one.text === text),
+          );
+        await this.core.saveCommand(tx, command);
+        await this.core.saveConversation(tx, conversation);
+        if (!opens) await this.hosts.quiet(tx, command.hostId);
+        else {
+          opening = true;
+          const turn = {
+            commandId: unheard[0]!.id,
+            text: unheard.map((one) => one.text).join('\n\n'),
+          };
+          next = (await this.hosts.open(tx, renter, conversation, turn, unheard[0]!.pointing))
+            .hostId;
+          opening = false;
+        }
+        return first;
+      });
+    const first = await finish(true).catch((error: unknown) => {
+      if (!opening) throw error;
+      next = undefined;
+      return finish(false);
     });
     this.core.forget(retained.command);
     this.core.announce(value.conversationId);
+    if (next) this.core.streams.wake(next);
     if (first) void this.name(value.conversationId, retained.command.messages).catch(() => {});
     return { saved: true };
   }

@@ -26,10 +26,11 @@ import { streamSimple as streamAnthropic } from '@earendil-works/pi-ai/api/anthr
 import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api/openai-responses';
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
-import { messageChars } from './limits.js';
+import { messageChars, notRun } from './limits.js';
 import { piProvider } from './models.js';
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import type {
+  PiMessage,
   PiBootstrap,
   PiCompletion,
   PiNextReply,
@@ -54,6 +55,9 @@ const TOOL_OUTPUT_BYTES = 128_000;
 /** Tool calls one answer may make; the next is refused before it runs, and the model is told to
  * answer with what it has. */
 const TOOL_CALLS = 64;
+/** A user message's words, however they were put. */
+const wordsOf = ({ content }: { content: string | { type: string; text?: string }[] }) =>
+  typeof content === 'string' ? content : (content[0]?.text ?? '');
 // No answer has an output cap (a summary has Pi's): the model's own maximum ends it. Pi compacts
 // at 90% of the model's window, where Codex does (executeTurn); the history a turn restores, and
 // its checkpoint, are never more than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay
@@ -484,6 +488,25 @@ async function executeTurn(
   });
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
+  /** What the person said while the turn runs: how many of it came, and what the model has not had. */
+  let heard = 0;
+  const unheard: string[] = [];
+  const steer = (said: string[]) => {
+    for (const text of said) {
+      unheard.push(text);
+      session.agent.steer({
+        role: 'user',
+        content: [{ type: 'text', text }],
+        timestamp: Date.now(),
+      });
+    }
+  };
+  // All of it comes each time: replies to two calls at once say the same.
+  const hear = (said: unknown) => {
+    if (!Array.isArray(said) || said.length <= heard) return;
+    steer(said.slice(heard).map(String));
+    heard = said.length;
+  };
   let calls = 0;
   let failure: Error | null = null;
   /** Ends the turn: nothing more is sent, and the session stops. */
@@ -518,8 +541,14 @@ async function executeTurn(
     const pending = Promise.resolve()
       .then(async () => {
         if (signal.aborted) return;
-        const receipt = await request<{ accepted: boolean }>('progress', batch, signal, 3);
+        const receipt = await request<{ accepted: boolean; heard?: unknown }>(
+          'progress',
+          { ...batch, heard },
+          signal,
+          3,
+        );
         if (receipt.accepted !== true) throw new Error('Conversation revoked');
+        hear(receipt.heard);
       })
       .catch((error: unknown) => {
         stop(error instanceof Error ? error : new Error('Conversation revoked'));
@@ -570,19 +599,26 @@ async function executeTurn(
       if (signal.aborted || failure) throw new Error('Turn cancelled');
       if (!input || typeof input !== 'object' || Array.isArray(input))
         throw new Error('Tool arguments must be an object');
+      // Asked for before the person spoke: the model gets to hear them before it changes anything.
+      if (tool.readOnly === false && unheard.length)
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ notRun }) }],
+          details: undefined,
+        };
       if (++calls > TOOL_CALLS)
         throw new Error(
           `This answer has used its ${TOOL_CALLS} tool calls: answer now with what you have, and say what is left`,
         );
-      let output: { result: unknown };
+      let output: { result: unknown; heard?: unknown };
       try {
-        output = await request<{ result: unknown }>(
+        output = await request<{ result: unknown; heard?: unknown }>(
           'tool',
-          { ...ids, name: tool.name, input },
+          { ...ids, name: tool.name, input, heard },
           toolSignal ? AbortSignal.any([signal, toolSignal]) : signal,
           tool.readOnly === false ? 1 : 3,
         );
         if (!Object.hasOwn(output ?? {}, 'result')) throw new Error('Invalid tool response');
+        hear(output.heard);
       } catch (error) {
         // Lost authority ends the turn; any other failure is a tool result the model can answer.
         if (error instanceof WorkerHttpError && [401, 403, 409].includes(error.status))
@@ -749,6 +785,12 @@ async function executeTurn(
       }
       return;
     }
+    // What they said is in the model's context now, ahead of its next call.
+    if (event.type === 'message_end' && event.message.role === 'user') {
+      const at = unheard.indexOf(wordsOf(event.message));
+      if (at >= 0) unheard.splice(at, 1);
+      return;
+    }
     if (event.type !== 'message_update') return;
     const update = event.assistantMessageEvent;
     if (update.type === 'text_delta') enqueue('text', update.delta);
@@ -783,15 +825,29 @@ async function executeTurn(
       context = recentImages(context);
       if (narrow) context = within(context, room);
       if (!work.context) return context;
-      const at = context.findLastIndex((message) => message.role === 'user');
+      // On the turn's own question, not on what the person said as it ran.
+      const at = context.findLastIndex(
+        (message) => message.role === 'user' && wordsOf(message) === prompt,
+      );
       return context.map((message, index) =>
         index === at ? { ...message, content: [{ type: 'text', text: given }] } : message,
       ) as typeof context;
     };
     await session.prompt(prompt, { expandPromptTemplates: false });
-    while (!failure && !signal.aborted && (events.length || sending)) {
-      flush();
+    for (;;) {
+      while (!failure && !signal.aborted && (events.length || sending)) {
+        flush();
+        if (sending) await sending;
+      }
+      if (failure || signal.aborted) break;
+      // Asked once more as the answer ends, so that what the person just said is answered in it.
+      flush(true);
       if (sending) await sending;
+      if (!unheard.length || failure || signal.aborted) break;
+      session.agent.clearSteeringQueue();
+      const [next, ...more] = unheard.splice(0);
+      steer(more);
+      await session.prompt(next!, { expandPromptTemplates: false });
     }
     if (failure || signal.aborted) throw failure ?? new Error('Turn cancelled');
     const branch = manager.getBranch();
@@ -817,7 +873,15 @@ async function executeTurn(
       (message) => !['stop', 'toolUse', 'length'].includes(message.stopReason),
     );
     if (failed) throw new Error(`Model response failed (${failed.stopReason})`);
-    const messages = assistant.flatMap((message) => {
+    // The person's words where the model heard them, every user message after the first; Main
+    // puts them back as they said them, without what went with them to the model.
+    const answers = new Set<unknown>(assistant);
+    const asked = turn.find((entry) => entry.type === 'message' && entry.message.role === 'user');
+    const messages = turn.flatMap((entry): PiMessage[] => {
+      if (entry.type !== 'message' || entry === asked) return [];
+      if (entry.message.role === 'user') return [{ role: 'user', text: '' }];
+      if (!answers.has(entry.message)) return [];
+      const message = entry.message as (typeof assistant)[number];
       const text = [
         message.content
           .filter((part) => part.type === 'text')
@@ -831,7 +895,7 @@ async function executeTurn(
       ]
         .filter(Boolean)
         .join('\n\n');
-      return text ? [{ role: 'assistant' as const, text }] : [];
+      return text ? [{ role: 'assistant', text }] : [];
     });
     if (
       !messages.length ||
@@ -856,6 +920,7 @@ async function executeTurn(
     });
     return {
       ...ids,
+      heard,
       messages,
       outcomes,
       checkpoint: saved.content,

@@ -59,7 +59,6 @@ import {
   active,
   conversationCaller,
   decode,
-  storedTurn,
   equal,
   hash,
   parse,
@@ -84,6 +83,8 @@ const publicConversation = ({
  * Fleet machines (hosts), and the routes the host's worker calls (protocol). */
 /** Interrupted turns a question investigation carries on after. */
 const QUESTION_RETRIES = 2;
+/** The most a person says during one turn that is held for its model. */
+const MOST_HEARD = 20;
 
 export class PiService implements Pi {
   private readonly core: PiCore;
@@ -110,6 +111,7 @@ export class PiService implements Pi {
   readonly next: PiWorkerProtocol['next'] = (...args) => this.protocol.next(...args);
   readonly begin: PiWorkerProtocol['begin'] = (...args) => this.protocol.begin(...args);
   readonly tool: PiWorkerProtocol['tool'] = (...args) => this.protocol.tool(...args);
+  readonly heardSince: PiWorkerProtocol['heardSince'] = (input) => this.protocol.heardSince(input);
   readonly progress: PiWorkerProtocol['progress'] = (...args) => this.protocol.progress(...args);
   readonly complete: PiWorkerProtocol['complete'] = (...args) => this.protocol.complete(...args);
   readonly fail: PiWorkerProtocol['fail'] = (...args) => this.protocol.fail(...args);
@@ -413,7 +415,7 @@ export class PiService implements Pi {
     // the same message whatever the page showed.
     const { model, pointing, ...value } = parse(sendInput, input);
     const renter = await this.hosts.hostCaller();
-    const { command, hostId } = await this.core.state.transaction(async (tx) => {
+    const { command, hostId, spoken } = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const existing = await this.core.row<PiCommandRecord>(tx, turnAt, id, value.commandId);
       if (existing) {
@@ -423,14 +425,20 @@ export class PiService implements Pi {
           'Command ID was reused with different input',
           409,
         );
-        return { command: publicCommand(existing), hostId: existing.hostId };
+        return { command: publicCommand(existing), hostId: existing.hostId, spoken: false };
       }
-      check(
-        !conversation.activeCommandId,
-        'pi_turn_busy',
-        'This conversation already has an active turn',
-        409,
-      );
+      // Said during a turn, however that has ended since: a retry is the same words once.
+      const turns = await this.core.commands(tx, id);
+      const heard = turns.find((turn) => turn.heard?.some((one) => one.id === value.commandId));
+      if (heard) {
+        check(
+          heard.heard!.find((one) => one.id === value.commandId)!.text === value.text,
+          'pi_command_conflict',
+          'Command ID was reused with different input',
+          409,
+        );
+        return { command: publicCommand(heard), hostId: null, spoken: false };
+      }
       const count = await tx.get<{ count: number }>(
         'SELECT COUNT(*)::integer AS count FROM pi_commands WHERE conversation_id=?',
         id,
@@ -449,54 +457,29 @@ export class PiService implements Pi {
         `This conversation now answers on ${current.label}. Send again to use it.`,
         409,
       );
+      // Said while a turn runs, it goes to that turn's model at its next chance (heard).
+      if (conversation.activeCommandId) {
+        const turn = await this.core.command(tx, id, conversation.activeCommandId);
+        const said = turn.heard ?? [];
+        check(said.length < MOST_HEARD, 'pi_turn_busy', 'Wait for the answer to catch up', 409);
+        turn.heard = [
+          ...said,
+          { id: value.commandId, text: value.text, ...(pointing && { pointing }) },
+        ];
+        turn.messages.push({ role: 'user', text: value.text });
+        await this.core.saveCommand(tx, turn);
+        return { command: publicCommand(turn), hostId: null, spoken: true };
+      }
       // Every read of the turn runs as the person, with their authority as of this message.
       conversation.source = await this.core.scope.delegationSource(caller, tx);
-      const { host, queued } = await this.hosts.ensure(
-        renter,
-        conversation,
-        conversation.source,
-        tx,
-      );
-      const slot = host.current!;
-      const expiry = this.hosts.turnEnd(slot, conversation.source, this.hosts.startMs(queued));
-      check(expiry > this.core.clock(), 'pi_expired', 'Conversation source has expired', 403);
-      const command: PiCommandRecord = {
-        id: value.commandId,
-        conversationId: id,
-        epoch: slot.epoch,
-        runtimeId: slot.allocationId,
-        hostId: host.id,
-        machine: slot.machine,
-        status: queued ? 'waiting' : 'starting',
-        messages: [{ role: 'user', text: value.text }],
-        ...(pointing && { pointing }),
-        outcomes: [],
-        error: null,
-        createdAt: this.core.time(),
-        expiresAt: new Date(expiry).toISOString(),
-        completedAt: null,
-        inputHash: digest(value),
-        workerId: null,
-        resultHash: null,
-      };
-      await tx.run(
-        'INSERT INTO pi_commands(id,conversation_id,status,relay_hash,created_at,host_id,data_json) VALUES(?,?,?,?,?,?,?)',
-        command.id,
-        id,
-        command.status,
-        hash(this.core.modelToken(command)),
-        command.createdAt,
-        host.id,
-        storedTurn(command),
-      );
-      if (host.idleSince) {
-        host.idleSince = null;
-        await this.hosts.saveHost(tx, host);
-      }
-      conversation.activeCommandId = command.id;
-      await this.core.saveConversation(tx, conversation);
-      return { command: publicCommand(command), hostId: host.id };
+      const opened = await this.hosts.open(tx, renter, conversation, value, pointing);
+      return { command: publicCommand(opened.command), hostId: opened.hostId, spoken: false };
     });
+    if (spoken) {
+      const turn = `${id}:${command.id}`;
+      this.core.spoken.add(turn);
+      this.core.listening.get(turn)?.abort('said');
+    }
     this.core.streams.changed(id, command.id);
     this.core.announce();
     if (hostId) this.core.streams.wake(hostId);

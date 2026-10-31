@@ -125,24 +125,15 @@ test('send commits a command, its host and the Fleet request atomically, dedupli
     f.pi.send(f.operator, first.id, { commandId: 'a', text: 'first' }),
     f.pi.send(f.operator, first.id, { commandId: 'b', text: 'second' }),
   ]);
-  assert.equal([one, two].filter((result) => result.status === 'fulfilled').length, 1);
-  assert.equal(
-    [one, two].filter(
-      (result) => result.status === 'rejected' && code('pi_turn_busy')(result.reason),
-    ).length,
-    1,
-  );
-  const accepted =
-    one.status === 'fulfilled'
-      ? one.value
-      : (two as PromiseFulfilledResult<Awaited<ReturnType<typeof f.pi.send>>>).value;
-  assert.deepEqual(
-    await f.pi.send(f.operator, first.id, {
-      commandId: accepted.id,
-      text: accepted.messages[0].text,
-    }),
-    accepted,
-  );
+  // One turn: whichever came second is said to it.
+  assert.ok(one.status === 'fulfilled' && two.status === 'fulfilled');
+  assert.equal(one.value.id, two.value.id);
+  const accepted = await f.pi.send(f.operator, first.id, {
+    commandId: one.value.id,
+    text: one.value.messages[0].text,
+  });
+  assert.equal(accepted.messages.length, 2);
+  assert.equal((await f.pi.snapshot(f.operator, first.id)).commands.length, 1);
   await assert.rejects(
     f.pi.send(f.operator, first.id, { commandId: accepted.id, text: 'changed' }),
     code('pi_command_conflict'),
@@ -454,6 +445,86 @@ test('a Fleet halt the agent makes is recorded as its person’s', async (t) => 
   );
   assert.equal(halted.at(-1)?.actorId, human.actorId);
   assert.equal(halted.at(-1)?.data.intent, 'stop');
+});
+
+test('what a person says during a turn reaches its worker, and what it never took is the next turn', async (t) => {
+  const f = await fixture(t);
+  const { token, input } = await f.begun(f.operator);
+  const id = input.conversationId;
+  const say = (commandId: string, text: string, pointing?: string) =>
+    f.pi.send(f.operator, id, { commandId, text, ...(pointing && { pointing }) });
+  // Nothing yet: nothing said.
+  assert.deepEqual(await f.pi.heardSince({ ...input, heard: 0 }), {});
+  const said = await say('said_1', "stop, that's wrong", '[board b: selected a]');
+  assert.equal(said.id, input.commandId);
+  // The page shows the words as they were said; a retry is the same words once.
+  assert.deepEqual(
+    (await say('said_1', "stop, that's wrong")).messages.map(({ text }) => text),
+    ['hello', "stop, that's wrong"],
+  );
+  // A worker asks how much it has, as many times as it likes; with what the page pointed at.
+  const words = "[board b: selected a]\n\nstop, that's wrong";
+  assert.deepEqual(await f.pi.heardSince({ ...input, heard: 0 }), { heard: [words] });
+  assert.deepEqual(await f.pi.heardSince({ ...input, heard: 1 }), {});
+  await assert.rejects(say('said_1', 'other words'), code('pi_command_conflict'));
+  // A worker that does not ask is told nothing, and its progress hears the same way.
+  assert.deepEqual(await f.pi.heardSince(input), {});
+  assert.deepEqual(await f.pi.progress(token, { ...input, events: [], heard: 0 }), {
+    accepted: true,
+    heard: [words],
+  });
+  // Unheard by the model yet, no change is made for it: a read still runs.
+  assert.match(
+    JSON.stringify(await f.pi.tool(token, { ...input, name: 'task.create', input: {}, heard: 0 })),
+    /notRun/,
+  );
+  await say('said_2', 'and one more thing');
+  // Its answer ends having taken only the first: their words stand where the model heard them.
+  const done = f.completion(input);
+  await f.pi.complete(token, {
+    ...done,
+    heard: 1,
+    messages: [
+      { role: 'user', text: '' },
+      { role: 'assistant', text: 'Understood.' },
+    ],
+  });
+  const { commands } = await f.pi.snapshot(f.operator, id);
+  const answered = commands.find((command) => command.id === input.commandId)!;
+  const next = commands.find((command) => command.id === 'said_2')!;
+  assert.deepEqual(
+    answered.messages.map(({ role, text }) => [role, text]),
+    [
+      ['user', 'hello'],
+      ['user', "stop, that's wrong"],
+      ['assistant', 'Understood.'],
+    ],
+  );
+  // What it never took opens a turn of its own at once, under the id the page sent.
+  assert.equal(next.messages[0]!.text, 'and one more thing');
+  assert.equal(next.status, 'starting');
+  // A retry of what was said to the turn that ended is still those words once.
+  assert.equal((await say('said_1', "stop, that's wrong")).id, input.commandId);
+  assert.equal((await f.pi.snapshot(f.operator, id)).commands.length, 2);
+});
+
+test("a worker cannot put words in a person's mouth, and a stop ends what they said", async (t) => {
+  const f = await fixture(t);
+  const { token, input } = await f.begun(f.operator);
+  await assert.rejects(
+    f.pi.complete(token, {
+      ...f.completion(input),
+      heard: 0,
+      messages: [{ role: 'user', text: 'I said so' }],
+    }),
+    code('pi_result_invalid'),
+  );
+  await f.pi.send(f.operator, input.conversationId, { commandId: 'said', text: 'wait' });
+  await f.pi.stop(f.operator, input.conversationId);
+  const { commands, conversation } = await f.pi.snapshot(f.operator, input.conversationId);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0]!.status, 'interrupted');
+  assert.equal(conversation.activeCommandId, null);
 });
 
 test('duplicate begin interrupts ambiguous prompts and fences worker/model tools', async (t) => {
