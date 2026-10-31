@@ -125,6 +125,72 @@ function putFile(
   });
 }
 
+/** What cannot be stored, said before anything is hashed or sent. */
+export const refusalOf = (file: File, available: boolean) =>
+  file.size > MAX_FILE && !available
+    ? 'Files over 2 MB need project storage, which is unavailable'
+    : file.size > MAX_UPLOAD
+      ? 'Files up to 512 MiB can be uploaded'
+      : '';
+
+/**
+ * Keeps a file in the project: a small one inline, a large one by storage's signed PUT. It stops
+ * where `live` says the page has gone, answering nothing, and says how it goes through `told`.
+ */
+export async function storeFile(
+  file: File,
+  {
+    live,
+    told,
+    sending,
+    pending,
+    requestId,
+  }: {
+    live(): boolean;
+    told(note: string, fraction?: number): void;
+    sending: { current?: XMLHttpRequest };
+    /** The upload begun for a file, which the same file sent again resumes. */
+    pending: { current?: { file: File; uploadId: string } };
+    requestId: string;
+  },
+): Promise<Artifact | undefined> {
+  told('Uploading');
+  if (file.size <= MAX_FILE) {
+    const input = await fileInput(file);
+    return live() ? await call<Artifact>('artifact.write:create', input) : undefined;
+  }
+  let plan: UploadPlan;
+  if (pending.current?.file === file) {
+    plan = await call<UploadPlan>('artifact.write:upload_resume', {
+      uploadId: pending.current.uploadId,
+    });
+  } else {
+    told('Hashing');
+    const sha256 = await fileHash(file, (value) => {
+      if (live()) told('Hashing', value * 0.1);
+    });
+    if (!live()) return;
+    plan = await call<UploadPlan>('artifact.write:upload_begin', {
+      ...named(file),
+      size: file.size,
+      sha256,
+      requestId,
+    });
+    pending.current = { file, uploadId: plan.uploadId };
+  }
+  if (!live()) return;
+  const upload = plan.parts[0];
+  if (upload) {
+    told('Uploading');
+    await putFile(upload, file, sending, (loaded) => {
+      if (live()) told('Uploading', 0.1 + 0.9 * (loaded / file.size));
+    });
+  }
+  if (!live()) return;
+  told('Verifying');
+  return await call<Artifact>('artifact.write:upload_complete', { uploadId: plan.uploadId });
+}
+
 /**
  * Upload file is one press: it opens the chooser, and the chosen file is sent at once,
  * as is a file dropped anywhere on the page. What is happening is said beside the
@@ -150,57 +216,24 @@ export function UploadControl({ available }: { available: boolean }) {
     clearTimeout(done.current);
     setFailed(undefined);
     setFraction(0);
-    // What cannot be stored is said before anything is hashed or sent.
-    const refusal =
-      file.size > MAX_FILE && !available
-        ? 'Files over 2 MB need project storage, which is unavailable'
-        : file.size > MAX_UPLOAD
-          ? 'Files up to 512 MiB can be uploaded'
-          : '';
+    const refusal = refusalOf(file, available);
     if (refusal) {
       setNote(refusal);
       setFailed('refused');
       return;
     }
     setBusy(true);
-    setNote('Uploading');
     try {
-      if (file.size <= MAX_FILE) {
-        const input = await fileInput(file);
-        if (!current()) return;
-        await call('artifact.write:create', input);
-      } else {
-        let plan: UploadPlan;
-        if (pending.current?.file === file) {
-          plan = await call<UploadPlan>('artifact.write:upload_resume', {
-            uploadId: pending.current.uploadId,
-          });
-        } else {
-          setNote('Hashing');
-          const sha256 = await fileHash(file, (value) => {
-            if (current()) setFraction(value * 0.1);
-          });
-          if (!current()) return;
-          plan = await call<UploadPlan>('artifact.write:upload_begin', {
-            ...named(file),
-            size: file.size,
-            sha256,
-            requestId: requestId.current,
-          });
-          pending.current = { file, uploadId: plan.uploadId };
-        }
-        if (!current()) return;
-        const upload = plan.parts[0];
-        if (upload) {
-          setNote('Uploading');
-          await putFile(upload, file, sending, (loaded) => {
-            if (current()) setFraction(0.1 + 0.9 * (loaded / file.size));
-          });
-        }
-        if (!current()) return;
-        setNote('Verifying');
-        await call('artifact.write:upload_complete', { uploadId: plan.uploadId });
-      }
+      await storeFile(file, {
+        live: current,
+        told: (said, part) => {
+          setNote(said);
+          if (part !== undefined) setFraction(part);
+        },
+        sending,
+        pending,
+        requestId: requestId.current,
+      });
       if (!current()) return;
       pending.current = undefined;
       refreshTools('artifact.read:list');

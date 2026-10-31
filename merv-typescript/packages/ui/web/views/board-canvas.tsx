@@ -21,6 +21,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
   Excalidraw,
+  getCommonBounds,
   MainMenu,
   newElementWith,
   WelcomeScreen,
@@ -31,11 +32,14 @@ import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/el
 import { MOST_IMAGE_BYTES, stacked, type BoardElement, type BoardScene } from '@merv/board/models';
 import { accountRequest, type ApiError, call } from '../api';
 import { ensureBoardFonts } from './board-fonts';
+import { typing } from '../list-filters';
+import { useCurrent } from '../mutations';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
 import { BoardLinkDetails } from './board-link-details';
-import { AddButton, CardPicker, type CardPick } from './board-add';
+import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
+import { inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
 import { BoardReplay } from './board-replay';
 
@@ -102,6 +106,16 @@ const cardOf = (selected: readonly OrderedExcalidrawElement[]) => {
     ? card
     : undefined;
 };
+/** Where shapes stand together. */
+const rectOf = (shapes: readonly OrderedExcalidrawElement[]): Rect => {
+  const [x, y, right, bottom] = getCommonBounds(shapes);
+  return { x, y, width: right - x, height: bottom - y };
+};
+/** The width a picture lands at, unless it would not fit the view at this zoom. */
+const PICTURE_WIDTH = 640;
+/** A card's size, and a picture's shape, before Board has drawn it. */
+const CARD = { width: 280, height: 110 };
+const PICTURE_SHAPE = 0.75;
 
 function BoardCanvasScene({ id }: { id: string }) {
   const navigate = useNavigate();
@@ -113,6 +127,9 @@ function BoardCanvasScene({ id }: { id: string }) {
   const [replaying, setReplaying] = useState(false);
   /** The card whose popup opened as it was selected, so a closed popup stays closed. */
   const opened = useRef<string | null>(null);
+  /** What is being placed, so what is added next lands beside it and not on it. */
+  const placing = useRef(Promise.resolve());
+  const current = useCurrent();
   /** Asks Board for what changed now, as the poll does. */
   const pull = useRef<() => Promise<void>>();
   const previousZoom = useRef<number>();
@@ -135,6 +152,8 @@ function BoardCanvasScene({ id }: { id: string }) {
   /** Shows what others drew, as they drew it, on a canvas above the board. */
   const player = useRef<Player>();
   const reveal = useRef<HTMLCanvasElement>(null);
+  const focusBoard = () =>
+    reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
 
   useEffect(() => {
     let live = true;
@@ -254,8 +273,7 @@ function BoardCanvasScene({ id }: { id: string }) {
     if (replaying) player.current.finish();
     player.current.instant = replaying;
     // Back from one, the focus is on the board again, as a paste needs it.
-    if (!replaying)
-      reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
+    if (!replaying) focusBoard();
   }, [replaying]);
 
   // What others drew since the revision in hand: played in the order they drew it, around what the
@@ -324,54 +342,134 @@ function BoardCanvasScene({ id }: { id: string }) {
     };
   }, [save]);
 
-  // A card lands in the middle of what is in view, chosen, so it can be moved from there at once.
-  const addCard = async (picks: CardPick[], name: string) => {
-    setAdding(false);
-    if (!api) return;
-    const { scrollX, scrollY, zoom, width, height } = api.getAppState();
-    const one = picks.length === 1 ? picks[0]! : undefined;
-    // Below whatever already stands there, so a card never lands on another.
-    const x = Math.round(width / 2 / zoom.value - scrollX - 140);
-    let y = Math.round(height / 2 / zoom.value - scrollY - 50);
-    const standing = api.getSceneElements();
-    const covered = (top: number) =>
-      standing.some(
-        (el) => el.x < x + 280 && x < el.x + el.width && el.y < top + 110 && top < el.y + el.height,
-      );
-    for (let step = 0; step < 20 && covered(y); step++) y += 130;
-    const drawn = await call<{ created: Record<string, string> }>('board.write:draw', {
-      board: id,
-      ops: [
-        {
-          op: 'link',
-          key: 'card',
-          target: one ? one.target : picks.map((pick) => pick.target),
-          text: one ? one.text : name,
-          ...(one?.fact && { fact: one.fact }),
-          at: [x, y],
-        },
-      ],
-    }).catch((error: Error) => void setProblem(`Not added: ${error.message}`));
-    const card = drawn?.created.card;
-    for (let tries = 0; card && tries < 20; tries++) {
-      await pull.current?.();
-      // The person's own card is never played back to them.
-      player.current?.finish();
-      const scene = api.getSceneElements();
-      const group = scene.find((el) => el.id === card)?.groupIds[0];
-      if (group) {
-        api.updateScene({
-          appState: {
-            selectedElementIds: Object.fromEntries(
-              scene.filter((el) => el.groupIds[0] === group).map((el) => [el.id, true]),
-            ),
-            selectedGroupIds: { [group]: true },
-          },
-        });
+  // The panel takes ⌘K ahead of Excalidraw, whose own use of it opens the link editor (still on the
+  // chosen shape's Link button): wherever the board has the keys, and never from something being
+  // written in, a dialog of Excalidraw's or a replay.
+  const openPanel = () => {
+    api?.updateScene({ appState: { showHyperlinkPopup: false } });
+    setAdding(true);
+  };
+  useEffect(() => {
+    const press = (event: KeyboardEvent) => {
+      const target = event.target as Element;
+      if (
+        !asksToAdd(event) ||
+        typing(target) ||
+        !(target === document.body || target.closest('.board-canvas')) ||
+        replaying ||
+        !api ||
+        api.getAppState().openDialog
+      )
         return;
+      event.preventDefault();
+      event.stopPropagation();
+      openPanel();
+    };
+    window.addEventListener('keydown', press, true);
+    return () => window.removeEventListener('keydown', press, true);
+  }, [api, replaying]);
+
+  const draw = async (op: Record<string, unknown>) =>
+    (
+      await call<{ created: Record<string, string> }>('board.write:draw', {
+        board: id,
+        ops: [{ key: 'item', ...op }],
+      })
+    ).created.item!;
+  /** Asks Board for what it just drew until the scene holds it, and answers its shapes. */
+  const landed = async (drawn: string) => {
+    // A hidden page or a person mid-gesture asks for nothing, which spends no try.
+    for (let tries = 0; tries < 20 && current(); tries += document.hidden || busy(api!) ? 0 : 1) {
+      await pull.current?.();
+      // What the person added is never played back to them.
+      player.current?.finish();
+      const scene = api!.getSceneElements();
+      const shape = scene.find((el) => el.id === drawn);
+      if (shape) {
+        const group = shape.groupIds[0];
+        return group ? scene.filter((el) => el.groupIds[0] === group) : [shape];
       }
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
+    return [];
+  };
+  // What is added lands beside what is chosen, or in the middle of the view, and each next to the
+  // one before, and ends up chosen, so it can be moved from there at once.
+  const place = async (items: CardPick[]) => {
+    if (!api) return;
+    const { selectedElementIds, scrollX, scrollY, zoom, width, height } = api.getAppState();
+    const view = {
+      x: -scrollX,
+      y: -scrollY,
+      width: width / zoom.value,
+      height: height / zoom.value,
+    };
+    const chosen = api.getSceneElements().filter((el) => selectedElementIds[el.id]);
+    const added = new Set<string>();
+    const shapesOf = (ids: Set<string>) => api.getSceneElements().filter((el) => ids.has(el.id));
+    const besideWhat = () => {
+      const beside = added.size ? shapesOf(added) : chosen;
+      return beside.length ? rectOf(beside) : undefined;
+    };
+    const rests = (shapes: readonly OrderedExcalidrawElement[]) =>
+      api
+        .getSceneElements()
+        .filter((el) => !shapes.includes(el))
+        .map((el) => rectOf([el]));
+    for (const { target, text, fact, picture } of items) {
+      if (!current()) return;
+      const wide = Math.max(20, Math.min(PICTURE_WIDTH, view.width * 0.6));
+      const size = picture ? { width: wide, height: wide * PICTURE_SHAPE } : CARD;
+      const at = landing(size, rests([]), besideWhat(), view);
+      const card = { op: 'link', target, text, ...(fact && { fact }), at };
+      const drawing = picture
+        ? draw({
+            op: 'image',
+            artifactId: target,
+            at,
+            ...(wide < PICTURE_WIDTH && { width: wide }),
+          }).catch((error: ApiError) => {
+            // Refused, it stays a card; with no answer it may be there, and a card would be a second.
+            if (!error.status || error.code.startsWith('http_')) throw error;
+            return draw(card);
+          })
+        : draw(card);
+      const drawn = await drawing.catch(
+        (error: Error) => void setProblem(`Not added: ${error.message}`),
+      );
+      const shapes = drawn ? await landed(drawn) : [];
+      if (!shapes.length) continue;
+      // Only now is its true height known: one taller than was allowed for moves off what it covers.
+      const rect = rectOf(shapes);
+      const others = rests(shapes);
+      if (others.some((other) => overlaps(other, rect))) {
+        const [x, y] = landing(rect, others, besideWhat(), view);
+        const moved = new Set(shapes.map((el) => el.id));
+        api.updateScene({
+          elements: api
+            .getSceneElementsIncludingDeleted()
+            .map((el) =>
+              moved.has(el.id)
+                ? newElementWith(el, { x: el.x + x - rect.x, y: el.y + y - rect.y })
+                : el,
+            ),
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+      }
+      for (const el of shapes) added.add(el.id);
+    }
+    const shapes = shapesOf(added);
+    if (!shapes.length) return;
+    if (!inView(rectOf(shapes), view)) fitView(api, shapes, zoom.value);
+    api.setActiveTool({ type: 'selection' });
+    api.updateScene({
+      appState: {
+        selectedElementIds: Object.fromEntries(shapes.map((el) => [el.id, true])),
+        selectedGroupIds: Object.fromEntries(
+          shapes.flatMap((el) => (el.groupIds[0] ? [[el.groupIds[0], true]] : [])),
+        ),
+      },
+    });
   };
 
   // What the replay and the board have in common.
@@ -416,8 +514,15 @@ function BoardCanvasScene({ id }: { id: string }) {
       {adding && (
         <CardPicker
           board={id}
-          close={() => setAdding(false)}
-          add={(picks, name) => void addCard(picks, name)}
+          close={() => {
+            setAdding(false);
+            focusBoard();
+          }}
+          add={(items) => {
+            placing.current = placing.current
+              .then(() => place(items))
+              .catch((error: Error) => setProblem(`Not added: ${error.message}`));
+          }}
         />
       )}
       <Excalidraw
@@ -461,7 +566,7 @@ function BoardCanvasScene({ id }: { id: string }) {
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);
         }}
-        renderToolbarEnd={() => <AddButton key="merv-add" onClick={() => setAdding(true)} />}
+        renderToolbarEnd={() => <AddButton key="merv-add" onClick={openPanel} />}
       >
         <MainMenu>
           <MainMenu.DefaultItems.SaveAsImage />
