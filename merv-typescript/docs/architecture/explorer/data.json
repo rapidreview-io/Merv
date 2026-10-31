@@ -481,6 +481,11 @@
           "readOnly": true
         },
         {
+          "name": "board.outcome.delete",
+          "description": "Delete an outcome of a board; the files sent from it stay.",
+          "readOnly": false
+        },
+        {
           "name": "board.outcome.sent",
           "description": "Note the file frozen from an outcome as the person sent it on.",
           "readOnly": false
@@ -526,6 +531,11 @@
           "name": "board.history",
           "description": "A board's history in order, a page at a time after a revision (the page's replay reads this).",
           "readOnly": true
+        },
+        {
+          "name": "board.outcome.delete",
+          "description": "Delete an outcome of a board; the files sent from it stay.",
+          "readOnly": false
         },
         {
           "name": "board.outcome.sent",

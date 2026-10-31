@@ -176,6 +176,11 @@ test('the pointing note says what is selected, near and circled, in ids alone', 
   });
   assert.match(full, /selected a,b; pointer at \(-3,80\) near \w+; circled a/);
   assert.ok(sendInput.safeParse({ commandId: 'c', text: 't', pointing: full }).success);
+  // The outcome beside the board goes along, and a passage of it in numbers, and no words at all.
+  for (const pointing of ['[board b: outcome o-1]', '[board b: selected a; outcome o chars 3-9]'])
+    assert.ok(sendInput.safeParse({ commandId: 'c', text: 't', pointing }).success, pointing);
+  for (const pointing of ['[board b: outcome o chars x-y]', '[board b: outcome o says hello]'])
+    assert.ok(!sendInput.safeParse({ commandId: 'c', text: 't', pointing }).success, pointing);
   // Turned shapes are read as they stand: the pointer, and the middle of what a turned ring holds.
   const tall = { ...box('tall', 0, 0), width: 200, height: 20, angle: Math.PI / 2 };
   assert.equal(

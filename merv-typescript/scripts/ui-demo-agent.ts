@@ -57,7 +57,45 @@ const act = (tool: string, action: string, input: object): Step => ({
 const newest = (shown: unknown) =>
   ((Array.isArray(shown) ? shown : (shown as { index?: unknown[] })?.index)?.[0] as { id?: string })
     ?.id;
-function plan(asked: string, read: (tool: string) => unknown): Step[] {
+/** What `Draft …` writes in the outcome the note names, a section a call, as the guide asks. */
+const SECTIONS = [
+  "Goal: measure what the recall layer is worth, on the board's held-out set.",
+  '## Method\n\n- Remove the top-k recall layer\n- Keep the reranker\n  - no retraining\n- Score answer F1, n=2,000',
+  '## Risks\n\nThe reranker may overfit once recall is gone, so a **second split** is held back to compare.\n\n| Arm | F1 |\n| --- | --- |\n| baseline | 0.71 |\n| ablation | ? |',
+  '## Budget\n\nFour GPU hours, on one machine.',
+];
+function drafted(asked: string, note: string): Step[] {
+  const board = /\[board ([\w-]+)/.exec(note)?.[1];
+  const outcome = /outcome ([\w-]+)/.exec(note)?.[1];
+  if (!board || !outcome) return [{ say: 'Open the outcome beside a board, and ask me again.' }];
+  const calls = SECTIONS.map((section, index) =>
+    act(
+      'board.write',
+      'outcome',
+      index
+        ? {
+            board,
+            outcome,
+            edits: [
+              {
+                find: SECTIONS[index - 1]!.slice(-40),
+                replace: `${SECTIONS[index - 1]!.slice(-40)}\n\n${section}`,
+              },
+            ],
+          }
+        : {
+            board,
+            outcome,
+            title: asked.includes('PRD') ? 'Retrieval ablation PRD' : 'Retrieval ablation plan',
+            content: section,
+            expectedRevision: 1,
+          },
+    ),
+  );
+  return [...calls, { say: 'It is written beside the board; change whatever you like.' }];
+}
+function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[] {
+  if (/^Draft /.test(asked)) return drafted(asked, note);
   if (/pause/i.test(asked)) return dispatch(false);
   if (/\brose\b/i.test(asked)) {
     const drawn = read('board.write') as { board?: { id: string } } | undefined;
@@ -223,9 +261,8 @@ type Item = { role?: string; type?: string; name?: string; call_id?: string; out
 function next(body: { input: (Item & { content?: { text?: string }[] | string })[] }): Step {
   const from = body.input.findLastIndex((item) => item.role === 'user');
   const content = body.input[from]?.content;
-  const asked = (Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '')
-    .split('\nUser message:\n')
-    .at(-1)!;
+  const whole = Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '';
+  const asked = whole.split('\nUser message:\n').at(-1)!;
   const after = body.input.slice(from + 1);
   const read = (tool: string) => {
     const call = after.find((item) => item.name === tool.replaceAll('.', '_'));
@@ -238,7 +275,7 @@ function next(body: { input: (Item & { content?: { text?: string }[] | string })
       return null;
     }
   };
-  const steps = plan(asked.trim(), read);
+  const steps = plan(asked.trim(), read, whole);
   const done = after.filter((item) => item.type === 'function_call_output').length;
   return steps[Math.min(done, steps.length - 1)]!;
 }
