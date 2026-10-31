@@ -18,6 +18,7 @@
     "tests/ui-render.ts",
     "tests/ui-oauth-consent.test.ts",
     "tests/ui-artifact-upload.test.ts",
+    "tests/ui-board-add.test.ts",
     "tests/ui-markdown.test.ts",
     "tests/ui-reviews.test.ts",
     "tests/ui-home.test.ts",

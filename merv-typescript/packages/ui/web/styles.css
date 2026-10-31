@@ -7976,7 +7976,7 @@ html:has(.board-page) body {
 .excalidraw .merv-rich-hyperlink:has(.board-card-members) > :not(.board-link-details) {
   display: none;
 }
-/* The + opens its panel under the toolbar, in the middle, where the card will land: what to add
+/* The panel opens under the toolbar, in the middle, where what is added will land: what to add
    as tabs across it, then the kinds and the search over the list of what there is. */
 .board-add-panel {
   top: 64px;
@@ -8005,6 +8005,28 @@ html:has(.board-page) body {
 .board-add-filters > .search {
   flex: 1 1 160px;
   display: flex;
+}
+.board-add-upload {
+  margin-left: auto;
+}
+.board-add-panel .upload-drop {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-elev);
+}
+.board-add-sending {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+}
+.board-add-sending p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .board-add-link {
   display: flex;
