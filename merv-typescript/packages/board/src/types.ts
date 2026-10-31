@@ -26,6 +26,8 @@ export interface BoardDrawn {
   note?: string;
   /** Where the call's changes stand, for those watching; no answer to the agent carries it. */
   region?: { x: number; y: number; width: number; height: number };
+  /** How long a pen takes to draw what the call made, for the same; no answer carries it either. */
+  penMs?: number;
 }
 
 /** An image already stored, for an image operation: tools turn its source into this first. */

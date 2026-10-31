@@ -97,6 +97,7 @@ export const publicCommand = (record: PiCommandRecord): PiCommand => {
     projectPaper: _paper,
     calledAt: _called,
     retried: _retried,
+    heard: _heard,
     eventsAfter: _events,
     // Calls proposed before 2026-10-20, when no agent was asked for approval any more: inert.
     proposals: _proposals,
@@ -160,6 +161,10 @@ export class PiCore {
   /** Memory only, keyed like progressAt: each claimed turn's refused calls, by the digest of name
    * and input, with the code each was refused with. */
   readonly refusals = new Map<string, Map<string, string>>();
+  /** Memory only, keyed the same: turns whose person has said something meanwhile, which /progress
+   * then reads for; and the tool call each turn is waiting on, which hears them say it. */
+  readonly spoken = new Set<string>();
+  readonly listening = new Map<string, AbortController>();
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
    * announcement only makes an open page read again. */
   readonly unsent = new Set<string>();
@@ -508,6 +513,9 @@ export class PiCore {
     const turn = `${conversationId}:${id}`;
     this.progressAt.delete(turn);
     this.refusals.delete(turn);
+    this.spoken.delete(turn);
+    this.listening.get(turn)?.abort('stopped');
+    this.listening.delete(turn);
     for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
     const live = this.live.get(conversationId);
     for (const field of ['turn', 'progress', 'streamed'] as const)

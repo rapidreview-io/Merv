@@ -2,6 +2,7 @@ import { bootMaintenance } from '@merv/contracts/maintenance';
 import { swallowed } from '@merv/contracts/issues';
 import {
   check,
+  digest,
   newId,
   MervError,
   type Caller,
@@ -22,7 +23,17 @@ import type {
   PiMoveFailure,
   PiSlot,
 } from './types.js';
-import { active, decode, gone, lost, type PiCore, roleOf, roles } from './core.js';
+import {
+  active,
+  decode,
+  gone,
+  hash,
+  lost,
+  type PiCore,
+  roleOf,
+  roles,
+  storedTurn,
+} from './core.js';
 
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
 const rolloverMs = 15 * 60_000;
@@ -125,6 +136,55 @@ export class PiHosts implements FleetOwner {
     );
     const allocation = host?.current && (await this.allocation(host.current.allocationId, tx));
     return { host, allocation: allocation || null };
+  }
+  /** A new turn of the conversation, as the active one: on its host, rented when it has none. */
+  async open(
+    tx: Transaction,
+    renter: Caller,
+    conversation: PiConversationRecord,
+    value: { commandId: string; text: string },
+    pointing?: string,
+  ): Promise<{ command: PiCommandRecord; hostId: string }> {
+    const { host, queued } = await this.ensure(renter, conversation, conversation.source, tx);
+    const slot = host.current!;
+    const expiry = this.turnEnd(slot, conversation.source, this.startMs(queued));
+    check(expiry > this.core.clock(), 'pi_expired', 'Conversation source has expired', 403);
+    const command: PiCommandRecord = {
+      id: value.commandId,
+      conversationId: conversation.id,
+      epoch: slot.epoch,
+      runtimeId: slot.allocationId,
+      hostId: host.id,
+      machine: slot.machine,
+      status: queued ? 'waiting' : 'starting',
+      messages: [{ role: 'user', text: value.text }],
+      ...(pointing && { pointing }),
+      outcomes: [],
+      error: null,
+      createdAt: this.core.time(),
+      expiresAt: new Date(expiry).toISOString(),
+      completedAt: null,
+      inputHash: digest(value),
+      workerId: null,
+      resultHash: null,
+    };
+    await tx.run(
+      'INSERT INTO pi_commands(id,conversation_id,status,relay_hash,created_at,host_id,data_json) VALUES(?,?,?,?,?,?,?)',
+      command.id,
+      conversation.id,
+      command.status,
+      hash(this.core.modelToken(command)),
+      command.createdAt,
+      host.id,
+      storedTurn(command),
+    );
+    if (host.idleSince) {
+      host.idleSince = null;
+      await this.saveHost(tx, host);
+    }
+    conversation.activeCommandId = command.id;
+    await this.core.saveConversation(tx, conversation);
+    return { command, hostId: host.id };
   }
   /** T1: the person's live host here, with a current slot for new turns: one is rented when it
    * has none. A host that has idled out is ended, not raced; the next send starts a fresh one. */

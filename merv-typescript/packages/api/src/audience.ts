@@ -7,3 +7,5 @@ export const agentAudience = new AsyncLocalStorage<boolean>();
 export const agentClient = new AsyncLocalStorage<string | undefined>();
 export const isAgentAudience = (caller: Caller): boolean =>
   !!caller.session || !!caller.conversation || agentAudience.getStore() === true;
+/** Aborted, with 'said' or 'stopped', when the person behind this invocation steps in meanwhile. */
+export const personInterrupts = new AsyncLocalStorage<AbortSignal>();

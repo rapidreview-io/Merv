@@ -319,9 +319,9 @@ export function useConversation(transport: PiTransport = toolTransport) {
     );
   };
   /** Whether the words reached the server; `commandId` names the turn they start, where it is
-   * theirs before they are sent. */
+   * theirs before they are sent. Said while an answer runs, they reach it at its next chance. */
   const send = async (text = draft.trim(), commandId?: string): Promise<boolean> => {
-    if (busy || blocked || unavailable || active || !text) return false;
+    if (busy || blocked || unavailable || !text) return false;
     let id = selection.current;
     setBusy(true);
     try {

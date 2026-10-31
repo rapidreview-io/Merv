@@ -40,7 +40,7 @@ import type {
   OutcomeLine,
   PlacedImage,
 } from './types.js';
-import { MOST_IMAGE_BYTES, stacked } from './models.js';
+import { MOST_IMAGE_BYTES, penMs, penUnits, stacked } from './models.js';
 export type * from './types.js';
 
 /** The most live shapes one board holds. */
@@ -454,7 +454,8 @@ export class BoardService implements Board {
         await this.write(board, tx);
         await recorded(this.state, tx, caller, 'board.set', board.id, { title: board.title });
       }
-      const drawing = new Drawing(await this.elements(board.id, undefined, tx), agent);
+      const before = await this.elements(board.id, undefined, tx);
+      const drawing = new Drawing(before, agent);
       const waiting = [...images];
       for (const op of input.ops)
         drawing.apply(op, op.op === 'image' ? waiting.shift() : undefined);
@@ -463,6 +464,7 @@ export class BoardService implements Board {
         ? await this.merge(caller, board, changed, 'draw', tx)
         : { board, accepted: 0 };
       const region = bounds(changed.map(rectOf));
+      const standing = new Set(before.map((el) => el.id));
       return {
         board: merged.board,
         created: drawing.created,
@@ -470,6 +472,7 @@ export class BoardService implements Board {
         ...(drawing.proposal && { proposal: drawing.proposal }),
         ...drawing.report(),
         ...(region && { region }),
+        penMs: penMs(penUnits(changed, (el) => standing.has(el))),
       };
     });
   }

@@ -59,6 +59,21 @@ const newest = (shown: unknown) =>
     ?.id;
 function plan(asked: string, read: (tool: string) => unknown): Step[] {
   if (/pause/i.test(asked)) return dispatch(false);
+  // A drawing in many small calls, to watch and to step in on.
+  if (/\bin steps\b/i.test(asked)) {
+    const drawn = read('board.write') as { board?: { id: string } } | undefined;
+    const on = /board_\w+/.exec(asked)?.[0] ?? drawn?.board?.id;
+    const steps = ['Input', 'Hidden', 'Output', 'Loss', 'Update', 'Repeat', 'Check', 'Done'];
+    return [
+      ...steps.map((text, i) =>
+        act('board.write', 'draw', {
+          ...(on ? { board: on } : { title: 'In steps' }),
+          ops: [{ op: 'box', text, at: [(i % 4) * 240, Math.floor(i / 4) * 160], width: 200 }],
+        }),
+      ),
+      { say: 'That is all of it.' },
+    ];
+  }
   if (/\brose\b/i.test(asked)) {
     const drawn = read('board.write') as { board?: { id: string } } | undefined;
     return [

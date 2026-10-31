@@ -352,8 +352,8 @@ export function Composer({
             Audio
           </button>
         )}
-        {/* While an answer runs, Stop stands where Send was: nothing can be sent until it ends. */}
-        {active ? (
+        {/* While an answer runs, Stop stands where Send was, until there is something to say to it. */}
+        {active && !draft.trim() ? (
           <button
             className="btn"
             type="button"

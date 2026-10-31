@@ -103,10 +103,16 @@ async function fixture(
     sections?: string[];
     /** The turn's role has a terminal. */
     shell?: boolean;
+    /** What the person says, answered to the worker's first tool call or last word of progress. */
+    saidAtTool?: string[];
+    saidAtEnd?: string;
+    /** The tool makes changes, which run one at a time. */
+    writes?: boolean;
   } = {},
 ) {
   const tool = {
     ...globalTool,
+    ...(options.writes && { readOnly: false }),
     ...(options.boardImage
       ? { name: 'board.look' }
       : options.screenImage
@@ -367,7 +373,11 @@ async function fixture(
             });
           });
         }
-        return json({ result: options.toolResult ?? { title: 'Project' } });
+        const said = toolRequests === 1 ? options.saidAtTool : undefined;
+        return json({
+          result: options.toolResult ?? { title: 'Project' },
+          ...(said && { heard: said }),
+        });
       }
       if (path === '/pi-worker/progress') {
         progress.push(body.events);
@@ -381,6 +391,10 @@ async function fixture(
           });
         if (options.cancel)
           return json({ error: { code: 'pi_command_stale', message: 'revoked' } }, 409);
+        if (options.saidAtEnd && modelRequests.length === 1)
+          return json({ accepted: true, heard: [options.saidAtEnd] });
+        if (options.saidAtTool && toolRequests)
+          return json({ accepted: true, heard: options.saidAtTool });
         return json({ accepted: true });
       }
       if (path === '/pi-worker/complete') {
@@ -499,6 +513,42 @@ test('real Pi session streams through relay, invokes only allowlisted tool, chec
   });
   assert.ok(checkpoint.entries.some((entry) => entry.type === 'message'));
   assert.ok(checkpoint.leafId);
+});
+
+test('what the person says reaches the model at the next tool result, and stops the changes it had asked for', async () => {
+  const app = await fixture({
+    toolCall: true,
+    calls: 3,
+    writes: true,
+    saidAtTool: ["stop, that's wrong, use a tree"],
+  });
+  await app.run();
+  assert.equal(app.modelRequests.length, 2);
+  const input = app.modelRequests[1]!.input as { role?: string; type?: string; output?: string }[];
+  const kinds = input.map((item) => item.type ?? item.role);
+  // The tool's result, then their words, ahead of the next call.
+  assert.equal(kinds.at(-1), 'user');
+  assert.match(JSON.stringify(input.at(-1)), /use a tree/);
+  assert.equal(input.at(-2)?.type, 'function_call_output');
+  // Told again and again, as replies to two calls at once can, they said it once.
+  assert.equal(JSON.stringify(input).split('use a tree').length, 2);
+  // Only the first of the three calls ran; the others say so instead.
+  assert.equal(app.toolRequests, 1);
+  assert.match(String(input.at(-2)?.output), /notRun/);
+  assert.equal(app.completions[0]!.heard, 1);
+  assert.deepEqual(app.completions[0]!.messages, [
+    { role: 'user', text: '' },
+    { role: 'assistant', text: 'Finished' },
+  ]);
+});
+
+test('what the person says as the answer ends is answered in the same turn', async () => {
+  const app = await fixture({ saidAtEnd: 'one more thing' });
+  await app.run();
+  assert.equal(app.modelRequests.length, 2);
+  assert.match(JSON.stringify(app.modelRequests[1]!.input), /one more thing/);
+  assert.equal(app.completions[0]!.heard, 1);
+  assert.equal(app.failures.length, 0);
 });
 
 test('model stream uses only the supplied relay transport, never ambient fetch', async () => {

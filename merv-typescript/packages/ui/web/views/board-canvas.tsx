@@ -55,7 +55,9 @@ import { BoardTalk } from './board-talk';
 /** The shapes Board keeps; anything else stays on this page only. */
 const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame image'.split(' '));
 const SAVE_MS = 600;
-const ASK_MS = 1500;
+/** How often the page asks what changed, and how often while an agent has lately been drawing. */
+const [ASK_MS, ASK_DRAWING_MS] = [1500, 400];
+const DRAWING_MS = 20_000;
 /** The most what others drew may be shown behind, in milliseconds of playing it. */
 const BEHIND_MS = 4000;
 /** What a person may add, told at once; Board checks the bytes again. */
@@ -178,6 +180,8 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
   const waiting = useRef(0);
   /** Gathers what the person points at, to go with what they say to Pi. */
   const pointing = useRef<BoardPointing>();
+  /** Whether the person's hand was on the board at the last change, drawing or changing a shape. */
+  const handDown = useRef(false);
   const focusBoard = () =>
     reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
 
@@ -303,8 +307,9 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
     follow.current = camera;
     const unpoint = pointWith({
       note() {
-        // Saying something to Pi is watching for its answer.
+        // Saying something to Pi is watching for its answer, and what Pi was drawing is by the way.
         camera.following = true;
+        made.hurry();
         return hand.note();
       },
       said: hand.said,
@@ -336,7 +341,7 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
   useEffect(() => {
     if (!api) return;
     // One ask at a time: a slow answer is never overtaken, so the revision never goes back.
-    let [live, asking] = [true, false];
+    let [live, asking, heldBack] = [true, false, false];
     const ask = async () => {
       if (asking || document.visibilityState === 'hidden') return;
       asking = true;
@@ -365,7 +370,10 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
             ).size
           : 0;
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
-      if (busy(api)) return;
+      if (busy(api)) {
+        heldBack = true;
+        return;
+      }
       revision.current = scene.board.revision;
       const held = api.getSceneElementsIncludingDeleted();
       if (scene.whole) {
@@ -390,9 +398,19 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
       if (!player.current!.instant && fresh.length && presence.current?.drew())
         follow.current?.expect(fresh);
       player.current!.add(fresh);
+      // What came while their hand was down lands now, as what was being played did.
+      if (heldBack) player.current!.hurry();
+      heldBack = false;
     };
     pull.current = ask;
-    const every = setInterval(() => void ask(), ASK_MS);
+    // Quicker while an agent draws, so ink starts soon after the shape was made.
+    let asked = 0;
+    const every = setInterval(() => {
+      const drew = (presence.current?.doing().drewMs ?? Infinity) < DRAWING_MS;
+      if (Date.now() - asked < (drew || player.current?.waiting ? ASK_DRAWING_MS : ASK_MS)) return;
+      asked = Date.now();
+      void ask();
+    }, ASK_DRAWING_MS);
     return () => {
       live = false;
       clearInterval(every);
@@ -635,6 +653,22 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
           files.current = held;
           bring?.(elements, held);
           setDrawnOn(elements.length > 0);
+          // The person has taken up the pen: an agent drawing hears it now, and what it had drawn
+          // stops being played, so the board they are working on is as it stands.
+          const down = !!(
+            appState.newElement ||
+            appState.multiElement ||
+            appState.editingTextElement ||
+            appState.editingLinearElement ||
+            appState.isResizing ||
+            appState.isRotating ||
+            appState.selectedElementsAreBeingDragged
+          );
+          if (down && !handDown.current) {
+            player.current?.hurry();
+            void call('board.hand', { id }).catch(() => undefined);
+          }
+          handDown.current = down;
           // Only the person's own shapes changing puts off their save: no cursor, camera or other
           // hand's shapes can, however often they move.
           const dirt = elements.reduce(
@@ -685,6 +719,7 @@ function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
             follow.current?.resume(presence.current?.doing().region);
             focusBoard();
           }}
+          stepIn={() => player.current?.hurry()}
         />
       )}
       {head &&

@@ -46,10 +46,13 @@ export function BoardTalk({
   doing,
   following,
   jump,
+  stepIn,
 }: {
   doing(): Omit<Doing, 'thinking'>;
   following(): boolean;
   jump(): void;
+  /** The person stops what is drawing: what it has drawn stops being played. */
+  stepIn(): void;
 }) {
   const agent = useAgent();
   const roomy = useRoomy();
@@ -60,13 +63,28 @@ export function BoardTalk({
   }, []);
   const open = docked(agent, roomy);
   const line = statusLine({ ...doing(), thinking: !!agent?.pi?.active && !open });
+  const pi = agent?.pi;
   return (
     <>
       {line && (
-        <button type="button" className="board-status" onClick={jump}>
-          {line}
-          {!following() && <span className="board-status-follow">Follow</span>}
-        </button>
+        <div className="board-status">
+          <button type="button" onClick={jump}>
+            {line}
+            {!following() && <span className="board-status-follow">Follow</span>}
+          </button>
+          {pi?.active && line === 'Pi is drawing' && (
+            <button
+              type="button"
+              className="board-status-stop"
+              onClick={() => {
+                stepIn();
+                void pi.stop();
+              }}
+            >
+              Stop
+            </button>
+          )}
+        </div>
       )}
       {agent && !open && !readOnly() && (
         <button type="button" className="board-ask" onClick={agent.ask}>

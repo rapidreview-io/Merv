@@ -1,7 +1,7 @@
 /**
  * Where agents are on a board, shown as Excalidraw shows a collaborator: a small named cursor that
  * slides to the middle of what an agent last looked at or drew, rides the pen's tip while a stroke
- * of its own is traced, dims and goes when nothing has been heard of it for a while. A collaborator
+ * of its own is drawn and across its lifts, dims and goes when nothing has been heard of it for a while. A collaborator
  * is the page's own view state, so a cursor is never saved, changes no version and enters no undo.
  * It also keeps who last drew, for the line that says so (board-talk.tsx).
  */
@@ -82,22 +82,19 @@ export class BoardPresence {
     this.ticking ??= setInterval(this.tick, TICK_MS);
     this.tick();
   }
-  /** The pen's tip: the cursor of the agent last drawing around it rides it. */
+  /** The pen's tip: the cursor of the agent last drawing around it, else of the last to draw, rides it. */
   pen = (tip: [number, number] | null) => {
     if (!tip) return;
     const [x, y] = tip;
-    const rider = [...this.cursors.values()]
-      .filter(({ drew, region: r }) => {
-        const room = 40;
-        return (
-          drew &&
-          x > r.x - room &&
-          x < r.x + r.width + room &&
-          y > r.y - room &&
-          y < r.y + r.height + room
-        );
-      })
-      .sort((a, b) => b.at - a.at)[0];
+    const room = 40;
+    const drawing = [...this.cursors.values()]
+      .filter(({ drew }) => drew)
+      .sort((a, b) => b.at - a.at);
+    const rider =
+      drawing.find(
+        ({ region: r }) =>
+          x > r.x - room && x < r.x + r.width + room && y > r.y - room && y < r.y + r.height + room,
+      ) ?? drawing[0];
     if (rider) Object.assign(rider, { x, y, toX: x, toY: y, heardAt: Date.now() });
   };
   private tick = () => {
