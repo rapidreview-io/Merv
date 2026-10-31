@@ -184,7 +184,9 @@ export class Player {
   private draw() {
     const { canvas } = this;
     const ratio = devicePixelRatio;
-    const [width, height] = [canvas.clientWidth * ratio, canvas.clientHeight * ratio];
+    const [width, height] = [canvas.clientWidth, canvas.clientHeight].map((n) =>
+      Math.floor(n * ratio),
+    ) as [number, number];
     if (canvas.width !== width || canvas.height !== height)
       [canvas.width, canvas.height] = [width, height];
     const pen = canvas.getContext('2d')!;
@@ -236,8 +238,10 @@ export class Player {
  * clash alike, so here it stays on the page, as it does when merging below.
  */
 export const restored = (shapes: readonly BoardElement[], repairBindings: boolean) => {
+  // Given a shape twice, as what was waiting can be, the last is the newest: Excalidraw would take
+  // the other for a new shape.
   const as = new Map(shapes.map((el) => [el.id, el]));
-  const out = restoreElements(stacked(shapes) as never, null, {
+  const out = restoreElements(stacked([...as.values()]) as never, null, {
     refreshDimensions: true,
     repairBindings,
   });

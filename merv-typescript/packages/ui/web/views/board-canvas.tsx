@@ -491,6 +491,15 @@ function BoardCanvasScene({ id }: { id: string }) {
             className="btn-text"
             onClick={() => {
               clearTimeout(timer.current);
+              // Excalidraw hears some keys from anywhere, and acts on what is selected.
+              api?.updateScene({
+                appState: {
+                  selectedElementIds: {},
+                  selectedGroupIds: {},
+                  selectedLinearElement: null,
+                },
+                captureUpdate: CaptureUpdateAction.NEVER,
+              });
               void save().then(() => setReplaying(true));
             }}
           >

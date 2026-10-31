@@ -93,7 +93,7 @@ export function BoardReplay({
     control.current = {
       jump,
       play() {
-        if (at >= changes.length) jump(first);
+        if (at >= changes.length && !player.busy) jump(first);
         playing = true;
         if (player.busy) told();
         else step();
