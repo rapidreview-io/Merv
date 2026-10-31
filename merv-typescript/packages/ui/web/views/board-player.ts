@@ -85,6 +85,8 @@ export class Player {
   instant = false;
   /** Called once all it was given has landed. */
   idle?: () => void;
+  /** Hears where the pen's tip is on the board as it traces a stroke, and null when none is. */
+  pen?: (tip: Point | null) => void;
   /**
    * @param behind The most it stays behind, in milliseconds: given more than that to play, it speeds up.
    * @param rate How fast it plays at the least.
@@ -194,7 +196,7 @@ export class Player {
     pen.clearRect(0, 0, width, height);
     const head = this.queue[0];
     const stroke = head?.pen;
-    if (!stroke) return;
+    if (!stroke) return this.pen?.(null);
     const { scrollX, scrollY, zoom } = this.stage.camera();
     const scale = ratio * zoom.value;
     pen.setTransform(
@@ -216,6 +218,8 @@ export class Player {
     pen.translate(-cx, -cy);
     pen.globalAlpha = Number(stroke.opacity ?? 100) / 100;
     const points = penned(stroke.points, this.spent / head.ms);
+    const [tipX, tipY] = points.at(-1)!;
+    this.pen?.([stroke.x + tipX, stroke.y + tipY]);
     if (stroke.type === 'freedraw') {
       const pressures = (stroke.pressures as number[] | undefined)?.slice(0, points.length);
       pen.fillStyle = stroke.strokeColor;
