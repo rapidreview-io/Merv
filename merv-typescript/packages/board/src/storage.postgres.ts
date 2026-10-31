@@ -20,4 +20,10 @@ CREATE TABLE board_images(project_id TEXT NOT NULL,file_id TEXT NOT NULL,content
 ALTER TABLE board_elements ADD COLUMN file_id TEXT;
 CREATE INDEX board_elements_file ON board_elements(file_id) WHERE file_id IS NOT NULL;
 `,
+  // What each revision made of its shapes, kept for replay, and the files history names, whose
+  // bytes it keeps.
+  4: `
+CREATE TABLE board_history(board_id TEXT NOT NULL,revision BIGINT NOT NULL,actor_id TEXT NOT NULL,began_at TEXT NOT NULL,kind TEXT NOT NULL,shapes TEXT NOT NULL,PRIMARY KEY(board_id,revision));
+CREATE TABLE board_history_files(project_id TEXT NOT NULL,file_id TEXT NOT NULL,PRIMARY KEY(project_id,file_id));
+`,
 };

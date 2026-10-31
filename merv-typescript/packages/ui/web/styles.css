@@ -7866,6 +7866,75 @@ html:has(.board-page) body {
   transform: translateX(-50%);
   margin: 0;
 }
+/* What is being drawn by someone else, above the board and out of its way. */
+.board-reveal {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.board-reveal.is-dark {
+  filter: invert(93%) hue-rotate(180deg);
+}
+.board-history {
+  position: absolute;
+  z-index: 4;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+/* On a phone Excalidraw's toolbar runs the width of the top. */
+@media (max-width: 730px) {
+  .board-history {
+    top: auto;
+    bottom: 64px;
+  }
+}
+/* Under a replay the board goes on, and takes no keys. */
+.board-canvas.is-replaying > .excalidraw {
+  visibility: hidden;
+}
+.board-replay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--bg);
+}
+.board-replay .main-menu-trigger {
+  visibility: hidden;
+}
+.board-replay-bar {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: min(760px, calc(100% - 2 * var(--space-3)));
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.board-replay-scrub {
+  flex: 1 1 160px;
+  min-width: 120px;
+  accent-color: var(--text);
+}
+.board-replay-where {
+  font-size: var(--text-xs);
+}
 /* What a board takes in comes from its own +, so Excalidraw's Library has no place on it. */
 .board-canvas .excalidraw .default-sidebar-trigger {
   display: none;
