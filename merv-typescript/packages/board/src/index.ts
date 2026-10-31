@@ -12,10 +12,20 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { Drawing } from './elements.js';
-import { drawSchema, elementSchema, id, parse, setSchema, title, type DrawInput } from './input.js';
+import {
+  drawSchema,
+  elementSchema,
+  fileIdSchema,
+  id,
+  imageType,
+  parse,
+  setSchema,
+  title,
+  type DrawInput,
+} from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 import type { Board, BoardDrawn, BoardElement, BoardScene, BoardSummary } from './types.js';
-import { stacked } from './models.js';
+import { MOST_IMAGE_BYTES, stacked } from './models.js';
 export type * from './types.js';
 
 /** The most live shapes one board holds. */
@@ -33,8 +43,9 @@ const newer = (shape: BoardElement, held?: BoardElement) =>
  * their agents through board.draw. A board is a living record, not a file: each shape is kept at
  * its newest version, so a person, a colleague and an agent drawing at once merge shape by shape.
  * Board reads nothing outside itself; a card that links to a record keeps only its id, which the
- * page names and opens through project.references. Every project member may edit a board,
- * including reviewers and readers; read scope establishes membership, not a read-only effect.
+ * page names and opens through project.references. An image's bytes are Board's own, kept in its
+ * table under project membership, so it needs no other plugin. Every project member may edit a
+ * board, including reviewers and readers; read scope establishes membership, not a read-only effect.
  * Session writes still re-check their live authority in this transaction.
  */
 export class BoardService implements Board {
@@ -202,24 +213,35 @@ export class BoardService implements Board {
     };
     for (const shape of kept)
       await tx.run(
-        `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record) VALUES(?,?,?,?,?,?)
-         ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,deleted_at=excluded.deleted_at,record=excluded.record`,
+        `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record,file_id) VALUES(?,?,?,?,?,?,?)
+         ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,deleted_at=excluded.deleted_at,record=excluded.record,file_id=excluded.file_id`,
         board.id,
         shape.id,
         next.revision,
         shape.isDeleted ? 'true' : 'false',
         shape.isDeleted ? next.updatedAt : null,
         JSON.stringify(shape),
+        typeof shape.fileId === 'string' ? shape.fileId : null,
       );
     // Shapes deleted over 30 days ago go, the oldest first and a bounded number a save; the board
     // keeps the newest revision it purged, so scene() knows which readers missed a deletion.
-    await tx.run(
+    const cutoff = new Date(Date.parse(next.updatedAt) - KEEP_MS).toISOString();
+    const purged = await tx.run(
       `WITH gone AS (DELETE FROM board_elements WHERE (board_id,element_id) IN (SELECT board_id,element_id FROM board_elements
          WHERE board_id=? AND deleted AND deleted_at<? ORDER BY deleted_at LIMIT ${PURGE}) RETURNING board_id,revision)
        UPDATE boards SET purged=GREATEST(purged,(SELECT MAX(revision) FROM gone)) WHERE id IN (SELECT board_id FROM gone)`,
       board.id,
-      new Date(Date.parse(next.updatedAt) - KEEP_MS).toISOString(),
+      cutoff,
     );
+    // A purge may leave bytes no shape of the project can name, and they go with it, as does what
+    // was stored that long ago and never drawn.
+    if (purged.changes)
+      await tx.run(
+        `DELETE FROM board_images i WHERE project_id=? AND stored_at<? AND NOT EXISTS(SELECT 1 FROM board_elements e
+           JOIN boards b ON b.id=e.board_id WHERE b.project_id=i.project_id AND e.file_id=i.file_id)`,
+        board.projectId,
+        cutoff,
+      );
     await this.write(next, tx);
     await recorded(this.state, tx, caller, 'board.changed', board.id, {
       revision: next.revision,
@@ -233,6 +255,41 @@ export class BoardService implements Board {
     return await this.state.transaction(async (tx) => {
       await this.editable(caller, tx);
       return await this.merge(caller, (await this.summary(caller, boardId, tx))[0], elements, tx);
+    });
+  }
+  async storeImage(caller: Caller, fileId: string, bytes: Buffer) {
+    caller = this.open(caller);
+    const file = parse(fileIdSchema, fileId);
+    check(bytes.length <= MOST_IMAGE_BYTES, 'image_too_large', 'An image is at most 10 MiB', 413);
+    const mediaType = imageType(bytes);
+    check(mediaType, 'image_type', 'An image is a PNG, JPEG, WebP or GIF', 415);
+    await this.state.transaction(async (tx) => {
+      await this.editable(caller, tx);
+      // The same file again is kept once; its date moves, so a purge spares what is about to be drawn.
+      await tx.run(
+        `INSERT INTO board_images(project_id,file_id,content,stored_at) VALUES(?,?,?,?)
+         ON CONFLICT(project_id,file_id) DO UPDATE SET stored_at=excluded.stored_at`,
+        caller.projectId,
+        file,
+        bytes,
+        now(),
+      );
+    });
+    return { fileId: file, mediaType, size: bytes.length };
+  }
+  async image(caller: Caller, fileId: string) {
+    caller = this.open(caller);
+    const file = parse(fileIdSchema, fileId);
+    return await forRead(this.state, async (tx) => {
+      // Members alone: a platform reader of the board's shapes is not shown what people pasted.
+      await this.editable(caller, tx);
+      const row = await tx.get<{ content: Buffer }>(
+        'SELECT content FROM board_images WHERE project_id=? AND file_id=?',
+        caller.projectId,
+        file,
+      );
+      check(row, 'not_found', 'Image not found', 404);
+      return { mediaType: imageType(row.content)!, content: row.content };
     });
   }
   async draw(caller: Caller, value: DrawInput): Promise<BoardDrawn> {

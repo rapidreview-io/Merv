@@ -6,6 +6,13 @@ import type { Region, View } from '@merv/contracts/board-view';
 import { boardCamera as camera } from '@merv/contracts';
 import type { BoardElement } from './models.js';
 
+/** The images a view shows, as Excalidraw takes them, and what brings them for that view. */
+export type Files = Record<
+  string,
+  { id: string; mimeType: string; dataURL: string; created: number }
+>;
+export type ImagesFor = (viewport: Region) => Promise<Files>;
+
 /** One offline browser, serial exports, and isolated pages. No board data leaves the server. */
 export class BoardRenderer {
   private browser?: Promise<Browser>;
@@ -19,8 +26,14 @@ export class BoardRenderer {
     this.closed = true;
     await (await this.browser?.catch(() => undefined))?.close();
   }
-  render(elements: BoardElement[], current?: Region, view?: View, focus?: string) {
-    const run = this.queue.then(() => this.renderNow(elements, current, view, focus));
+  render(
+    elements: BoardElement[],
+    current?: Region,
+    view?: View,
+    focus?: string,
+    images?: ImagesFor,
+  ) {
+    const run = this.queue.then(() => this.renderNow(elements, current, view, focus, images));
     this.queue = run.catch(() => {});
     return run;
   }
@@ -29,6 +42,7 @@ export class BoardRenderer {
     current?: Region,
     view?: View,
     focus?: string,
+    images?: ImagesFor,
   ): Promise<{
     image: { data: string; mimeType: 'image/jpeg' };
     viewport: Region;
@@ -49,7 +63,7 @@ export class BoardRenderer {
     const browser = await this.browser;
     if (!browser.isConnected()) {
       this.browser = undefined;
-      return this.renderNow(elements, current, view, focus);
+      return this.renderNow(elements, current, view, focus, images);
     }
     const page = await browser.newPage();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -100,8 +114,9 @@ export class BoardRenderer {
         view ?? (focus ? { action: 'fit' } : undefined),
       );
       const result = (await page.evaluate(
-        ({ elements, viewport }) => (window as any).renderViewport({ elements }, viewport),
-        { elements: elements as unknown, viewport },
+        ({ elements, files, viewport }) =>
+          (window as any).renderViewport({ elements, files }, viewport),
+        { elements: elements as unknown, files: (await images?.(viewport)) ?? {}, viewport },
       )) as { bytes: number[]; pixels: { width: number; height: number } };
       const data = Buffer.from(result.bytes).toString('base64');
       if (data.length > 700000)

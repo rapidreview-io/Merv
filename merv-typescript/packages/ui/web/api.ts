@@ -177,6 +177,8 @@ export async function accountRequest<T>(
   options: {
     method?: string;
     body?: unknown;
+    /** The body is these bytes, not JSON. */
+    raw?: BufferSource;
     scoped?: boolean;
     credentials?: 'same-origin';
     /** The answer is bytes, read as a Blob; a refusal is still JSON. */
@@ -194,10 +196,12 @@ export async function accountRequest<T>(
         credentials: options.credentials ?? 'omit',
         headers: {
           ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(options.raw && { 'content-type': 'application/octet-stream' }),
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
           ...(options.scoped ? scopeHeaders(project) : {}),
         },
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(options.raw && { body: options.raw }),
       });
     } catch {
       requireScope(epoch);

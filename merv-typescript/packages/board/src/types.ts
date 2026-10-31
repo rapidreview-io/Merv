@@ -26,6 +26,15 @@ export interface Board {
     id: string,
     elements: BoardElement[],
   ): Promise<{ board: BoardSummary; accepted: number }>;
+  /** Keeps an image's bytes under its file id in the caller's project, once: PNG, JPEG, WebP or
+   *  GIF by their content, at most 10 MiB. */
+  storeImage(
+    caller: Caller,
+    fileId: string,
+    bytes: Buffer,
+  ): Promise<{ fileId: string; mediaType: string; size: number }>;
+  /** An image's bytes, to a member of the project that stored them. */
+  image(caller: Caller, fileId: string): Promise<{ mediaType: string; content: Buffer }>;
   /** Draws an agent's operations (input.ts), placed by Board, on one board or a new one. */
   draw(caller: Caller, input: DrawInput): Promise<BoardDrawn>;
 }

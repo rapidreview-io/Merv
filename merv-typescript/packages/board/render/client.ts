@@ -51,7 +51,7 @@ window.renderViewport = async (scene, area) => {
   const blob = await exportToBlob({
     elements,
     exportingFrame: frame,
-    files: {},
+    files: scene.files ?? {},
     appState: { viewBackgroundColor: '#ffffff', exportBackground: true, exportWithDarkMode: false },
     mimeType: 'image/jpeg',
     quality: 0.72,
