@@ -8,23 +8,27 @@
  * nothing from elsewhere.
  */
 import '@excalidraw/excalidraw/index.css';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
   Excalidraw,
-  getCommonBounds,
-  getDataURL,
   MainMenu,
   newElementWith,
   WelcomeScreen,
-  reconcileElements,
   restoreElements,
 } from '@excalidraw/excalidraw';
 import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
-import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
-import { MOST_IMAGE_BYTES, stacked, type BoardScene } from '@merv/board/models';
+import { MOST_IMAGE_BYTES, stacked, type BoardElement, type BoardScene } from '@merv/board/models';
 import { accountRequest, type ApiError, call } from '../api';
 import { ensureBoardFonts } from './board-fonts';
 import { useRows } from '../navigation';
@@ -32,6 +36,8 @@ import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
 import { BoardLinkDetails } from './board-link-details';
 import { AddButton, CardPicker, type CardPick } from './board-add';
+import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
+import { BoardReplay } from './board-replay';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -39,6 +45,8 @@ import { AddButton, CardPicker, type CardPick } from './board-add';
 const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame image'.split(' '));
 const SAVE_MS = 600;
 const ASK_MS = 1500;
+/** The most what others drew may be shown behind, in milliseconds of playing it. */
+const BEHIND_MS = 4000;
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -54,9 +62,6 @@ const nameImage = (file: File): string => {
     );
   return undefined as never;
 };
-/** The file a shape shows, if it is an image with its file chosen. */
-const fileOf = (el: OrderedExcalidrawElement) => (el.type === 'image' ? el.fileId : null);
-const imageAt = (fileId: string) => `/board-images/${encodeURIComponent(fileId)}`;
 /**
  * Whether Excalidraw is adding an image: it holds that very shape, and restoring the scene now
  * would replace it, or drop it as too small to see, so what others drew waits until it is placed.
@@ -67,6 +72,24 @@ const addingImage = (api: ExcalidrawImperativeAPI) => {
     !!pendingImageElementId ||
     newElement?.type === 'image' ||
     api.getSceneElements().some((el) => el.type === 'image' && !el.fileId)
+  );
+};
+/** Whether the person is in the middle of something, which what others drew then waits for. */
+const busy = (api: ExcalidrawImperativeAPI) => {
+  const state = api.getAppState();
+  return (
+    addingImage(api) ||
+    state.isResizing ||
+    state.isRotating ||
+    state.selectedElementsAreBeingDragged ||
+    !!state.selectedLinearElement?.isDragging ||
+    !!(
+      state.newElement ||
+      state.multiElement ||
+      state.selectionElement ||
+      state.editingTextElement ||
+      state.editingLinearElement
+    )
   );
 };
 /** The card a selection is, as the link popup reads it: one linked shape, or a card's group. */
@@ -87,6 +110,7 @@ function BoardCanvasScene({ id }: { id: string }) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [readingReference, setReadingReference] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [replaying, setReplaying] = useState(false);
   /** The card whose popup opened as it was selected, so a closed popup stays closed. */
   const opened = useRef<string | null>(null);
   /** Asks Board for what changed now, as the poll does. */
@@ -104,7 +128,13 @@ function BoardCanvasScene({ id }: { id: string }) {
   const files = useRef<BinaryFiles>({});
   /** The files Board holds, as far as this page knows, and those asked of it, once each. */
   const onBoard = useRef(new Set<string>());
-  const asked = useRef(new Set<string>());
+  const bring = useMemo(
+    () => api && imageBringer(api, (fileId) => onBoard.current.add(fileId)),
+    [api],
+  );
+  /** Shows what others drew, as they drew it, on a canvas above the board. */
+  const player = useRef<Player>();
+  const reveal = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -167,21 +197,6 @@ function BoardCanvasScene({ id }: { id: string }) {
     await run;
   }, [id, api]);
 
-  // An image on the board that this page has not got: its shape shows a placeholder until it comes.
-  const bring = (fileId: FileId) => {
-    asked.current.add(fileId);
-    accountRequest<Blob>(imageAt(fileId), { scoped: true, bytes: true })
-      .then(async (blob) => {
-        const dataURL = await getDataURL(blob);
-        onBoard.current.add(fileId);
-        api?.addFiles([{ id: fileId, mimeType: blob.type as never, dataURL, created: Date.now() }]);
-      })
-      // Refused or gone, it stays a placeholder; anything else is asked again at the next change.
-      .catch(
-        (error: ApiError) => [403, 404].includes(error.status) || asked.current.delete(fileId),
-      );
-  };
-
   // A board opens with all of it in view, zoomed out as far as that takes and never in; with
   // ?focus=<shape or frame id> it opens on that part, large enough to read.
   const [search] = useSearchParams();
@@ -191,21 +206,7 @@ function BoardCanvasScene({ id }: { id: string }) {
     const frame = requestAnimationFrame(() => {
       const all = api.getSceneElements();
       const part = focus ? all.filter((el) => el.id === focus) : [];
-      const shown = part.length ? part : all;
-      if (!shown.length) return;
-      const [x1, y1, x2, y2] = getCommonBounds(shown);
-      const { width, height } = api.getAppState();
-      const fit =
-        Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (part.length ? 0.8 : 0.9);
-      const zoom = Math.max(0.1, Math.min(part.length ? 2 : 1, fit));
-      api.updateScene({
-        appState: {
-          zoom: { value: zoom as never },
-          scrollX: width / (2 * zoom) - (x1 + x2) / 2,
-          scrollY: height / (2 * zoom) - (y1 + y2) / 2,
-        },
-        captureUpdate: CaptureUpdateAction.NEVER,
-      });
+      fitView(api, part.length ? part : all, part.length ? 2 : 1);
     });
     return () => cancelAnimationFrame(frame);
   }, [api, focus]);
@@ -233,7 +234,32 @@ function BoardCanvasScene({ id }: { id: string }) {
     };
   }, [api]);
 
-  // What others drew since the revision in hand, merged in without disturbing what is held.
+  useEffect(() => {
+    if (!api || !reveal.current) return;
+    const land = (shapes: BoardElement[]) => {
+      for (const el of shapes)
+        known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
+    };
+    const made = new Player(
+      stageOf(api, () => busy(api), land),
+      reveal.current,
+      BEHIND_MS,
+    );
+    player.current = made;
+    return () => made.stop();
+  }, [api]);
+  // Under a replay, what others draw lands as it comes, to be there on return.
+  useEffect(() => {
+    if (!player.current) return;
+    if (replaying) player.current.finish();
+    player.current.instant = replaying;
+    // Back from one, the focus is on the board again, as a paste needs it.
+    if (!replaying)
+      reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
+  }, [replaying]);
+
+  // What others drew since the revision in hand: played in the order they drew it, around what the
+  // person is doing, and all of it after what the page already holds (its own saves, come back).
   useEffect(() => {
     if (!api) return;
     // One ask at a time: a slow answer is never overtaken, so the revision never goes back.
@@ -255,31 +281,29 @@ function BoardCanvasScene({ id }: { id: string }) {
       }
       asking = false;
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
-      if (addingImage(api)) return;
+      if (busy(api)) return;
       revision.current = scene.board.revision;
-      // Never repair bindings here: these are only the shapes that changed, and a box whose text
-      // did not change would lose it.
-      const remote = restoreElements(stacked(scene.elements) as never, null, {
-        refreshDimensions: true,
-      }) as unknown as RemoteExcalidrawElement[];
-      for (const el of scene.elements)
-        known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
-      // Told it all (a deletion after the revision in hand was purged): a shape held here as Board
-      // last had it, and not among them, is gone.
-      const named = new Set(scene.elements.map((el) => el.id));
-      const held = api
-        .getSceneElementsIncludingDeleted()
-        .filter(
-          (el) => !scene.whole || named.has(el.id) || known.current.get(el.id) !== el.version,
-        );
-      api.updateScene({
-        // Repair and measure only after merging: a delta alone may omit a bound label.
-        elements: restoreElements(reconcileElements(held, remote, api.getAppState()), null, {
-          refreshDimensions: true,
-          repairBindings: true,
-        }),
-        captureUpdate: CaptureUpdateAction.NEVER,
-      });
+      const held = api.getSceneElementsIncludingDeleted();
+      if (scene.whole) {
+        // Told it all (a deletion after the revision in hand was purged): a shape held here as
+        // Board last had it, and not among them, is gone.
+        player.current!.finish();
+        const named = new Set(scene.elements.map((el) => el.id));
+        api.updateScene({
+          elements: api
+            .getSceneElementsIncludingDeleted()
+            .filter((el) => named.has(el.id) || known.current.get(el.id) !== el.version),
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        player.current!.stage.show(scene.elements, true);
+        return;
+      }
+      const same = new Set(held.map((el) => `${el.id}/${el.version}/${el.versionNonce}`));
+      player.current!.add(
+        stacked(scene.elements).filter(
+          (el) => !same.has(`${el.id}/${el.version}/${el.versionNonce}`),
+        ),
+      );
     };
     pull.current = ask;
     const every = setInterval(() => void ask(), ASK_MS);
@@ -331,6 +355,8 @@ function BoardCanvasScene({ id }: { id: string }) {
     const card = drawn?.created.card;
     for (let tries = 0; card && tries < 20; tries++) {
       await pull.current?.();
+      // The person's own card is never played back to them.
+      player.current?.finish();
       const scene = api.getSceneElements();
       const group = scene.find((el) => el.id === card)?.groupIds[0];
       if (group) {
@@ -348,10 +374,40 @@ function BoardCanvasScene({ id }: { id: string }) {
     }
   };
 
+  // What the replay and the board have in common.
+  const editor: ComponentProps<typeof Excalidraw> = {
+    theme,
+    aiEnabled: false,
+    validateEmbeddable: false,
+    UIOptions: {
+      canvasActions: {
+        loadScene: false,
+        saveToActiveFile: false,
+        export: false,
+        toggleTheme: false,
+      },
+    },
+    renderHyperlinkDetails: (element, close) => (
+      <BoardLinkDetails key={element.id} element={element} close={close} theme={theme} />
+    ),
+    onLinkOpen: (element, event) => {
+      const link = element.link ?? '';
+      if (!link.startsWith('merv:')) return;
+      // A card names a record by id; it opens where a link to that record would.
+      event.preventDefault();
+      void placeOf({ record: link.slice('merv:'.length) }, rows).then(
+        (place) => typeof place !== 'string' && navigate(place.path),
+        () => undefined,
+      );
+    },
+  };
+
   if (problem && !first) return <p className="pi-error board-loading">{problem}</p>;
   if (!first) return <p className="muted board-loading">Opening the board…</p>;
   return (
-    <div className={`board-canvas${readingReference ? ' board-reading-reference' : ''}`}>
+    <div
+      className={`board-canvas${readingReference ? ' board-reading-reference' : ''}${replaying ? ' is-replaying' : ''}`}
+    >
       {problem && (
         <p className="pi-error board-problem" role="alert">
           {problem}
@@ -365,26 +421,13 @@ function BoardCanvasScene({ id }: { id: string }) {
         />
       )}
       <Excalidraw
+        {...editor}
         excalidrawAPI={setApi}
         // Excalidraw takes a paste only with the focus inside it: the page is the board, so at once.
         autoFocus
-        theme={theme}
-        aiEnabled={false}
-        validateEmbeddable={false}
         generateIdForFile={nameImage}
-        UIOptions={{
-          canvasActions: {
-            loadScene: false,
-            saveToActiveFile: false,
-            export: false,
-            toggleTheme: false,
-          },
-        }}
         initialData={{
-          elements: restoreElements(stacked(first.elements) as never, null, {
-            refreshDimensions: true,
-            repairBindings: true,
-          }),
+          elements: restored(first.elements, true),
         }}
         onChange={(elements: readonly OrderedExcalidrawElement[], appState, held) => {
           const zoomChanged =
@@ -413,28 +456,12 @@ function BoardCanvasScene({ id }: { id: string }) {
           opened.current = card?.id ?? null;
           scene.current = elements;
           files.current = held;
-          for (const el of elements) {
-            const fileId = el.isDeleted ? null : fileOf(el);
-            if (fileId && !held[fileId] && !asked.current.has(fileId)) bring(fileId);
-          }
+          bring?.(elements, held);
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);
         }}
         renderToolbarEnd={() => <AddButton key="merv-add" onClick={() => setAdding(true)} />}
-        renderHyperlinkDetails={(element, close) => (
-          <BoardLinkDetails key={element.id} element={element} close={close} theme={theme} />
-        )}
-        onLinkOpen={(element, event) => {
-          const link = element.link ?? '';
-          if (!link.startsWith('merv:')) return;
-          // A card names a record by id; it opens where a link to that record would.
-          event.preventDefault();
-          void placeOf({ record: link.slice('merv:'.length) }, rows).then(
-            (place) => typeof place !== 'string' && navigate(place.path),
-            () => undefined,
-          );
-        }}
       >
         <MainMenu>
           <MainMenu.DefaultItems.SaveAsImage />
@@ -450,6 +477,36 @@ function BoardCanvasScene({ id }: { id: string }) {
           <WelcomeScreen.Hints.ToolbarHint />
         </WelcomeScreen>
       </Excalidraw>
+      <canvas ref={reveal} className={`board-reveal is-${theme}`} />
+      {replaying ? (
+        <BoardReplay id={id} editor={editor} close={() => setReplaying(false)} />
+      ) : (
+        <p
+          className="board-history muted"
+          title="Project members can replay this board. What is drawn here is kept for that, erased work too."
+        >
+          History on
+          <button
+            type="button"
+            className="btn-text"
+            onClick={() => {
+              clearTimeout(timer.current);
+              // Excalidraw hears some keys from anywhere, and acts on what is selected.
+              api?.updateScene({
+                appState: {
+                  selectedElementIds: {},
+                  selectedGroupIds: {},
+                  selectedLinearElement: null,
+                },
+                captureUpdate: CaptureUpdateAction.NEVER,
+              });
+              void save().then(() => setReplaying(true));
+            }}
+          >
+            Replay
+          </button>
+        </p>
+      )}
     </div>
   );
 }

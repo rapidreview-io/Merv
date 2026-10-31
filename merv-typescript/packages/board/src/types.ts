@@ -1,6 +1,6 @@
 import type { Caller } from '@merv/contracts';
 import type { DrawInput } from './input.js';
-import type { BoardElement, BoardScene, BoardSummary } from './models.js';
+import type { BoardElement, BoardHistory, BoardScene, BoardSummary } from './models.js';
 
 export type * from './models.js';
 
@@ -26,6 +26,8 @@ export interface Board {
     id: string,
     elements: BoardElement[],
   ): Promise<{ board: BoardSummary; accepted: number }>;
+  /** A member's page of the board's history, oldest first, after a revision. */
+  history(caller: Caller, id: string, after?: number): Promise<BoardHistory>;
   /** Keeps an image's bytes under its file id in the caller's project, once: PNG, JPEG, WebP or
    *  GIF by their content, at most 10 MiB. */
   storeImage(

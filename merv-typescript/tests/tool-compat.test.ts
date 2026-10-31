@@ -404,8 +404,8 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   assert.deepEqual(
     (await app.ctx.tools.describe(owner)).map(({ name }) => name),
-    [...traded(captured.listings.page), 'intake.read', 'intake.write'].sort((a, b) =>
-      a.localeCompare(b),
+    [...traded(captured.listings.page), 'board.history', 'intake.read', 'intake.write'].sort(
+      (a, b) => a.localeCompare(b),
     ),
   );
 

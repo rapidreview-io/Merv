@@ -225,6 +225,8 @@ test('bytes outlive their shape by its 30 days, and any shape of the project kee
 
   const long = new Date(Date.now() - 31 * 86_400_000).toISOString();
   await f.app.ctx.state.transaction(async (tx) => {
+    // What history names is kept for as long as it lasts (board-replay.test.ts): here, it never did.
+    await tx.run(`DELETE FROM board_history_files`);
     await tx.run(`UPDATE board_elements SET deleted_at=? WHERE deleted`, long);
     await tx.run(`UPDATE board_images SET stored_at=? WHERE file_id<>'fresh'`, long);
   });

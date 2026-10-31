@@ -24,7 +24,15 @@ import {
   type DrawInput,
 } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
-import type { Board, BoardDrawn, BoardElement, BoardScene, BoardSummary } from './types.js';
+import type {
+  Board,
+  BoardChange,
+  BoardDrawn,
+  BoardElement,
+  BoardHistory,
+  BoardScene,
+  BoardSummary,
+} from './types.js';
 import { MOST_IMAGE_BYTES, stacked } from './models.js';
 export type * from './types.js';
 
@@ -32,6 +40,10 @@ export type * from './types.js';
 const MOST = 5_000;
 /** How long a deleted shape is kept, and the most a save purges after it. */
 const [KEEP_MS, PURGE] = [30 * 86_400_000, 500];
+/** How long a person's saves count as one step of history, and the size past which a step stops growing. */
+const [STEP_MS, STEP_BYTES] = [5_000, 1_000_000];
+/** The most steps of history one read answers, and the bytes past which it stops. */
+const [HISTORY_PAGE, HISTORY_BYTES] = [100, 2_000_000];
 /** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
 const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
@@ -117,6 +129,42 @@ export class BoardService implements Board {
       return whole ? { board, elements, whole } : { board, elements };
     });
   }
+  async history(caller: Caller, boardId: string, after = 0): Promise<BoardHistory> {
+    caller = this.open(caller);
+    return await forRead(this.state, async (tx) => {
+      // Members alone, as with image bytes: it holds what people drew and erased.
+      await this.editable(caller, tx);
+      await this.summary(caller, boardId, tx);
+      const rows = await tx.all<{
+        revision: number;
+        actor_id: string;
+        began_at: string;
+        kind: BoardChange['kind'];
+        shapes: string;
+      }>(
+        `SELECT revision,actor_id,began_at,kind,shapes FROM (SELECT *,SUM(octet_length(shapes)) OVER (ORDER BY revision)-octet_length(shapes) AS earlier
+           FROM board_history WHERE board_id=? AND revision>? ORDER BY revision LIMIT ${HISTORY_PAGE}) h WHERE earlier<${HISTORY_BYTES} ORDER BY revision`,
+        boardId,
+        after,
+      );
+      const count = await tx.get<{ total: number; left: number }>(
+        'SELECT COUNT(*)::int AS total,(COUNT(*) FILTER (WHERE revision>?))::int AS left FROM board_history WHERE board_id=?',
+        after,
+        boardId,
+      );
+      return {
+        changes: rows.map((row) => ({
+          revision: row.revision,
+          actorId: row.actor_id,
+          at: row.began_at,
+          kind: row.kind,
+          shapes: JSON.parse(row.shapes) as BoardElement[],
+        })),
+        total: count!.total,
+        ...(count!.left > rows.length && { next: rows.at(-1)!.revision }),
+      };
+    });
+  }
   /** Collaboration is for project members, not platform inspection or runner control identities. */
   private async editable(caller: Caller, tx: Transaction): Promise<void> {
     check(
@@ -168,11 +216,81 @@ export class BoardService implements Board {
       return next;
     });
   }
+  /**
+   * Writes what this revision made of its shapes to the board's history, for replay. A person's
+   * saves moments apart are one step, so a step is not a row every 600 ms; an agent's every call
+   * stands alone, since each is a step it meant, and another actor's change ends any step.
+   */
+  private async remember(
+    caller: Caller,
+    board: BoardSummary,
+    next: BoardSummary,
+    shapes: BoardElement[],
+    kind: BoardChange['kind'],
+    tx: Transaction,
+  ) {
+    const last = await tx.get<{
+      revision: number;
+      actor_id: string;
+      began_at: string;
+      kind: string;
+      bytes: number;
+    }>(
+      'SELECT revision,actor_id,began_at,kind,octet_length(shapes) AS bytes FROM board_history WHERE board_id=? ORDER BY revision DESC LIMIT 1',
+      board.id,
+    );
+    const step = (revision: number, at: string, kind: string, shapes: BoardElement[]) =>
+      tx.run(
+        'INSERT INTO board_history(board_id,revision,actor_id,began_at,kind,shapes) VALUES(?,?,?,?,?,?)',
+        board.id,
+        revision,
+        caller.actorId,
+        at,
+        kind,
+        JSON.stringify(shapes),
+      );
+    // A board older than history starts it from how it stands, as there is no knowing how it came.
+    const before = !last && board.revision ? await this.elements(board.id, undefined, tx) : [];
+    if (!last && board.revision) await step(board.revision, next.updatedAt, 'before', before);
+    if (
+      kind === 'save' &&
+      last?.kind === 'save' &&
+      last.actor_id === caller.actorId &&
+      last.bytes < STEP_BYTES &&
+      Date.parse(next.updatedAt) - Date.parse(last.began_at) < STEP_MS
+    ) {
+      // A shape saved again stands where it first came in the step, as it now is.
+      const held = await tx.get<{ shapes: string }>(
+        'SELECT shapes FROM board_history WHERE board_id=? AND revision=?',
+        board.id,
+        last.revision,
+      );
+      const merged = new Map((JSON.parse(held!.shapes) as BoardElement[]).map((el) => [el.id, el]));
+      for (const shape of shapes) merged.set(shape.id, shape);
+      await tx.run(
+        'UPDATE board_history SET revision=?,shapes=? WHERE board_id=? AND revision=?',
+        next.revision,
+        JSON.stringify([...merged.values()]),
+        board.id,
+        last.revision,
+      );
+    } else await step(next.revision, next.updatedAt, kind, shapes);
+    // History shows an image as long as the board lasts, so its bytes last that long too.
+    const files = new Set([...before, ...shapes].map((el) => el.fileId));
+    for (const file of files)
+      if (typeof file === 'string')
+        await tx.run(
+          'INSERT INTO board_history_files(project_id,file_id) VALUES(?,?) ON CONFLICT DO NOTHING',
+          board.projectId,
+          file,
+        );
+  }
   /** Keeps each shape whose version is newer than the stored one, all in one revision of the board. */
   private async merge(
     caller: Caller,
     board: BoardSummary,
     shapes: BoardElement[],
+    kind: 'draw' | 'save',
     tx: Transaction,
   ) {
     // A save may name a shape twice: its newest version stands for it.
@@ -211,6 +329,7 @@ export class BoardService implements Board {
       updatedBy: caller.actorId,
       updatedAt: now(),
     };
+    await this.remember(caller, board, next, kept, kind, tx);
     for (const shape of kept)
       await tx.run(
         `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record,file_id) VALUES(?,?,?,?,?,?,?)
@@ -238,7 +357,8 @@ export class BoardService implements Board {
     if (purged.changes)
       await tx.run(
         `DELETE FROM board_images i WHERE project_id=? AND stored_at<? AND NOT EXISTS(SELECT 1 FROM board_elements e
-           JOIN boards b ON b.id=e.board_id WHERE b.project_id=i.project_id AND e.file_id=i.file_id)`,
+           JOIN boards b ON b.id=e.board_id WHERE b.project_id=i.project_id AND e.file_id=i.file_id)
+           AND NOT EXISTS(SELECT 1 FROM board_history_files f WHERE f.project_id=i.project_id AND f.file_id=i.file_id)`,
         board.projectId,
         cutoff,
       );
@@ -254,7 +374,8 @@ export class BoardService implements Board {
     const elements = parse(elementSchema.array().min(1).max(500), shapes) as BoardElement[];
     return await this.state.transaction(async (tx) => {
       await this.editable(caller, tx);
-      return await this.merge(caller, (await this.summary(caller, boardId, tx))[0], elements, tx);
+      const [board] = await this.summary(caller, boardId, tx);
+      return await this.merge(caller, board, elements, 'save', tx);
     });
   }
   async storeImage(caller: Caller, fileId: string, bytes: Buffer) {
@@ -317,7 +438,7 @@ export class BoardService implements Board {
       for (const op of input.ops) drawing.apply(op);
       const changed = drawing.result();
       const merged = changed.length
-        ? await this.merge(caller, board, changed, tx)
+        ? await this.merge(caller, board, changed, 'draw', tx)
         : { board, accepted: 0 };
       return { board: merged.board, created: drawing.created, changed: merged.accepted };
     });

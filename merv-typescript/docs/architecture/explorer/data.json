@@ -476,6 +476,11 @@
       "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins.",
       "exposedTools": [
         {
+          "name": "board.history",
+          "description": "A board's history in order, a page at a time after a revision (the page's replay reads this).",
+          "readOnly": true
+        },
+        {
           "name": "board.save",
           "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
           "readOnly": false
@@ -512,6 +517,11 @@
       "label": "Board · tools adapter",
       "purpose": "Connects Board to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "board.history",
+          "description": "A board's history in order, a page at a time after a revision (the page's replay reads this).",
+          "readOnly": true
+        },
         {
           "name": "board.save",
           "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
