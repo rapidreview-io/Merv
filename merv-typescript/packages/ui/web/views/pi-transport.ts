@@ -23,12 +23,13 @@ export interface PiTransport {
 }
 
 /** What the page in view says the person is pointing at, read as each message of theirs goes. */
-let pointing: (() => string | undefined) | undefined;
-let pointed: { commandId: string; note: string | undefined } | undefined;
-export const pointWith = (read: () => string | undefined) => {
-  pointing = read;
+type Hand = { note(): string | undefined; said(): void };
+let pointing: Hand | undefined;
+let pointed: { commandId: string; note: string | undefined; hand: Hand | undefined } | undefined;
+export const pointWith = (hand: Hand) => {
+  pointing = hand;
   return () => {
-    if (pointing === read) pointing = undefined;
+    if (pointing === hand) pointing = undefined;
   };
 };
 
@@ -41,11 +42,16 @@ export const toolTransport: PiTransport = {
   voice: (id, sdp) => call<{ sdp: string }>('pi.voice', { id, sdp }),
   list: () => call<PiConversation[]>('pi.list'),
   snapshot: (id) => call<PiSnapshot>('pi.snapshot', { id }),
-  send: (id, input) => {
+  send: async (id, input) => {
     // A retry goes with what it first pointed at, wherever the hand has gone since.
     if (pointed?.commandId !== input.commandId)
-      pointed = { commandId: input.commandId, note: pointing?.() };
-    return call('pi.send', { id, ...input, pointing: pointed.note });
+      pointed = { commandId: input.commandId, note: pointing?.note(), hand: pointing };
+    const { note, hand } = pointed;
+    const sent = await call('pi.send', { id, ...input, pointing: note });
+    // Only what reached Pi is said, by the hand that said it: a message that failed and is reworded
+    // still carries the circle, and another board's hand is not touched.
+    hand?.said();
+    return sent;
   },
   stop: (id) => call<PiSnapshot>('pi.stop', { id }),
   events: (id) => `/pi/${encodeURIComponent(id)}/events`,

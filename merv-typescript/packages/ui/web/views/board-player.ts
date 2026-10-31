@@ -19,6 +19,7 @@ import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/el
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
 import { stacked, type BoardElement } from '@merv/board/models';
 import { accountRequest, type ApiError } from '../api';
+import type { Rect } from './board-place';
 
 type Point = [number, number];
 type Stroke = BoardElement & { points: Point[]; strokeColor: string; strokeWidth: number };
@@ -97,8 +98,9 @@ export class Player {
     private behind: number,
     private rate = 1,
   ) {}
-  get busy() {
-    return this.queue.length > 0;
+  /** How many things are still to land. */
+  get waiting() {
+    return this.queue.length;
   }
   add(shapes: BoardElement[]) {
     if (!shapes.length) return;
@@ -287,7 +289,35 @@ export const stageOf = (
   },
 });
 
-/** Puts these in the middle of the view, zoomed out as far as that takes and in only to `most`. */
+/** What Excalidraw's own controls leave of a canvas: its toolbar above and its footer below. */
+const [TOP, BOTTOM, SIDE] = [72, 60, 16];
+/**
+ * The part of the canvas that shows the board, in its pixels: clear of Excalidraw's controls, and
+ * on whichever side of the Agent's window has the most room.
+ */
+export const clearView = (api: ExcalidrawImperativeAPI): Rect => {
+  const { width, height, offsetLeft, offsetTop } = api.getAppState();
+  const x = Math.min(SIDE, width / 4);
+  const y = Math.min(TOP, height / 4);
+  const free = { x, y, width: width - 2 * x, height: height - y - Math.min(BOTTOM, height / 4) };
+  const dock = document.querySelector('.pi-dock')?.getBoundingClientRect();
+  if (!dock) return free;
+  const [left, top] = [dock.left - offsetLeft, dock.top - offsetTop];
+  const [right, bottom] = [left + dock.width, top + dock.height];
+  const [endX, endY] = [free.x + free.width, free.y + free.height];
+  return [
+    { ...free, width: Math.min(free.width, left - x) },
+    { ...free, x: Math.max(x, right), width: Math.min(free.width, endX - right) },
+    { ...free, height: Math.min(free.height, top - y) },
+    { ...free, y: Math.max(y, bottom), height: Math.min(free.height, endY - bottom) },
+  ].reduce((best, side) =>
+    side.width * side.height > best.width * best.height && side.width > 0 && side.height > 0
+      ? side
+      : best,
+  );
+};
+
+/** Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`. */
 export const fitView = (
   api: ExcalidrawImperativeAPI,
   shapes: readonly OrderedExcalidrawElement[],
@@ -295,14 +325,14 @@ export const fitView = (
 ) => {
   if (!shapes.length) return;
   const [x1, y1, x2, y2] = getCommonBounds(shapes);
-  const { width, height } = api.getAppState();
+  const { x, y, width, height } = clearView(api);
   const fit = Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (most > 1 ? 0.8 : 0.9);
   const zoom = Math.max(0.1, Math.min(most, fit));
   api.updateScene({
     appState: {
       zoom: { value: zoom as never },
-      scrollX: width / (2 * zoom) - (x1 + x2) / 2,
-      scrollY: height / (2 * zoom) - (y1 + y2) / 2,
+      scrollX: (x + width / 2) / zoom - (x1 + x2) / 2,
+      scrollY: (y + height / 2) / zoom - (y1 + y2) / 2,
     },
     captureUpdate: CaptureUpdateAction.NEVER,
   });

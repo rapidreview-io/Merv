@@ -18,7 +18,8 @@ for (const mode of ['dev', 'prod']) {
       !source.includes('renderHyperlinkDetails') ||
       !source.includes('max(16px, calc(100% - 396px))') ||
       !source.includes('mervCardOf') ||
-      !source.includes('mervImageBytes')
+      !source.includes('mervImageBytes') ||
+      !source.includes('mervLinkKeyless')
     )
       throw new Error(
         'Installed rich hyperlink patch is stale; reinstall Excalidraw before continuing',
@@ -30,8 +31,24 @@ for (const mode of ['dev', 'prod']) {
       throw new Error(`Excalidraw ${mode} patch context changed: ${before.slice(0, 60)}`);
     source = source.replace(before, after);
   };
-  // An image is refused past 10 MiB, Board's own limit, rather than Excalidraw's 4 MB.
+  // An image is refused past 10 MiB, Board's own limit, rather than Excalidraw's 4 MB. ⌘K is the
+  // board's + panel (views/board-canvas.tsx), so nothing says it opens the link editor.
   if (mode === 'dev') {
+    replace(
+      't("labels.link.label")} - ${getShortcutKey("CtrlOrCmd+K")}`',
+      't("labels.link.label")}`',
+    );
+    replace('hyperlink: [getShortcutKey("CtrlOrCmd+K")],', 'hyperlink: [/* mervLinkKeyless */],');
+    replace(
+      `/* @__PURE__ */ jsx92(
+                  Shortcut,
+                  {
+                    label: t("toolBar.link"),
+                    shortcuts: [getShortcutKey("CtrlOrCmd+K")]
+                  }
+                )`,
+      '',
+    );
     replace(
       'if (imageFile.size > MAX_ALLOWED_FILE_BYTES) {',
       'if (imageFile.size > 10485760 /* mervImageBytes */) {',
@@ -77,6 +94,9 @@ for (const mode of ['dev', 'prod']) {
       'children: [\n        !isEditing && appProps.renderHyperlinkDetails?.(element, () => setAppState({ showHyperlinkPopup: false })),\n        isEditing ? /* @__PURE__ */ jsx48(',
     );
   } else {
+    replace('g("labels.link.label")} - ${A("CtrlOrCmd+K")}`', 'g("labels.link.label")}`');
+    replace('hyperlink:[A("CtrlOrCmd+K")],', 'hyperlink:[/* mervLinkKeyless */],');
+    replace(',B(U,{label:g("toolBar.link"),shortcuts:[A("CtrlOrCmd+K")]})', '');
     replace('if(t.size>Zd)throw', 'if(t.size>10485760/* mervImageBytes */)throw');
     replace('maxSize:`${Math.trunc(Zd/1024/1024)}MB`', 'maxSize:"10 MiB"');
     replace(

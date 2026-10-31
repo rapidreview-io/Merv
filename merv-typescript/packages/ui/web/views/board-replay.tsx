@@ -93,9 +93,9 @@ export function BoardReplay({
     control.current = {
       jump,
       play() {
-        if (at >= changes.length && !player.busy) jump(first);
+        if (at >= changes.length && !player.waiting) jump(first);
         playing = true;
-        if (player.busy) told();
+        if (player.waiting) told();
         else step();
       },
       pause() {

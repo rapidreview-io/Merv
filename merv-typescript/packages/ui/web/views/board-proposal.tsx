@@ -6,7 +6,10 @@
 import { useEffect, useState } from 'react';
 import { CaptureUpdateAction, getCommonBounds, newElementWith } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type {
+  ExcalidrawArrowElement,
+  ExcalidrawElement,
+} from '@excalidraw/excalidraw/element/types';
 import { Icon } from '../icons';
 
 const isProposed = (el: ExcalidrawElement) => !!el.customData?.proposed;
@@ -57,11 +60,25 @@ export function BoardProposal({ api }: { api: ExcalidrawImperativeAPI }) {
         .map((el) => el.id),
     );
     // A label an agent gave a proposed box later goes with it, proposed or not.
-    const goes = (el: ExcalidrawElement) =>
-      parts.has(el.id) ||
-      (dismiss && el.type === 'text' && !!el.containerId && parts.has(el.containerId));
+    if (dismiss)
+      for (const el of scene)
+        if (el.type === 'text' && el.containerId && parts.has(el.containerId)) parts.add(el.id);
+    const elements = scene.map((el) => {
+      if (parts.has(el.id)) return newElementWith(el, made(el) as never);
+      if (!dismiss) return el;
+      // Nothing that stays goes on naming what went.
+      const { startBinding, endBinding } = el as Partial<ExcalidrawArrowElement>;
+      const [start, end] = [startBinding, endBinding].map((end) => parts.has(end?.elementId ?? ''));
+      const named = el.boundElements?.some(({ id }) => parts.has(id));
+      if (!start && !end && !named) return el;
+      return newElementWith(el, {
+        ...(start && { startBinding: null }),
+        ...(end && { endBinding: null }),
+        ...(named && { boundElements: el.boundElements!.filter(({ id }) => !parts.has(id)) }),
+      } as never);
+    });
     api.updateScene({
-      elements: scene.map((el) => (goes(el) ? newElementWith(el, made(el) as never) : el)),
+      elements,
       ...(dismiss && { appState: { selectedElementIds: {}, selectedGroupIds: {} } }),
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });

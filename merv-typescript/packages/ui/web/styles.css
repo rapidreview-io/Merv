@@ -6156,7 +6156,7 @@ html:has(.pi-page) body {
   z-index: 4;
   display: flex;
   flex-direction: column;
-  width: 380px;
+  width: min(380px, calc(100vw - 2 * var(--space-2)));
   height: min(560px, 70vh);
   overflow: hidden;
   background: var(--bg-elev);
@@ -6207,6 +6207,14 @@ html:has(.pi-page) body {
 .pi-dock > :is(.pi-error, .muted) {
   padding: 0 var(--space-3) var(--space-2);
   font-size: var(--text-sm);
+}
+/* Asked for on a phone's board, it rises over the lower half and leaves the drawing in sight. */
+@media (max-width: 639px) {
+  body:has(.board-page) .pi-dock:not(.pi-dock--voice) {
+    right: var(--space-2);
+    bottom: var(--space-2);
+    height: 45dvh;
+  }
 }
 /* The composer keeps its two rows, its controls beside them as on the page. */
 .pi-dock .pi-compose {
@@ -7856,6 +7864,28 @@ html:has(.board-page) body {
 .board-page-head .file-page-title {
   flex: 1;
 }
+/* Where a bar stands over the page, the title line stands in it, beside its menu: what shows there
+   is the board's name, and the page starts below it, with nothing for the board's focus to scroll. */
+@media (max-width: 880px) {
+  .board-page {
+    height: calc(100dvh - var(--topbar-h));
+  }
+  .board-page-head {
+    position: fixed;
+    inset: 0 0 auto 50px;
+    z-index: 20;
+    height: var(--topbar-h);
+    padding: 0 var(--space-3) 0 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line-soft);
+  }
+}
+@media (max-width: 639px) {
+  .board-page-head .back-link {
+    max-width: 1.2em;
+    text-overflow: clip;
+  }
+}
 .board-title-input {
   flex: 1;
   min-width: 0;
@@ -8037,23 +8067,53 @@ html:has(.board-page) body {
 .board-canvas .excalidraw .UserList-Wrapper {
   display: none;
 }
-.board-history {
+/* The line of what an agent is doing, there only while it is, and the way to Pi from a board. */
+.board-status,
+.board-ask {
   position: absolute;
   z-index: 4;
-  top: var(--space-3);
-  right: var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  font-size: var(--text-xs);
+  padding: 4px var(--space-3);
+  font-family: Excalifont, var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
-/* On a phone Excalidraw's toolbar runs the width of the top. */
+.board-status {
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.board-status-follow {
+  margin-left: var(--space-2);
+  text-decoration: underline;
+  color: var(--muted);
+}
+.board-ask {
+  right: 60px;
+  bottom: 16px;
+}
+.board-status:hover,
+.board-ask:hover {
+  background: var(--bg-soft);
+}
+/* On a phone Excalidraw's toolbars run the width of the top and the bottom, and the dock rises over
+   the lower half. */
 @media (max-width: 730px) {
-  .board-history {
-    top: auto;
-    bottom: 64px;
+  .board-status {
+    top: 72px;
+    bottom: auto;
   }
+  .board-ask {
+    right: var(--space-3);
+    bottom: 72px;
+  }
+}
+.board-head-end {
+  display: contents;
 }
 /* Under a replay the board goes on, and takes no keys. */
 .board-canvas.is-replaying > .excalidraw {

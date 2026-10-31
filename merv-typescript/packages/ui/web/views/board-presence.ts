@@ -3,6 +3,7 @@
  * slides to the middle of what an agent last looked at or drew, rides the pen's tip while a stroke
  * of its own is traced, dims and goes when nothing has been heard of it for a while. A collaborator
  * is the page's own view state, so a cursor is never saved, changes no version and enters no undo.
+ * It also keeps who last drew, for the line that says so (board-talk.tsx).
  */
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
@@ -18,6 +19,8 @@ const SLIDE = 0.25;
  * pale blue of the board's own palette, whichever agent it is.
  */
 const BLUE = 'agent22';
+/** How long after it was heard of an agent is still looking, or what comes is still what it drew. */
+const LOOK_MS = 5_000;
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 interface Cursor extends BoardLooking {
@@ -33,7 +36,32 @@ export class BoardPresence {
   private cursors = new Map<string, Cursor>();
   private ticking?: ReturnType<typeof setInterval>;
   private shown = '';
+  private drawn = { at: 0, name: '' };
   constructor(private api: ExcalidrawImperativeAPI) {}
+  private latest() {
+    return [...this.cursors.values()].sort((a, b) => b.at - a.at)[0];
+  }
+  /**
+   * Shapes came: an agent heard of just now is named for them, and it answers true. Whether that
+   * agent's last word was a look says nothing, since agents look at what they just drew.
+   */
+  drew() {
+    const now = Date.now();
+    const cursor = this.latest();
+    if (!cursor || now - cursor.heardAt > LOOK_MS) return false;
+    this.drawn = { at: now, name: cursor.name };
+    return true;
+  }
+  /** Who is at the board and how long ago they drew; where the one last heard of is. */
+  doing(now = Date.now()) {
+    const cursor = this.latest();
+    return {
+      name: this.drawn.at ? this.drawn.name : (cursor?.name ?? ''),
+      drewMs: this.drawn.at ? now - this.drawn.at : Infinity,
+      looking: !!cursor && !cursor.drew && now - cursor.heardAt < LOOK_MS ? cursor.name : '',
+      region: cursor?.region,
+    };
+  }
   /** What the page was just told of where agents are. */
   heard(looking: BoardLooking[]) {
     for (const where of looking) {

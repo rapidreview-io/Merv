@@ -17,6 +17,7 @@ import {
   useSyncExternalStore,
   type ComponentProps,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
@@ -42,10 +43,12 @@ import { BoardLinkDetails } from './board-link-details';
 import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
 import { inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
+import { BoardFollow } from './board-follow';
 import { BoardPointing } from './board-pointing';
 import { BoardPresence } from './board-presence';
 import { BoardProposal } from './board-proposal';
 import { BoardReplay } from './board-replay';
+import { BoardTalk } from './board-talk';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -121,10 +124,14 @@ const PICTURE_WIDTH = 640;
 const CARD = { width: 280, height: 110 };
 const PICTURE_SHAPE = 0.75;
 
-/** `onOutcomes` hears what each poll says of the board's outcomes. */
-type CanvasProps = { id: string; onOutcomes?(lines: BoardScene['outcomes']): void };
+/** `onOutcomes` hears what each poll says of the board's outcomes; `head` is where its line ends. */
+type CanvasProps = {
+  id: string;
+  onOutcomes?(lines: BoardScene['outcomes']): void;
+  head?: HTMLElement | null;
+};
 
-function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
+function BoardCanvasScene({ id, onOutcomes, head }: CanvasProps) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -132,6 +139,8 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const [readingReference, setReadingReference] = useState(false);
   const [adding, setAdding] = useState(false);
   const [replaying, setReplaying] = useState(false);
+  /** Whether anything is drawn here since it opened: with its revision, whether there is a past. */
+  const [drawnOn, setDrawnOn] = useState(false);
   /** The card whose popup opened as it was selected, so a closed popup stays closed. */
   const opened = useRef<string | null>(null);
   /** What is being placed, so what is added next lands beside it and not on it. */
@@ -146,7 +155,8 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const known = useRef(new Map<string, number>());
   const revision = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  const cursors = useRef<unknown>();
+  /** The person's unsaved shapes as they last stood, whose change alone puts off their save. */
+  const unsaved = useRef(0);
   const saving = useRef<Promise<void> | null>(null);
   /** The shapes as Excalidraw last drew them, read after it unmounts and empties its own scene. */
   const scene = useRef<readonly OrderedExcalidrawElement[]>([]);
@@ -162,6 +172,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();
+  /** Keeps what agents draw in view, until the person's hand is on the board. */
+  const follow = useRef<BoardFollow>();
+  /** What the last poll brought that waits for the person to finish. */
+  const waiting = useRef(0);
   /** Gathers what the person points at, to go with what they say to Pi. */
   const pointing = useRef<BoardPointing>();
   const focusBoard = () =>
@@ -271,6 +285,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       for (const el of shapes)
         known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
       pointing.current?.landed(shapes);
+      presence.current?.drew();
     };
     const made = new Player(
       stageOf(api, () => busy(api), land),
@@ -284,11 +299,26 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const hand = new BoardPointing(api, id);
     hand.landed(first?.elements ?? []);
     pointing.current = hand;
-    const unpoint = pointWith(hand.note);
+    const camera = new BoardFollow(api);
+    follow.current = camera;
+    const unpoint = pointWith({
+      note() {
+        // Saying something to Pi is watching for its answer.
+        camera.following = true;
+        return hand.note();
+      },
+      said: hand.said,
+    });
+    const board = reveal.current.parentElement!.querySelector(':scope > .excalidraw')!;
+    const hands = ['pointerdown', 'wheel', 'keydown', 'gesturestart'];
+    for (const kind of hands)
+      board.addEventListener(kind, camera.release, { capture: true, passive: true });
     return () => {
       made.stop();
       here.stop();
       hand.stop();
+      camera.release();
+      for (const kind of hands) board.removeEventListener(kind, camera.release, { capture: true });
       unpoint();
     };
   }, [api, id]);
@@ -325,6 +355,15 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       }
       asking = false;
       if (live && scene?.looking) presence.current?.heard(scene.looking);
+      // What waits for the person, once each: a label with its shape, a group of strokes as one.
+      waiting.current =
+        live && scene && busy(api)
+          ? new Set(
+              scene.elements
+                .filter((el) => known.current.get(el.id) !== el.version && !el.containerId)
+                .map((el) => (el.groupIds as string[] | undefined)?.[0] ?? el.id),
+            ).size
+          : 0;
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
       if (busy(api)) return;
       revision.current = scene.board.revision;
@@ -344,11 +383,13 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         return;
       }
       const same = new Set(held.map((el) => `${el.id}/${el.version}/${el.versionNonce}`));
-      player.current!.add(
-        stacked(scene.elements).filter(
-          (el) => !same.has(`${el.id}/${el.version}/${el.versionNonce}`),
-        ),
+      const fresh = stacked(scene.elements).filter(
+        (el) => !same.has(`${el.id}/${el.version}/${el.versionNonce}`),
       );
+      // The view goes ahead of the ink, so a stroke is watched as it is drawn.
+      if (!player.current!.instant && fresh.length && presence.current?.drew())
+        follow.current?.expect(fresh);
+      player.current!.add(fresh);
     };
     pull.current = ask;
     const every = setInterval(() => void ask(), ASK_MS);
@@ -373,6 +414,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   // chosen shape's Link button): wherever the board has the keys, and never from something being
   // written in, a dialog of Excalidraw's or a replay.
   const openPanel = () => {
+    follow.current?.release();
     api?.updateScene({ appState: { showHyperlinkPopup: false } });
     setAdding(true);
   };
@@ -592,11 +634,16 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
           scene.current = elements;
           files.current = held;
           bring?.(elements, held);
-          // A cursor moving changes no shape, and must not put off the save of one that did.
-          const moved = appState.collaborators !== cursors.current;
-          cursors.current = appState.collaborators;
-          if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
-          if (moved && timer.current) return;
+          setDrawnOn(elements.length > 0);
+          // Only the person's own shapes changing puts off their save: no cursor, camera or other
+          // hand's shapes can, however often they move.
+          const dirt = elements.reduce(
+            (sum, el) => (known.current.get(el.id) === el.version ? sum : sum + el.version),
+            0,
+          );
+          if (!dirt) return;
+          if (dirt === unsaved.current && timer.current) return;
+          unsaved.current = dirt;
           clearTimeout(timer.current);
           timer.current = setTimeout(() => {
             timer.current = undefined;
@@ -624,16 +671,33 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       {replaying ? (
         <BoardReplay id={id} editor={editor} close={() => setReplaying(false)} />
       ) : (
-        <p
-          className="board-history muted"
-          title="Project members can replay this board. What is drawn here is kept for that, erased work too."
-        >
-          History on
+        <BoardTalk
+          doing={() => {
+            const said = presence.current?.doing();
+            return {
+              ...said,
+              playing: !!player.current?.waiting && (said?.drewMs ?? Infinity) < BEHIND_MS,
+              waiting: api && busy(api) ? waiting.current + (player.current?.waiting ?? 0) : 0,
+            };
+          }}
+          following={() => !!follow.current?.following}
+          jump={() => {
+            follow.current?.resume(presence.current?.doing().region);
+            focusBoard();
+          }}
+        />
+      )}
+      {head &&
+        (drawnOn || first.board.revision > 0) &&
+        !replaying &&
+        createPortal(
           <button
             type="button"
             className="btn-text"
+            title="History on: project members can replay this board, erased work too."
             onClick={() => {
               clearTimeout(timer.current);
+              timer.current = undefined;
               // Excalidraw hears some keys from anywhere, and acts on what is selected.
               api?.updateScene({
                 appState: {
@@ -647,14 +711,14 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
             }}
           >
             Replay
-          </button>
-        </p>
-      )}
+          </button>,
+          head,
+        )}
     </div>
   );
 }
 
 /** A different board gets separate refs, pending saves, and first-scene state. */
-export default function BoardCanvas({ id, onOutcomes }: CanvasProps) {
-  return <BoardCanvasScene key={id} id={id} onOutcomes={onOutcomes} />;
+export default function BoardCanvas(props: CanvasProps) {
+  return <BoardCanvasScene key={props.id} {...props} />;
 }

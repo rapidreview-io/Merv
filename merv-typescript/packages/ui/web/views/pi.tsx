@@ -82,8 +82,12 @@ interface Agent {
   live: boolean;
   /** The dock was closed by hand: it stays shut until the Agent page opens again. */
   hidden: boolean;
+  /** A page asked for the dock: it stands, on a phone too and before any question, until closed. */
+  asked: boolean;
   /** The Agent page opened: the conversation begins, or goes on as it was left. */
   start(): void;
+  /** The person asked for Pi where they are: the conversation begins, in the dock. */
+  ask(): void;
   /** The person's machine was released: the conversation ends, and its stream with it. */
   end(): void;
   hide(): void;
@@ -97,26 +101,33 @@ export const useAgent = () => useContext(AgentContext);
 
 /**
  * Holds the Agent's conversation above the routes, so it outlives its page. Nothing is read,
- * warmed or streamed until the Agent page first opens; from then on it stays connected while the
+ * warmed or streamed until the Agent page first opens or a page asks for it; from then on it stays connected while the
  * person goes elsewhere, until it ends (views/pi-dock.tsx). The page opened after that begins it
  * again exactly as the first opening did, and so does a change of scope.
  */
 export function PiProvider({ children }: { children: ReactNode }) {
   const scope = useScopeVersion();
-  const [open, setOpen] = useState({ live: false, opened: 0, hidden: false });
+  const [open, setOpen] = useState({ live: false, opened: 0, hidden: false, asked: false });
   const [pi, setPi] = useState<Conversation | null>(null);
   const controls = useMemo(
     () => ({
       start: () =>
         setOpen((now) =>
           !now.live
-            ? { live: true, opened: now.opened + 1, hidden: false }
+            ? { ...now, live: true, opened: now.opened + 1, hidden: false }
             : now.hidden
               ? { ...now, hidden: false }
               : now,
         ),
-      end: () => setOpen((now) => (now.live ? { ...now, live: false } : now)),
-      hide: () => setOpen((now) => (now.hidden ? now : { ...now, hidden: true })),
+      ask: () =>
+        setOpen((now) => ({
+          live: true,
+          opened: now.opened + (now.live ? 0 : 1),
+          hidden: false,
+          asked: true,
+        })),
+      end: () => setOpen((now) => (now.live ? { ...now, live: false, asked: false } : now)),
+      hide: () => setOpen((now) => ({ ...now, hidden: true, asked: false })),
     }),
     [],
   );

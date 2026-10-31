@@ -1,11 +1,12 @@
 /**
- * The Agent beside any other page. Once a conversation has been opened on the Agent page it stays
- * alive while the person goes elsewhere, and a small window floats over the page they are on, at
- * the lower right until it is dragged by its head: the conversation, how its turn stands, and a
- * composer. Expand goes back to the Agent page, where the conversation is whole; Close puts the
- * window away until that page is opened again. When the person's machine is released for
- * inactivity, by the server's clock, the window closes itself and the conversation ends with it.
- * It is not drawn on a phone.
+ * The Agent beside any other page. Once a conversation has been opened on the Agent page, or asked
+ * for from a page such as a board, it stays alive while the person goes elsewhere, and a small
+ * window floats over the page they are on, at the lower right until it is dragged by its head: the
+ * conversation, how its turn stands, and a composer. Expand goes back to the Agent page, where the
+ * conversation is whole; Close puts the window away until that page is opened again. When the
+ * person's machine is released for inactivity, by the server's clock, the window closes itself and
+ * the conversation ends with it, unless the person asked for it here and has not closed it. On a
+ * phone it is drawn only when asked for.
  */
 import type { UiRowDescription } from '@merv/ui/rows';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -34,6 +35,13 @@ function releasedAt({ host }: PiSnapshot, skew: number): number | null {
   return Number.isNaN(at) ? null : at - skew;
 }
 
+/** Whether the window stands beside a page that is not the Agent's own. */
+export const docked = (agent: ReturnType<typeof useAgent>, roomy: boolean) =>
+  !!agent?.asked ||
+  (roomy &&
+    ((agent?.voice.state !== undefined && agent.voice.state !== 'off') ||
+      (!agent?.hidden && !!agent?.pi?.snapshot?.commands.length)));
+
 export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   const agent = useAgent();
   const navigate = useNavigate();
@@ -44,19 +52,27 @@ export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   const pi = agent?.pi;
   const end = agent?.end;
   const speaking = agent?.voice.state !== undefined && agent.voice.state !== 'off';
-  const drawn =
-    !!row && !here && roomy && (speaking || (!agent?.hidden && !!pi?.snapshot?.commands.length));
+  const drawn = !!row && !here && docked(agent, roomy);
   // Away from its page the conversation ends with the machine, whether or not the window is
   // drawn, once nothing the person began is under way: no turn, no question or call on its way,
   // no machine being started, and no question half written in the window.
   const underway =
-    !pi || speaking || pi.active || pi.busy || pi.warming.current || (drawn && !!pi.draft.trim());
+    !pi ||
+    speaking ||
+    agent?.asked ||
+    pi.active ||
+    pi.busy ||
+    pi.warming.current ||
+    (drawn && !!pi.draft.trim());
   const at = !here && pi?.snapshot && !underway ? releasedAt(pi.snapshot, pi.skew.current) : null;
   useEffect(() => {
     if (at === null || !end) return;
     const timer = setTimeout(end, Math.max(0, at - Date.now()));
     return () => clearTimeout(timer);
   }, [at, end]);
+  // Asked for, the window is there to be written in.
+  const composer = drawn && agent?.asked ? pi?.composer : undefined;
+  useEffect(() => composer?.current?.focus(), [composer]);
   if (!drawn || !pi || !row || !agent) return null;
   return (
     <Floating pi={pi} expand={() => navigate(row.path)} hide={agent.hide}>

@@ -140,6 +140,8 @@ function BoardPage({ row }: ViewProps) {
   // The board alone: no shape changed after a revision this high, so none is read or sent.
   const read = useTool<BoardScene>('board.scene', { id, since: MAX }, { every: 10000 });
   const [editing, setEditing] = useState(false);
+  /** The end of the title line, where the canvas puts its Replay. */
+  const [end, setEnd] = useState<HTMLElement | null>(null);
   const board = read.data?.board;
   const outcomes = useOutcomes(id, read.data?.outcomes);
   useEffect(() => {
@@ -158,11 +160,12 @@ function BoardPage({ row }: ViewProps) {
           <header className="file-page-head board-page-head">
             <BackLink home={row.path} label="Boards" />
             <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
+            <span ref={setEnd} className="board-head-end" />
             <OutcomeWord place={outcomes} />
             <BoardMenu board={board} rename={() => setEditing(true)} />
           </header>
           <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>
-            <Canvas key={board.id} id={board.id} onOutcomes={outcomes.report} />
+            <Canvas key={board.id} id={board.id} onOutcomes={outcomes.report} head={end} />
           </Suspense>
         </div>
         {shown && <OutcomePane key={shown} board={board.id} place={outcomes} />}
