@@ -18,6 +18,12 @@ export interface BoardDrawn {
   changed: number;
   /** The group of what the call proposed, to move or delete it whole. */
   proposal?: string;
+  /** Where its shapes landed, by key or id, as x, y, width, height. */
+  placed: Record<string, number[]>;
+  /** What stands under a shape that landed on another, by key or id. */
+  overlaps?: Record<string, string[]>;
+  /** Why a shape placed exactly landed on another. */
+  note?: string;
   /** Where the call's changes stand, for those watching; no answer to the agent carries it. */
   region?: { x: number; y: number; width: number; height: number };
 }
@@ -55,9 +61,14 @@ export interface Board {
   ): Promise<{ fileId: string; mediaType: string; size: number }>;
   /** An image's bytes, to a member of the project that stored them. */
   image(caller: Caller, fileId: string): Promise<{ mediaType: string; content: Buffer }>;
-  /** Draws an agent's operations (input.ts), placed by Board, on one board or a new one;
-   *  `images` holds what each image operation places, in order. */
-  draw(caller: Caller, input: DrawInput, images?: PlacedImage[]): Promise<BoardDrawn>;
+  /** Draws operations (input.ts), placed by Board, on one board or a new one; `images` holds what
+   *  each image operation places, in order, and `agent` marks an agent's hand on what it draws. */
+  draw(
+    caller: Caller,
+    input: DrawInput,
+    images?: PlacedImage[],
+    agent?: boolean,
+  ): Promise<BoardDrawn>;
   /** One of a board's outcomes with its text; `scene` lists them. */
   outcome(caller: Caller, board: string, id: string): Promise<Outcome>;
   /** Creates an outcome, or changes one: edits apply at any revision, content only at its own. */

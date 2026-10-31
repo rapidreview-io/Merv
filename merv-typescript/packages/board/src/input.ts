@@ -171,6 +171,8 @@ export const opSchema = z.discriminatedUnion('op', [
     text: text.optional(),
     color: color.optional(),
     ink: ink.optional(),
+    /** An arrow turned to go the other way, its bends and label kept. */
+    reverse: z.literal(true).optional(),
   }),
   z.object({ op: z.literal('move'), id: shape, ...place }).strict(),
   z.object({ op: z.literal('delete'), ids: z.array(shape).min(1).max(200) }).strict(),
