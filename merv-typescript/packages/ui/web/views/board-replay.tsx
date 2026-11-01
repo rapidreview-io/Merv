@@ -30,6 +30,7 @@ import { picturesOf, Projection, restoreOne, type Shape } from './board-projecti
 import { Scrubber, whenOf, type ScrubberControl } from './board-scrubber';
 import { captionAt, timelineOf, type Timeline } from './board-timeline';
 import { useActorNames } from './people';
+import { speech } from '../speech';
 
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
@@ -137,6 +138,7 @@ export function BoardReplay({
       if (!who) return '';
       const name = names(who.actorId);
       if (who.person) return name ?? 'Someone';
+      if (speech.boardOnly) return speech.agent;
       return name ? `${name}'s agent` : 'An agent';
     },
     [names],
@@ -625,7 +627,9 @@ export function BoardReplay({
         aria-label={moving ? 'Pause the replay' : 'Replay this board'}
         title={
           away
-            ? 'Replay. History is on: project members can replay this board, erased work too.'
+            ? speech.boardOnly
+              ? 'Replay'
+              : 'Replay. History is on: project members can replay this board, erased work too.'
             : undefined
         }
         onClick={toggle}

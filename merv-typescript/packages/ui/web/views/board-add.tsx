@@ -20,6 +20,7 @@ import { useCurrent } from '../mutations';
 import { NotSession, readTranscript } from '@merv/board/transcript';
 import { bytes, fileType, MAX_FILE, refusalOf, storeFile, type FileType } from './artifacts';
 import { newest, useHome } from './map-data';
+import { speech } from '../speech';
 
 /** What is drawn for one thing added: what it opens (several, for a collection), its title and fact. */
 export interface CardPick {
@@ -47,8 +48,8 @@ export const AddButton = ({ onClick }: { onClick(): void }) => (
     key="merv-add"
     type="button"
     className="ToolIcon_type_button ToolIcon_size_medium ToolIcon board-add"
-    title={`Add a board, file, record, collection or link — ${ADD_KEY}`}
-    aria-label="Add a board, file, record, collection or link"
+    title={speech.boardOnly ? 'Add a board or link' : `Add a board, file, record, collection or link — ${ADD_KEY}`}
+    aria-label={speech.boardOnly ? 'Add a board or link' : 'Add a board, file, record, collection or link'}
     onClick={onClick}
   >
     <div className="ToolIcon__icon" aria-hidden="true">
@@ -62,7 +63,7 @@ type Adding = (typeof TABS)[number];
 /** The tab last added from, which the panel next opens on. */
 let lastTab: Adding = 'boards';
 const EMPTY: Record<Adding, string> = {
-  boards: 'No other boards in this project yet.',
+  boards: 'No other boards yet.',
   files: 'No files in this project yet.',
   records: 'No tasks, experiments or papers in this project yet.',
   collection: 'No boards or files to collect yet.',
@@ -185,7 +186,9 @@ export function CardPicker({
   close(): void;
   add(items: CardPick[]): void;
 }) {
-  const [tab, setTab] = useState(lastTab);
+  // Files, and what is gathered from them, exist where something keeps files.
+  const keepsFiles = !speech.boardOnly;
+  const [tab, setTab] = useState(keepsFiles ? lastTab : lastTab === 'link' ? 'link' : 'boards');
   const [kind, setKind] = useState('');
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -209,7 +212,7 @@ export function CardPicker({
     if (!box.current?.contains(document.activeElement)) box.current?.focus();
   }, []);
   const boards = useTool<{ boards: BoardSummary[] }>('board.read', {});
-  const files = useTool<Artifact[]>('artifact.read:list', { limit: 200 });
+  const files = useTool<Artifact[]>(keepsFiles ? 'artifact.read:list' : null, { limit: 200 });
   const boardRows: Row[] = (boards.data?.boards ?? [])
     .filter((b) => b.id !== board)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -389,9 +392,13 @@ export function CardPicker({
         label="What to add"
         options={[
           { value: 'boards', label: 'Boards', count: boards.data && boardRows.length },
-          { value: 'files', label: 'Files', count: files.data && fileRows.length },
-          { value: 'records', label: 'Records' },
-          { value: 'collection', label: 'Collection' },
+          ...(keepsFiles
+            ? [
+                { value: 'files', label: 'Files', count: files.data && fileRows.length },
+                { value: 'records', label: 'Records' },
+                { value: 'collection', label: 'Collection' },
+              ]
+            : []),
           { value: 'link', label: 'Link' },
         ]}
         value={tab}
@@ -500,7 +507,7 @@ export function CardPicker({
                 <span className="finder-when">{row.meta}</span>
               </div>
             ))}
-            {(tab === 'records' ? home.data : boards.data && files.data) && rows.length === 0 && (
+            {(tab === 'records' ? home.data : boards.data && (files.data || !keepsFiles)) && rows.length === 0 && (
               <p className="finder-none">{all.length ? 'Nothing matches.' : EMPTY[tab]}</p>
             )}
           </div>

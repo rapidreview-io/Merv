@@ -60,6 +60,7 @@ export async function openVoice(
   offer: string,
   history: ReturnType<typeof voiceHistory>,
   person: string,
+  instructions = voiceInstructions,
 ): Promise<{ sessionId: string; sdp: string }> {
   let response: Response;
   try {
@@ -74,7 +75,7 @@ export async function openVoice(
       body: JSON.stringify({
         session: {
           model: config.model,
-          instructions: voiceInstructions,
+          instructions,
           delegation: { type: 'client' },
           audio: { output: { voice: config.voice } },
           store: false,

@@ -7,6 +7,7 @@ import { readOnly } from '../api';
 import { useRoomy } from '../theme';
 import { useAgent } from './pi';
 import { docked } from './pi-dock';
+import { speech } from '../speech';
 
 /** How long the last ink still counts as drawing, and how long a line says when it was. */
 const [DRAWING_MS, DREW_MS] = [1_500, 30_000];
@@ -92,7 +93,7 @@ export function BoardTalk({
             )}
         </div>
       )}
-      {agent && !open && !readOnly() && (
+      {agent && !open && !readOnly() && !speech.boardOnly && (
         <button type="button" className="board-ask" onClick={agent.ask}>
           Ask Pi
         </button>

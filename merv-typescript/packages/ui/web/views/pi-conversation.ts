@@ -4,6 +4,7 @@ import { ApiError, call } from '../api';
 import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
 import { toolTransport, type PiTransport } from './pi-transport';
+import { speech } from '../speech';
 import type { PiConversation, PiEvent, PiHostView, PiSnapshot } from '@merv/pi/models';
 
 type PiDelta = PiEvent & { streamId: string };
@@ -56,7 +57,7 @@ const UNAVAILABLE = 'This conversation isn’t available right now.';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
 const said = (cause: unknown, fallback: string): string => {
   if (!(cause instanceof ApiError)) return fallback;
-  if (cause.status === 0) return 'Merv didn’t answer. Try again.';
+  if (cause.status === 0) return `${speech.app} didn’t answer. Try again.`;
   if (cause.status >= 500 || cause.code.startsWith('http_') || cause.code === 'invalid_response')
     return 'Something went wrong on the server. Try again.';
   return cause.message;
@@ -268,13 +269,23 @@ export function useConversation(transport: PiTransport = toolTransport) {
       : stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
         ? 'writing'
         : (stage?.name ?? '');
-  const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
+  const phrase =
+    speech.boardOnly && ['queued', 'machine', 'agent', 'ready'].includes(step)
+      ? step === 'ready'
+        ? 'Ready'
+        : 'Getting ready'
+      : (step === 'tool' && !speech.boardOnly && stage?.detail) || STAGE[step];
   // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
   // while the stream that would end it is away.
   const standing: [string, string, string?] = unavailable
     ? ['Unavailable', '']
     : !phrase
-      ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
+      ? [
+          speech.boardOnly && ['waiting', 'starting'].includes(status)
+            ? 'Getting ready'
+            : (STATUS[status] ?? 'Ready'),
+          active ? 'active' : '',
+        ]
       : WAITS.includes(step)
         ? [phrase, 'active', streamError ? undefined : stage?.since]
         : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
@@ -442,6 +453,16 @@ export function useConversation(transport: PiTransport = toolTransport) {
     machine,
     pickModel,
     stop,
+    /** The conversation `key` always names, made the first time; each board has its own this way. */
+    openKeyed: async (key: string) => {
+      const item = await transport.create!(key);
+      if (!valid()) return;
+      pending.current = null;
+      setDraft('');
+      setError('');
+      setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
+      choose(item.id);
+    },
     /** Another conversation, with nothing of this one's carried into it. */
     switchTo: (id: string) => {
       pending.current = null;

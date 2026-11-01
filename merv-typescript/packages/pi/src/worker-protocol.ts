@@ -212,7 +212,9 @@ export class PiWorkerProtocol {
       // writing, a profile's own) or a retired name only where the profile names it; a noun
       // tool is cut to the actions a profile's addresses name.
       const registry = this.core.tools;
-      const grants = profile ? profileGrants(profile.tools, registry) : undefined;
+      const surface = this.core.config.surface;
+      const allowed = profile?.tools ?? surface?.tools;
+      const grants = allowed ? profileGrants(allowed, registry) : undefined;
       const described = (
         await registry.describe(caller, false, { names: grants && [...grants.keys()] })
       )
@@ -225,14 +227,16 @@ export class PiWorkerProtocol {
           return grants ? grants.has(name) : tool.tier !== 'worker';
         })
         .flatMap((description) => {
-          const tool = piTool(restricted(description, grants?.get(description.name)));
+          const cut = restricted(description, grants?.get(description.name));
+          const tool = piTool(surface ? surface.tool(cut) : cut);
           // A reader is offered what reads, and any tool some of whose actions do (`reads`).
           const reads = tool?.readOnly || !!registry.tool(description.name)?.reads;
           return tool && (actor!.role !== 'reader' || reads) ? [tool] : [];
         });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
       const previous = await this.told(conversation, command, actor!.role);
-      const told = [...previous.notes, ...notes];
+      // An app with no machines to speak of names none to its agent.
+      const told = surface ? previous.notes : [...previous.notes, ...notes];
       // What the installed plugins tell the turn about the project now, under the worker's cap.
       const context =
         clip(
@@ -298,6 +302,7 @@ export class PiWorkerProtocol {
         instructions,
         notes: sent,
         context: sentContext,
+        ...(this.core.config.surface && { contextName: this.core.config.surface.contextName }),
         ...(previous.interrupted && { previousInterrupted: true as const }),
         ...(profile?.shell && { shell: true as const }),
       };
@@ -354,6 +359,7 @@ export class PiWorkerProtocol {
         model: this.core.conversationModel(conversation, command),
         today: this.core.time().slice(0, 10),
         interrupted: interrupted ?? [],
+        ...(this.core.config.surface && { serves: this.core.config.surface.serves }),
       }),
       interrupted: interrupted !== null,
     };
@@ -534,6 +540,13 @@ export class PiWorkerProtocol {
       'This tool was not offered in this turn',
       403,
     );
+    const { surface } = this.core.config;
+    if (surface)
+      requireGranted(
+        profileGrants(surface.tools, this.core.tools),
+        value.name,
+        this.core.tools.identity(value.name, value.input),
+      );
     if (conversation.profile) {
       const profile = this.core.profiles.get(conversation.profile);
       // A retired name and its noun action are one call: the profile and its own check see

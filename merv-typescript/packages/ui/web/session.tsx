@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ComponentProps,
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
@@ -37,6 +38,7 @@ import {
 import { Failure, Field, SearchField, relativeTime } from './components';
 import { Icon } from './icons';
 import { browserAuth, setAuthMode, signedInEmail, type AuthConfiguration } from './auth';
+import { speech } from './speech';
 
 export type { Actor, Project, Account } from './api';
 interface Session {
@@ -213,7 +215,7 @@ function SignIn({
     <main className="signin">
       <section className="signin-card">
         <header className="signin-head">
-          <span className="signin-wordmark">merv</span>
+          <span className="signin-wordmark">{speech.app.toLowerCase()}</span>
           <h1>
             {person ? (
               <button
@@ -300,7 +302,7 @@ function SignIn({
         )}
         {!person && local}
         <Failure message={error} id={refusal} />
-        {client && (
+        {client && !speech.boardOnly && (
           <button
             type="button"
             className="signin-switch signin-corner"
@@ -530,10 +532,13 @@ export function SessionProvider({
   children,
   accountOnly = false,
   preservePath = false,
+  Chooser = Projects,
 }: {
   children: ReactNode;
   accountOnly?: boolean;
   preservePath?: boolean;
+  /** Where a sign-in with several projects, or none, goes; Merv's chooser unless the app has its own. */
+  Chooser?: (props: ComponentProps<typeof Projects>) => ReactNode;
 }) {
   const invitationId = new URLSearchParams(window.location.search).get('invitation');
   if (invitationId) safely(() => sessionStorage.setItem('merv:invitation', invitationId));
@@ -711,7 +716,7 @@ export function SessionProvider({
   };
   if (state.phase === 'projects')
     return (
-      <Projects
+      <Chooser
         account={state.account}
         error={state.error}
         choose={choose}

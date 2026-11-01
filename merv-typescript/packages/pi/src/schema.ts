@@ -1,6 +1,7 @@
 import { boardViewSchema as viewSchema } from '@merv/contracts';
 import { z } from 'zod';
 import { idSchema } from '@merv/contracts/schemas';
+import type { ToolDescription } from '@merv/api/types';
 import { messageChars } from './limits.js';
 
 export const id = z
@@ -119,8 +120,25 @@ export const completionInput = commandInput
     checkpointHash: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
+/** An app other than Merv that Pi works in: what it tells Pi and offers it, in place of Merv's. */
+export const piSurface = z.strictObject({
+  opening: z.string().min(1),
+  closing: z.string().min(1),
+  /** The note that says whom Pi serves. */
+  serves: z.string().min(1).max(300),
+  /** What a person's page and its pointing are called in a turn's context, e.g. 'Board'. */
+  contextName: z.string().regex(/^[A-Z][a-z]{0,19}$/),
+  /** The tools Pi is offered: names, or addresses `tool:action`, as a profile's. */
+  tools: z.array(z.string()).min(1).max(64),
+  /** Each says it in this app's words: the installed plugins' guide, a tool, the voice's brief. */
+  guide: z.custom<(text: string) => string>((value) => typeof value === 'function'),
+  tool: z.custom<(tool: ToolDescription) => ToolDescription>((value) => typeof value === 'function'),
+  voice: z.custom<(text: string) => string>((value) => typeof value === 'function'),
+});
+export type PiSurface = z.output<typeof piSurface>;
 export const piConfig = z.strictObject({
   baseUrl: z.string().url().optional(),
+  surface: piSurface.optional(),
   /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
    * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
    * for reasoning on any model. The picker shows labels only. */

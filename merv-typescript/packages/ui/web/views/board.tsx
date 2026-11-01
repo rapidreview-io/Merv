@@ -3,7 +3,7 @@
  * opens as the whole page, its title on one line with ← back and ⋯, and the canvas under it. The
  * canvas is Excalidraw, loaded only when a board opens (board-canvas.tsx).
  */
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { BoardScene, BoardSummary } from '@merv/board/models';
 import { call, refreshTools, useTool } from '../api';
@@ -94,7 +94,7 @@ function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
   );
 }
 
-function BoardTitle({
+export function BoardTitle({
   board,
   editing,
   done,
@@ -186,17 +186,32 @@ function BoardShare({ board }: { board: BoardSummary }) {
   );
 }
 
-function BoardPage({ row }: ViewProps) {
-  const { id = '' } = useParams();
+/**
+ * One board and what stands beside it, whatever its title line: the canvas, and the outcome pane.
+ * `head` draws the line, handed the board and its outcomes.
+ */
+export function BoardStage({
+  id,
+  head,
+  back,
+  title = (board) => `${board.title} · Merv`,
+  children,
+}: {
+  id: string;
+  head(board: BoardSummary, outcomes: ReturnType<typeof useOutcomes>): ReactNode;
+  back?: { to: string; label: string };
+  title?(board: BoardSummary): string;
+  children?(board: BoardSummary): ReactNode;
+}) {
   // The board alone: no shape changed after a revision this high, so none is read or sent.
   const read = useTool<BoardScene>('board.scene', { id, since: MAX }, { every: 10000 });
-  const [editing, setEditing] = useState(false);
   const board = read.data?.board;
   const outcomes = useOutcomes(id, read.data?.outcomes);
   useEffect(() => {
-    if (board) document.title = `${board.title} · Merv`;
+    if (board) document.title = title(board);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board]);
-  if (!board) return <PageLoad {...read} back={{ to: row.path, label: 'Boards' }} />;
+  if (!board) return <PageLoad {...read} back={back} />;
   const { shown, full } = outcomes;
   return (
     <div className="board-page">
@@ -206,20 +221,35 @@ function BoardPage({ row }: ViewProps) {
         data-full={shown && full ? '' : undefined}
       >
         <div className="board-main">
-          <header className="file-page-head board-page-head">
-            <BackLink home={row.path} label="Boards" />
-            <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
-            <OutcomeWord place={outcomes} />
-            <BoardShare board={board} />
-            <BoardMenu board={board} rename={() => setEditing(true)} />
-          </header>
+          {head(board, outcomes)}
           <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>
             <Canvas key={board.id} id={board.id} onOutcomes={outcomes.report} />
           </Suspense>
+          {children?.(board)}
         </div>
         {shown && <OutcomePane key={shown} board={board.id} place={outcomes} />}
       </div>
     </div>
+  );
+}
+
+function BoardPage({ row }: ViewProps) {
+  const { id = '' } = useParams();
+  const [editing, setEditing] = useState(false);
+  return (
+    <BoardStage
+      id={id}
+      back={{ to: row.path, label: 'Boards' }}
+      head={(board, outcomes) => (
+        <header className="file-page-head board-page-head">
+          <BackLink home={row.path} label="Boards" />
+          <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
+          <OutcomeWord place={outcomes} />
+          <BoardShare board={board} />
+          <BoardMenu board={board} rename={() => setEditing(true)} />
+        </header>
+      )}
+    />
   );
 }
 

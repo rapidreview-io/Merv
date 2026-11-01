@@ -18,6 +18,7 @@ import { pathOf, useRows } from '../navigation';
 import { useSession, writes } from '../session';
 import { useRoomy } from '../theme';
 import { useAgent, useSay } from './pi';
+import { speech } from '../speech';
 import { pointPassage } from './board-pointing';
 import { SendControl, WorkLine, type Way } from './board-outcome-send';
 import type { HandReport } from './board-outcome-hand';
@@ -522,7 +523,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     await push();
     const held = saved.current!;
     if (now() !== held.text) throw new Error('what you typed is not saved yet');
-    if (!keeps) return null;
+    if (!keeps || speech.boardOnly) return null;
     // Asked of Artifacts each time, never taken from what a send noted: this is what they see.
     const file = await call<{ id: string }>('artifact.write:create', {
       title: held.title,
@@ -615,7 +616,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   const arrived = useRef(place.arriving);
   const more = useMoreMenu();
   const SENDS: Record<Way, () => Promise<void>> = { fleet, claude: open, copy };
-  const ways: Way[] = keeps
+  const ways: Way[] = keeps && !speech.boardOnly
     ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
     : ['copy'];
   const sent = record?.sent ?? [];
@@ -761,7 +762,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
                     {[
                       ['a plan', 'a plan'],
                       ['a PRD', 'a PRD'],
-                      ['an experiment', 'an experiment plan'],
+                      ...(speech.boardOnly ? [] : [['an experiment', 'an experiment plan']]),
                       ['a prompt', 'a prompt for another agent'],
                     ].map(([word, kind], index) => (
                       <span key={word}>

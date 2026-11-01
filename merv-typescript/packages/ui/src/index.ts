@@ -122,12 +122,15 @@ export const uiPlugin = {
   Config: z
     .object({
       assets: z.string().refine(visible).optional(),
+      /** A bundle built beside the default one: `board` is the board app (vite.board.config.ts). */
+      bundle: z.literal('board').optional(),
     })
     .strict()
     .default({}),
   inject: ['api', 'tools'],
-  apply(ctx: Context, config: { assets?: string } = {}) {
-    const assets = config.assets ?? defaultAssets;
+  apply(ctx: Context, config: { assets?: string; bundle?: 'board' } = {}) {
+    const assets =
+      config.assets ?? (config.bundle ? fileURLToPath(new URL('../dist-board/', import.meta.url)) : defaultAssets);
     const ui = new UiRegistry(assets);
     // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
     const isolated = async <T>(read: () => Promise<T>): Promise<T> => {

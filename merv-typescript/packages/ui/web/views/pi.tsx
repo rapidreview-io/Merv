@@ -24,6 +24,7 @@ import { useVoice, VoicePanel, type Voice } from './pi-voice';
 import { useScreenAnswer } from './pi-screen';
 import { toolTransport } from './pi-transport';
 import { Floating } from './pi-dock';
+import { speech } from '../speech';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -279,7 +280,7 @@ export function Transcript({ pi }: { pi: Conversation }) {
         changed(all, at, host, snapshot.models),
         ...item.messages.map((message, index) => (
           <article className={`pi-message pi-message--${message.role}`} key={`${item.id}-${index}`}>
-            <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
+            <span className="pi-speaker">{message.role === 'user' ? 'You' : speech.agent}</span>
             {message.role === 'user' ? (
               <div className="pi-message-text">{message.text}</div>
             ) : (
@@ -289,13 +290,15 @@ export function Transcript({ pi }: { pi: Conversation }) {
         )),
         item.status === 'interrupted' && (
           <p className="pi-ended" key={`${item.id}-ended`}>
-            {(item.error && STOPPED[item.error]) ?? 'The agent stopped. Ask again.'}
+            {speech.boardOnly && item.error !== 'cancelled'
+              ? 'Stopped. Ask again.'
+              : ((item.error && STOPPED[item.error]) ?? 'The agent stopped. Ask again.')}
           </p>
         ),
       ])}
       {visible && (visible.text || visible.progress) && (
         <article className="pi-message pi-message--assistant pi-message--transient">
-          <span className="pi-speaker">Agent · live</span>
+          <span className="pi-speaker">{speech.agent} · live</span>
           {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
           {visible.progress && <p className="muted">{visible.progress}</p>}
         </article>
@@ -346,7 +349,7 @@ export function Composer({
       }}
     >
       <label htmlFor="pi-draft" className="sr-only">
-        Message Agent
+        Message {speech.agent}
       </label>
       <textarea
         id="pi-draft"

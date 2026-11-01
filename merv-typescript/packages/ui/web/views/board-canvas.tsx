@@ -49,6 +49,7 @@ import { BoardSelection } from './board-selection';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
 import { useAgent } from './pi';
+import { speech } from '../speech';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -471,6 +472,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const press = (event: KeyboardEvent) => {
       const target = event.target as Element;
       if (
+        speech.boardOnly ||
         !asksToAdd(event) ||
         typing(target) ||
         !(target === document.body || target.closest('.board-canvas')) ||
