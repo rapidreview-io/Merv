@@ -15,8 +15,8 @@ import { boardModel } from './board-app-model.js';
 const home = process.env.BOARD_HOME ?? join(homedir(), '.merv', 'board');
 const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT ?? 3090);
-const run = (command: string, ...args: string[]) =>
-  execFileSync(command, args, { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
+const run = (cwd: string, command: string, ...args: string[]) =>
+  execFileSync(command, args, { cwd: join(root, cwd), stdio: ['ignore', 'ignore', 'inherit'] });
 
 /** The folder of a PostgreSQL server, not only its clients: Homebrew's libpq has `initdb` alone. */
 const serverBin = () =>
@@ -91,9 +91,9 @@ async function main() {
     process.argv.includes('--build') ||
     !existsSync(join(root, 'packages/ui/dist-board/index.html'))
   )
-    run('npx', 'vite', 'build', '--config', 'packages/ui/vite.board.config.ts');
+    run('packages/ui', 'npx', 'vite', 'build', '--config', 'vite.board.config.ts');
   if (!existsSync(join(root, 'packages/board/dist/fonts.json')))
-    run('node', 'scripts/build-board-renderer.mjs');
+    run('.', 'node', 'scripts/build-board-renderer.mjs');
   const scripted = process.argv.includes('--scripted') || !process.env.MERV_PI_MODEL_API_KEY;
   if (scripted) process.env.MERV_PI_MODEL_API_KEY = 'scripted';
   const app = await createApp({

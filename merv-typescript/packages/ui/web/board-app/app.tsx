@@ -9,6 +9,7 @@ import type { BoardSummary } from '@merv/board/models';
 import { accountRequest, call, refreshTools, safely, useTool, type Project } from '../api';
 import { ErrorBoundary, PageLoad } from '../components';
 import { SessionProvider } from '../session';
+import { useRoomy } from '../theme';
 import { BoardStage } from '../views/board';
 import { PiProvider } from '../views/pi';
 import { BoardHead } from './head';
@@ -69,11 +70,15 @@ function Landing() {
 function Board() {
   const { id = '' } = useParams();
   const [talking, setTalking] = useState(false);
+  const roomy = useRoomy();
   useEffect(() => void safely(() => localStorage.setItem(LAST, id)), [id]);
   return (
     <BoardStage
       id={id}
       title={(board) => board.title}
+      beside={(outcomes) =>
+        talking && roomy && !outcomes.shown && <Conversation close={() => setTalking(false)} />
+      }
       head={(board, outcomes) => (
         <BoardHead
           board={board}
@@ -86,7 +91,7 @@ function Board() {
       {(board) => (
         <>
           <BoardBar board={board} open={() => setTalking(true)} />
-          {talking && <Conversation close={() => setTalking(false)} />}
+          {talking && !roomy && <Conversation close={() => setTalking(false)} />}
         </>
       )}
     </BoardStage>

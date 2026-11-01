@@ -250,12 +250,8 @@
   display: none;
 }
 .board-talk-pane {
-  position: absolute;
-  z-index: 6;
-  top: 44px;
-  right: 0;
-  bottom: 0;
-  width: min(400px, 100%);
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
@@ -286,22 +282,19 @@
     min-width: 300px;
   }
 }
-/* Excalidraw draws its phone layout by the canvas's width, wherever that comes from: its tools run
-   along the bottom, so the line stands on them, the full width, beside Play. */
-@container board-main (max-width: 730px) {
-  .board-bar,
-  .board-main:has(.board-talk-pane) .board-bar {
-    left: var(--space-2);
-    right: calc(var(--space-2) + var(--lg-button-size, 2.25rem) + var(--space-2));
-    bottom: 64px;
-    transform: none;
-    width: auto;
-    min-width: 0;
-  }
-  .board-main:not(:has(.board-scrub.is-in)) .board-play {
-    right: var(--space-2);
-    bottom: 72px;
-  }
+/* Excalidraw's phone layout, however narrow the canvas came to be: its tools run along the bottom,
+   so the line stands on them, the full width, beside Play. */
+.board-main:has(.excalidraw--mobile) .board-bar {
+  left: var(--space-2);
+  right: calc(var(--space-2) + var(--lg-button-size, 2.25rem) + var(--space-2));
+  bottom: 64px;
+  transform: none;
+  width: auto;
+  min-width: 0;
+}
+.board-main:has(.excalidraw--mobile):not(:has(.board-scrub.is-in)) .board-play {
+  right: var(--space-2);
+  bottom: 72px;
 }
 @media (max-width: 730px) {
   .boards-sheet {
@@ -316,27 +309,19 @@
   .board-page .board-status {
     bottom: auto;
   }
-  /* The whole conversation, with the line still over its foot to write in. */
-  .board-talk-pane {
-    width: 100%;
-    padding-bottom: 124px;
-  }
-  .board-main:has(.board-talk-pane) .board-bar {
-    z-index: 7;
-  }
 }
-/* Beside the canvas where there is room: the canvas gives it up, and the line stays over the canvas. */
-@media (min-width: 731px) {
-  .board-main:has(.board-talk-pane) {
-    padding-right: 400px;
-  }
-  .board-main:has(.board-talk-pane) .board-bar {
-    left: calc(50% - 200px);
-  }
+/* A column beside the canvas; on a phone the whole page, with the line still over its foot. */
+.board-plane:has(> .board-talk-pane) {
+  grid-template-columns: minmax(0, 1fr) min(400px, 50%);
 }
-/* Excalidraw's own coaching under its toolbar: this app has none. */
-.board-page .excalidraw .HintViewer {
-  display: none;
+.board-main > .board-talk-pane {
+  position: absolute;
+  z-index: 6;
+  inset: 44px 0 0 0;
+  padding-bottom: 124px;
+}
+.board-main:has(> .board-talk-pane) .board-bar {
+  z-index: 7;
 }
 /* Excalidraw's own help is in its menu; Play takes the corner. */
 .board-page .excalidraw .help-icon {
@@ -353,4 +338,8 @@
 }
 .board-outcome-start .btn-text {
   margin-right: var(--space-3);
+}
+/* Excalidraw's own coaching under its toolbar: this app has none. */
+.board-page .excalidraw .HintViewer {
+  display: none;
 }

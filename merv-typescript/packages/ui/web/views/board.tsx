@@ -196,12 +196,15 @@ export function BoardStage({
   back,
   title = (board) => `${board.title} · Merv`,
   children,
+  beside,
 }: {
   id: string;
   head(board: BoardSummary, outcomes: ReturnType<typeof useOutcomes>): ReactNode;
   back?: { to: string; label: string };
   title?(board: BoardSummary): string;
+  /** Over the canvas, and in a column of its own beside it. */
   children?(board: BoardSummary): ReactNode;
+  beside?(outcomes: ReturnType<typeof useOutcomes>): ReactNode;
 }) {
   // The board alone: no shape changed after a revision this high, so none is read or sent.
   const read = useTool<BoardScene>('board.scene', { id, since: MAX }, { every: 10000 });
@@ -228,6 +231,7 @@ export function BoardStage({
           {children?.(board)}
         </div>
         {shown && <OutcomePane key={shown} board={board.id} place={outcomes} />}
+        {beside?.(outcomes)}
       </div>
     </div>
   );
