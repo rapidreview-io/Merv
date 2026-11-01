@@ -17,6 +17,7 @@ import { SearchField, relativeTime, useDismiss, words } from '../components';
 import { Icon } from '../icons';
 import { Chips, Tabs, matches } from '../list-filters';
 import { useCurrent } from '../mutations';
+import { NotSession, readTranscript } from '@merv/board/transcript';
 import { bytes, fileType, MAX_FILE, refusalOf, storeFile, type FileType } from './artifacts';
 import { newest, useHome } from './map-data';
 
@@ -98,6 +99,27 @@ const webPick = (address: string): CardPick | undefined => {
 
 /** What Board can draw as a picture; any other image stays a card. */
 const PICTURED = /^image\/(jpeg|png|webp)\s*(;|$)/i;
+/** The most of a file read to see whether it is an agent's session. */
+const MOST_SESSION = 512 * 1024 * 1024;
+/**
+ * An agent's session goes as its steps with secret-shaped values replaced, made here, so the raw
+ * file never leaves this machine; any other file goes as it is.
+ */
+export const sessionOf = async (file: File): Promise<File> => {
+  if (!/\.jsonl$/i.test(file.name) || file.size > MOST_SESSION) return file;
+  let session;
+  try {
+    session = readTranscript(await file.text());
+  } catch (error) {
+    // What is no session goes as any file; a session that cannot be read never goes raw.
+    if (error instanceof NotSession) return file;
+    throw error;
+  }
+  const name = file.name.replace(/\.jsonl$/i, '');
+  return new File([JSON.stringify(session)], `${name} agent session.json`, {
+    type: 'application/json',
+  });
+};
 const fileRow = (file: Artifact): Row => {
   const type = fileType(file);
   const fact = `${type.label} · ${bytes(file.size)}`;
@@ -263,11 +285,12 @@ export function CardPicker({
     const kept: Artifact[] = [];
     const refused: string[] = [];
     box.current?.focus();
-    for (const [index, file] of chosen.entries()) {
-      const name = `${file.name}${chosen.length > 1 ? ` (${index + 1} of ${chosen.length})` : ''}`;
+    for (const [index, given] of chosen.entries()) {
+      const name = `${given.name}${chosen.length > 1 ? ` (${index + 1} of ${chosen.length})` : ''}`;
       const told = (said: string, part?: number) =>
         setSent({ note: `${said} ${name}${part ? ` ${Math.round(part * 100)}%` : ''}` });
       try {
+        const file = await sessionOf(given);
         told('Uploading');
         const available =
           file.size <= MAX_FILE ||
@@ -285,7 +308,7 @@ export function CardPicker({
           }));
         if (stored) kept.push(stored);
       } catch (error) {
-        refused.push(`${file.name}: ${error instanceof Error ? error.message : error}`);
+        refused.push(`${given.name}: ${error instanceof Error ? error.message : error}`);
       }
       // The panel gone, by Cancel or a change of project, nothing more is sent or added.
       if (!current()) return;

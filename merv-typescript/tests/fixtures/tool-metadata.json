@@ -17,7 +17,7 @@
     "artifact.upload_resume": "eeeb0b2ebe5aa8d7a1b4f41c7e3c8785cc9e4feb1ca07c61f38103c3b12ea9a1",
     "board.draw": "616d4dfbac83f2f2198895871d0b64a95a16b68a869acc5f8a95f470a7248583",
     "board.look": "cbf8878ffda3112f061b2765dbfc57e1a9e81ec44c8f4b06aa827eeadfb3d208",
-    "board.read": "8dd4fdd59cebf8122364b977da6e87775af82c2a8e81d238a582f0d4b4d73dc6",
+    "board.read": "ab64d86893081c42d09d20db11e60992c0abfb33eaef35bca14d72125e62c5f4",
     "board.save": "96b59058f5c2b693164bf0879bc6e6d5f76e57456a403832a2e1f0ad0315358a",
     "board.scene": "14201921a4da8eb9ae4aea91c4425f35d51cde3bc21352e64d9ec0f279186bda",
     "board.set": "7951501177af4db290a034a98e863f5a77e1213743b70aa5cff6afae2b7d607e",
@@ -126,7 +126,7 @@
   "scripts": {
     "artifact.read": "0a54d1c68bd52dbfaf2984dfb76479a1b4343b2889271f203f21e5ada157ef9e",
     "artifact.write": "53c3db7d2bef1e75f529efa209d79e9bfcbdc7b183dc0fb8a967eaf8ffd9b14d",
-    "board.read": "5773c552e3295fafecd465a3425478bfe636c696399b11954a067ac928e471fb",
+    "board.read": "3ae0c00566278e5e578fdcc03a84bd24fdc85ee23e6ed483cc1617beb2f1a3d1",
     "board.write": "24cb458515540068c057d20a4766c5031ef3ad41c1963e5c796d606c9b6c1c04",
     "code.git_credential": "df126b778322db3640ab250bcaaf20ac6b17df5e7066cd4bc322c5378fa47021",
     "code.read": "807a597e9a658f8fc0f0466b4a5abd719308407e8ebe1f145251e216b26b7fbe",
@@ -166,7 +166,7 @@
   "schemas": {
     "artifact.read": "cfa0286e4d4b5a24fcfc8eb7b494ba1e1cd3fbf49ccf90f243ecbedeff3a9853",
     "artifact.write": "f026b06ebab547904f257cea7dda1a8eb87d9a96c5061fe90073b54448df5406",
-    "board.read": "d6ab991a5b9d3348c75ec2d69c1bccafc9e952646d99033063a07cf7868ab6ed",
+    "board.read": "35e387090d424ff04862323595f46ca8ba300f39fa4dd259b19b011ed7d158ae",
     "board.write": "e68cab1dac4bdcc7bfa023f741d5cf542f486a0f0081cae17eb0e52868049ad7",
     "code.git_credential": "d896b55489a04a09fc28d340bef6a03c944b3bec740b89e5da56ab325c5aa3f1",
     "code.read": "14d2acb788e523cba851e428948e8fc9edb18f481431071a4105099d6a0593a7",
