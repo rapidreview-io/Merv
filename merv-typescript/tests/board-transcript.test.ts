@@ -84,9 +84,7 @@ test('Claude Code: calls meet their results, a failure is what the file records,
   const seen = overview(whole);
   assert.equal(seen.totals.failures, 1);
   assert.deepEqual(
-    seen.along.marks
-      .filter((mark) => mark.kind === 'retry')
-      .map(({ step, last }) => [step, last]),
+    seen.along.marks.filter((mark) => mark.kind === 'retry').map(({ step, last }) => [step, last]),
     [[4, 5]],
   );
   assert.deepEqual(seen.gaps.callsWithoutResult.first, [5]);
