@@ -32,7 +32,7 @@ import { useActorNames } from './people';
 
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
-const SPEEDS = [1, 2, 4];
+const SPEEDS = [0.25, 0.5, 1, 2, 4];
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
@@ -544,17 +544,24 @@ export function BoardReplay({
             }}
           />
           <div className="board-scrub-ends">
-            <button
-              type="button"
+            <div
               className="board-scrub-speed"
-              aria-label={`Play at ${projection.speed} times speed`}
-              data-set={projection.speed > 1 ? '' : undefined}
-              onClick={() =>
-                projection.setSpeed(SPEEDS[(SPEEDS.indexOf(projection.speed) + 1) % SPEEDS.length]!)
-              }
+              role="group"
+              aria-label="Replay speed"
+              data-set={projection.speed !== 1 ? '' : undefined}
             >
-              {projection.speed}×
-            </button>
+              {SPEEDS.map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  aria-label={`Play at ${speed} times speed`}
+                  aria-pressed={speed === projection.speed}
+                  onClick={() => projection.setSpeed(speed)}
+                >
+                  {speed}×
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               className={`board-scrub-now${said?.back ? ' is-called' : ''}`}

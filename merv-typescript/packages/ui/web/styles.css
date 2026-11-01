@@ -8933,14 +8933,26 @@ html[data-theme='dark'] .board-replay-own {
 .board-scrub-ends button:hover {
   color: var(--text);
 }
+.board-scrub-speed {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .board-scrub-speed:not([data-set]) {
   opacity: 0;
   transition: opacity 140ms ease;
 }
 .board-replay-own:has(.board-scrub:hover) .board-scrub-speed,
 .board-scrub-speed:hover,
-.board-scrub-speed:focus-visible {
+.board-scrub-speed:focus-within {
   opacity: 1;
+}
+/* The speed in use stands alone; the others come out beside it under the hand. */
+.board-scrub-speed:not(:hover, :focus-within) button[aria-pressed='false'] {
+  display: none;
+}
+.board-scrub-speed button[aria-pressed='true'] {
+  color: var(--text);
 }
 .board-scrub-now.is-called {
   color: var(--text);
