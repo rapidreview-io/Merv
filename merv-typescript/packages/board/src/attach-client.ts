@@ -39,8 +39,8 @@ const post = async ({ url, token }: Attached, path: string, body: unknown, ms?: 
     body: JSON.stringify(body),
     ...(ms && { signal: AbortSignal.timeout(ms) }),
   });
-  if (!answer.ok && !ms) throw new Error((await answer.text()).slice(0, 300));
-  return answer.ok ? ((await answer.json()) as Record<string, any>) : {};
+  if (!answer.ok) throw new Error((await answer.text()).slice(0, 300));
+  return (await answer.json()) as Record<string, any>;
 };
 
 /** What a person's hand did, as Claude reads it: the meaning goes with it, so compaction loses none. */
@@ -112,7 +112,7 @@ async function pair([code = '', session = '', data = '']: string[]) {
   const file = fileOf(data, session);
   writeFileSync(file, JSON.stringify({ url, token, board }), { mode: 0o600 });
   console.log(
-    `Attached to board "${title}" (${board}) as ${name}; board_read and board_write always act on it. Sent while attached: prompts and Claude's closing words (first ${SENT} characters), tool names with their command, path, pattern or URL (first ${SENT} characters), and what is drawn. Never tool output or file contents.`,
+    `Attached to board "${title}" (${board}) as ${name}; board_read and board_write always act on it. Sent while attached: prompts and Claude's closing words (first ${SENT} characters), tool names with their command, path, pattern or URL (first ${SENT} characters, and a command can hold text), and what is drawn. Never tool output.`,
   );
 }
 
@@ -124,23 +124,39 @@ function mcp() {
   const say = (id: unknown, result: unknown) =>
     process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
   const text = (words: string) => ({ isError: true, content: [{ type: 'text', text: words }] });
-  const listing = fetch(`${url}/board-attach/tools`, { signal: AbortSignal.timeout(5_000) })
-    .then((answer) => answer.json() as Promise<{ instructions: string; tools: any[] }>)
-    .catch(() => ({ instructions: '', tools: [] }));
+  const notify = (method: string) =>
+    process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`);
+  let listed: { instructions: string; tools: any[] } = { instructions: '', tools: [] };
+  /** The board's tools; if it is down now, they appear when it comes back, and nothing waits. */
+  const discover = async (): Promise<void> => {
+    try {
+      const answer = await fetch(`${url}/board-attach/tools`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      listed = (await answer.json()) as typeof listed;
+      if (started) notify('notifications/tools/list_changed');
+    } catch {
+      setTimeout(() => void discover(), QUIET_MS).unref();
+    }
+  };
+  let started = false;
+  const first = discover().finally(() => (started = true));
   createInterface({ input: process.stdin }).on('line', (line) => {
     const { id, method, params } = JSON.parse(line) as Record<string, any>;
     void (async () => {
       if (method === 'initialize') {
-        const { instructions } = await listing;
+        await first;
+        const { instructions } = listed;
         say(id, {
           protocolVersion: params.protocolVersion,
-          capabilities: { tools: {} },
+          capabilities: { tools: { listChanged: true } },
           serverInfo: { name: 'board', version: '0.1.0' },
           instructions,
         });
       } else if (method === 'tools/list') {
-        const { tools } = await listing;
-        say(id, { tools: tools.map((tool) => ({ ...tool, name: tool.name.replace('.', '_') })) });
+        say(id, {
+          tools: listed.tools.map((tool) => ({ ...tool, name: tool.name.replace('.', '_') })),
+        });
       } else if (method === 'tools/call') {
         const attached = attachedTo(data, session);
         if (!attached)

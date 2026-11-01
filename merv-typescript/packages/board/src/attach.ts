@@ -4,8 +4,10 @@ import { check, MervError, newId, type Caller } from '@merv/contracts';
 import { redact, type Step } from './transcript.js';
 import type { AttachedSession, AttachedStep, BoardAttached } from './models.js';
 
-/** How long a code waits, how long an attachment lives unused, and failed codes allowed a minute. */
-const [CODE_MS, IDLE_MS, MISSES] = [5 * 60_000, 24 * 3_600_000, 30];
+/** How long a code waits, and how long an attachment lives unused. */
+const [CODE_MS, IDLE_MS] = [5 * 60_000, 24 * 3_600_000];
+/** Long enough that guessing one in its five minutes is no plan, so no one can be locked out. */
+const CODE_LETTERS = 8;
 /** The most steps a session keeps for pages, and sessions held at all. */
 const [MOST_STEPS, MOST_SESSIONS] = [300, 1000];
 /** No I, L, O, 0 or 1: a code is read off a screen and typed. */
@@ -13,7 +15,7 @@ const LETTERS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const hashed = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export const pairSchema = z.strictObject({
-  code: z.string().trim().toUpperCase().length(6),
+  code: z.string().trim().toUpperCase().length(CODE_LETTERS),
   name: z.string().trim().max(40),
 });
 export const eventSchema = z.strictObject({
@@ -52,11 +54,13 @@ export class BoardAttach {
   private codes = new Map<string, { board: string; caller: Caller; until: number }>();
   private live = new Map<string, Attachment>();
   private seq = 0;
-  private misses = { count: 0, since: 0 };
   /** A code the person who may use this board types into their session. */
   code(board: string, caller: Caller): string {
     for (const [code, { until }] of this.codes) if (until < Date.now()) this.codes.delete(code);
-    const code = Array.from({ length: 6 }, () => LETTERS[randomInt(LETTERS.length)]).join('');
+    const code = Array.from(
+      { length: CODE_LETTERS },
+      () => LETTERS[randomInt(LETTERS.length)],
+    ).join('');
     // Only who they are: their browser's login may lapse while the session runs, and Scope rechecks
     // the actor's membership on every call.
     const { actorId, projectId } = caller;
@@ -64,12 +68,9 @@ export class BoardAttach {
     return code;
   }
   pair(code: string, name: string): { token: string; attachment: Attachment } {
-    if (Date.now() - this.misses.since > 60_000) this.misses = { count: 0, since: Date.now() };
-    const held = this.misses.count < MISSES ? this.codes.get(code) : undefined;
-    if (!held || held.until < Date.now()) {
-      this.misses.count++;
+    const held = this.codes.get(code);
+    if (!held || held.until < Date.now())
       throw new MervError('board_code', 'That code is wrong or has expired', 403);
-    }
     this.codes.delete(code);
     const token = `bt_${randomBytes(32).toString('base64url')}`;
     const attachment: Attachment = {

@@ -70,8 +70,8 @@ var post = async ({ url, token }, path, body, ms) => {
     body: JSON.stringify(body),
     ...ms && { signal: AbortSignal.timeout(ms) }
   });
-  if (!answer.ok && !ms) throw new Error((await answer.text()).slice(0, 300));
-  return answer.ok ? await answer.json() : {};
+  if (!answer.ok) throw new Error((await answer.text()).slice(0, 300));
+  return await answer.json();
 };
 var noted = (board, hand) => `[board ${board}: the person watching this board just did this by hand, to steer you without typing: ${hand.join("; ")}. A stroke across a step of your work means they dropped it: carry on without it. A circle means focus there. The question mark only means software read a stroke, so ask only if acting on it could not easily be undone. Say in one line what you changed.]`;
 function stepOf(input) {
@@ -135,7 +135,7 @@ async function pair([code = "", session = "", data = ""]) {
   const file = fileOf(data, session);
   writeFileSync(file, JSON.stringify({ url, token, board }), { mode: 384 });
   console.log(
-    `Attached to board "${title}" (${board}) as ${name}; board_read and board_write always act on it. Sent while attached: prompts and Claude's closing words (first ${SENT} characters), tool names with their command, path, pattern or URL (first ${SENT} characters), and what is drawn. Never tool output or file contents.`
+    `Attached to board "${title}" (${board}) as ${name}; board_read and board_write always act on it. Sent while attached: prompts and Claude's closing words (first ${SENT} characters), tool names with their command, path, pattern or URL (first ${SENT} characters, and a command can hold text), and what is drawn. Never tool output.`
   );
 }
 function mcp() {
@@ -145,21 +145,38 @@ function mcp() {
   const say = (id, result) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}
 `);
   const text = (words) => ({ isError: true, content: [{ type: "text", text: words }] });
-  const listing = fetch(`${url}/board-attach/tools`, { signal: AbortSignal.timeout(5e3) }).then((answer) => answer.json()).catch(() => ({ instructions: "", tools: [] }));
+  const notify = (method) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method })}
+`);
+  let listed = { instructions: "", tools: [] };
+  const discover = async () => {
+    try {
+      const answer = await fetch(`${url}/board-attach/tools`, {
+        signal: AbortSignal.timeout(5e3)
+      });
+      listed = await answer.json();
+      if (started) notify("notifications/tools/list_changed");
+    } catch {
+      setTimeout(() => void discover(), QUIET_MS).unref();
+    }
+  };
+  let started = false;
+  const first = discover().finally(() => started = true);
   createInterface({ input: process.stdin }).on("line", (line) => {
     const { id, method, params } = JSON.parse(line);
     void (async () => {
       if (method === "initialize") {
-        const { instructions } = await listing;
+        await first;
+        const { instructions } = listed;
         say(id, {
           protocolVersion: params.protocolVersion,
-          capabilities: { tools: {} },
+          capabilities: { tools: { listChanged: true } },
           serverInfo: { name: "board", version: "0.1.0" },
           instructions
         });
       } else if (method === "tools/list") {
-        const { tools } = await listing;
-        say(id, { tools: tools.map((tool) => ({ ...tool, name: tool.name.replace(".", "_") })) });
+        say(id, {
+          tools: listed.tools.map((tool) => ({ ...tool, name: tool.name.replace(".", "_") }))
+        });
       } else if (method === "tools/call") {
         const attached = attachedTo(data, session);
         if (!attached)

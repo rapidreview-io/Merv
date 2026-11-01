@@ -75,7 +75,7 @@ function AttachNote({ code }: { code: string }) {
       <code>claude plugin install board --marketplace rapidreview-io/merv-plugins</code>
       <p>
         It sends prompts, tool names, commands and paths, cut short with secrets removed, and what
-        Claude draws. Never tool output or file contents. Session events are relayed, not stored.
+        Claude draws. Never tool output. Session events are relayed, not stored.
       </p>
     </div>
   );

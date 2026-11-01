@@ -57,7 +57,7 @@ test('a session pairs by code once, and only that session is attached', async (t
   const file = join(f.data, 'attached', 's1.json');
   assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).board, f.board);
-  assert.match(await f.run(['pair', 'AAAAAA', 's2', f.data]), /Not attached/);
+  assert.match(await f.run(['pair', 'AAAAAAAA', 's2', f.data]), /Not attached/);
   // An unattached session's hook says nothing and sends nothing.
   assert.equal(await f.run(['hook'], JSON.stringify({ session_id: 's2', prompt: 'x' })), '');
   assert.equal((await f.attached())?.sessions.length, 1);
@@ -174,6 +174,28 @@ test('a token reaches its own board and nothing else', async (t) => {
   assert.equal(scene.attached, undefined, 'a page that did not ask is not told');
   await f.tools.call('board.detach', f.owner, { session: (await f.attached())!.sessions[0]!.id });
   assert.equal((await send('board.read', { action: 'get', get: {} })).status, 401);
+});
+
+test('sessions from one folder are each told of the same mark', async (t) => {
+  const f = await fixture(t);
+  await f.run(['pair', await f.coded(), 's1', f.data]);
+  await f.run(['pair', await f.coded(), 's2', f.data]);
+  await f.tools.call('board.write:draw', f.owner, {
+    board: f.board,
+    ops: [{ op: 'text', text: 'keep this' }],
+  });
+  const ask = (session_id: string) =>
+    f.run(
+      ['hook'],
+      JSON.stringify({
+        session_id,
+        hook_event_name: 'PostToolUse',
+        tool_name: 'x',
+        tool_use_id: session_id,
+      }),
+    );
+  assert.match(await ask('s1'), /keep this/);
+  assert.match(await ask('s2'), /keep this/);
 });
 
 test('an unreachable board costs a hook under a second, then nothing', () => {

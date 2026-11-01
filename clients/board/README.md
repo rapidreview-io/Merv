@@ -8,7 +8,7 @@ claude plugin install board --marketplace rapidreview-io/merv-plugins
 ```
 
 On a board, choose **Attach Claude Code** in the ⋯ menu, then in your session run the line it shows:
-`/board:pair ABC234`. Only that session attaches, and only to that board.
+`/board:pair ABCD2345`. Only that session attaches, and only to that board.
 
 ## What is sent
 
@@ -20,8 +20,10 @@ To the board's server, only while this session is attached, over an outbound con
   command, path, pattern, URL or description;
 - what Claude draws.
 
-Never sent: tool output, file contents, edits, or the transcript. Text goes through the same secret
-patterns as board transcripts before it leaves your machine; a pattern can miss a secret, so a secret
+Never sent: tool output, the content of files Claude reads or writes with its file tools, or the
+transcript. A shell command is sent as written, up to 200 characters, so one that holds text inline
+(a heredoc, an `echo`) sends that text too. Text goes through the same secret
+patterns as board transcripts before it leaves your machine; a pattern can miss a secret, so one
 typed in a prompt or command could still pass.
 
 The server relays session events to pages open on that board and keeps them in memory only. What

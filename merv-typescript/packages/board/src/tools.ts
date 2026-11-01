@@ -180,26 +180,26 @@ export const boardToolsPlugin = {
             if (route === 'POST /pair') {
               const { code, name } = await r.json(pairSchema);
               const { token, attachment } = attach.pair(code, name);
-              const { board: on, caller } = attachment;
+              const { id: who, board: on, caller } = attachment;
               const { board: summary } = await board.scene(caller, on, Number.MAX_SAFE_INTEGER);
               // Everything a person does from here on is told to this session.
-              agentClient.run(name, () => watch.see(reader(caller), on, summary.revision));
+              watch.see(who, on, summary.revision);
               return { token, board: on, title: summary.title, name };
             }
             const attachment = attach.of(r.bearer());
-            const { board: on, caller, name } = attachment;
+            const { id: who, board: on, caller, name } = attachment;
             if (route === 'POST /event') {
               const event = await r.json(eventSchema);
               attach.relay(attachment, event);
               if (!event.ask) return {};
               const hand = await agentAudience.run(true, () =>
                 agentClient.run(name, async () => {
-                  const who = reader(caller);
                   const since = watch.seen(who).find(([at]) => at === on)?.[1];
                   if (since === undefined) return [];
                   const told = await handSince(caller, who, on, since);
                   // Told: its next draw need not be refused for what it has just read.
-                  if (told.length && watch.ahead(on, who)) watch.read(on, who);
+                  const agent = `${caller.actorId}:${named(caller)}`;
+                  if (told.length && watch.ahead(on, agent)) watch.read(on, agent);
                   return told;
                 }),
               );
