@@ -328,3 +328,15 @@ export function profileOf({ units, hands, length }: Timeline, count: number, spr
   }
   return { heights, hands: drew };
 }
+
+/** The most recent spoken line, held through its unit and for a short reading pause. */
+export const captionAt = (line: Timeline, at: number): string => {
+  for (let i = landedBy(line, at) - 1; i >= 0; i--) {
+    const unit = line.units[i]!;
+    const say = unit.shapes
+      .map((shape) => (shape.customData as { say?: unknown } | undefined)?.say)
+      .find((value): value is string => typeof value === 'string' && !!value);
+    if (say) return at <= Math.max(unit.start + unit.ms, unit.start + 6000) ? say : '';
+  }
+  return '';
+};

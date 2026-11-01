@@ -138,6 +138,54 @@ function BoardTitle({
   );
 }
 
+function BoardShare({ board }: { board: BoardSummary }) {
+  const { actor } = useSession();
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState('');
+  const change = async (revoke: boolean) => {
+    setBusy(true);
+    try {
+      const result = await call<{ token?: string }>('board.share', { id: board.id, revoke });
+      const url = result.token ? `${location.origin}/ui/board-share#${result.token}` : '';
+      setLink(url);
+      setMessage(
+        revoke
+          ? 'Link revoked'
+          : 'Anyone with this link can view this board and its history, including erased work.',
+      );
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (board.createdBy !== actor.id) return null;
+  return (
+    <details className="board-share">
+      <summary>Share</summary>
+      <div className="board-share-menu">
+        <button className="btn-text" disabled={busy} onClick={() => void change(false)}>
+          Make a new link
+        </button>
+        <button className="btn-text" disabled={busy} onClick={() => void change(true)}>
+          Revoke link
+        </button>
+        {link && (
+          <input
+            className="input"
+            aria-label="Share link"
+            value={link}
+            readOnly
+            onFocus={(event) => event.target.select()}
+          />
+        )}
+        {message && <p role="status">{message}</p>}
+      </div>
+    </details>
+  );
+}
+
 function BoardPage({ row }: ViewProps) {
   const { id = '' } = useParams();
   // The board alone: no shape changed after a revision this high, so none is read or sent.
@@ -162,6 +210,7 @@ function BoardPage({ row }: ViewProps) {
             <BackLink home={row.path} label="Boards" />
             <BoardTitle board={board} editing={editing} done={() => setEditing(false)} />
             <OutcomeWord place={outcomes} />
+            <BoardShare board={board} />
             <BoardMenu board={board} rename={() => setEditing(true)} />
           </header>
           <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>

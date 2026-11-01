@@ -31,4 +31,7 @@ CREATE TABLE board_history_files(project_id TEXT NOT NULL,file_id TEXT NOT NULL,
   5: `
 CREATE TABLE board_outcomes(board_id TEXT NOT NULL,id TEXT NOT NULL,revision BIGINT NOT NULL,record TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(board_id,id));
 `,
+  6: `
+CREATE TABLE board_shares(board_id TEXT PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,digest TEXT NOT NULL UNIQUE);
+`,
 };

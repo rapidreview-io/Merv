@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { lazy, Suspense, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { drillIn, safely } from './api';
@@ -6,7 +6,9 @@ import { App } from './app';
 import { watchStaleBuild } from './stale-build';
 import './styles.css';
 
-watchStaleBuild();
+const SharedBoard = lazy(() => import('./views/board-shared'));
+const shared = window.location.pathname === '/ui/board-share';
+if (!shared) watchStaleBuild();
 // A sign-in's callback lands on the root; it goes on, with its code, to the page it began on.
 const { pathname, search, hash } = window.location;
 const back = safely(() => sessionStorage.getItem('merv:return'));
@@ -21,7 +23,7 @@ else {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <BrowserRouter basename={base}>
-        <App />
+        <Suspense fallback={null}>{shared ? <SharedBoard /> : <App />}</Suspense>
       </BrowserRouter>
     </StrictMode>,
   );

@@ -39,6 +39,12 @@ export interface PlacedImage {
 }
 
 export interface Board {
+  share(caller: Caller, id: string, revoke?: boolean): Promise<{ token?: string }>;
+  sharedScene(
+    token: string,
+  ): Promise<{ title: string; revision: number; elements: BoardElement[] }>;
+  sharedHistory(token: string, after?: number): Promise<BoardHistory>;
+  sharedImage(token: string, fileId: string): Promise<{ mediaType: string; content: Buffer }>;
   list(caller: Caller): Promise<BoardSummary[]>;
   scene(caller: Caller, id: string, since?: number): Promise<BoardScene>;
   create(caller: Caller, title: string): Promise<BoardSummary>;
