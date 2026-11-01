@@ -9,6 +9,7 @@ const { CardPicker, asksToAdd } = await import('../packages/ui/web/views/board-a
 const { framing, inView, landing, overlaps } =
   await import('../packages/ui/web/views/board-place.js');
 const { statusLine } = await import('../packages/ui/web/views/board-talk.js');
+const { markOn } = await import('../packages/ui/web/views/board-pointing.js');
 
 const view = { x: 0, y: 0, width: 1000, height: 800 };
 const card = { width: 280, height: 110 };
@@ -94,6 +95,25 @@ test('a long column of what stands there is walked past, not landed on', () => {
 test('whether a place is in view', () => {
   assert.ok(inView({ x: 10, y: 10, width: 100, height: 100 }, view));
   assert.ok(!inView({ x: 950, y: 10, width: 100, height: 100 }, view));
+});
+
+test('a mark is the person’s fresh stroke or words on an agent’s shape, and where it stands', () => {
+  const agents = { id: 'a', type: 'rectangle', x: 0, y: 0, width: 100, height: 100 };
+  const theirs = { id: 'p', type: 'rectangle', x: 300, y: 0, width: 100, height: 100 };
+  const by = (el: object, more: object = {}) => ({ ...el, customData: { by: 'agent' }, ...more });
+  const ring = { id: 'r', type: 'freedraw', x: -10, y: -10, width: 120, height: 120, updated: 50 };
+  const word = { id: 'w', type: 'text', x: 60, y: 110, width: 40, height: 20, updated: 60 };
+  const old = { ...ring, id: 'o', updated: 5 };
+  const onTheirs = { ...ring, id: 't', x: 290 };
+  const own = by({ ...ring, id: 'n' });
+  assert.deepEqual(markOn([by(agents), theirs, ring, word, old, onTheirs, own] as never, 10), {
+    x: -10,
+    y: -10,
+    width: 120,
+    height: 140,
+  });
+  assert.equal(markOn([by(agents), theirs, old, onTheirs, own] as never, 10), undefined);
+  assert.equal(markOn([by(agents), { ...ring, isDeleted: true }] as never, 10), undefined);
 });
 
 test('the panel is asked for by ⌘K or Ctrl+K alone', () => {

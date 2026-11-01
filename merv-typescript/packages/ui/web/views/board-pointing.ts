@@ -109,6 +109,45 @@ export function pointingNote(input: {
   return `[board ${input.board}${said.length ? `: ${said.join('; ')}` : ''}]`;
 }
 
+/** Where these stand together. */
+const around = (shapes: readonly Shape[]) => {
+  const boxes = shapes.map(boxOf);
+  const [x, y] = [Math.min(...boxes.map((b) => b.x)), Math.min(...boxes.map((b) => b.y))];
+  return {
+    x,
+    y,
+    width: Math.max(...boxes.map((b) => b.x + b.width)) - x,
+    height: Math.max(...boxes.map((b) => b.y + b.height)) - y,
+  };
+};
+/**
+ * A mark the person just made on an agent's drawing: a stroke, line, arrow or words of theirs
+ * since `since` that touch something an agent drew; where it stands, or nothing.
+ */
+export function markOn(shapes: readonly Shape[], since: number) {
+  const live = shapes.filter((el) => !el.isDeleted);
+  const drawn = new Set(['freedraw', 'line', 'arrow', 'text']);
+  const agents = live.filter((el) => (el.customData as { by?: string })?.by === 'agent');
+  // On it, or beside it as a word is written beside a box.
+  const touches = (a: Shape, b: Shape, room = 40) => {
+    const [p, q] = [boxOf(a), boxOf(b)];
+    return (
+      p.x < q.x + q.width + room &&
+      q.x < p.x + p.width + room &&
+      p.y < q.y + q.height + room &&
+      q.y < p.y + p.height + room
+    );
+  };
+  const marks = live.filter(
+    (el) =>
+      drawn.has(el.type) &&
+      (el.updated ?? 0) > since &&
+      !(el.customData as { by?: string })?.by &&
+      agents.some((on) => touches(el, on)),
+  );
+  return marks.length ? around(marks) : undefined;
+}
+
 /** The passage selected in the outcome open beside the board, which goes along in the same note. */
 type Passage = { note(): string | undefined; said(): void };
 let passage: Passage | undefined;
@@ -140,6 +179,12 @@ export class BoardPointing {
   }
   landed(shapes: readonly { id: string; type: string }[]) {
     for (const { id, type } of shapes) if (type === 'freedraw') this.others.add(id);
+  }
+  /** Where what is selected stands, if anything is. */
+  selection() {
+    const { selectedElementIds } = this.api.getAppState();
+    const chosen = this.api.getSceneElements().filter((el) => selectedElementIds[el.id]);
+    return chosen.length ? around(chosen as readonly Shape[]) : undefined;
   }
   note = () => {
     const { selectedElementIds, zoom } = this.api.getAppState();

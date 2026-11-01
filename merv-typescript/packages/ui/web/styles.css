@@ -8591,8 +8591,9 @@ html:has(.board-page) body {
 .board-reveal.is-dark {
   filter: invert(93%) hue-rotate(180deg);
 }
-/* Keep or dismiss what an agent proposed, above it while it is selected. */
-.board-proposal {
+/* What a selection can do, above it while it stands: keep or dismiss an agent's proposal, or ask
+   Pi to finish the sketch or try it another way. */
+.board-selection {
   position: absolute;
   z-index: 3;
   transform: translate(-50%, -100%);
@@ -8604,19 +8605,22 @@ html:has(.board-page) body {
   border-radius: var(--radius-md);
   box-shadow: 0 10px 32px #00000016;
 }
-.board-proposal > button {
+.board-selection > button {
   display: grid;
   place-items: center;
-  width: 28px;
+  min-width: 28px;
   height: 28px;
-  padding: 0;
+  padding: 0 var(--space-2);
+  font-family: Excalifont, var(--font-body);
+  font-size: var(--text-sm);
+  white-space: nowrap;
   color: inherit;
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.board-proposal > button:hover {
+.board-selection > button:hover {
   background: var(--bg-soft);
 }
 /* An agent shows as a cursor on the board alone: Excalidraw would list it as a person too. */

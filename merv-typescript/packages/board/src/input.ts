@@ -169,6 +169,7 @@ export const opSchema = z.discriminatedUnion('op', [
     title,
     holds: z.array(shape).max(200).optional(),
     near: shape.optional(),
+    side: place.side,
   }),
   z.strictObject({
     op: z.literal('flow'),
@@ -197,6 +198,9 @@ export const opSchema = z.discriminatedUnion('op', [
     say,
     strokes: z.array(stroke).min(1).max(80),
     size: z.enum(['s', 'm', 'l', 'native']).optional(),
+    /** A stroke whose pen (colour, width, roughness) these strokes take, unless one sets its own:
+     *  how a continuation of a person's lines looks like theirs. */
+    like: shape.optional(),
     proposed,
     ...place,
   }),

@@ -1052,6 +1052,8 @@ export class Drawing {
             ? { ...op, at: [op.at[0] + minX, op.at[1] + minY] as [number, number] }
             : op;
         const at = this.place({ width: width * scale, height: height * scale }, placement);
+        // The pen of the stroke it is like, so a continuation of a person's lines looks like theirs.
+        const pen = op.like ? (this.group(op.like)[0] ?? this.find(op.like)) : undefined;
         const group = elementId();
         let first: El | undefined;
         for (const { stroke, lines } of read)
@@ -1065,9 +1067,14 @@ export class Drawing {
             if (filled && (drawn[0]![0] !== drawn.at(-1)![0] || drawn[0]![1] !== drawn.at(-1)![1]))
               drawn.push([...drawn[0]!]);
             const el = this.line(drawn, {
-              strokeColor: paint(INKS, stroke.color ?? 'black'),
+              strokeColor: stroke.color
+                ? paint(INKS, stroke.color)
+                : (pen?.strokeColor ?? '#1e1e1e'),
               backgroundColor: filled ? paint(PAINTS, stroke.fill!) : 'transparent',
-              strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
+              strokeWidth: stroke.width
+                ? { thin: 1, medium: 2, bold: 4 }[stroke.width]
+                : (pen?.strokeWidth ?? 2),
+              ...(pen && { roughness: pen.roughness ?? 0 }),
               groupIds: [group],
               frameId: at.frameId,
               customData: { sketch: group, ...(op.key && { key: op.key }) },

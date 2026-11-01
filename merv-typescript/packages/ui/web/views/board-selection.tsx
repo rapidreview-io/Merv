@@ -1,7 +1,9 @@
 /**
- * The person's answer to what an agent proposed: while a proposal is selected, a keep and a dismiss
- * above it. Keeping makes its shapes ordinary, and dismissing deletes them, each a change of theirs
- * like any other: saved, in history and undoable.
+ * What a selection on a board can do, above it while it stands. A proposal of an agent's takes a
+ * keep and a dismiss: keeping makes its shapes ordinary, and dismissing deletes them, each a change
+ * of theirs like any other: saved, in history and undoable. The person's own shapes take two asks
+ * of Pi, each a sentence sent as they would say it, with what is selected pointed at beside it
+ * (pi-transport): finish my sketch, and try it another way.
  */
 import { useEffect, useState } from 'react';
 import { CaptureUpdateAction, getCommonBounds, newElementWith } from '@excalidraw/excalidraw';
@@ -10,35 +12,67 @@ import type {
   ExcalidrawArrowElement,
   ExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
+import { readOnly } from '../api';
 import { Icon } from '../icons';
+import { useSay } from './pi';
 
 const isProposed = (el: ExcalidrawElement) => !!el.customData?.proposed;
+/** What the two asks say, as a person would; the note beside them says what is selected. */
+export const ASKS = { finish: 'Finish my sketch.', another: 'Try it another way.' } as const;
 
-export function BoardProposal({ api }: { api: ExcalidrawImperativeAPI }) {
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+type Stood = { left: number; top: number; proposal: boolean };
+
+export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
+  const [at, setAt] = useState<Stood | null>(null);
+  const say = useSay()?.say;
   useEffect(
     () =>
       api.onChange((elements, state) => {
         const chosen = elements.filter((el) => state.selectedElementIds[el.id] && !el.isDeleted);
+        const proposal = chosen.every(isProposed);
         if (
           !chosen.length ||
-          !chosen.every(isProposed) ||
           state.selectedElementsAreBeingDragged ||
           state.isResizing ||
-          state.isRotating
+          state.isRotating ||
+          state.editingTextElement ||
+          // A card opens what it holds; it is not a sketch of theirs.
+          (!proposal && chosen.some((el) => el.customData?.card || el.link))
         )
           return setAt(null);
         const [x1, y1, x2] = getCommonBounds(chosen);
         const { scrollX, scrollY, zoom, width } = state;
+        // Centred on the selection, and whole on the screen at a phone's width.
+        const half = proposal ? 36 : 116;
         const [left, top] = [
-          Math.round(Math.min(width - 40, Math.max(40, ((x1 + x2) / 2 + scrollX) * zoom.value))),
+          Math.round(
+            Math.min(width - half, Math.max(half, ((x1 + x2) / 2 + scrollX) * zoom.value)),
+          ),
           Math.round(Math.max(44, (y1 + scrollY) * zoom.value - 10)),
         ];
-        setAt((held) => (held?.left === left && held.top === top ? held : { left, top }));
+        setAt((held) =>
+          held?.left === left && held.top === top && held.proposal === proposal
+            ? held
+            : { left, top, proposal },
+        );
       }),
     [api],
   );
   if (!at) return null;
+  const { proposal, ...style } = at;
+  if (!proposal) {
+    if (!say || readOnly()) return null;
+    return (
+      <div className="board-selection" style={style}>
+        <button type="button" onClick={() => void say(ASKS.finish)}>
+          Finish my sketch
+        </button>
+        <button type="button" onClick={() => void say(ASKS.another)}>
+          Another way
+        </button>
+      </div>
+    );
+  }
   /** Makes this of the proposals selected, every part of each, as one step the person can undo. */
   const answer = (
     made: (el: ExcalidrawElement) => Partial<ExcalidrawElement>,
@@ -95,7 +129,7 @@ export function BoardProposal({ api }: { api: ExcalidrawImperativeAPI }) {
       false,
     );
   return (
-    <div className="board-proposal" style={at}>
+    <div className="board-selection" style={style}>
       <button type="button" title="Keep" aria-label="Keep" onClick={keep}>
         <Icon name="check" size={16} />
       </button>

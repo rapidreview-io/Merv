@@ -94,8 +94,116 @@ function drafted(asked: string, note: string): Step[] {
   );
   return [...calls, { say: 'It is written beside the board; change whatever you like.' }];
 }
+/** The shapes the note says are selected or circled, with where get says each stands. */
+function pointed(note: string, read: (tool: string) => unknown) {
+  const ids = /(?:selected|circled) ([\w,-]+)/.exec(note)?.[1]?.split(',') ?? [];
+  const got = read('board.read') as { shapes?: { id: string; at: number[]; size: number[] }[] };
+  const shapes = (got?.shapes ?? []).filter((shape) => ids.includes(shape.id));
+  const x = Math.min(...shapes.map((s) => s.at[0]!));
+  const y = Math.min(...shapes.map((s) => s.at[1]!));
+  const right = Math.max(...shapes.map((s) => s.at[0]! + s.size[0]!));
+  const bottom = Math.max(...shapes.map((s) => s.at[1]! + s.size[1]!));
+  return { ids, shapes, box: { x, y, width: right - x, height: bottom - y } };
+}
 function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[] {
   if (/^Draft /.test(asked)) return drafted(asked, note);
+  const board = /\[board ([\w-]+)/.exec(note)?.[1];
+  // The person's own lines carried on, as a proposal in their pen, joined to their last stroke.
+  if (board && /\b(finish|continue|complete)\b/i.test(asked)) {
+    const { ids, shapes, box } = pointed(note, read);
+    const w = Math.max(80, box.width || 0);
+    const h = Math.max(40, box.height || 0);
+    return [
+      act('board.read', 'get', { board }),
+      ...(shapes.length
+        ? [
+            act('board.write', 'draw', {
+              board,
+              ops: [
+                {
+                  op: 'sketch',
+                  proposed: true,
+                  like: ids[0],
+                  size: 'native',
+                  at: [box.x + box.width, box.y],
+                  strokes: [
+                    {
+                      path: `M0 ${h} C ${w / 3} ${h}, ${w / 3} 0, ${(2 * w) / 3} 0 S ${w} ${h / 2}, ${w * 1.2} 0`,
+                    },
+                  ],
+                  say: 'Carrying your line on the way it was going.',
+                },
+              ],
+            }),
+            { say: 'Keep it if that is where it was going.' },
+          ]
+        : [{ say: 'Select the lines to finish, and ask again.' }]),
+    ];
+  }
+  // A variant beside the original, in a frame of its own, so both stand on one screen.
+  if (board && /\b(another way|variant|alternative)\b/i.test(asked)) {
+    const { shapes, box } = pointed(note, read);
+    const rightmost = shapes.toSorted((a, b) => b.at[0]! + b.size[0]! - a.at[0]! - a.size[0]!)[0];
+    const side = Math.max(240, Math.round(box.width || 0));
+    return [
+      act('board.read', 'get', { board }),
+      ...(rightmost
+        ? [
+            act('board.write', 'draw', {
+              board,
+              ops: [
+                {
+                  op: 'frame',
+                  key: 'v',
+                  title: 'Another way: as a loop',
+                  near: rightmost.id,
+                  side: 'right',
+                  say: 'Same idea, as a loop instead.',
+                },
+              ],
+            }),
+            act('board.write', 'draw', {
+              board,
+              ops: [
+                { op: 'box', key: 'a', text: 'Draft', in: 'v', width: side / 2 },
+                {
+                  op: 'box',
+                  key: 'b',
+                  text: 'Check',
+                  in: 'v',
+                  width: side / 2,
+                  say: 'Then it checks itself.',
+                },
+                { op: 'arrow', from: 'a', to: 'b' },
+                { op: 'arrow', from: 'b', to: 'a', label: 'again' },
+              ],
+            }),
+            { say: 'Both are there now, side by side.' },
+          ]
+        : [{ say: 'Select what to try another way, and ask again.' }]),
+    ];
+  }
+  // A mark on its drawing is answered on the spot, beside what it marks.
+  if (board && /circled|selected/.test(note) && /\b(this|here|fix|change|wrong)\b/i.test(asked)) {
+    const { ids } = pointed(note, read);
+    return [
+      act('board.read', 'get', { board }),
+      act('board.write', 'draw', {
+        board,
+        ops: [
+          {
+            op: 'note',
+            text: 'Changed here',
+            color: 'blue',
+            near: ids[0],
+            side: 'below',
+            say: 'Right, this is the part to change.',
+          },
+        ],
+      }),
+      { say: 'I changed it where you marked.' },
+    ];
+  }
   const file = /^Create a task from outcome .*?(art_[\w-]+)/.exec(asked)?.[1];
   if (file)
     return [

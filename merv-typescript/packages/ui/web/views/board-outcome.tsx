@@ -17,7 +17,7 @@ import { Icon } from '../icons';
 import { pathOf, useRows } from '../navigation';
 import { useSession, writes } from '../session';
 import { useRoomy } from '../theme';
-import { useAgent } from './pi';
+import { useAgent, useSay } from './pi';
 import { pointPassage } from './board-pointing';
 import { SendControl, WorkLine, type Way } from './board-outcome-send';
 import type { HandReport } from './board-outcome-hand';
@@ -563,10 +563,18 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       if (file) await mark('copy', file);
       say('copied');
     });
-  /** What Pi is to be told once its conversation stands. */
-  const [asking, setAsking] = useState<{ words: string } | null>(null);
+  const spoken = useSay();
+  const asking = !!spoken?.asking;
   const askedDraft = useRef(false);
   const [refused, setRefused] = useState(false);
+  /** Pi is told, once its conversation stands; refused, the pane says so. */
+  const ask = (words: string) =>
+    void spoken?.say(words).then((said) => {
+      if (said) return;
+      askedDraft.current = false;
+      setRefused(true);
+      setProblem('Not sent: Pi is busy or unavailable. Try again then.');
+    });
   const fleet = () =>
     act(async () => {
       const frozen = await freeze();
@@ -574,34 +582,20 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       setRefused(false);
       // Noted first: the task may come at any moment after the ask, and it finds its send by this.
       await mark('fleet', frozen);
-      setAsking({
-        words: `Create a task from outcome ${id} on board ${board}: derive its checks from the document and name the frozen file ${frozen.artifactId} in its goal, to read first.`,
-      });
-      agent?.start();
+      ask(
+        `Create a task from outcome ${id} on board ${board}: derive its checks from the document and name the frozen file ${frozen.artifactId} in its goal, to read first.`,
+      );
     });
   const draft = (kind: string) => {
     askedDraft.current = true;
-    setAsking({ words: draftAsk(kind) });
-    agent?.start();
+    ask(draftAsk(kind));
   };
   const pi = agent?.pi;
-  const listed = !!pi?.listed;
-  useEffect(() => {
-    if (!asking || !pi || !listed) return;
-    setAsking(null);
-    void pi.send(asking.words).then((said) => {
-      if (said) return;
-      askedDraft.current = false;
-      setRefused(true);
-      setProblem('Not sent: Pi is busy or unavailable. Try again then.');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asking, listed]);
   // A sign of life: from the press that asks for a draft to the end of the turn that writes it.
   const busy = !!pi?.active;
   useEffect(() => {
     if (askedDraft.current && !busy && !asking && !sending) askedDraft.current = false;
-    const working = (askedDraft.current || !!asking) && (busy || !!asking);
+    const working = (askedDraft.current || asking) && (busy || asking);
     editor.current?.working(working ? 'Pi' : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, asking, lead]);
@@ -732,7 +726,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
               sent={sent}
               revision={record?.revision ?? 0}
               files={files}
-              thinking={busy || !!asking}
+              thinking={busy || asking}
               refused={refused}
               unsure={note === 'open'}
               copy={() => void copy()}

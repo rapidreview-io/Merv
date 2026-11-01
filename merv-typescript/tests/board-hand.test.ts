@@ -153,3 +153,37 @@ test('a shape is told by its words, its label, or the label beside it, with its 
     ['deleted box "Softmax"'],
   );
 });
+
+test('a mark on another’s shape says where it stands; a loose stroke is no mark', async () => {
+  const { handRead } = await import('../packages/board/src/hand.js');
+  const far = shape('far', {
+    type: 'freedraw',
+    x: 5000,
+    y: 5000,
+    points: [
+      [0, 0],
+      [20, 20],
+    ],
+  });
+  const over = shape('over', {
+    type: 'freedraw',
+    x: 490,
+    y: -10,
+    width: 120,
+    height: 120,
+    points: [
+      [0, 60],
+      [60, 0],
+      [120, 60],
+      [60, 120],
+      [0, 60],
+    ],
+  });
+  const word = shape('w', { type: 'text', text: 'no', x: 520, y: 110, width: 30, height: 20 });
+  const none = handRead([step(2, [far])], [b, far], 1);
+  assert.equal(none.mark, undefined);
+  assert.deepEqual(none.lines, ['a stroke near b (a sketch?)']);
+  const marked = handRead([step(2, [over, word])], [b, over, word], 1);
+  assert.deepEqual(marked.mark, { x: 490, y: -10, width: 120, height: 140 });
+  assert.deepEqual(marked.lines, ['wrote "no" near b', 'a stroke around b (circled?)']);
+});

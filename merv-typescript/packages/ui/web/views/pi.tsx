@@ -2,6 +2,7 @@ import {
   createContext,
   memo,
   useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -98,6 +99,33 @@ interface Agent {
 }
 const AgentContext = createContext<Agent | null>(null);
 export const useAgent = () => useContext(AgentContext);
+
+/**
+ * Saying a sentence to Pi from any page, as the person would: the conversation begins if it has
+ * not, and the words go once it is listed. `say` answers whether they reached Pi; `asking` while
+ * they are on their way. Nothing without an agent, as on a page without one.
+ */
+export function useSay() {
+  const agent = useAgent();
+  const [asking, setAsking] = useState<{ words: string; done(sent: boolean): void } | null>(null);
+  const pi = agent?.pi;
+  const listed = !!pi?.listed;
+  useEffect(() => {
+    if (!asking || !pi || !listed) return;
+    setAsking(null);
+    void pi.send(asking.words).then(asking.done);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asking, listed]);
+  const say = useCallback(
+    (words: string) =>
+      new Promise<boolean>((done) => {
+        setAsking({ words, done });
+        agent!.start();
+      }),
+    [agent],
+  );
+  return agent ? { say, asking: !!asking } : null;
+}
 
 /**
  * Holds the Agent's conversation above the routes, so it outlives its page. Nothing is read,
