@@ -113,6 +113,50 @@ test('a hold ends with its time, at the cap, when the page stops asking and when
   t.mock.timers.reset();
 });
 
+test('a page counts as watching for moments, and a hand with no save waits once', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const watch = new BoardWatch();
+  assert.equal(watch.watched('b'), false);
+  watch.asked('b');
+  assert.equal(watch.watched('b'), true);
+  t.mock.timers.tick(5_000);
+  assert.equal(watch.watched('b'), false);
+  // Nothing on its way: no wait.
+  await watch.landing('b', 2_500);
+  watch.hand('b', false);
+  let done = false;
+  void watch.landing('b', 2_500).then(() => (done = true));
+  t.mock.timers.tick(2_500);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(done, true);
+  // Its save lands first: at once, and another stroke begun meanwhile is no save.
+  watch.hand('b', false);
+  done = false;
+  void watch.landing('b', 2_500).then(() => (done = true));
+  watch.hand('b', false);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(done, false);
+  watch.hand('b');
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(done, true);
+  t.mock.timers.reset();
+});
+
+test('an agent that read what a person did is not stopped by it', () => {
+  const watch = new BoardWatch();
+  assert.equal(watch.ahead('b', 'pi'), undefined);
+  watch.hand('b', false);
+  watch.hand('b');
+  watch.read('b', 'pi');
+  assert.equal(watch.ahead('b', 'pi'), undefined);
+  // What comes after the read still does, and so does what was not saved yet when it read.
+  watch.hand('b');
+  assert.deepEqual(watch.ahead('b', 'pi'), { how: 'drew' });
+  watch.hand('b', false);
+  watch.read('b', 'pi');
+  assert.deepEqual(watch.ahead('b', 'pi'), { how: 'drew' });
+});
+
 test('a person stepping in ends a hold and says how, once to each agent', async () => {
   const watch = new BoardWatch();
   watch.asked('b');
@@ -156,6 +200,22 @@ test('a draw is held only while a person watches, and says when they step in', a
     projectId: owner.projectId,
     conversation: { id: 'pi', epoch: 1, commandId: 'turn', runtimeId: 'runtime' },
   };
+  const circle = shape('ring', {
+    type: 'freedraw',
+    x: 3000,
+    y: 3000,
+    version: 2,
+    seed: 1,
+    versionNonce: 3,
+    groupIds: [],
+    customData: {},
+    width: 5,
+    height: 5,
+    points: [
+      [0, 0],
+      [5, 5],
+    ],
+  });
   const draw = async (at: number) => {
     const began = Date.now();
     const drawn = (await tools.call('board.write:draw', pi, {
@@ -187,24 +247,64 @@ test('a draw is held only while a person watches, and says when they step in', a
   assert.ok((await draw(600)).notRun);
   assert.equal((await board.scene(owner, made.id)).board.revision, revisionThen);
   await tools.call('board.read:get', pi, { board: made.id });
-  // Open and quiet: as long as the pen, and what it says goes out before the pen is waited for.
+  // Open: its lines ride on its shapes for the page's pen to reach, and nothing is said for it here.
   await tools.call('board.scene', owner, { id: made.id });
-  let saidAfter = -1;
-  const speaking = Date.now();
-  const spoken = (await agentSaying.run(
-    () => (saidAfter = Date.now() - speaking),
+  const heardLines: string[] = [];
+  const hearing = (ops: object[]) =>
+    agentSaying.run(
+      (line) => heardLines.push(line),
+      () => tools.call('board.write:draw', pi, { board: made.id, ops }),
+    ) as Promise<{ steppedIn?: unknown; created: Record<string, string> }>;
+  const spoken = await hearing([
+    { op: 'box', key: 'one', say: 'The river first.', text: 'River', at: [900, 0] },
+    { op: 'box', key: 'two', text: 'Quiet', at: [900, 200] },
+    { op: 'arrow', say: 'Then where it goes.', from: 'one', to: 'two' },
+  ]);
+  assert.equal(spoken.steppedIn, undefined);
+  assert.deepEqual(heardLines, []);
+  const lines = async () =>
+    Object.fromEntries(
+      (await board.scene(owner, made.id)).elements.flatMap((el) => {
+        const say = (el.customData as { say?: string } | undefined)?.say;
+        return say ? [[el.type, say]] : [];
+      }),
+    );
+  assert.deepEqual(await lines(), {
+    rectangle: 'The river first.',
+    arrow: 'Then where it goes.',
+  });
+  // No page on it: the first line goes out as the call lands, for a voice with the board not open.
+  const unwatched = await board.create(owner, 'Unwatched');
+  await agentSaying.run(
+    (line) => heardLines.push(line),
     () =>
       tools.call('board.write:draw', pi, {
-        board: made.id,
-        ops: [{ op: 'box', text: 'Said', at: [900, 0], width: 200, height: 80 }],
-        saying: 'The river first.',
+        board: unwatched.id,
+        ops: [
+          { op: 'text', text: 'a', say: 'One.' },
+          { op: 'text', text: 'b', say: 'Two.' },
+        ],
       }),
-  )) as { steppedIn?: unknown };
-  assert.ok(saidAfter >= 0 && saidAfter < Date.now() - speaking - 300, `said at ${saidAfter}`);
-  assert.equal(spoken.steppedIn, undefined);
-  await assert.rejects(
-    tools.call('board.write:draw', pi, { board: made.id, ops: [], saying: 'x'.repeat(141) }),
   );
+  assert.deepEqual(heardLines, ['One.']);
+  await assert.rejects(
+    tools.call('board.write:draw', pi, {
+      board: made.id,
+      ops: [{ op: 'text', text: 'x', say: 'x'.repeat(101) }],
+    }),
+  );
+  await assert.rejects(
+    tools.call('board.write:draw', pi, { board: made.id, ops: [], saying: 'gone' }),
+  );
+  // Changed again, a shape does not say its line again.
+  await hearing([{ op: 'move', id: spoken.created.one!, at: [1300, 0] }]);
+  assert.deepEqual(await lines(), {});
+  // Two lines on one shape are both said.
+  await hearing([
+    { op: 'box', key: 'three', say: 'First.', text: 'Both', at: [1600, 0] },
+    { op: 'move', say: 'Second.', id: 'three', at: [1600, 40] },
+  ]);
+  assert.deepEqual(await lines(), { rectangle: 'First. Second.' });
   // A message is told what they did since this conversation last saw the board, once.
   await tools.call('board.save', owner, {
     id: made.id,
@@ -239,9 +339,21 @@ test('a draw is held only while a person watches, and says when they step in', a
   const during = draw(1800);
   while ((await board.scene(owner, made.id)).board.revision === before);
   await tools.call('board.hand', owner, { id: made.id });
+  // The hold ends as their hand comes down, and its answer waits only for what the hand did.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await tools.call('board.save', owner, { id: made.id, elements: [circle] });
   const heard = await during;
   assert.equal((heard.steppedIn as { how?: string }).how, 'drew');
-  assert.ok(heard.ms < 400, `told after ${heard.ms} ms`);
+  assert.match(
+    (heard.steppedIn as { hand: string[] }).hand[0]!,
+    /^a stroke near .*\(a sketch\?\)$/,
+  );
+  assert.ok(heard.ms < 600, `told after ${heard.ms} ms`);
   assert.equal(heard.notRun, undefined);
-  assert.equal((await board.scene(owner, made.id)).board.revision, before + 1);
+  assert.equal((await board.scene(owner, made.id)).board.revision, before + 2);
+  // A mark it has read refuses nothing: a next turn's first draw runs.
+  await tools.call('board.read:get', pi, { board: made.id });
+  await tools.call('board.save', owner, { id: made.id, elements: [{ ...circle, version: 3 }] });
+  await tools.call('board.read:get', pi, { board: made.id });
+  assert.equal((await draw(2100)).notRun, undefined);
 });

@@ -113,12 +113,21 @@ function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[]
     const drawn = read('board.write') as { board?: { id: string } } | undefined;
     const on = /board_\w+/.exec(asked)?.[0] ?? drawn?.board?.id;
     const steps = ['Input', 'Hidden', 'Output', 'Loss', 'Update', 'Repeat', 'Check', 'Done'];
+    const box = (text: string, i: number) => ({
+      op: 'box',
+      text,
+      at: [(i % 4) * 240, Math.floor(i / 4) * 160],
+      width: 200,
+    });
+    // Two calls of four, each with a line at its first box and at its third.
     return [
-      ...steps.map((text, i) =>
+      ...[0, 4].map((from) =>
         act('board.write', 'draw', {
           ...(on ? { board: on } : { title: 'In steps' }),
-          saying: `${text} comes next, and everything after it leans on this.`,
-          ops: [{ op: 'box', text, at: [(i % 4) * 240, Math.floor(i / 4) * 160], width: 200 }],
+          ops: steps.slice(from, from + 4).map((text, i) => ({
+            ...box(text, from + i),
+            ...(i % 2 === 0 && { say: `${text} comes next, and the rest leans on it.` }),
+          })),
         }),
       ),
       { say: 'That is all of it.' },

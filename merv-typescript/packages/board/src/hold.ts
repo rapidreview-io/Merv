@@ -30,6 +30,8 @@ interface Desk {
   told: Map<string, number>;
   /** Who was told of a person's hand, and until when they must read before they draw. */
   barred: Map<string, number>;
+  /** A hand has come down and what it did has not been saved yet. */
+  unsaved: boolean;
   wake: Set<() => void>;
 }
 
@@ -55,6 +57,7 @@ export class BoardWatch {
         seq: 0,
         told: new Map(),
         barred: new Map(),
+        unsaved: false,
         wake: new Set(),
       };
       this.desks.set(board, desk);
@@ -69,10 +72,11 @@ export class BoardWatch {
   asked(board: string): void {
     this.desk(board).polled = Date.now();
   }
-  /** A person drew or changed something, or (with none of it saved yet) has begun to. */
-  hand(board: string): void {
+  /** A person drew or changed something: `saved` when it is stored, else they have only begun to. */
+  hand(board: string, saved = true): void {
     const desk = this.desk(board);
     desk.seq++;
+    desk.unsaved = !saved;
     for (const wake of desk.wake) wake();
   }
   /**
@@ -84,7 +88,7 @@ export class BoardWatch {
     const desk = this.desk(board);
     const told = desk.told.get(agent) ?? desk.seq;
     const said = personInterrupts.getStore();
-    const watched = () => !this.closed && Date.now() - desk.polled < WATCHED_MS;
+    const watched = () => this.watched(board);
     const stepped = () => desk.seq > told || !!said?.aborted;
     if (watched() && ms) {
       const now = Date.now();
@@ -128,9 +132,35 @@ export class BoardWatch {
     if (stepped) return stepped;
     return (desk.barred.get(agent) ?? 0) > Date.now() ? { how: 'drew' } : undefined;
   }
-  /** `agent` read the board, as it was told to. */
+  /** Whether a page is watching this board now, whose pen says what an agent says with its ink. */
+  watched(board: string): boolean {
+    return !this.closed && Date.now() - this.desk(board).polled < WATCHED_MS;
+  }
+  /**
+   * Waits up to `ms` for what a hand that has just come down did to be saved. A hand comes down
+   * once, and this waits for it once: nothing waits where nothing is on its way.
+   */
+  async landing(board: string, ms: number): Promise<void> {
+    const desk = this.desk(board);
+    if (!desk.unsaved || this.closed) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        desk.wake.delete(saved);
+        resolve();
+      };
+      // Another stroke begun meanwhile is still no save.
+      const saved = () => (!desk.unsaved || this.closed) && done();
+      const timer = setTimeout(done, ms);
+      desk.wake.add(saved);
+    });
+    desk.unsaved = false;
+  }
+  /** `agent` read the board, as it was told to: all a person has saved is what it now knows. */
   read(board: string, agent: string): void {
-    this.desks.get(board)?.barred.delete(agent);
+    const desk = this.desks.get(board);
+    desk?.barred.delete(agent);
+    if (desk?.told.has(agent) && !desk.unsaved) desk.told.set(agent, desk.seq);
   }
   /** The boards `reader` knows, each with the revision it has seen of it. */
   seen(reader: string): [string, number][] {

@@ -5,6 +5,7 @@
  * them, and a circle is a guess, which the guide tells the agent.
  */
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import { boxOf, inStroke, unturned } from '@merv/board/models';
 
 type Shape = {
   id: string;
@@ -31,18 +32,6 @@ const NEAR_PX = 120;
 const MOST = 12;
 const NAMEABLE = /^[\w-]{1,40}$/;
 
-const boxOf = (el: Shape) => {
-  if (!el.points?.length) return { x: el.x, y: el.y, width: el.width, height: el.height };
-  const [xs, ys] = [el.points.map((p) => el.x + p[0]), el.points.map((p) => el.y + p[1])];
-  const [x, y] = [Math.min(...xs), Math.min(...ys)];
-  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
-};
-/** Where a spot on the board falls in a shape's own frame, the shape turned back about its middle. */
-const unturned = (spot: Spot, box: ReturnType<typeof boxOf>, angle = 0): Spot => {
-  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
-  const [dx, dy, cos, sin] = [spot.x - cx, spot.y - cy, Math.cos(angle), Math.sin(angle)];
-  return { x: cx + dx * cos + dy * sin, y: cy - dx * sin + dy * cos };
-};
 /** A freehand stroke that comes back near where it began, around something of a size. */
 const closed = ({ type, points }: Shape) => {
   if (type !== 'freedraw' || !points || points.length < 8) return false;
@@ -51,20 +40,6 @@ const closed = ({ type, points }: Shape) => {
   const [first, last] = [points[0]!, points.at(-1)!];
   return size >= 30 && Math.hypot(last[0] - first[0], last[1] - first[1]) <= size * 0.3;
 };
-/** Whether a spot on the board is inside a stroke's outline. */
-const within = (at: Spot, stroke: Shape) => {
-  const { x, y, points } = stroke;
-  const spot = unturned(at, boxOf(stroke), stroke.angle);
-  let inside = false;
-  for (const [i, a] of points!.entries()) {
-    const b = points!.at(i - 1)!;
-    const [ax, ay, bx, by] = [x + a[0], y + a[1], x + b[0], y + b[1]];
-    if (ay > spot.y !== by > spot.y && spot.x < ax + ((spot.y - ay) / (by - ay)) * (bx - ax))
-      inside = !inside;
-  }
-  return inside;
-};
-
 /** The note for this moment of a board: `[board b: selected …; pointer at (x,y) near …; circled …]`. */
 export function pointingNote(input: {
   board: string;
@@ -125,7 +100,7 @@ export function pointingNote(input: {
   const circled = others.filter((el) =>
     circles.some((circle) => {
       const box = boxOf(el);
-      return within({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, circle);
+      return inStroke({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, circle);
     }),
   );
   const inside = list(circled);

@@ -1,13 +1,19 @@
+import { boxOf, inStroke } from './models.js';
 import type { BoardChange, BoardElement } from './types.js';
 
 /** The most lines and characters a person's actions come to, the newest kept. */
 const [MOST_LINES, MOST_CHARS] = [12, 600];
 /** How far a shape must go, in board units, to have moved. */
 const MOVED = 8;
+/** How near a shape without words of its own a label must be to name it. */
+const NAMES = 160;
 
 /** What a shape's customData says of it. */
 const data = (el: BoardElement) => (el.customData ?? {}) as Record<string, unknown>;
-const middle = (el: BoardElement) => ({ x: el.x + el.width / 2, y: el.y + el.height / 2 });
+const middle = (el: BoardElement) => {
+  const { x, y, width, height } = boxOf(el);
+  return { x: x + width / 2, y: y + height / 2 };
+};
 const stroke = (el: BoardElement) =>
   (el.type === 'freedraw' || el.type === 'line') && !data(el).sketch;
 const text = (el?: BoardElement) => (typeof el?.text === 'string' ? el.text.trim() : '');
@@ -33,15 +39,43 @@ const closed = (el: BoardElement) => {
   );
 };
 
+/**
+ * A shape as an agent is told of it, in words so it need not stop to read: its id, for what it does
+ * next, with what it says, or what its label says, or else the label it stands by.
+ */
+function called(el: BoardElement, live: BoardElement[], beside = live): string {
+  const group = (el.groupIds as string[] | undefined)?.at(-1);
+  const mate = group && live.find((o) => text(o) && (o.groupIds as string[])?.includes(group));
+  const own =
+    text(el) ||
+    text(live.find(({ containerId }) => containerId === el.id)) ||
+    text(mate || undefined);
+  if (own) return `${named(el)} ${quoted(own)}`;
+  const { x, y } = middle(el);
+  const label = nearest(
+    beside.filter((o) => text(o)),
+    x,
+    y,
+  );
+  return label && Math.hypot(middle(label).x - x, middle(label).y - y) < NAMES
+    ? `${named(el)} by ${quoted(text(label))}`
+    : named(el);
+}
+
 /** One line for a run of strokes, by what they lie on: only ever a guess, so it asks. */
 function strokes(drawn: BoardElement[], live: BoardElement[]): string[] {
   const others = live.filter((el) => !stroke(el) && !el.containerId);
-  const within = (el: BoardElement) =>
-    others.filter((other) => {
-      const { x, y } = middle(other);
-      return x > el.x && x < el.x + el.width && y > el.y && y < el.y + el.height;
+  const within = (el: BoardElement) => {
+    const box = boxOf(el);
+    return others.filter((other) => {
+      const at = middle(other);
+      return closed(el)
+        ? inStroke(at, el)
+        : at.x > box.x && at.x < box.x + box.width && at.y > box.y && at.y < box.y + box.height;
     });
-  const ids = (shapes: BoardElement[]) => [...new Set(shapes.map(named))].slice(0, 4).join(',');
+  };
+  const ids = (shapes: BoardElement[]) =>
+    [...new Set(shapes.map((el) => called(el, live)))].slice(0, 4).join(', ');
   const count = (n: number) => (n === 1 ? 'a stroke' : `${n} strokes`);
   const lines: string[] = [];
   const crossing: BoardElement[] = [];
@@ -57,7 +91,7 @@ function strokes(drawn: BoardElement[], live: BoardElement[]): string[] {
   if (loose.length) {
     const { x, y } = middle(loose.at(-1)!);
     const near = nearest(others, x, y);
-    lines.push(`${count(loose.length)}${near ? ` near ${named(near)}` : ''} (a sketch?)`);
+    lines.push(`${count(loose.length)}${near ? ` near ${called(near, live)}` : ''} (a sketch?)`);
   }
   return lines;
 }
@@ -91,23 +125,30 @@ export function handLog(changes: BoardChange[], live: BoardElement[], after: num
       }
     }
   const others = live.filter((el) => !touched.has(el.id));
+  // A shape gone may have taken its label with it: how they both stood still names it.
+  const every = [...live, ...stood.values()];
   const lines = new Map<string, string>();
   const drawn: BoardElement[] = [];
   for (const [id, now] of touched) {
     const was = stood.get(id);
     const name = named(now);
     if (now.isDeleted) {
-      if (was && !was.isDeleted) lines.set(`gone ${name}`, `deleted ${name}`);
+      if (was && !was.isDeleted) lines.set(`gone ${name}`, `deleted ${called(was, every, others)}`);
       continue;
     }
     if (!was || was.isDeleted) {
       if (stroke(now)) drawn.push(now);
       else if (now.type === 'arrow') {
         const [from, to] = [bound(now.startBinding), bound(now.endBinding)];
-        lines.set(`new ${id}`, `arrow ${from ?? id} → ${to ?? 'nowhere'}`);
+        const end = (at?: string) => {
+          const shape = at ? live.find((el) => el.id === at) : undefined;
+          return shape ? called(shape, every, others) : at;
+        };
+        lines.set(`new ${id}`, `arrow ${end(from) ?? id} → ${end(to) ?? 'nowhere'}`);
       } else if (now.type === 'text' && !now.containerId) {
         const near = nearest(others, middle(now).x, middle(now).y);
-        lines.set(`new ${id}`, `wrote ${quoted(text(now))}${near ? ` near ${named(near)}` : ''}`);
+        const by = near ? ` near ${called(near, every, others)}` : '';
+        lines.set(`new ${id}`, `wrote ${quoted(text(now))}${by}`);
       } else if (now.type === 'text') {
         lines.set(`new ${name}`, `labelled ${name} ${quoted(text(now))}`);
       } else if (!lines.has(`new ${name}`)) lines.set(`new ${name}`, `added ${now.type} ${name}`);
@@ -122,7 +163,8 @@ export function handLog(changes: BoardChange[], live: BoardElement[], after: num
       !(now.type === 'arrow' && (bound(now.startBinding) || bound(now.endBinding)))
     ) {
       const near = nearest(others, middle(now).x, middle(now).y);
-      lines.set(`moved ${name}`, `moved ${name}${near ? ` beside ${named(near)}` : ''}`);
+      const by = near ? ` beside ${called(near, every, others)}` : '';
+      lines.set(`moved ${name}`, `moved ${called(now, every, others)}${by}`);
     }
   }
   const said = [...lines.values(), ...(drawn.length ? strokes(drawn, others) : [])];

@@ -277,6 +277,7 @@ export function BoardReplay({
             redraw((count) => count + 1);
           },
           ended: () => latest.current.leave(true),
+          say: (line) => say(line),
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {

@@ -357,7 +357,11 @@ export class BoardService implements Board {
     const kept = [...latest.values()].filter((shape) => newer(shape, stored.get(shape.id)));
     // A page's save is a person's hand, whichever last drew the shape it holds.
     if (kind === 'save')
-      for (const { customData } of kept) delete (customData as { changedBy?: string })?.changedBy;
+      for (const { customData } of kept) {
+        delete (customData as { changedBy?: string })?.changedBy;
+        // And it says nothing: a line copied or moved with its shape is no agent speaking.
+        delete (customData as { say?: string })?.say;
+      }
     if (!kept.length) return { board, accepted: 0 };
     // A shape new to the board, or brought back from deletion, counts against the cap.
     const added = kept.filter(

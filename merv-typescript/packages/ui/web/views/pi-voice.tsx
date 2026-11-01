@@ -146,11 +146,14 @@ export function useVoice(pi: Conversation | null) {
     held.line = undefined;
     held.last = Date.now();
   };
+  const speak = (line: string) => {
+    if (!live.current) return;
+    live.current.line = line;
+    utter();
+  };
   const saying = pi?.snapshot?.stage.saying;
   useEffect(() => {
-    if (!live.current || !saying) return;
-    live.current.line = saying;
-    utter();
+    if (saying) speak(saying);
   }, [saying]);
 
   /** A person stepped in some way the voice could not hear: it stops, and what waits is dropped. */
@@ -396,6 +399,7 @@ export function useVoice(pi: Conversation | null) {
     start: () => void start(),
     stop,
     hush,
+    speak,
     steered,
     mute: () => {
       const held = live.current;

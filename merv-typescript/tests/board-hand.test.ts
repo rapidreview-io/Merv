@@ -95,3 +95,61 @@ test('it stays short, the newest kept, and says where the rest is', () => {
   assert.equal(log.at(-1), 'wrote "word 29"');
   assert.ok(log.join('').length < 700);
 });
+
+test('a stroke lies where its points go, not to the right of where it starts', () => {
+  // Begun at its rightmost point and drawn round to the left: over `left`, nowhere near `right`.
+  const left = shape('left', { x: 0, y: 0 });
+  const right = shape('right', { x: 300, y: 0 });
+  const ring = shape('ring', {
+    type: 'freedraw',
+    x: 200,
+    y: 50,
+    width: 300,
+    height: 200,
+    points: [
+      [0, 0],
+      [-100, -100],
+      [-250, -100],
+      [-300, 0],
+      [-250, 100],
+      [-100, 100],
+      [-5, 5],
+    ],
+  });
+  assert.deepEqual(handLog([step(2, [ring])], [left, right, ring], 1), [
+    'a stroke around left (circled?)',
+  ]);
+});
+
+test('a shape is told by its words, its label, or the label beside it, with its id', () => {
+  const box = shape('box', { boundElements: [{ type: 'text', id: 'label' }] });
+  const label = shape('label', { type: 'text', text: 'Softmax', containerId: 'box' });
+  const sketch = shape('curve', { type: 'line', x: 1000, customData: { sketch: 'g' } });
+  const beside = shape('name', { type: 'text', text: 'Loss', x: 1000, y: 110, height: 20 });
+  const ring = (id: string, x: number) =>
+    shape(id, {
+      type: 'freedraw',
+      x,
+      y: -50,
+      width: 200,
+      height: 200,
+      points: [
+        [0, 0],
+        [200, 0],
+        [200, 200],
+        [0, 200],
+        [5, 5],
+      ],
+    });
+  const live = [box, label, sketch, beside];
+  assert.deepEqual(handLog([step(2, [ring('r', -50)])], live, 1), [
+    'a stroke around box "Softmax" (circled?)',
+  ]);
+  assert.deepEqual(handLog([step(2, [ring('r', 950)])], live, 1), [
+    'a stroke around g by "Loss", name "Loss" (circled?)',
+  ]);
+  assert.deepEqual(
+    handLog([step(1, [box, label], 'before'), step(2, [{ ...box, isDeleted: true }])], [], 1),
+    ['deleted box "Softmax"'],
+  );
+});
