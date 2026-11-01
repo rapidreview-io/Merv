@@ -3,6 +3,11 @@ import type { Data } from '@merv/contracts/data';
 /** Which provider serves a model: a Claude model is Anthropic's, every other one OpenAI's. */
 export const piProvider = (model: string): 'openai' | 'anthropic' =>
   model.startsWith('claude-') ? 'anthropic' : 'openai';
+/** A catalog model as its provider takes it: Sol Ultrafast is Sol at OpenAI's ultrafast tier. */
+export const piUpstream = (model: string) =>
+  model.endsWith('-ultrafast')
+    ? { model: model.slice(0, -'-ultrafast'.length), service_tier: 'ultrafast' }
+    : { model };
 export interface PiModelConfig {
   id: string;
   label: string;

@@ -4,7 +4,7 @@ import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig, ModelTokens } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
-import { piProvider } from './models.js';
+import { piProvider, piUpstream } from './models.js';
 import {
   piAnthropicSchema,
   piRelayGrantSchema,
@@ -32,6 +32,7 @@ type Price = readonly [input: number, cached: number, output: number];
  *  of input where the provider publishes no other. */
 const PRICES: Record<string, Price> = {
   'gpt-6.1-sol': [2, 0.2, 10],
+  'gpt-6.1-sol-ultrafast': [12, 1.2, 60],
   'gpt-6-sol': [2, 0.2, 10],
   'gpt-6-luna': [0.1, 0.01, 0.5],
   'gpt-6.1-terra': [1, 0.05, 5],
@@ -174,9 +175,11 @@ export function piModelRelay({
       // replay only where the model reasons.
       const effort = efforts.get(grant.model)! as 'none' | 'low' | 'medium';
       const { reasoning: _reasoning, include: _include, ...rest } = parsed.data;
+      const upstream = piUpstream(grant.model);
       return {
         ...rest,
-        model: modelIdPrefix + grant.model,
+        ...upstream,
+        model: modelIdPrefix + upstream.model,
         reasoning: { effort },
         ...(effort !== 'none' && { include: ['reasoning.encrypted_content'] }),
       };
@@ -285,8 +288,10 @@ export function piAsk(providers: Providers, ask: PiAsk, timeoutMs: number) {
     };
     return { body, send: () => claudeTexts(key, body, timeoutMs) };
   }
+  const upstream = piUpstream(ask.model);
   const body = {
-    model: (providers.modelIdPrefix ?? '') + ask.model,
+    ...upstream,
+    model: (providers.modelIdPrefix ?? '') + upstream.model,
     store: false,
     max_output_tokens: ask.maxTokens,
     reasoning: { effort: ask.effort },
