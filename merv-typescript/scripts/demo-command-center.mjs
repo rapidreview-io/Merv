@@ -26,7 +26,10 @@ const loss = Array.from({ length: steps }, (_, step) => {
   return `${step * 100},${value.toFixed(4)}`;
 });
 writeFileSync(join(workspace, 'loss.csv'), `step,loss\n${loss.join('\n')}\n`);
-writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'loss-glance', type: 'module', private: true }, null, 2)}\n`);
+writeFileSync(
+  join(workspace, 'package.json'),
+  `${JSON.stringify({ name: 'loss-glance', type: 'module', private: true }, null, 2)}\n`,
+);
 const git = (...args) => spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
 git('init', '-q');
 git('add', '.');
@@ -62,11 +65,25 @@ lines.on('line', (line) => {
   const ready = JSON.parse(held.slice(start + 1));
   const operator = ready.tokens.operator;
   report(operator, board);
-  writeFileSync(join(workspace, '..', `board-demo-${port}.json`), JSON.stringify({ url, operator, board, workspace }));
+  writeFileSync(
+    join(workspace, '..', `board-demo-${port}.json`),
+    JSON.stringify({ url, operator, board, workspace }),
+  );
   if (process.argv.includes('--no-connector')) return;
   connector = spawn(
     'node',
-    [join(root, '../clients/board-connect/connect.mjs'), '--server', url, '--key', operator, '--workspace', workspace, '--name', 'Mac', '--trust-checks'],
+    [
+      join(root, '../clients/board-connect/connect.mjs'),
+      '--server',
+      url,
+      '--key',
+      operator,
+      '--workspace',
+      workspace,
+      '--name',
+      'Mac',
+      '--trust-checks',
+    ],
     { stdio: 'inherit' },
   );
 });

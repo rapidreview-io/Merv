@@ -48,7 +48,11 @@ async function claudeEnv() {
 }
 
 type Task = { title: string; goal?: string; checks: string[] };
-const SAYS = ['First the piece everything leans on.', 'Then the next thing it lets you see.', 'And one more.'];
+const SAYS = [
+  'First the piece everything leans on.',
+  'Then the next thing it lets you see.',
+  'And one more.',
+];
 
 export async function seedCommand(
   app: Awaited<ReturnType<typeof createApp>>,
@@ -79,13 +83,38 @@ export async function seedCommand(
         at: [0, 0],
         strokes: [
           { path: 'M0 0 L0 220 L380 220', width: 'medium', color: 'black' },
-          { path: 'M6 20 C 50 150, 110 190, 180 198 S 320 205, 372 204', width: 'bold', color: 'blue' },
-          { path: 'M196 176 C 180 196, 180 216, 200 226 C 240 240, 368 232, 378 208 C 384 188, 330 178, 196 176 Z', width: 'thin', color: 'red' },
+          {
+            path: 'M6 20 C 50 150, 110 190, 180 198 S 320 205, 372 204',
+            width: 'bold',
+            color: 'blue',
+          },
+          {
+            path: 'M196 176 C 180 196, 180 216, 200 226 C 240 240, 368 232, 378 208 C 384 188, 330 178, 196 176 Z',
+            width: 'thin',
+            color: 'red',
+          },
         ],
       },
-      { op: 'text', text: 'it stopped here. tell me the step!', size: 's', color: 'red', at: [210, 140] },
-      { op: 'note', key: 'a', text: 'loss.csv in, one line of sparkline out, right in the terminal', at: [560, -40] },
-      { op: 'note', key: 'b', text: 'Say the step where it plateaus, so I stop the run sooner', color: 'blue', at: [560, 110] },
+      {
+        op: 'text',
+        text: 'it stopped here. tell me the step!',
+        size: 's',
+        color: 'red',
+        at: [210, 140],
+      },
+      {
+        op: 'note',
+        key: 'a',
+        text: 'loss.csv in, one line of sparkline out, right in the terminal',
+        at: [560, -40],
+      },
+      {
+        op: 'note',
+        key: 'b',
+        text: 'Say the step where it plateaus, so I stop the run sooner',
+        color: 'blue',
+        at: [560, 110],
+      },
     ],
   });
   console.log(JSON.stringify({ commandCenterBoard: seeded.board.id }));
@@ -100,7 +129,9 @@ export async function seedCommand(
     const look = await tool<{ image?: { data: string } }>('board.read:look', { board }).catch(
       () => ({ image: undefined }),
     );
-    const words = said.shapes.flatMap((shape) => (shape.text ? [`- ${shape.text}`] : [])).join('\n');
+    const words = said.shapes
+      .flatMap((shape) => (shape.text ? [`- ${shape.text}`] : []))
+      .join('\n');
     const scratch = mkdtempSync(join(tmpdir(), 'board-distil-'));
     let picture = '';
     if (look.image) {

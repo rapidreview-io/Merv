@@ -15,10 +15,18 @@ import { chromium } from 'playwright-core';
 const out = process.argv[2];
 mkdirSync(out, { recursive: true });
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const demo = JSON.parse(readFileSync(join(process.env.TMPDIR ?? tmpdir(), `board-demo-${process.env.PORT ?? 3210}.json`), 'utf8'));
+const demo = JSON.parse(
+  readFileSync(
+    join(process.env.TMPDIR ?? tmpdir(), `board-demo-${process.env.PORT ?? 3210}.json`),
+    'utf8',
+  ),
+);
 const cache = join(homedir(), 'Library/Caches/ms-playwright/chromium-1200');
 const executablePath = [
-  join(cache, 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+  join(
+    cache,
+    'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  ),
   join(cache, 'chrome-mac/Chromium.app/Contents/MacOS/Chromium'),
 ].find((path) => {
   try {
@@ -42,7 +50,8 @@ const until = async (test, ms, what) => {
   for (;;) {
     const now = await state();
     if (test(now)) return now;
-    if (Date.now() > end) throw new Error(`timed out: ${what}: ${JSON.stringify(now).slice(0, 600)}`);
+    if (Date.now() > end)
+      throw new Error(`timed out: ${what}: ${JSON.stringify(now).slice(0, 600)}`);
     await new Promise((done) => setTimeout(done, 1500));
   }
 };
@@ -63,17 +72,30 @@ async function person({ width, height, video, phone }) {
   const page = await context.newPage();
   page.on('pageerror', (error) => say('pageerror', error.message));
   await page.goto(`${demo.url}/ui/boards`, { waitUntil: 'domcontentloaded' });
-  await page.getByLabel(/bearer credential/i).first().fill(demo.operator);
+  await page
+    .getByLabel(/bearer credential/i)
+    .first()
+    .fill(demo.operator);
   await page.getByRole('button', { name: /^continue$/i }).click();
-  await page.getByRole('button', { name: 'Skip' }).click({ timeout: 8000 }).catch(() => {});
+  await page
+    .getByRole('button', { name: 'Skip' })
+    .click({ timeout: 8000 })
+    .catch(() => {});
   await page.goto(`${demo.url}/ui/boards/${demo.board}`, { waitUntil: 'domcontentloaded' });
   await page.locator('.board-agents-pill').waitFor({ timeout: 20000 });
-  await page.getByRole('button', { name: 'Skip' }).click({ timeout: 2500 }).catch(() => {});
+  await page
+    .getByRole('button', { name: 'Skip' })
+    .click({ timeout: 2500 })
+    .catch(() => {});
   return { context, page };
 }
 const shot = (page, name) => page.screenshot({ path: join(out, `${name}.png`) });
 const fit = async (page) => {
-  await page.locator('.board-canvas canvas').last().click({ position: { x: 12, y: 300 }, force: true }).catch(() => {});
+  await page
+    .locator('.board-canvas canvas')
+    .last()
+    .click({ position: { x: 12, y: 300 }, force: true })
+    .catch(() => {});
   await page.keyboard.press('Escape');
   await page.keyboard.press('Shift+1');
   await page.waitForTimeout(900);
@@ -98,7 +120,9 @@ const closeUp = async (page, ids) => {
     const left = Math.min(...frames.map((el) => el.x));
     const right = Math.max(...frames.map((el) => el.x + el.width));
     const top = Math.min(...frames.map((el) => el.y));
-    const near = api.getSceneElements().filter((el) => el.x >= left - 10 && el.x + el.width <= right + 10 && el.y >= top - 40);
+    const near = api
+      .getSceneElements()
+      .filter((el) => el.x >= left - 10 && el.x + el.width <= right + 10 && el.y >= top - 40);
     api.scrollToContent(near, { fitToViewport: true, viewportZoomFactor: 0.82, animate: false });
   }, ids);
   await page.waitForTimeout(600);
@@ -111,7 +135,10 @@ const settled = async (page) => {
     if (now !== count) [count, since] = [now, Date.now()];
     await page.waitForTimeout(1000);
   }
-  await page.locator('.board-status').waitFor({ state: 'hidden', timeout: 90_000 }).catch(() => {});
+  await page
+    .locator('.board-status')
+    .waitFor({ state: 'hidden', timeout: 90_000 })
+    .catch(() => {});
 };
 
 const { context, page } = await person({ width: 1440, height: 900, video: true });
@@ -128,13 +155,19 @@ try {
   await page.locator('.board-agents-pill').click();
   await until((now) => now.tasks.length >= 2, 240_000, 'tasks');
   await settled(page);
-  say('tasks', JSON.stringify((await state()).tasks.map((task) => [task.title, task.checks.map((one) => one.text)])));
+  say(
+    'tasks',
+    JSON.stringify(
+      (await state()).tasks.map((task) => [task.title, task.checks.map((one) => one.text)]),
+    ),
+  );
   const made = await state();
   await fit(page);
   await shot(page, '02-distilled');
 
   // A person rewrites one of Pi's checks, in place, as any note.
-  const sentence = made.tasks[0].checks.find((one) => !one.text.includes('`')) ?? made.tasks[0].checks.at(-1);
+  const sentence =
+    made.tasks[0].checks.find((one) => !one.text.includes('`')) ?? made.tasks[0].checks.at(-1);
   const spot = await screenOf(page, sentence.id);
   await page.mouse.dblclick(spot.x, spot.y);
   const typing = page.locator('.excalidraw-textEditorContainer textarea');
@@ -144,7 +177,11 @@ try {
   await shot(page, '03-editing-a-check');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
-  await until((now) => now.tasks[0].checks.some((one) => one.text.includes('80-column')), 15_000, 'edit saved');
+  await until(
+    (now) => now.tasks[0].checks.some((one) => one.text.includes('80-column')),
+    15_000,
+    'edit saved',
+  );
   say('edited a check by hand');
   await page.locator('.board-agents-pill').click();
   await page.locator('.board-agents-pane').waitFor();
@@ -162,8 +199,15 @@ try {
   await closeUp(page, pair);
   await page.waitForTimeout(12_000);
   await shot(page, '04-running');
-  const done = await until((now) => now.tasks.slice(0, 2).every((task) => over(task.latest)), 540_000, 'runs');
-  say('runs', JSON.stringify(done.tasks.map((task) => [task.title, task.said, task.latest?.verdicts])));
+  const done = await until(
+    (now) => now.tasks.slice(0, 2).every((task) => over(task.latest)),
+    540_000,
+    'runs',
+  );
+  say(
+    'runs',
+    JSON.stringify(done.tasks.map((task) => [task.title, task.said, task.latest?.verdicts])),
+  );
   await page.waitForTimeout(3000);
   await closeUp(page, pair);
   await shot(page, '05-results');
@@ -184,7 +228,11 @@ if (process.argv.includes('--no-phone')) {
   process.exit(0);
 }
 // The lid closes: the connector goes away, and only then does a phone look.
-const connector = execSync(`pgrep -f 'clients/board-connect/connect.mjs.*--server ${demo.url}'`, { encoding: 'utf8' }).trim().split('\n')[0];
+const connector = execSync(`pgrep -f 'clients/board-connect/connect.mjs.*--server ${demo.url}'`, {
+  encoding: 'utf8',
+})
+  .trim()
+  .split('\n')[0];
 process.kill(Number(connector));
 say('connector stopped', connector);
 await until((now) => !now.connector?.online, 30_000, 'offline');
@@ -206,12 +254,27 @@ await phone.page.waitForTimeout(6000);
 // The lid opens.
 const back = spawn(
   'node',
-  [join(root, '../clients/board-connect/connect.mjs'), '--server', demo.url, '--key', demo.operator, '--workspace', demo.workspace, '--name', 'Mac', '--trust-checks'],
+  [
+    join(root, '../clients/board-connect/connect.mjs'),
+    '--server',
+    demo.url,
+    '--key',
+    demo.operator,
+    '--workspace',
+    demo.workspace,
+    '--name',
+    'Mac',
+    '--trust-checks',
+  ],
   { stdio: 'inherit', detached: true },
 );
 back.unref();
 say('connector back', back.pid);
-const after = await until((now) => now.waiting === 0 && now.tasks.every((task) => !task.latest || over(task.latest)), 400_000, 'queued run');
+const after = await until(
+  (now) => now.waiting === 0 && now.tasks.every((task) => !task.latest || over(task.latest)),
+  400_000,
+  'queued run',
+);
 say('after', JSON.stringify(after.tasks.map((task) => [task.title, task.said])));
 await phone.page.waitForTimeout(4000);
 await shot(phone.page, '10-phone-done');

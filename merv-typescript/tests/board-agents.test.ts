@@ -48,11 +48,15 @@ test('a task is its frame as it stands: a rewritten check and a dropped-in note 
     task: made.task,
     harness: 'claude',
   });
-  assert.deepEqual(
-    run.spec.checks.map(({ text }) => text).sort(),
-    ['Fits one line', 'Says the plateau', '`node --test`'],
+  assert.deepEqual(run.spec.checks.map(({ text }) => text).sort(), [
+    'Fits one line',
+    'Says the plateau',
+    '`node --test`',
+  ]);
+  assert.equal(
+    run.spec.checks.find(({ text }) => text === '`node --test`')?.command,
+    'node --test',
   );
-  assert.equal(run.spec.checks.find(({ text }) => text === '`node --test`')?.command, 'node --test');
 });
 
 test('only a person hands off or stops: an agent reading the board cannot start code on a machine', async (t) => {
@@ -76,7 +80,10 @@ test('a hand-off waits for its own person’s machine, which alone takes it, and
   assert.equal(queued.connector, null);
   assert.match(queued.tasks[0]!.said, /waits for your machine/);
 
-  const other = await app.ctx.scope.credentials.issueActor(owner, { name: 'Dana', role: 'operator' });
+  const other = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Dana',
+    role: 'operator',
+  });
   const dana: Caller = {
     projectId: owner.projectId,
     actorId: other.actor.id,

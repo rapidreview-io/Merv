@@ -131,8 +131,13 @@ export const boardAgentsPlugin = {
           ...(boardId ? [boardId] : []),
         )
       ).map((row) => JSON.parse(row.record) as T);
-    const save = (projectId: string, kind: string, key: string, boardId: string | null, row: object) =>
-      state.transaction((tx) => put(tx, projectId, kind, key, boardId, row));
+    const save = (
+      projectId: string,
+      kind: string,
+      key: string,
+      boardId: string | null,
+      row: object,
+    ) => state.transaction((tx) => put(tx, projectId, kind, key, boardId, row));
     const read = <T>(projectId: string, kind: string, key: string) =>
       state.transaction((tx) => get<T>(tx, projectId, kind, key));
     const rows = <T>(projectId: string, kind: string, boardId?: string) =>
@@ -179,7 +184,9 @@ export const boardAgentsPlugin = {
       board.draw(caller, { board: boardId, ops } as never, [], false);
     const show = async (caller: Caller, task: AgentTask, run: AgentRun) => {
       const connector = await connectorOf(caller);
-      await draw(caller, task.board, [{ op: 'edit', id: task.status, ...standing(run, connector) }]);
+      await draw(caller, task.board, [
+        { op: 'edit', id: task.status, ...standing(run, connector) },
+      ]);
     };
 
     /** The frame as it stands: every shape in it that says something and is not the machinery's. */
@@ -257,7 +264,14 @@ export const boardAgentsPlugin = {
           ];
           let at = y! + 68;
           if (input.goal) {
-            ops.push({ op: 'text', key: 'goal', text: input.goal, size: 's', at: [x! + 20, at], in: 'FRAME' });
+            ops.push({
+              op: 'text',
+              key: 'goal',
+              text: input.goal,
+              size: 's',
+              at: [x! + 20, at],
+              in: 'FRAME',
+            });
             at += goalHeight;
           }
           input.checks.forEach((text, index) => {
@@ -299,10 +313,14 @@ export const boardAgentsPlugin = {
     const page = [
       {
         name: 'board.agents.state',
-        description: "A board's tasks, the latest run of each, and whether the person's machine is on.",
+        description:
+          "A board's tasks, the latest run of each, and whether the person's machine is on.",
         inputSchema: stateSchema,
         readOnly: true,
-        handler: async (caller: Caller, input: z.infer<typeof stateSchema>): Promise<AgentsState> => {
+        handler: async (
+          caller: Caller,
+          input: z.infer<typeof stateSchema>,
+        ): Promise<AgentsState> => {
           const scene = await board.scene(caller, input.board, Number.MAX_SAFE_INTEGER);
           const tasks = await rows<AgentTask>(caller.projectId, 'task', scene.board.id);
           const runs = await rows<AgentRun>(caller.projectId, 'run', scene.board.id);
@@ -323,7 +341,9 @@ export const boardAgentsPlugin = {
                   said: run ? standing(run, connector).text : '',
                   ...(run &&
                     JSON.stringify(spec.checks.map((held) => held.text)) !==
-                      JSON.stringify(run.spec.checks.map((held) => held.text)) && { changed: true }),
+                      JSON.stringify(run.spec.checks.map((held) => held.text)) && {
+                      changed: true,
+                    }),
                   checks: spec.checks.map((held) => {
                     const verdict = run?.verdicts?.find((one) => one.check === held.id);
                     return { id: held.id, text: held.text, ...(verdict && { verdict }) };
@@ -340,7 +360,8 @@ export const boardAgentsPlugin = {
       },
       {
         name: 'board.agents.handoff',
-        description: "Hand a task, as it stands on the board now, to one of the person's own agents.",
+        description:
+          "Hand a task, as it stands on the board now, to one of the person's own agents.",
         inputSchema: handoffSchema,
         handler: async (caller: Caller, input: z.infer<typeof handoffSchema>) => {
           // A person's alone: a board's words, or an agent reading them, never start code on a machine.
@@ -376,7 +397,8 @@ export const boardAgentsPlugin = {
                   previous: {
                     summary: prior.result?.summary ?? '',
                     failures,
-                    ...(prior.harness === input.harness && prior.session && { session: prior.session }),
+                    ...(prior.harness === input.harness &&
+                      prior.session && { session: prior.session }),
                   },
                 }),
             },
@@ -433,8 +455,14 @@ export const boardAgentsPlugin = {
           );
           // A connector starting afresh holds no process: what it left running is lost.
           if (input.fresh)
-            for (const run of mine.filter((held) => ['running', 'judging', 'stopping'].includes(held.state))) {
-              const lost: AgentRun = { ...run, state: 'error', error: 'lost when its machine restarted' };
+            for (const run of mine.filter((held) =>
+              ['running', 'judging', 'stopping'].includes(held.state),
+            )) {
+              const lost: AgentRun = {
+                ...run,
+                state: 'error',
+                error: 'lost when its machine restarted',
+              };
               await save(caller.projectId, 'run', run.id, run.board, lost);
               const task = await read<AgentTask>(caller.projectId, 'task', run.task);
               if (task) await show(caller, task, lost);
@@ -444,7 +472,12 @@ export const boardAgentsPlugin = {
             .filter((run) => run.state === 'queued')
             .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
           if (!next || input.capacity === false) return { stop };
-          const claimed: AgentRun = { ...next, state: 'running', startedAt: now(), step: 'starting' };
+          const claimed: AgentRun = {
+            ...next,
+            state: 'running',
+            startedAt: now(),
+            step: 'starting',
+          };
           await save(caller.projectId, 'run', next.id, next.board, claimed);
           const task = await read<AgentTask>(caller.projectId, 'task', next.task);
           if (task) await show(caller, task, claimed);
@@ -496,7 +529,9 @@ export const boardAgentsPlugin = {
           return {
             op: 'text',
             key: `v${index}`,
-            text: wrapped(line(`${verdict.how === 'judge' ? `${verdict.by}: ` : ''}${verdict.reason}`, 100)),
+            text: wrapped(
+              line(`${verdict.how === 'judge' ? `${verdict.by}: ` : ''}${verdict.reason}`, 100),
+            ),
             fontSize: 13,
             color: 'gray',
             at: [beside.x + CHECK_WIDTH + 16, beside.y + 4],
@@ -518,14 +553,19 @@ export const boardAgentsPlugin = {
         '## Checks',
         ...(run.verdicts ?? []).map((verdict) => {
           const said = run.spec.checks.find((held) => held.id === verdict.check)?.text ?? '';
-          const outcome = !verdict.pass ? 'Fail' : verdict.how === 'command' ? 'Pass' : 'For your eyes';
+          const outcome = !verdict.pass
+            ? 'Fail'
+            : verdict.how === 'command'
+              ? 'Pass'
+              : 'For your eyes';
           return `- **${outcome}** ${said}: ${verdict.reason} (${verdict.how === 'command' ? 'ran it' : `${verdict.by}'s reading`})`;
         }),
         ...(stat ? ['', '## Changes', '```', stat, '```'] : []),
       ].join('\n');
-      const taken = run.startedAt && run.endedAt
-        ? Math.round((Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000)
-        : undefined;
+      const taken =
+        run.startedAt && run.endedAt
+          ? Math.round((Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000)
+          : undefined;
       await draw(caller, task.board, [
         {
           op: 'page',

@@ -79,7 +79,11 @@ function TaskRow({
       </ul>
       <div className="board-agents-ways">
         {active ? (
-          <button type="button" className="btn-text" onClick={() => act('board.agents.stop', { run: run.id })}>
+          <button
+            type="button"
+            className="btn-text"
+            onClick={() => act('board.agents.stop', { run: run.id })}
+          >
             Stop
           </button>
         ) : (
@@ -89,7 +93,11 @@ function TaskRow({
                 type="button"
                 className="btn"
                 onClick={() =>
-                  act('board.agents.handoff', { task: task.id, harness: run.harness, sendBack: true })
+                  act('board.agents.handoff', {
+                    task: task.id,
+                    harness: run.harness,
+                    sendBack: true,
+                  })
                 }
               >
                 Send back to {NAMES[run.harness]}
@@ -170,7 +178,8 @@ export function BoardAgents({ id, api }: { id: string; api: ExcalidrawImperative
   const busy = chosenTask?.latest && !OVER.has(chosenTask.latest.state);
   const focus = (frame: string) => {
     const whole = api.getSceneElements().find((el) => el.id === frame);
-    if (whole) api.scrollToContent(whole, { fitToViewport: true, viewportZoomFactor: 0.7, animate: true });
+    if (whole)
+      api.scrollToContent(whole, { fitToViewport: true, viewportZoomFactor: 0.7, animate: true });
     if (!matchMedia('(min-width: 731px)').matches) setOpen(false);
   };
   return (
@@ -225,7 +234,10 @@ export function BoardAgents({ id, api }: { id: string; api: ExcalidrawImperative
       )}
       {chosenTask && busy && (
         <div className="board-selection" style={{ left: chosen!.left, top: chosen!.top }}>
-          <button type="button" onClick={() => act('board.agents.stop', { run: chosenTask.latest!.id })}>
+          <button
+            type="button"
+            onClick={() => act('board.agents.stop', { run: chosenTask.latest!.id })}
+          >
             Stop
           </button>
         </div>
