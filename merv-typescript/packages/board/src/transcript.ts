@@ -629,6 +629,7 @@ export function overview(whole: Transcript) {
     said?: string;
     tool?: string;
     until?: number;
+    last?: number;
     minutes?: number;
   }[] = [
     ...spaced(
@@ -643,7 +644,8 @@ export function overview(whole: Transcript) {
       ...on(chain[0]!),
       kind: 'retry',
       tool,
-      until: chain.at(-1),
+      until: x(steps[chain.at(-1)! - 1]!),
+      last: chain.at(-1),
     })),
     ...compactions.map((step) => ({ ...on(step), kind: 'compaction' })),
     ...pauses.slice(0, 12).map(({ after, minutes }) => ({
