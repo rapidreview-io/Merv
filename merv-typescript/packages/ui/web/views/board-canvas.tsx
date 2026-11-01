@@ -174,6 +174,9 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const agent = useAgent();
   const hush = useRef(agent?.voice.hush);
   hush.current = agent?.pi?.active ? agent.voice.hush : undefined;
+  // Only Pi's turn has the voice: what another agent says is for the line on the board.
+  const speak = useRef(agent?.voice.speak);
+  speak.current = agent?.pi?.active ? agent.voice.speak : undefined;
   const steered = agent?.voice.steered;
   useEffect(() => {
     if (steered) player.current?.hurry();
@@ -307,6 +310,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const here = new BoardPresence(api);
     presence.current = here;
     made.pen = here.pen;
+    made.say = (line) => {
+      here.said(line);
+      speak.current?.(line);
+    };
     const hand = new BoardPointing(api, id);
     hand.landed(first?.elements ?? []);
     pointing.current = hand;

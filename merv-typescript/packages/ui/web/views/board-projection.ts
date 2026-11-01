@@ -97,6 +97,8 @@ interface Hooks {
   /** The clock reached now. */
   ended(): void;
   nameOf(hand: number): string;
+  /** The pen reached a line said with what it drew. */
+  say(line: string): void;
   /** What else has been drawn since this began, if anything. */
   more(): Promise<BoardChange[] | null>;
   /** How many pixels the scrubber takes off the bottom of the view. */
@@ -184,6 +186,7 @@ export class Projection {
     this.player.pen = (tip) => {
       if (tip && this.tag) [this.tag.toX, this.tag.toY] = tip;
     };
+    this.player.say = hooks.say;
   }
   /** What the second Excalidraw shows to begin with: what the board shows, to the pixel. */
   match(files: BinaryFiles) {

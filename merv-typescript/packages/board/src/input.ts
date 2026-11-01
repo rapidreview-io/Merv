@@ -9,6 +9,8 @@ const shape = z.string().min(1).max(100);
 /** A name this call gives what it draws, for its later operations and its answer. */
 const name = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
 const key = name.optional();
+/** A short line heard as the pen reaches the op that carries it, which keeps it on what it makes. */
+const say = z.string().trim().min(1).max(100).refine(visible).optional();
 export const COLORS = {
   yellow: '#ffec99',
   blue: '#a5d8ff',
@@ -87,11 +89,12 @@ const opens = z.union([
 ]);
 export const opSchema = z.discriminatedUnion('op', [
   z
-    .object({ op: z.literal('note'), key, text, color: color.optional(), proposed, ...place })
+    .object({ op: z.literal('note'), key, say, text, color: color.optional(), proposed, ...place })
     .strict(),
   z.strictObject({
     op: z.literal('box'),
     key,
+    say,
     text: z
       .string()
       .trim()
@@ -108,6 +111,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('text'),
     key,
+    say,
     color: ink.optional(),
     text,
     size: z.enum(['s', 'm', 'l']).optional(),
@@ -118,6 +122,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('link'),
     key,
+    say,
     /** A Merv record's id or a web address, or a list of them that one card holds. */
     target: z.union([opens, z.array(opens).min(1).max(50)]),
     text,
@@ -142,6 +147,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('arrow'),
     key,
+    say,
     from: shape,
     to: shape,
     label: z.union([z.literal(''), text]).optional(),
@@ -150,6 +156,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('frame'),
     key,
+    say,
     title,
     holds: z.array(shape).max(200).optional(),
     near: shape.optional(),
@@ -157,6 +164,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('flow'),
     key,
+    say,
     nodes: z.array(node).min(1).max(40),
     edges: z.array(edge).max(80).default([]),
     direction: z.enum(['right', 'down']).optional(),
@@ -164,6 +172,7 @@ export const opSchema = z.discriminatedUnion('op', [
   }),
   z.strictObject({
     op: z.literal('edit'),
+    say,
     id: shape,
     text: text.optional(),
     color: color.optional(),
@@ -171,11 +180,12 @@ export const opSchema = z.discriminatedUnion('op', [
     /** An arrow turned to go the other way, its bends and label kept. */
     reverse: z.literal(true).optional(),
   }),
-  z.object({ op: z.literal('move'), id: shape, ...place }).strict(),
-  z.object({ op: z.literal('delete'), ids: z.array(shape).min(1).max(200) }).strict(),
+  z.object({ op: z.literal('move'), say, id: shape, ...place }).strict(),
+  z.object({ op: z.literal('delete'), say, ids: z.array(shape).min(1).max(200) }).strict(),
   z.strictObject({
     op: z.literal('sketch'),
     key,
+    say,
     strokes: z.array(stroke).min(1).max(80),
     size: z.enum(['s', 'm', 'l', 'native']).optional(),
     proposed,
@@ -184,6 +194,7 @@ export const opSchema = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('image'),
     key,
+    say,
     /** An image artifact, or a PDF artifact with the page to take. */
     artifactId: z.string().regex(/^art_[A-Za-z0-9_-]{1,190}$/),
     page: z.number().int().min(1).optional(),
@@ -208,14 +219,6 @@ export const drawSchema = z.strictObject({
   board: id.optional(),
   title: title.optional(),
   ops: z.array(opSchema).max(100).default([]),
-  /** One sentence said aloud as the pen starts, for whoever the agent is working with. */
-  saying: z
-    .string()
-    .trim()
-    .min(1)
-    .max(140)
-    .optional()
-    .describe('One spoken sentence said aloud as your pen starts.'),
 });
 export type DrawInput = z.input<typeof drawSchema>;
 

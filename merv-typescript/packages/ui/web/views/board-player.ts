@@ -20,6 +20,7 @@ import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconc
 import {
   PEN,
   penMs,
+  lineOf,
   penUnits,
   stacked,
   type BoardElement,
@@ -53,6 +54,8 @@ interface Unit extends PenUnit {
   marks?: Mark[];
   inking?: boolean;
   quiet?: boolean;
+  /** Its line has been said. */
+  said?: boolean;
 }
 /** Past this many times what it may stay behind it no longer draws the oldest: they land at once. */
 const FAR = 10;
@@ -180,6 +183,8 @@ export class Player {
   idle?: () => void;
   /** Hears where the pen's tip is on the board as it draws and lifts, and null when it is done. */
   pen?: (tip: Point | null) => void;
+  /** Hears a line an agent said with what it drew, as the pen comes to it. */
+  say?: (line: string) => void;
   /**
    * @param behind How far behind it plays at a hand's pace, in milliseconds: given more, it hurries,
    * up to three times that, and at ten times what is oldest lands at once. Infinity never hurries.
@@ -203,6 +208,12 @@ export class Player {
     if (this.instant || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.finish();
       this.stage.show(shapes, true);
+      // Without motion nothing is reached in turn: what was said last is what there is to say.
+      const line = penUnits(shapes, () => false)
+        .map(lineOf)
+        .filter(Boolean)
+        .at(-1);
+      if (line && !this.instant) this.say?.(line);
       this.idle?.();
       return;
     }
@@ -341,6 +352,12 @@ export class Player {
         if (step && !head.ink) {
           void this.inked(head);
           break;
+        }
+        // A step in hand or nothing to draw, it has come to this unit; landing unshown, it has not.
+        if (!head.said && !head.quiet) {
+          head.said = true;
+          const line = lineOf(head);
+          if (line) this.say?.(line);
         }
         const takes = step ? step.rest + step.ms : head.quiet ? 0 : head.ms;
         if (this.spent + budget < takes) {

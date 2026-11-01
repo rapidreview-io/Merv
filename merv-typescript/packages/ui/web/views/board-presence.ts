@@ -21,6 +21,8 @@ const SLIDE = 0.25;
 const BLUE = 'agent22';
 /** How long after it was heard of an agent is still looking, or what comes is still what it drew. */
 const LOOK_MS = 5_000;
+/** How long a line stands as what the one drawing is saying, about as long as it takes to say. */
+const LINE_MS = 8_000;
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 interface Cursor extends BoardLooking {
@@ -37,6 +39,7 @@ export class BoardPresence {
   private ticking?: ReturnType<typeof setInterval>;
   private shown = '';
   private drawn = { at: 0, name: '' };
+  private line = { at: 0, words: '' };
   constructor(private api: ExcalidrawImperativeAPI) {}
   private latest() {
     return [...this.cursors.values()].sort((a, b) => b.at - a.at)[0];
@@ -52,6 +55,10 @@ export class BoardPresence {
     this.drawn = { at: now, name: cursor.name };
     return true;
   }
+  /** The pen reached a line an agent said with what it drew. */
+  said(words: string) {
+    this.line = { at: Date.now(), words };
+  }
   /** Who is at the board and how long ago they drew; where the one last heard of is. */
   doing(now = Date.now()) {
     const cursor = this.latest();
@@ -60,7 +67,7 @@ export class BoardPresence {
       drewMs: this.drawn.at ? now - this.drawn.at : Infinity,
       looking: !!cursor && !cursor.drew && now - cursor.heardAt < LOOK_MS ? cursor.name : '',
       region: cursor?.region,
-      saying: cursor?.saying,
+      saying: now - this.line.at < LINE_MS ? this.line.words : undefined,
     };
   }
   /** What the page was just told of where agents are. */

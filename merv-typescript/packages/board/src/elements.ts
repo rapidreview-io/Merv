@@ -146,6 +146,10 @@ export class Drawing {
   /** What this call put somewhere, and whether by `at`, which checks nothing. */
   private readonly landing = new Map<string, boolean>();
   private exactly = false;
+  /** The lines this call says, by the shape each goes with; what the op in hand made and changed. */
+  private readonly lines = new Map<string, string>();
+  private made?: El;
+  private touched?: El;
   /** Where shapes stand, frames apart: a shape goes beside another inside a frame. */
   private occupied: Rect[] = [];
   private frames: Rect[] = [];
@@ -262,6 +266,7 @@ export class Drawing {
     return element;
   }
   private touch(el: El) {
+    this.touched ??= el;
     el.version += 1;
     el.versionNonce = nonce();
     el.updated = Date.now();
@@ -305,6 +310,7 @@ export class Drawing {
       });
     this.elements.set(el.id, el);
     this.changed.add(el.id);
+    this.made ??= el;
     this.landed(el);
     return el;
   }
@@ -768,7 +774,18 @@ export class Drawing {
     el.customData = { ...el.customData, key };
   }
 
+  /** Does one op; a line it says goes on the first thing it made, or else the first it changed. */
   apply(op: DrawOp, file?: PlacedImage) {
+    this.made = this.touched = undefined;
+    this.perform(op, file);
+    const first = (this.made ?? this.touched) as El | undefined;
+    // Two lines on one shape are said together, the later after the earlier.
+    if (op.say && first) {
+      const held = this.lines.get(first.id);
+      this.lines.set(first.id, held ? `${held} ${op.say}` : op.say);
+    }
+  }
+  private perform(op: DrawOp, file?: PlacedImage) {
     this.proposing = 'proposed' in op && !!op.proposed;
     this.exactly = 'at' in op && !!op.at;
     switch (op.op) {
@@ -1078,6 +1095,10 @@ export class Drawing {
   result(): El[] {
     return [...this.changed].map((id) => {
       const el = this.elements.get(id)!;
+      // A line is heard once, as this call's pen comes to it: changed again, a shape is not re-said.
+      if (el.customData?.say) delete el.customData.say;
+      const say = this.lines.get(id);
+      if (say) el.customData = { ...el.customData, say };
       if (this.agent) el.customData = { ...el.customData, changedBy: 'agent' };
       else if (el.customData?.changedBy) delete el.customData.changedBy;
       return el;

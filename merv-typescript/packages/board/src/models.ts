@@ -85,8 +85,6 @@ export interface BoardLooking {
   at: number;
   /** It drew there, so a stroke being traced there is its own. */
   drew?: true;
-  /** The sentence its last draw came with, which the page shows while the pen goes. */
-  saying?: string;
 }
 
 /**
@@ -126,6 +124,45 @@ export const stacked = <T extends object>(elements: readonly T[]): T[] =>
     const [p, q] = [a, b].map((el) => String((el as { id?: unknown }).id));
     return x! < y! ? -1 : x! > y! ? 1 : p! < q! ? -1 : p! > q! ? 1 : 0;
   });
+
+type Points = { x: number; y: number; width: number; height: number; points?: unknown };
+/**
+ * Where a shape truly lies. A stroke's x and y are where it starts, and its points go any way from
+ * there, so its box is theirs; anything else's is its own.
+ */
+export const boxOf = (el: Points) => {
+  const points = el.points as readonly (readonly [number, number])[] | undefined;
+  if (!points?.length) return { x: el.x, y: el.y, width: el.width, height: el.height };
+  const [xs, ys] = [points.map((p) => el.x + p[0]), points.map((p) => el.y + p[1])];
+  const [x, y] = [Math.min(...xs), Math.min(...ys)];
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+};
+/** Where a spot on the board falls in a shape's own frame, the shape turned back about its middle. */
+export const unturned = (
+  spot: { x: number; y: number },
+  box: ReturnType<typeof boxOf>,
+  angle = 0,
+) => {
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  const [dx, dy, cos, sin] = [spot.x - cx, spot.y - cy, Math.cos(angle), Math.sin(angle)];
+  return { x: cx + dx * cos + dy * sin, y: cy - dx * sin + dy * cos };
+};
+/** Whether a spot on the board is inside a stroke's outline. */
+export const inStroke = (
+  at: { x: number; y: number },
+  stroke: Points & { angle?: unknown },
+): boolean => {
+  const points = stroke.points as readonly (readonly [number, number])[];
+  const spot = unturned(at, boxOf(stroke), Number(stroke.angle ?? 0));
+  let inside = false;
+  for (const [i, a] of points.entries()) {
+    const b = points.at(i - 1)!;
+    const [ax, ay, bx, by] = [stroke.x + a[0], stroke.y + a[1], stroke.x + b[0], stroke.y + b[1]];
+    if (ay > spot.y !== by > spot.y && spot.x < ax + ((spot.y - ay) / (by - ay)) * (bx - ax))
+      inside = !inside;
+  }
+  return inside;
+};
 
 /** The board once these steps of its history are done: every shape as the last of them left it. */
 export const boardAt = (changes: readonly BoardChange[]): BoardElement[] => {
@@ -264,6 +301,11 @@ export const penUnits = (
     return { shapes: unit, steps, ms: steps.length ? 0 : PEN.edit };
   });
 };
+/** The line an agent said with this unit: heard as the pen comes to it, live and in replay. */
+export const lineOf = ({ shapes }: PenUnit) =>
+  shapes
+    .map((shape) => (shape.customData as { say?: unknown } | undefined)?.say)
+    .find((say): say is string => typeof say === 'string');
 /** How long these units take to draw, played at the pace of a hand. */
 export const penMs = (units: readonly PenUnit[]) =>
   units.reduce(
