@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import type { Context } from 'cordis';
 import {
   check,
@@ -73,6 +74,13 @@ const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
   shape.version > held.version ||
   (shape.version === held.version && shape.versionNonce < held.versionNonce);
+
+/** A public drawing carries no record targets, links, agent identity or embedded details. */
+const publicShape = (shape: BoardElement): BoardElement => {
+  const { customData, link: _link, ...drawn } = shape;
+  const say = (customData as { say?: unknown } | undefined)?.say;
+  return { ...drawn, link: null, ...(typeof say === 'string' && { customData: { say } }) };
+};
 
 /**
  * Whiteboards (founder, 2026-10-09): unlimited per project, drawn on by people in Excalidraw and by
@@ -160,34 +168,119 @@ export class BoardService implements Board {
       // Members alone, as with image bytes: it holds what people drew and erased.
       await this.editable(caller, tx);
       await this.summary(caller, boardId, tx);
-      const rows = await tx.all<{
-        revision: number;
-        actor_id: string;
-        began_at: string;
-        kind: BoardChange['kind'];
-        shapes: string;
-      }>(
-        `SELECT revision,actor_id,began_at,kind,shapes FROM (SELECT *,SUM(octet_length(shapes)) OVER (ORDER BY revision)-octet_length(shapes) AS earlier
+      return this.historyPage(boardId, after, tx);
+    });
+  }
+  private async historyPage(
+    boardId: string,
+    after: number,
+    tx: Transaction,
+  ): Promise<BoardHistory> {
+    const rows = await tx.all<{
+      revision: number;
+      actor_id: string;
+      began_at: string;
+      kind: BoardChange['kind'];
+      shapes: string;
+    }>(
+      `SELECT revision,actor_id,began_at,kind,shapes FROM (SELECT *,SUM(octet_length(shapes)) OVER (ORDER BY revision)-octet_length(shapes) AS earlier
            FROM board_history WHERE board_id=? AND revision>? ORDER BY revision LIMIT ${HISTORY_PAGE}) h WHERE earlier<${HISTORY_BYTES} ORDER BY revision`,
+      boardId,
+      after,
+    );
+    const count = await tx.get<{ total: number; left: number }>(
+      'SELECT COUNT(*)::int AS total,(COUNT(*) FILTER (WHERE revision>?))::int AS left FROM board_history WHERE board_id=?',
+      after,
+      boardId,
+    );
+    return {
+      changes: rows.map((row) => ({
+        revision: row.revision,
+        actorId: row.actor_id,
+        at: row.began_at,
+        kind: row.kind,
+        shapes: JSON.parse(row.shapes) as BoardElement[],
+      })),
+      total: count!.total,
+      ...(count!.left > rows.length && { next: rows.at(-1)!.revision }),
+    };
+  }
+  /** A share is a separate read capability, never a Scope credential. Only its digest is kept. */
+  async share(caller: Caller, boardId: string, revoke = false): Promise<{ token?: string }> {
+    caller = this.open(caller);
+    return this.state.transaction(async (tx) => {
+      await this.editable(caller, tx);
+      const [board] = await this.summary(caller, boardId, tx);
+      check(board.createdBy === caller.actorId, 'forbidden', 'Only the board owner can share', 403);
+      await tx.run('DELETE FROM board_shares WHERE board_id=?', boardId);
+      if (revoke) return {};
+      const token = `mbs_${randomBytes(32).toString('base64url')}`;
+      await tx.run(
+        'INSERT INTO board_shares(board_id,digest) VALUES(?,?)',
         boardId,
-        after,
+        this.digest(token),
       );
-      const count = await tx.get<{ total: number; left: number }>(
-        'SELECT COUNT(*)::int AS total,(COUNT(*) FILTER (WHERE revision>?))::int AS left FROM board_history WHERE board_id=?',
-        after,
-        boardId,
-      );
+      return { token };
+    });
+  }
+  private digest(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+  private async shared(token: string, tx: Transaction): Promise<BoardSummary> {
+    check(!this.closed, 'board_unavailable', 'Boards are unavailable', 503);
+    check(/^mbs_[A-Za-z0-9_-]{43}$/.test(token), 'not_found', 'Share not found', 404);
+    const row = await tx.get<{ record: string }>(
+      'SELECT b.record FROM boards b JOIN board_shares s ON s.board_id=b.id WHERE s.digest=?',
+      this.digest(token),
+    );
+    check(row, 'not_found', 'Share not found', 404);
+    return JSON.parse(row.record);
+  }
+  async sharedScene(token: string) {
+    return forRead(this.state, async (tx) => {
+      const board = await this.shared(token, tx);
       return {
-        changes: rows.map((row) => ({
-          revision: row.revision,
-          actorId: row.actor_id,
-          at: row.began_at,
-          kind: row.kind,
-          shapes: JSON.parse(row.shapes) as BoardElement[],
-        })),
-        total: count!.total,
-        ...(count!.left > rows.length && { next: rows.at(-1)!.revision }),
+        title: board.title,
+        revision: board.revision,
+        elements: (await this.elements(board.id, undefined, tx)).map(publicShape),
       };
+    });
+  }
+  async sharedHistory(token: string, after = 0): Promise<BoardHistory> {
+    return forRead(this.state, async (tx) => {
+      const board = await this.shared(token, tx);
+      const page = await this.historyPage(board.id, after, tx);
+      return {
+        ...page,
+        changes: page.changes.map((change) => ({
+          ...change,
+          actorId: createHash('sha256')
+            .update(token)
+            .update(change.actorId)
+            .digest('hex')
+            .slice(0, 16),
+          shapes: change.shapes.map(publicShape),
+        })),
+      };
+    });
+  }
+  async sharedImage(token: string, fileId: string) {
+    return forRead(this.state, async (tx) => {
+      const board = await this.shared(token, tx);
+      const file = parse(fileIdSchema, fileId);
+      const row = await tx.get<{ content: Buffer }>(
+        `SELECT content FROM board_images WHERE project_id=? AND file_id=? AND (
+          EXISTS(SELECT 1 FROM board_elements WHERE board_id=? AND file_id=?) OR
+          EXISTS(SELECT 1 FROM board_history h, jsonb_array_elements(h.shapes::jsonb) e WHERE h.board_id=? AND e->>'fileId'=?))`,
+        board.projectId,
+        file,
+        board.id,
+        file,
+        board.id,
+        file,
+      );
+      check(row, 'not_found', 'Image not found', 404);
+      return { mediaType: imageType(row.content)!, content: row.content };
     });
   }
   /** What changed after a revision, a bounded page of it, and how each shape it names stood then. */

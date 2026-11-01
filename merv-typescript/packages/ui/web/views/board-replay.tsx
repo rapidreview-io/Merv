@@ -22,12 +22,13 @@ import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { BoardChange, BoardHistory } from '@merv/board/models';
 import { call } from '../api';
 import { typing } from '../list-filters';
+import { recordClip } from './board-clip';
 import { BoardFilm } from './board-film';
 import { ensureBoardFonts } from './board-fonts';
 import { clearView } from './board-player';
 import { picturesOf, Projection, restoreOne, type Shape } from './board-projection';
 import { Scrubber, whenOf, type ScrubberControl } from './board-scrubber';
-import { timelineOf, type Timeline } from './board-timeline';
+import { captionAt, timelineOf, type Timeline } from './board-timeline';
 import { useActorNames } from './people';
 
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
@@ -50,8 +51,10 @@ export function BoardReplay({
   settle,
   revision,
   mode,
+  readHistory,
 }: {
   id: string;
+  readHistory?(after?: number): Promise<BoardHistory>;
   /** The board's own Excalidraw, which keeps going underneath. */
   live: ExcalidrawImperativeAPI;
   /** How the board's own Excalidraw looks and opens what it holds. */
@@ -65,6 +68,14 @@ export function BoardReplay({
   mode(replaying: boolean): void;
 }) {
   const names = useActorNames();
+  const recording = useRef<ReturnType<typeof recordClip>>();
+  const [clipping, setClipping] = useState(false);
+  const finishClip = () => {
+    recording.current?.();
+    recording.current = undefined;
+    setClipping(false);
+  };
+  useEffect(() => () => recording.current?.(false), []);
   const [phase, setPhase] = useState<Phase>('off');
   const phaseNow = useRef(phase);
   phaseNow.current = phase;
@@ -182,6 +193,7 @@ export function BoardReplay({
   /** Back to the board: it is the board again at once, and the scrubber goes after it. */
   const leave = useCallback(
     (linger: boolean) => {
+      finishClip();
       shown.current?.rest();
       mode(false);
       putBack();
@@ -228,10 +240,12 @@ export function BoardReplay({
       const changes: BoardChange[] = [];
       let after: number | undefined;
       do {
-        const page: BoardHistory = await call('board.history', {
-          id,
-          ...(after !== undefined && { after }),
-        });
+        const page: BoardHistory = readHistory
+          ? await readHistory(after)
+          : await call('board.history', {
+              id,
+              ...(after !== undefined && { after }),
+            });
         if (stale()) return;
         changes.push(...page.changes);
         after = page.next;
@@ -288,6 +302,7 @@ export function BoardReplay({
             return Math.max(0, clear.y + clear.height - top);
           },
           more: async () => {
+            if (readHistory) return null;
             const had = history.current;
             const after = had.at(-1)?.revision ?? 0;
             if (latest.current.revision() <= after) return null;
@@ -545,6 +560,26 @@ export function BoardReplay({
             }}
           />
           <div className="board-scrub-ends">
+            <button
+              type="button"
+              aria-label={clipping ? 'Finish clip' : 'Export replay from here'}
+              onClick={() => {
+                if (clipping) return finishClip();
+                const layer = rootOf()?.querySelector<HTMLElement>('.board-replay-layer');
+                if (!layer || phase !== 'on') return say('Start the replay to export a clip');
+                try {
+                  recording.current = recordClip(layer, () =>
+                    captionAt(projection.line, projection.at),
+                  );
+                  setClipping(true);
+                  if (!projection.moving) projection.play();
+                } catch (error) {
+                  say((error as Error).message);
+                }
+              }}
+            >
+              {clipping ? 'Finish clip' : 'Clip'}
+            </button>
             <div
               className="board-scrub-speed"
               role="group"

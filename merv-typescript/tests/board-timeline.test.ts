@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { BoardChange, BoardElement } from '@merv/board/models';
 import { BoardFilm } from '../packages/ui/web/views/board-film.js';
 import {
+  captionAt,
   landedBy,
   momentAt,
   openingOf,
@@ -278,4 +279,23 @@ test('a longer film goes on from where this one stands, and knows the shapes it 
   assert.deepEqual([...longer.standing].sort(), ['a', 'b']);
   longer.seek(3);
   assert.deepEqual([...longer.standing].sort(), ['a', 'b', 'c']);
+});
+
+test('clip captions follow spoken units, survive a pause, and expire', () => {
+  const line = timelineOf([]);
+  line.units = [100, 1000].map((start, i) => ({
+    start,
+    ms: 300,
+    step: i,
+    hand: 0,
+    ink: 1,
+    reach: [0, 0, 100, 60],
+    shapes: [box(`caption-${i}`, 1, { customData: { say: i ? 'Next line' : 'First line' } })],
+  }));
+  assert.equal(captionAt(line, 0), '');
+  assert.equal(captionAt(line, 101), 'First line');
+  assert.equal(captionAt(line, 900), 'First line');
+  assert.equal(captionAt(line, 1001), 'Next line');
+  assert.equal(captionAt(line, 8000), '');
+  assert.equal(captionAt(line, 500), 'First line');
 });

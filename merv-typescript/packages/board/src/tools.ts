@@ -158,6 +158,40 @@ export const boardToolsPlugin = {
     // Each request answers to the caller's membership, and no link stands in for it.
     ctx.inject(['api'], (ctx) => {
       ctx.effect(() =>
+        ctx.api.credential('mbs_', {
+          kind: 'board-share',
+          forbidden: new MervError(
+            'unauthorized',
+            'Board shares only allow public board reads',
+            401,
+          ),
+          routes: () => false,
+        }),
+      );
+      ctx.effect(() =>
+        ctx.api.mount(
+          '/board-share',
+          async (req, res, r) => {
+            res.setHeader('cache-control', 'no-store');
+            res.setHeader('referrer-policy', 'no-referrer');
+            check(req.method === 'GET', 'not_found', 'Unknown endpoint', 404);
+            const token = r.bearer();
+            if (r.url.pathname === '/board-share/scene') return board.sharedScene(token);
+            if (r.url.pathname === '/board-share/history') {
+              const after = Number(r.url.searchParams.get('after') ?? 0);
+              check(Number.isSafeInteger(after) && after >= 0, 'invalid_input', 'Invalid revision');
+              return board.sharedHistory(token, after);
+            }
+            const file = /^\/board-share\/images\/([a-f0-9]{40})$/.exec(r.url.pathname);
+            check(file, 'not_found', 'Unknown endpoint', 404);
+            const { content, mediaType } = await board.sharedImage(token, file[1]!);
+            res.writeHead(200, { 'content-type': mediaType, 'x-content-type-options': 'nosniff' });
+            res.end(content);
+          },
+          { public: true },
+        ),
+      );
+      ctx.effect(() =>
         ctx.api.mount('/board-images', async (req, res, r) => {
           const fileId = r.url.pathname.slice('/board-images/'.length);
           if (req.method === 'PUT')
@@ -475,6 +509,14 @@ export const boardToolsPlugin = {
           );
           return here.length ? { ...scene, looking: here } : scene;
         },
+      },
+      {
+        name: 'board.share',
+        description: 'Make or revoke a read-only link to this board and its history.',
+        inputSchema: z.object({ id, revoke: z.boolean().optional() }).strict(),
+        uiOnly: true,
+        handler: (caller: Caller, input: { id: string; revoke?: boolean }) =>
+          board.share(caller, input.id, input.revoke),
       },
       {
         name: 'board.history',
