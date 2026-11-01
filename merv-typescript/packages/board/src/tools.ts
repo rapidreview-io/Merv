@@ -116,12 +116,13 @@ export const boardToolsPlugin = {
       caller.conversation?.id ?? `${caller.actorId}:${named(caller)}`;
     /** What people did on a board since `who` last saw it, in words; nothing it can read is told twice. */
     const handSince = async (caller: Caller, who: string, id: string, since: number) => {
-      const [changes, scene] = await Promise.all([
-        board.changesAfter(caller, id, since),
-        board.scene(caller, id),
-      ]);
-      watch.see(who, id, scene.board.revision);
-      return handLog(changes, scene.elements, since);
+      // In this order, and only as far as it read: a save that lands between is told next time.
+      const changes = await board.changesAfter(caller, id, since);
+      const scene = await board.scene(caller, id);
+      const read = Math.max(since, ...changes.map(({ revision }) => revision));
+      const lines = handLog(changes, scene.elements, since);
+      watch.see(who, id, read);
+      return watch.fresh(who, id, lines);
     };
     /** A step-in as the agent is told of it: what they did, if there is a word for it yet. */
     const told = async (caller: Caller, id: string, stepped: SteppedIn) => {

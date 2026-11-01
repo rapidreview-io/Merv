@@ -45,6 +45,7 @@ export class BoardWatch {
   private closed = false;
   /** How far each agent's conversation has seen each board. */
   private sights = new Map<string, Map<string, number>>();
+  private lastTold = new Map<string, string[]>();
   private desk(board: string): Desk {
     let desk = this.desks.get(board);
     if (!desk) {
@@ -140,11 +141,22 @@ export class BoardWatch {
     const sights = this.sights.get(reader) ?? new Map<string, number>();
     const had = sights.get(board);
     sights.delete(board);
-    sights.set(board, first && had !== undefined ? had : revision);
+    sights.set(board, had === undefined ? revision : first ? had : Math.max(had, revision));
     if (sights.size > BOARDS_A_READER) sights.delete(sights.keys().next().value!);
     this.sights.delete(reader);
     this.sights.set(reader, sights);
     if (this.sights.size > MOST_READERS) this.sights.delete(this.sights.keys().next().value!);
+  }
+  /** Those of `lines` not told to `reader` last time: a person's saves moments apart are one step
+   *  of history, so a step already told can come back with the next. */
+  fresh(reader: string, board: string, lines: string[]): string[] {
+    const key = `${reader}:${board}`;
+    const before = this.lastTold.get(key);
+    this.lastTold.delete(key);
+    if (lines.length) this.lastTold.set(key, lines);
+    else if (before) this.lastTold.set(key, before);
+    if (this.lastTold.size > MOST_READERS) this.lastTold.delete(this.lastTold.keys().next().value!);
+    return lines.filter((line) => !before?.includes(line));
   }
   /** Main is going down: every answer held comes back now. */
   close(): void {

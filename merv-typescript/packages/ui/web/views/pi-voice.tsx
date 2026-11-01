@@ -178,7 +178,8 @@ export function useVoice(pi: Conversation | null) {
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
     held.line = undefined;
     if (pi.active) setSteered((times) => times + 1);
-    const before = held.pending;
+    // A request waiting in another conversation is not this one's: its answer is left unsaid.
+    const before = held.pending?.id === pi.selected ? held.pending : undefined;
     const after = (pi.snapshot?.commands.length ?? 0) - (pi.active ? 1 : 0);
     held.pending = before
       ? { ...before, delegation }

@@ -415,9 +415,17 @@ export class PiService implements Pi {
     // the same message whatever the page showed.
     const { model, pointing: pointed, ...value } = parse(sendInput, input);
     const renter = await this.hosts.hostCaller();
-    await this.core.read((tx) => this.owned(caller, id, tx));
+    // A retry is the same message, which has had its note already.
+    const repeated = await this.core.read(async (tx) => {
+      await this.owned(caller, id, tx);
+      const turns = await this.core.commands(tx, id);
+      return turns.some(
+        (turn) =>
+          turn.id === value.commandId || turn.heard?.some((one) => one.id === value.commandId),
+      );
+    });
     // What the person did goes first: what they now point at may be what it made.
-    const noted = await this.core.tools.notes(caller, id);
+    const noted = repeated ? '' : await this.core.tools.notes(caller, id);
     const pointing = [noted, pointed].filter(Boolean).join('\n') || undefined;
     const { command, hostId, spoken } = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
