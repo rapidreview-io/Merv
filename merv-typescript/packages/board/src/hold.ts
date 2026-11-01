@@ -10,7 +10,7 @@ const PICKUP_MS = 300;
  * How far the pen may have left to draw when an answer comes: the model writes its next call while
  * the pen draws this one, so neither waits, and a person who steps in stops it within this much.
  */
-const AHEAD_MS = 6_000;
+const AHEAD_MS = 12_000;
 /** How often a hold checks that the page is still asking. */
 const CHECK_MS = 500;
 /** How long an agent told of a person's hand may not draw there unless it reads the board first. */

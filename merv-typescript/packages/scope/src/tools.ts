@@ -95,7 +95,7 @@ export const scopeToolsPlugin = {
     // The registry's own guide names no tool, so the tool's plugin says where to begin.
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "Connected from outside Merv, make project.read brief your first read in a project: who you are there, the project and its paper now (Merv's own agent is given it every turn).",
+        "Connected from outside Merv, make project.read brief your first read in a project: who you are there, the project and its paper now. Merv's own agent is given it every turn and never reads it.",
       ),
     );
     page(

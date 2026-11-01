@@ -83,14 +83,14 @@ test('a hold ends with its time, at the cap, when the page stops asking and when
   // Short enough a drawing, and the model writes on while the pen draws.
   assert.equal(await watch.hold('b', 'agent', 1_000, true), undefined);
   watch.asked('c');
-  let passed = settled(watch.hold('c', 'agent', 7_000, true));
+  let passed = settled(watch.hold('c', 'agent', 13_000, true));
   assert.equal(await passed(1_000), false);
   assert.equal(await passed(400), true);
 
   // A leased worker is never held, though the pen's work counts for whoever comes next.
   watch.asked('w');
-  assert.equal(await watch.hold('w', 'worker', 5_000, false), undefined);
-  passed = settled(watch.hold('w', 'agent', 5_000, true));
+  assert.equal(await watch.hold('w', 'worker', 9_000, false), undefined);
+  passed = settled(watch.hold('w', 'agent', 9_000, true));
   assert.equal(await passed(3_000), false);
 
   // However long the drawing, forty seconds at the most, while the page keeps asking.
@@ -339,13 +339,13 @@ test('a draw is held only while a person watches, and says when they step in', a
   const read = (await tools.call('board.read:get', pi, { board: made.id })) as { hand?: string[] };
   assert.equal(read.hand, undefined);
   await tools.call('board.scene', owner, { id: made.id });
-  const pen = await draw(1500, 12);
+  const pen = await draw(1500, 30);
   assert.ok(pen.ms >= 400, `held ${pen.ms} ms`);
   assert.equal(pen.steppedIn, undefined);
   // Open, and their hand comes down meanwhile: at once, and nothing more is stored.
   await tools.call('board.scene', owner, { id: made.id });
   const before = (await board.scene(owner, made.id)).board.revision;
-  const during = draw(1800, 12);
+  const during = draw(1800, 30);
   while ((await board.scene(owner, made.id)).board.revision === before);
   await tools.call('board.hand', owner, { id: made.id });
   // The hold ends as their hand comes down, and its answer waits only for what the hand did.
