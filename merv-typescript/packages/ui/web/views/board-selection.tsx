@@ -41,7 +41,14 @@ function clearOfPanel(island: HTMLElement, at: { left: number; top: number }) {
     : { left: at.left, top: bottom };
 }
 
-export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
+export function BoardSelection({
+  api,
+  frames,
+}: {
+  api: ExcalidrawImperativeAPI;
+  /** Task frames, whose selection is the hand-off's (board-agents). */
+  frames?: Set<string>;
+}) {
   const [at, setAt] = useState<Stood | null>(null);
   const [sending, setSending] = useState<'' | 'asking' | 'refused'>('');
   const said = useSay(true);
@@ -63,6 +70,7 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
           state.isResizing ||
           state.isRotating ||
           state.editingTextElement ||
+          chosen.some((el) => frames?.has(el.id) || (el.frameId && frames?.has(el.frameId))) ||
           // A card opens what it holds; it is not a sketch of theirs.
           (!proposal && chosen.some((el) => el.customData?.card || el.link))
         )
@@ -86,7 +94,7 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
             : { left, top, proposal, theirs },
         );
       }),
-    [api],
+    [api, frames],
   );
   if (!at) return null;
   const { proposal, theirs } = at;

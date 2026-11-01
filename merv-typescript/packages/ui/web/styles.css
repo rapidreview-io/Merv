@@ -10679,3 +10679,141 @@ html.modal-open {
 .board-shared .main-menu-trigger {
   display: none;
 }
+
+/* Experiment: the person's machine and a board's tasks (views/board-agents.tsx). */
+.board-agents-pill {
+  position: absolute;
+  z-index: 5;
+  top: 64px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.board-agents-pill:hover {
+  background: var(--bg-soft);
+}
+.board-agents-pill strong {
+  font-weight: 600;
+  color: #c2570c;
+}
+.board-agents-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c2570c;
+}
+.board-agents-dot[data-online] {
+  background: #16a34a;
+}
+.board-agents-pane {
+  position: absolute;
+  z-index: 5;
+  top: 100px;
+  right: 12px;
+  bottom: 12px;
+  width: min(380px, calc(100% - 24px));
+  padding: var(--space-3);
+  overflow: auto;
+  font-size: var(--text-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 32px #00000016;
+}
+.board-agents-pane > ul,
+.board-agents-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.board-agents-task {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
+}
+.board-agents-task:first-child {
+  border-top: 0;
+}
+.board-agents-title {
+  all: unset;
+  display: block;
+  font-weight: 600;
+  cursor: pointer;
+}
+.board-agents-said {
+  margin: 2px 0 0;
+  color: #2563eb;
+}
+.board-agents-task[data-state='passed'] .board-agents-said {
+  color: #16a34a;
+}
+.board-agents-task[data-state='failed'] .board-agents-said {
+  color: #dc2626;
+}
+.board-agents-task[data-state='queued'] .board-agents-said,
+.board-agents-task[data-state='error'] .board-agents-said {
+  color: #c2570c;
+}
+.board-agents-checks > li {
+  margin-top: var(--space-2);
+  padding-left: 14px;
+  position: relative;
+}
+.board-agents-checks > li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.board-agents-checks > li[data-pass='true']::before {
+  background: #16a34a;
+}
+.board-agents-checks > li[data-pass='false']::before {
+  background: #dc2626;
+}
+.board-agents-checks > li[data-pass='eyes']::before {
+  background: #2563eb;
+}
+.board-agents-changed {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+.board-agents-checks small {
+  display: block;
+  color: var(--muted);
+}
+.board-agents-ways {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.board-agents-problem {
+  margin: var(--space-2) 0 0;
+  color: #dc2626;
+}
+@media (max-width: 730px) {
+  .board-agents-pill {
+    top: auto;
+    right: auto;
+    left: 8px;
+    bottom: 76px;
+  }
+  .board-agents-pane {
+    top: 8px;
+    right: 8px;
+    bottom: 112px;
+    width: calc(100% - 16px);
+  }
+}

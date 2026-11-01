@@ -45,6 +45,7 @@ import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } fro
 import { BoardFollow } from './board-follow';
 import { BoardPointing, markOn } from './board-pointing';
 import { BoardPresence } from './board-presence';
+import { BoardAgents, useTaskFrames } from './board-agents';
 import { BoardSelection } from './board-selection';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
@@ -139,6 +140,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const { frames: taskFrames } = useTaskFrames(id);
   const [readingReference, setReadingReference] = useState(false);
   const [adding, setAdding] = useState(false);
   const [replaying, setReplaying] = useState(false);
@@ -739,7 +741,8 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         </WelcomeScreen>
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
-      {api && <BoardSelection api={api} />}
+      {api && <BoardSelection api={api} frames={taskFrames} />}
+      {api && <BoardAgents id={id} api={api} />}
       <BoardTalk
         doing={() => {
           const said = presence.current?.doing();

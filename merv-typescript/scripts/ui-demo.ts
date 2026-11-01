@@ -11,6 +11,7 @@ import { createApp } from '../src/app.js';
 import { type ApplicationConfig, defaultConfigFile } from '../src/config.js';
 import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
+import { seedCommand } from './ui-demo-command.js';
 import { buildMachine, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
 import { seedTrajectory } from './ui-demo-trajectory.js';
@@ -376,6 +377,7 @@ async function main() {
   const talker = setInterval(() => void talk(), 1200);
   talker.unref();
   if (process.argv.includes('--agent')) await seedAgent(app, url);
+  if (process.argv.includes('--command')) await seedCommand(app, url, boot.token);
   const heartbeat = setInterval(() => void beat(), 20_000);
   heartbeat.unref();
 

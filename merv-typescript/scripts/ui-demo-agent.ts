@@ -29,7 +29,7 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  * and anything else reads the project
  * and answers at length.
  */
-type Step = { call: string; input: object } | { say: string };
+export type Step = { call: string; input: object } | { say: string };
 const LONG = [
   'Here is where the project stands.',
   '',
@@ -402,9 +402,15 @@ function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[]
   return [{ call: 'project.get', input: {} }, { say: LONG }];
 }
 
+/** A demo's own plan for some of what a person says, ahead of the script above. */
+let planHook: ((asked: string, note: string) => Promise<Step[] | undefined>) | undefined;
+export const scriptPlans = (hook: NonNullable<typeof planHook>) => void (planHook = hook);
+
 type Item = { role?: string; type?: string; name?: string; call_id?: string; output?: string };
 /** The model's next move for one request: the turn's plan, as far along as its tool results. */
-function next(body: { input: (Item & { content?: { text?: string }[] | string })[] }): Step {
+async function next(body: {
+  input: (Item & { content?: { text?: string }[] | string })[];
+}): Promise<Step> {
   const from = body.input.findLastIndex((item) => item.role === 'user');
   const content = body.input[from]?.content;
   const whole = Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '';
@@ -421,7 +427,7 @@ function next(body: { input: (Item & { content?: { text?: string }[] | string })
       return null;
     }
   };
-  const steps = plan(asked.trim(), read, whole);
+  const steps = (await planHook?.(asked.trim(), whole)) ?? plan(asked.trim(), read, whole);
   const done = after.filter((item) => item.type === 'function_call_output').length;
   return steps[Math.min(done, steps.length - 1)]!;
 }
@@ -476,7 +482,7 @@ function stream(step: Step): ReadableStream<Uint8Array> {
 const scripted: typeof fetch = async (input, init) => {
   const request = new Request(input, init);
   if (!request.url.endsWith('/pi-model/responses')) return fetch(request);
-  return new Response(stream(next(await request.json())), {
+  return new Response(stream(await next(await request.json())), {
     headers: { 'content-type': 'text/event-stream' },
   });
 };
