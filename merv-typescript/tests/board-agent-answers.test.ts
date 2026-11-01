@@ -390,10 +390,19 @@ test('a sketch like a stroke takes its pen, a variant’s frame goes to the side
   );
   // A frame near a shape on its left side lands there, for a variant beside the original.
   const framed = await f.draw([
-    { op: 'frame', key: 'v', title: 'Another way', near: 'pen1', side: 'left' },
+    {
+      op: 'frame',
+      key: 'v',
+      title: 'Another way',
+      near: 'pen1',
+      side: 'left',
+      width: 300,
+      height: 90,
+    },
   ]);
-  const [x, , width] = framed.placed.v!;
+  const [x, , width, height] = framed.placed.v!;
   assert.ok(x! + width! <= 100, `${x}+${width} stands left of the stroke at 100`);
+  assert.deepEqual([width, height], [300, 90]);
 });
 
 test('told of a mark on the board, an agent’s cursor goes to the mark', async (t) => {

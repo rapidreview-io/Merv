@@ -8620,6 +8620,18 @@ html:has(.board-page) body {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+.board-selection > button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.board-selection-note {
+  padding: 0 var(--space-2);
+  line-height: 28px;
+  font-family: Excalifont, var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
 .board-selection > button:hover {
   background: var(--bg-soft);
 }

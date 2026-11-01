@@ -5,7 +5,7 @@
  * of Pi, each a sentence sent as they would say it, with what is selected pointed at beside it
  * (pi-transport): finish my sketch, and try it another way.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CaptureUpdateAction, getCommonBounds, newElementWith } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type {
@@ -20,16 +20,43 @@ const isProposed = (el: ExcalidrawElement) => !!el.customData?.proposed;
 /** What the two asks say, as a person would; the note beside them says what is selected. */
 export const ASKS = { finish: 'Finish my sketch.', another: 'Try it another way.' } as const;
 
-type Stood = { left: number; top: number; proposal: boolean };
+type Stood = { left: number; top: number; proposal: boolean; theirs: boolean };
+/** How long the island says a send was refused. */
+const REFUSED_MS = 4_000;
+/**
+ * Where the island stands clear of Excalidraw's style panel, which is drawn over the board's top
+ * left while a shape is selected, and only once the selection has drawn it: beside the panel, or
+ * under it when there is no room beside. Measured, since the panel's height is what it holds.
+ */
+function clearOfPanel(island: HTMLElement, at: { left: number; top: number }) {
+  const home = island.parentElement!;
+  const box = home.querySelector('.excalidraw .App-menu__left')?.getBoundingClientRect();
+  if (!box?.height) return at;
+  const room = home.getBoundingClientRect();
+  const [right, bottom] = [box.right - room.left + 8, box.bottom - room.top + 44];
+  const half = island.offsetWidth / 2;
+  if (at.top - 36 >= bottom - 44 || at.left - half >= right) return at;
+  return right + 2 * half <= room.width
+    ? { left: Math.max(at.left, right + half), top: at.top }
+    : { left: at.left, top: bottom };
+}
 
 export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
   const [at, setAt] = useState<Stood | null>(null);
-  const say = useSay()?.say;
+  const [sending, setSending] = useState<'' | 'asking' | 'refused'>('');
+  const said = useSay(true);
+  const island = useRef<HTMLDivElement>(null);
+  const [clear, setClear] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    setClear(at && island.current ? clearOfPanel(island.current, at) : null);
+  }, [at]);
   useEffect(
     () =>
       api.onChange((elements, state) => {
         const chosen = elements.filter((el) => state.selectedElementIds[el.id] && !el.isDeleted);
         const proposal = chosen.every(isProposed);
+        // Their own lines are finished; an agent's drawing is only tried another way.
+        const theirs = chosen.some((el) => el.customData?.by !== 'agent');
         if (
           !chosen.length ||
           state.selectedElementsAreBeingDragged ||
@@ -43,7 +70,7 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
         const [x1, y1, x2] = getCommonBounds(chosen);
         const { scrollX, scrollY, zoom, width } = state;
         // Centred on the selection, and whole on the screen at a phone's width.
-        const half = proposal ? 36 : 116;
+        const half = proposal ? 36 : theirs ? 116 : 60;
         const [left, top] = [
           Math.round(
             Math.min(width - half, Math.max(half, ((x1 + x2) / 2 + scrollX) * zoom.value)),
@@ -51,25 +78,48 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
           Math.round(Math.max(44, (y1 + scrollY) * zoom.value - 10)),
         ];
         setAt((held) =>
-          held?.left === left && held.top === top && held.proposal === proposal
+          held?.left === left &&
+          held.top === top &&
+          held.proposal === proposal &&
+          held.theirs === theirs
             ? held
-            : { left, top, proposal },
+            : { left, top, proposal, theirs },
         );
       }),
     [api],
   );
   if (!at) return null;
-  const { proposal, ...style } = at;
+  const { proposal, theirs } = at;
+  // Drawn where the selection puts it, and seen once measured clear of the panel.
+  const style = {
+    ...(clear ?? { left: at.left, top: at.top }),
+    visibility: clear ? undefined : ('hidden' as const),
+  };
   if (!proposal) {
-    if (!say || readOnly()) return null;
+    if (!said || readOnly()) return null;
+    const ask = (words: string) => {
+      setSending('asking');
+      void said.say(words).then((sent) => {
+        setSending(sent ? '' : 'refused');
+        if (!sent) setTimeout(() => setSending(''), REFUSED_MS);
+      });
+    };
     return (
-      <div className="board-selection" style={style}>
-        <button type="button" onClick={() => void say(ASKS.finish)}>
-          Finish my sketch
-        </button>
-        <button type="button" onClick={() => void say(ASKS.another)}>
-          Another way
-        </button>
+      <div className="board-selection" style={style} ref={island}>
+        {sending === 'refused' ? (
+          <span className="board-selection-note">Pi didn’t take it. Try again.</span>
+        ) : (
+          <>
+            {theirs && (
+              <button type="button" disabled={!!sending} onClick={() => ask(ASKS.finish)}>
+                Finish my sketch
+              </button>
+            )}
+            <button type="button" disabled={!!sending} onClick={() => ask(ASKS.another)}>
+              Another way
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -129,7 +179,7 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
       false,
     );
   return (
-    <div className="board-selection" style={style}>
+    <div className="board-selection" style={style} ref={island}>
       <button type="button" title="Keep" aria-label="Keep" onClick={keep}>
         <Icon name="check" size={16} />
       </button>

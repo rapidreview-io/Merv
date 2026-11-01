@@ -35,6 +35,8 @@ export class BoardFollow {
   following = true;
   /** The drawing being followed: where what came stands, and when it last did. */
   private burst?: { rects: Rect[]; at: number };
+  /** What was pointed at or marked, kept until the answer's first drawing, however long it takes. */
+  private anchored?: Rect;
   constructor(
     private api: ExcalidrawImperativeAPI,
     private board: Element,
@@ -42,7 +44,10 @@ export class BoardFollow {
   /** An agent's shapes are on their way. */
   expect(shapes: readonly BoardElement[]) {
     const coming = shapes.filter((el) => !el.isDeleted);
-    if (coming.length) this.take(rectOf(coming));
+    if (!coming.length) return;
+    const { anchored } = this;
+    this.anchored = undefined;
+    this.take(rectOf(coming), anchored);
   }
   /**
    * What the person pointed at or marked: the answer is read beside it, so the view keeps both
@@ -50,11 +55,12 @@ export class BoardFollow {
    */
   anchor(place: Rect) {
     this.following = true;
+    this.anchored = place;
     this.take(place);
   }
-  private take(rect: Rect) {
+  private take(rect: Rect, held?: Rect) {
     const now = Date.now();
-    const whole = [...this.recent(now), rect];
+    const whole = [...this.recent(now), ...(held ? [held] : []), rect];
     // A leap too far to read both ends of together starts a drawing of its own.
     const together = zoomToFit(union(whole), clearView(this.api)) >= LEAST_ZOOM;
     this.burst = { rects: together ? whole : [rect], at: now };

@@ -186,4 +186,16 @@ test('a mark on another’s shape says where it stands; a loose stroke is no mar
   const marked = handRead([step(2, [over, word])], [b, over, word], 1);
   assert.deepEqual(marked.mark, { x: 490, y: -10, width: 120, height: 140 });
   assert.deepEqual(marked.lines, ['wrote "no" near b', 'a stroke around b (circled?)']);
+  // An arrow drawn at another's shape is a mark too; one that stood before is not.
+  const arrow = shape('ar', { type: 'arrow', x: 400, y: 50, width: 90, height: 10 });
+  assert.deepEqual(handRead([step(2, [arrow])], [b, arrow], 1).mark, {
+    x: 400,
+    y: 50,
+    width: 90,
+    height: 10,
+  });
+  assert.equal(
+    handRead([step(1, [arrow], 'before'), step(2, [arrow])], [b, arrow], 1).mark,
+    undefined,
+  );
 });

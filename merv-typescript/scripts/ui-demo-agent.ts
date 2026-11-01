@@ -156,6 +156,8 @@ function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[]
                   op: 'frame',
                   key: 'v',
                   title: 'Another way: as a loop',
+                  width: Math.max(240, Math.round(box.width)),
+                  height: Math.max(160, Math.round(box.height)),
                   near: rightmost.id,
                   side: 'right',
                   say: 'Same idea, as a loop instead.',

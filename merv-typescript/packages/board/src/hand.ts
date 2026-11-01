@@ -182,7 +182,10 @@ export function handRead(changes: BoardChange[], live: BoardElement[], after: nu
   }
   const more = said.length - kept.length;
   const marked = [...touched.values()].filter(
-    (el) => !el.isDeleted && (drawn.includes(el) || (el.type === 'text' && !el.containerId)),
+    (el) =>
+      !el.isDeleted &&
+      (drawn.includes(el) ||
+        ((el.type === 'text' || el.type === 'arrow') && !el.containerId && !stood.get(el.id))),
   );
   const onOther = (el: BoardElement) => {
     const { x, y } = middle(el);
