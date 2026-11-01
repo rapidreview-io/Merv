@@ -3,7 +3,7 @@ export const clientBundle: Record<string, string> = {
   '.agents/plugins/marketplace.json':
     '{\n  "name": "merv",\n  "interface": { "displayName": "Merv" },\n  "plugins": [\n    {\n      "name": "merv",\n      "source": { "source": "local", "path": "./codex" },\n      "policy": { "installation": "AVAILABLE", "authentication": "ON_USE" },\n      "category": "Productivity"\n    }\n  ]\n}\n',
   '.claude-plugin/marketplace.json':
-    '{\n  "name": "merv",\n  "owner": {\n    "name": "RapidReview"\n  },\n  "metadata": {\n    "description": "Merv\'s client plugin for Claude Code."\n  },\n  "plugins": [\n    {\n      "name": "merv",\n      "source": "./claude-code",\n      "version": "0.5.8"\n    }\n  ]\n}\n',
+    '{\n  "name": "merv",\n  "owner": {\n    "name": "RapidReview"\n  },\n  "metadata": {\n    "description": "Merv\'s client plugin for Claude Code."\n  },\n  "plugins": [\n    {\n      "name": "merv",\n      "source": "./claude-code",\n      "version": "0.5.8"\n    },\n    {\n      "name": "board",\n      "source": "./board",\n      "version": "0.1.0"\n    }\n  ]\n}\n',
   'claude-code/.claude-plugin/plugin.json':
     '{\n  "name": "merv",\n  "version": "0.5.8",\n  "description": "Use Merv for research projects: experiments, tasks, papers, artifacts, reviews and status through remote MCP with browser sign-in.",\n  "author": {\n    "name": "RapidReview"\n  },\n  "keywords": ["research", "ml", "mcp", "experiments"]\n}\n',
   'claude-code/.mcp.json':

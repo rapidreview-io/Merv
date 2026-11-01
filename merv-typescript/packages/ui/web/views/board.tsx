@@ -66,11 +66,29 @@ function BoardList({ row }: ViewProps) {
   );
 }
 
+function AttachNote({ code }: { code: string }) {
+  return (
+    <div className="board-attach-note">
+      <p>In the session you want on this board, within 5 minutes:</p>
+      <code>/board:pair {code}</code>
+      <p>First time, in a terminal:</p>
+      <code>claude plugin install board --marketplace rapidreview-io/merv-plugins</code>
+      <p>
+        It sends prompts, tool names, commands and paths, cut short with secrets removed, and what
+        Claude draws. Never tool output. Session events are relayed, not stored.
+      </p>
+    </div>
+  );
+}
+
 function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
   const navigate = useNavigate();
   const { open, close, item, menu } = useMoreMenu();
   const [sure, setSure] = useState(false);
-  useEffect(() => void (open || setSure(false)), [open]);
+  const [code, setCode] = useState('');
+  useEffect(() => {
+    if (!open) (setSure(false), setCode(''));
+  }, [open]);
   const archive = async () => {
     if (!sure) return setSure(true);
     await call('board.set', { id: board.id, archived: true });
@@ -85,6 +103,13 @@ function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
       <p className="file-menu-facts board-menu-note">
         History on: project members can replay this board, erased work too.
       </p>
+      {code && <AttachNote code={code} />}
+      {item('Attach Claude Code', () => {
+        void call<{ code: string }>('board.attach', { id: board.id }).then(
+          (made) => setCode(made.code),
+          () => undefined,
+        );
+      })}
       {item('Rename', () => (close(), rename()))}
       {item(
         sure ? 'Archive: press again' : 'Archive board',

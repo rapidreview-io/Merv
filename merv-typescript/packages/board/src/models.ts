@@ -1,3 +1,4 @@
+import type { Step } from './transcript.js';
 import type { Json } from '@merv/contracts/data';
 
 /** The most bytes one image holds. */
@@ -75,6 +76,21 @@ export interface BoardScene {
   whole?: true;
   /** Where agents were on this board in the last moments, for the page to show. */
   looking?: BoardLooking[];
+  /** Sessions attached to this board and what they did since `steps`, for the page to show. */
+  attached?: BoardAttached;
+}
+
+/** A session attached to a board, as a page names it. */
+export interface AttachedSession {
+  id: string;
+  name: string;
+}
+/** One thing a session did, relayed to pages and kept nowhere. */
+export type AttachedStep = Step & { session: string; seq: number; key?: string };
+export interface BoardAttached {
+  sessions: AttachedSession[];
+  steps: AttachedStep[];
+  seq: number;
 }
 
 /** Where an agent last looked or drew on a board. It is no record: nothing keeps it. */
