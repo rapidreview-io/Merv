@@ -209,7 +209,13 @@ export const drawSchema = z.strictObject({
   title: title.optional(),
   ops: z.array(opSchema).max(100).default([]),
   /** One sentence said aloud as the pen starts, for whoever the agent is working with. */
-  saying: z.string().trim().min(1).max(140).optional(),
+  saying: z
+    .string()
+    .trim()
+    .min(1)
+    .max(140)
+    .optional()
+    .describe('One spoken sentence said aloud as your pen starts.'),
 });
 export type DrawInput = z.input<typeof drawSchema>;
 
