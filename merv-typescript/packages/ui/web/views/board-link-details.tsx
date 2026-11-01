@@ -94,17 +94,13 @@ export function BoardLinkDetails({
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
   }, [close, expanded]);
-  let host = '';
-  try {
-    host = new URL(link).hostname;
-  } catch {
-    /* Merv record links have no hostname. */
-  }
   const header = (title: string, actions?: ReactNode) => (
-    <header>
-      <span className="board-reference-title" title={title}>
-        {title}
-      </span>
+    <header className={title ? undefined : 'is-bare'}>
+      {title && (
+        <span className="board-reference-title" title={title}>
+          {title}
+        </span>
+      )}
       <div className="board-reference-actions">
         {actions}
         {mode !== 'none' && (
@@ -123,6 +119,16 @@ export function BoardLinkDetails({
       </div>
     </header>
   );
+  // Nothing written: the address row Excalidraw draws under this already says it all.
+  if (
+    !artifactId &&
+    !members &&
+    !charted &&
+    !details.text &&
+    !details.preview &&
+    (web || !details.title)
+  )
+    return null;
   const content = (
     <section
       ref={expanded ? dialog : undefined}
@@ -175,30 +181,21 @@ export function BoardLinkDetails({
                 <Markdown source={details.text} />
               </div>
             )}
-            {web && (
+            {web && details.preview && (
               <a
                 className="board-url-preview"
                 href={link}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <span className="board-url-host">{host} ↗</span>
-                <strong>{details.preview?.title ?? host}</strong>
-                {details.preview?.description ? (
-                  <p>{details.preview.description}</p>
-                ) : (
-                  <p>Open the original source. No preview metadata is available for this link.</p>
-                )}
+                <strong>{details.preview.title}</strong>
+                {details.preview.description && <p>{details.preview.description}</p>}
               </a>
             )}
             {members ? (
               <CardMembers targets={members} />
-            ) : charted ? (
-              <MetricsCharts experimentId={record} compact={expanded ? 4 : 1} />
             ) : (
-              !web &&
-              !artifactId &&
-              !details.text && <p>Open this Merv record using the link below.</p>
+              charted && <MetricsCharts experimentId={record} compact={expanded ? 4 : 1} />
             )}
           </div>
         </>
