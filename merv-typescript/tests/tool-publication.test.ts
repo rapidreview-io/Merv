@@ -104,7 +104,8 @@ test('outside noun summaries never change worker metadata or retired calls', asy
 });
 
 // The total is the original measured baseline; optional production tools are enabled.
-// Only sandboxes.spend's individual cap includes its approved funding guidance (933 characters).
+// Two individual caps exceed that measurement: sandboxes.spend's includes its approved funding
+// guidance, and board.read's (3395 before) the transcript and outcome actions added since.
 // Metadata accepts only the reviewed budget/funding descriptions (system.status/project.read
 // and sandboxes.spend). Every other hash, including every validation constraint, stays pinned.
 test('the operator MCP listing stays at least 25% below the measured baseline', async () => {
