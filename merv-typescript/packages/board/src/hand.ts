@@ -41,7 +41,12 @@ function strokes(drawn: BoardElement[], live: BoardElement[]): string[] {
       const { x, y } = middle(other);
       return x > el.x && x < el.x + el.width && y > el.y && y < el.y + el.height;
     });
-  const ids = (shapes: BoardElement[]) => [...new Set(shapes.map(named))].slice(0, 4).join(',');
+  // With its words, so an agent told in the middle of something need not stop to read them.
+  const said = (el: BoardElement) => {
+    const words = text(live.find(({ containerId }) => containerId === el.id)) || text(el);
+    return words ? `${named(el)} ${quoted(words)}` : named(el);
+  };
+  const ids = (shapes: BoardElement[]) => [...new Set(shapes.map(said))].slice(0, 4).join(', ');
   const count = (n: number) => (n === 1 ? 'a stroke' : `${n} strokes`);
   const lines: string[] = [];
   const crossing: BoardElement[] = [];

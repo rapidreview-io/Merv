@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { agentClient, agentSaying, isAgentAudience } from '@merv/api/audience';
+import { agentAudience, agentClient, agentSaying, isAgentAudience } from '@merv/api/audience';
 import type {} from '@merv/api/types';
 import { summarize } from './elements.js';
 import { MOST_BYTES, overview, readTranscript, stepsOf } from './transcript.js';
 import { handLog } from './hand.js';
+import { BoardAttach, callSchema, eventSchema, pairSchema, pinned } from './attach.js';
 import { BoardWatch, type SteppedIn } from './hold.js';
 import { BoardRenderer, type Files } from './renderer.js';
 import { boardViewSchema as viewSchema, check, MervError, type Caller } from '@merv/contracts';
@@ -39,8 +40,15 @@ const getSchema = z.strictObject({
   text: z.string().trim().max(200).optional(),
   region: z.strictObject({ x: place, y: place, width: place, height: place }).optional(),
 });
-const sceneSchema = z.object({ id, since: z.number().int().safe().min(0).optional() }).strict();
+const sceneSchema = z
+  .object({
+    id,
+    since: z.number().int().safe().min(0).optional(),
+    steps: z.number().int().safe().min(0).optional(),
+  })
+  .strict();
 const handSchema = z.strictObject({ id });
+const detachSchema = z.strictObject({ session: id });
 const transcriptSchema = z.strictObject({
   artifact: id,
   from: z.number().int().min(1).optional(),
@@ -143,9 +151,77 @@ export const boardToolsPlugin = {
         return notes.join('\n');
       }),
     );
+    const attach = new BoardAttach();
     // An image's bytes go between the page and Board here: a tool's JSON could not carry 10 MiB.
     // Each request answers to the caller's membership, and no link stands in for it.
     ctx.inject(['api'], (ctx) => {
+      // A Claude Code session's plugin dials out here with its token; no page reaches a machine.
+      ctx.effect(() =>
+        ctx.api.mount(
+          '/board-attach',
+          async (req, _res, r) => {
+            const route = `${req.method} ${r.url.pathname.slice('/board-attach'.length)}`;
+            if (route === 'GET /tools') {
+              const listed = await ctx.tools.describe(undefined, true, {
+                projectless: true,
+                names: ['board.read', 'board.write'],
+              });
+              return {
+                instructions: guide,
+                tools: listed.flatMap((tool) => {
+                  if (tool.name !== 'board.read' && tool.name !== 'board.write') return [];
+                  const { projectId: _, ...properties } = (tool.inputSchema.properties ?? {}) as {
+                    projectId?: unknown;
+                  };
+                  return [{ ...tool, inputSchema: { ...tool.inputSchema, properties } }];
+                }),
+              };
+            }
+            if (route === 'POST /pair') {
+              const { code, name } = await r.json(pairSchema);
+              const { token, attachment } = attach.pair(code, name);
+              const { board: on, caller } = attachment;
+              const { board: summary } = await board.scene(caller, on, Number.MAX_SAFE_INTEGER);
+              // Everything a person does from here on is told to this session.
+              agentClient.run(name, () => watch.see(reader(caller), on, summary.revision));
+              return { token, board: on, title: summary.title, name };
+            }
+            const attachment = attach.of(r.bearer());
+            const { board: on, caller, name } = attachment;
+            if (route === 'POST /event') {
+              const event = await r.json(eventSchema);
+              attach.relay(attachment, event);
+              if (!event.ask) return {};
+              const hand = await agentAudience.run(true, () =>
+                agentClient.run(name, async () => {
+                  const who = reader(caller);
+                  const since = watch.seen(who).find(([at]) => at === on)?.[1];
+                  if (since === undefined) return [];
+                  const told = await handSince(caller, who, on, since);
+                  // Told: its next draw need not be refused for what it has just read.
+                  if (told.length && watch.ahead(on, who)) watch.read(on, who);
+                  return told;
+                }),
+              );
+              return { board: on, hand };
+            }
+            if (route === 'POST /call') {
+              const { name: tool, input } = await r.json(callSchema);
+              const called = await ctx.tools
+                .invoke(tool, caller, pinned(on, tool, input), true, undefined, name)
+                .catch((error: Error) => ({
+                  format: 'mcp' as const,
+                  value: { isError: true, content: [{ type: 'text', text: error.message }] },
+                }));
+              if (called.format === 'mcp') return called.value;
+              const text = JSON.stringify(called.value ?? null);
+              return called.mcp ?? { content: [{ type: 'text', text }] };
+            }
+            throw new MervError('not_found', 'Unknown endpoint', 404);
+          },
+          { public: true },
+        ),
+      );
       ctx.effect(() =>
         ctx.api.mount('/board-images', async (req, res, r) => {
           const fileId = r.url.pathname.slice('/board-images/'.length);
@@ -460,7 +536,8 @@ export const boardToolsPlugin = {
           const here = [...looking.values()].flatMap(({ board: on, ...where }) =>
             on === input.id && where.at > since ? [where] : [],
           );
-          return here.length ? { ...scene, looking: here } : scene;
+          const attached = input.steps === undefined ? undefined : attach.on(input.id, input.steps);
+          return { ...scene, ...(here.length && { looking: here }), ...(attached && { attached }) };
         },
       },
       {
@@ -495,6 +572,26 @@ export const boardToolsPlugin = {
           await board.scene(caller, input.id, Number.MAX_SAFE_INTEGER);
           watch.hand(input.id);
           return { heard: true };
+        },
+      },
+      {
+        name: 'board.attach',
+        description: 'A code for attaching a Claude Code session to this board.',
+        inputSchema: handSchema,
+        uiOnly: true,
+        handler: async (caller: Caller, input: z.infer<typeof handSchema>) => {
+          await board.scene(caller, input.id, Number.MAX_SAFE_INTEGER);
+          return { code: attach.code(input.id, caller) };
+        },
+      },
+      {
+        name: 'board.detach',
+        description: 'Detach a Claude Code session from its board.',
+        inputSchema: detachSchema,
+        uiOnly: true,
+        handler: async (caller: Caller, input: z.infer<typeof detachSchema>) => {
+          attach.end(input.session, caller.projectId);
+          return { detached: true };
         },
       },
       {

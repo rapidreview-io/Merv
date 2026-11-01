@@ -212,7 +212,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-31",
+  "snapshot": "2026-11-01",
   "groups": [
     {
       "id": "front",
@@ -483,6 +483,16 @@
       "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins.",
       "exposedTools": [
         {
+          "name": "board.attach",
+          "description": "A code for attaching a Claude Code session to this board.",
+          "readOnly": false
+        },
+        {
+          "name": "board.detach",
+          "description": "Detach a Claude Code session from its board.",
+          "readOnly": false
+        },
+        {
           "name": "board.hand",
           "description": "A person's page says their hand has come down on a board, as it does.",
           "readOnly": true
@@ -558,6 +568,16 @@
       "label": "Board · tools adapter",
       "purpose": "Connects Board to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "board.attach",
+          "description": "A code for attaching a Claude Code session to this board.",
+          "readOnly": false
+        },
+        {
+          "name": "board.detach",
+          "description": "Detach a Claude Code session from its board.",
+          "readOnly": false
+        },
         {
           "name": "board.hand",
           "description": "A person's page says their hand has come down on a board, as it does.",

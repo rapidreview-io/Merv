@@ -1,0 +1,9 @@
+{
+  "name": "board",
+  "version": "0.1.0",
+  "description": "Attach the Claude Code session you are running to a shared whiteboard: watch it move, have it draw, and steer it mid-turn with a pen.",
+  "author": {
+    "name": "RapidReview"
+  },
+  "keywords": ["whiteboard", "board", "mcp"]
+}

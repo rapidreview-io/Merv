@@ -11,6 +11,11 @@
       "name": "merv",
       "source": "./claude-code",
       "version": "0.5.8"
+    },
+    {
+      "name": "board",
+      "source": "./board",
+      "version": "0.1.0"
     }
   ]
 }

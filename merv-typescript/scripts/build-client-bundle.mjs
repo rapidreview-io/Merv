@@ -22,3 +22,16 @@ writeFileSync(
     { parser: 'typescript', singleQuote: true, printWidth: 100 },
   ),
 );
+// The Board plugin's one program, from its source in a full checkout.
+if (!existsSync(packaged)) {
+  const { build } = await import('esbuild');
+  await build({
+    entryPoints: [new URL('../packages/board/src/attach-client.ts', import.meta.url).pathname],
+    outfile: new URL('board/board.mjs', root).pathname,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node18',
+    banner: { js: '// Generated from packages/board/src/attach-client.ts; do not edit.' },
+  });
+}

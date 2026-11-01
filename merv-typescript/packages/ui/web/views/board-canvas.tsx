@@ -47,6 +47,7 @@ import { BoardPointing } from './board-pointing';
 import { BoardPresence } from './board-presence';
 import { BoardProposal } from './board-proposal';
 import { BoardReplay } from './board-replay';
+import { BoardSessions, useAttached } from './board-session';
 import { BoardTalk } from './board-talk';
 import { useAgent } from './pi';
 
@@ -181,6 +182,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();
+  const attached = useAttached();
   /** Keeps what agents draw in view, until the person's hand is on the board. */
   const follow = useRef<BoardFollow>();
   /** What the last poll brought that waits for the person to finish. */
@@ -362,9 +364,11 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const ask = async () => {
       if (asking || document.visibilityState === 'hidden') return;
       asking = true;
-      const scene = await call<BoardScene>('board.scene', { id, since: revision.current }).catch(
-        () => null,
-      );
+      const scene = await call<BoardScene>('board.scene', {
+        id,
+        since: revision.current,
+        steps: attached.seq(),
+      }).catch(() => null);
       if (scene) {
         onOutcomes?.(scene.outcomes);
         try {
@@ -377,6 +381,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       }
       asking = false;
       if (live && scene?.looking) presence.current?.heard(scene.looking);
+      if (live && scene?.attached) attached.heard(scene.attached);
       // What waits for the person, once each: a label with its shape, a group of strokes as one.
       waiting.current =
         live && scene && busy(api)
@@ -720,6 +725,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
       {api && <BoardProposal api={api} />}
+      <BoardSessions board={id} sessions={attached.sessions} />
       <BoardTalk
         doing={() => {
           const said = presence.current?.doing();
