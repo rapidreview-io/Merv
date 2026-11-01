@@ -6,32 +6,34 @@ const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const { CardPicker, asksToAdd } = await import('../packages/ui/web/views/board-add.js');
-const { cameraFor, inView, landing, overlaps } =
+const { framing, inView, landing, overlaps } =
   await import('../packages/ui/web/views/board-place.js');
 const { statusLine } = await import('../packages/ui/web/views/board-talk.js');
 
 const view = { x: 0, y: 0, width: 1000, height: 800 };
 const card = { width: 280, height: 110 };
 
-test('the view follows by the least move, and zooms out only when it must', () => {
+test('the view stays if it shows a place, and otherwise centres on it in one change', () => {
   const clear = { x: 16, y: 72, width: 968, height: 668 };
   const now = { scrollX: 0, scrollY: 0, zoom: 1 };
   // In sight, it does not move at all.
-  assert.deepEqual(cameraFor({ x: 100, y: 200, width: 100, height: 100 }, clear, now), now);
-  // Past the right edge, it pans just far enough, keeping the zoom.
-  assert.deepEqual(cameraFor({ x: 2000, y: 200, width: 100, height: 100 }, clear, now), {
+  assert.deepEqual(framing({ x: 100, y: 200, width: 100, height: 100 }, clear, now), now);
+  // Out of sight, it centres on it, keeping the zoom, so what comes next is likely in view too.
+  assert.deepEqual(framing({ x: 2000, y: 200, width: 100, height: 100 }, clear, now), {
     zoom: 1,
-    scrollX: 16 + 968 - 2100 - 48,
-    scrollY: 0,
+    scrollX: 16 + 484 - 2050,
+    scrollY: 72 + 334 - 250,
   });
-  // Under the toolbar, it pans down clear of it.
-  assert.equal(cameraFor({ x: 100, y: 0, width: 100, height: 100 }, clear, now).scrollY, 72 + 48);
-  // Too large to fit, it zooms out and centres; it never zooms in.
-  const big = cameraFor({ x: 0, y: 0, width: 3000, height: 200 }, clear, now);
+  // Too large to fit, it zooms out; following never zooms in.
+  const big = framing({ x: 0, y: 0, width: 3000, height: 200 }, clear, now);
   assert.ok(big.zoom < 1);
   assert.equal(Math.round((1500 + big.scrollX) * big.zoom), 16 + 484);
-  const far = { scrollX: 0, scrollY: 0, zoom: 0.5 };
-  assert.equal(cameraFor({ x: 0, y: 200, width: 10, height: 10 }, clear, far).zoom, 0.5);
+  const far = { scrollX: 0, scrollY: 0, zoom: 0.25 };
+  assert.deepEqual(framing({ x: 400, y: 800, width: 10, height: 10 }, clear, far), far);
+  // Asked to be near, it comes in from too far to read, and stays if near enough already.
+  assert.equal(framing({ x: 400, y: 800, width: 10, height: 10 }, clear, far, 1).zoom, 1);
+  const half = { scrollX: 0, scrollY: 0, zoom: 0.5 };
+  assert.deepEqual(framing({ x: 400, y: 800, width: 10, height: 10 }, clear, half, 1), half);
 });
 
 test('the line says who is doing what, while it is happening and only then', () => {

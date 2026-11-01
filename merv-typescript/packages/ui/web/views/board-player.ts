@@ -584,6 +584,22 @@ export const clearView = (api: ExcalidrawImperativeAPI): Rect => {
   );
 };
 
+/** How long a change of view takes to dissolve. */
+const DISSOLVE_MS = 220;
+/**
+ * The view about to change with no travel: what these canvases show now stays over them and fades.
+ * Nothing slides, and opacity is not motion to the inner ear. Asked for less motion, it is a plain cut.
+ */
+export const dissolve = (root: Element | null | undefined) => {
+  const from = root?.querySelector<HTMLCanvasElement>('canvas.excalidraw__canvas.static');
+  if (!from || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const held = from.cloneNode() as HTMLCanvasElement;
+  held.getContext('2d')?.drawImage(from, 0, 0);
+  from.after(held);
+  held.animate({ opacity: [1, 0] }, { duration: DISSOLVE_MS, easing: 'ease-out' }).onfinish = () =>
+    held.remove();
+};
+
 /** Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`. */
 export const fitView = (
   api: ExcalidrawImperativeAPI,

@@ -21,7 +21,7 @@ export interface Unit {
   ink: number;
   start: number;
   ms: number;
-  /** All the board that has been drawn on by the time this lands, erased work too. */
+  /** How far it goes on the board, erased work too. */
   reach: Reach;
 }
 /** The least and most of x and y. */
@@ -32,8 +32,14 @@ export interface Cut {
   to: number;
   ms: number;
 }
+/** One stretch of work by one hand: units from `first` up to `end`. */
+export interface Chunk {
+  first: number;
+  end: number;
+}
 export interface Timeline {
   units: Unit[];
+  chunks: Chunk[];
   hands: Hand[];
   cuts: Cut[];
   /** The clock's whole length, in milliseconds at 1×. */
@@ -64,6 +70,13 @@ const EDGE_REST = 250;
 const [EDIT_INK, LEAST_INK] = [0.1, 20];
 /** How much a letter makes a pen travel, in its font's size. */
 const LETTER_INK = 1.6;
+/**
+ * A hand's silence past this ends its chunk of work. Real agents' steps came at most 58 s apart over
+ * 60 steps of model time and people's strokes at most 51 s, while people's returns were 450 s on.
+ */
+const CHUNK_GAP_MS = 5 * 60_000;
+/** A chunk that plays in less than this is too short to read, and takes in the one before it. */
+const LEAST_CHUNK_MS = 2_000;
 
 const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 const travel = (points: number[][]) =>
@@ -118,16 +131,16 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
   };
   const standing = new Set<string>();
   const units: Unit[] = [];
+  const chunks: Chunk[] = [];
   const cuts: Cut[] = [];
   const steps: number[] = [];
   let clock = EDGE_REST;
   let before = 0;
   let last: number | undefined;
-  let reach: Reach | undefined;
-  const reachOver = (shapes: BoardElement[]) => {
-    for (const shape of shapes) reach = widened(reach, reachOf(shape));
-    return reach ?? ([0, 0, 0, 0] as const);
-  };
+  let working: number | undefined;
+  const reachOver = (shapes: BoardElement[]) =>
+    shapes.reduce<Reach | undefined>((all, shape) => widened(all, reachOf(shape)), undefined) ??
+    ([0, 0, 0, 0] as const);
   for (const [step, change] of changes.entries()) {
     const at = Date.parse(change.at);
     if (change.kind === 'before') {
@@ -138,6 +151,10 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
       last = at;
       continue;
     }
+    const hand = handOf(change);
+    if (hand !== working || (last !== undefined && at - last > CHUNK_GAP_MS))
+      chunks.push({ first: units.length, end: units.length });
+    working = hand;
     if (last !== undefined) {
       const silence = Math.max(0, at - last);
       const rest =
@@ -158,7 +175,6 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
     }
     last = at;
     steps.push(clock);
-    const hand = handOf(change);
     for (const unit of penUnits(change.shapes, (id) => standing.has(id))) {
       const { shapes, steps } = unit;
       const fresh = new Set(steps.map(({ shape }) => shape));
@@ -170,6 +186,7 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
       const ms = penMs([unit]);
       units.push({ shapes, step, hand, ink, start: clock, ms, reach: reachOver(shapes) });
       clock += ms;
+      chunks.at(-1)!.end = units.length;
       for (const shape of shapes)
         if (shape.isDeleted) standing.delete(shape.id);
         else standing.add(shape.id);
@@ -191,6 +208,7 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
   for (const cut of cuts) [cut.from, cut.to] = [cut.from * scale, cut.to * scale];
   return {
     units,
+    chunks: chunks.filter(({ first, end }) => end > first),
     hands,
     cuts,
     length: clock * scale,
@@ -199,6 +217,21 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
     rate: 1 / scale,
   };
 }
+
+/**
+ * Where a replay opens: the last chunk of an agent's work, or with no agent's the last of a person's,
+ * since either way what is asked is what just happened. Too short to read, it takes in what led to it.
+ */
+export const openingOf = ({ chunks, units, hands }: Timeline) => {
+  const agents = chunks.filter(({ first }) => !hands[units[first]!.hand]?.person);
+  const last = agents.at(-1) ?? chunks.at(-1);
+  if (!last) return 0;
+  const lastUnit = units[last.end - 1]!;
+  const ends = lastUnit.start + lastUnit.ms;
+  let at = chunks.indexOf(last);
+  while (at > 0 && ends - units[chunks[at]!.first]!.start < LEAST_CHUNK_MS) at--;
+  return units[chunks[at]!.first]!.start;
+};
 
 /** How many units have landed by this moment: one lands as the playhead reaches it. */
 export const landedBy = ({ units }: Timeline, at: number) => {
