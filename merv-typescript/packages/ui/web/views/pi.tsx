@@ -2,6 +2,7 @@ import {
   createContext,
   memo,
   useContext,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -88,6 +89,8 @@ interface Agent {
   start(): void;
   /** The person asked for Pi where they are: the conversation begins, in the dock. */
   ask(): void;
+  /** A page speaks to Pi for the person: the conversation begins, with no dock opened for it. */
+  wake(): void;
   /** The person's machine was released: the conversation ends, and its stream with it. */
   end(): void;
   hide(): void;
@@ -98,6 +101,35 @@ interface Agent {
 }
 const AgentContext = createContext<Agent | null>(null);
 export const useAgent = () => useContext(AgentContext);
+
+/**
+ * Saying a sentence to Pi from any page, as the person would: the conversation begins if it has
+ * not, and the words go once it is listed. `say` answers whether they reached Pi; `asking` while
+ * they are on their way. `quiet` begins the conversation without opening the dock, for a page that
+ * is itself where the answer comes. Nothing without an agent, as on a page without one.
+ */
+export function useSay(quiet = false) {
+  const agent = useAgent();
+  const [asking, setAsking] = useState<{ words: string; done(sent: boolean): void } | null>(null);
+  const pi = agent?.pi;
+  const listed = !!pi?.listed;
+  useEffect(() => {
+    if (!asking || !pi || !listed) return;
+    setAsking(null);
+    void pi.send(asking.words).then(asking.done);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asking, listed]);
+  const say = useCallback(
+    (words: string) =>
+      new Promise<boolean>((done) => {
+        setAsking({ words, done });
+        if (quiet) agent!.wake();
+        else agent!.start();
+      }),
+    [agent, quiet],
+  );
+  return agent ? { say, asking: !!asking } : null;
+}
 
 /**
  * Holds the Agent's conversation above the routes, so it outlives its page. Nothing is read,
@@ -118,6 +150,10 @@ export function PiProvider({ children }: { children: ReactNode }) {
             : now.hidden
               ? { ...now, hidden: false }
               : now,
+        ),
+      wake: () =>
+        setOpen((now) =>
+          now.live ? now : { ...now, live: true, opened: now.opened + 1, hidden: true },
         ),
       ask: () =>
         setOpen((now) => ({

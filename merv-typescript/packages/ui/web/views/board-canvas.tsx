@@ -43,9 +43,9 @@ import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
 import { inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
 import { BoardFollow } from './board-follow';
-import { BoardPointing } from './board-pointing';
+import { BoardPointing, markOn } from './board-pointing';
 import { BoardPresence } from './board-presence';
-import { BoardProposal } from './board-proposal';
+import { BoardSelection } from './board-selection';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
 import { useAgent } from './pi';
@@ -192,8 +192,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const waiting = useRef(0);
   /** Gathers what the person points at, to go with what they say to Pi. */
   const pointing = useRef<BoardPointing>();
-  /** Whether the person's hand was on the board at the last change, drawing or changing a shape. */
+  /** Whether the person's hand was on the board at the last change, drawing or changing a shape,
+   *  and since when. */
   const handDown = useRef(false);
+  const handDownAt = useRef(0);
   const focusBoard = () =>
     reveal.current?.parentElement?.querySelector<HTMLElement>(':scope > .excalidraw')?.focus();
 
@@ -324,8 +326,11 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     follow.current = camera;
     const unpoint = pointWith({
       note() {
-        // Saying something to Pi is watching for its answer, and what Pi was drawing is by the way.
+        // Saying something to Pi is watching for its answer, and what Pi was drawing is by the way;
+        // what they point at stays in view beside it.
         camera.following = true;
+        const chosen = hand.selection();
+        if (chosen) camera.anchor(chosen);
         made.hurry();
         return hand.note();
       },
@@ -691,9 +696,15 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
             appState.selectedElementsAreBeingDragged
           );
           if (down && !handDown.current) {
+            handDownAt.current = Date.now();
             player.current?.hurry();
             hush.current?.();
             void call('board.hand', { id }).catch(() => undefined);
+          }
+          // A mark on an agent's drawing asks it to answer there: the view waits on that spot.
+          if (!down && handDown.current) {
+            const mark = markOn(elements as never, handDownAt.current);
+            if (mark) follow.current?.anchor(mark);
           }
           handDown.current = down;
           // Only the person's own shapes changing puts off their save: no cursor, camera or other
@@ -728,7 +739,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         </WelcomeScreen>
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
-      {api && <BoardProposal api={api} />}
+      {api && <BoardSelection api={api} />}
       <BoardTalk
         doing={() => {
           const said = presence.current?.doing();

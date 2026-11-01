@@ -340,3 +340,112 @@ test('a field beside the action’s object is told where it goes', async (t) => 
       },
     );
 });
+
+test('a sketch like a stroke takes its pen, a variant’s frame goes to the side asked', async (t) => {
+  const f = await fixture(t);
+  const theirs = {
+    id: 'pen1',
+    type: 'freedraw',
+    version: 1,
+    versionNonce: 1,
+    isDeleted: false,
+    x: 100,
+    y: 100,
+    width: 120,
+    height: 60,
+    strokeColor: '#e03131',
+    strokeWidth: 4,
+    roughness: 1,
+    points: [
+      [0, 60],
+      [60, 0],
+      [120, 60],
+    ],
+  } as El;
+  await f.save([theirs]);
+  // The continuation is in their pen; a stroke with a pen of its own keeps it; nothing to be like is refused.
+  const drawn = await f.agentDraw([
+    {
+      op: 'sketch',
+      key: 'more',
+      like: 'pen1',
+      proposed: true,
+      size: 'native',
+      at: [220, 100],
+      strokes: [{ path: 'M0 60 L60 0' }, { path: 'M60 0 L120 60', color: 'blue', width: 'thin' }],
+    },
+  ]);
+  const strokes = (await f.scene()).filter((el) => el.groupIds?.includes(drawn.created.more!));
+  assert.deepEqual(
+    strokes.map((el) => [el.strokeColor, el.strokeWidth, el.roughness, el.customData.proposed]),
+    [
+      ['#e03131', 4, 1, true],
+      ['#1971c2', 1, 1, true],
+    ],
+  );
+  assert.equal(drawn.placed.more![0], 220);
+  await assert.rejects(
+    f.draw([{ op: 'sketch', like: 'nothing', strokes: [{ path: 'M0 0 L1 1' }] }]),
+    /No shape "nothing"/,
+  );
+  // A frame near a shape on its left side lands there, for a variant beside the original.
+  const framed = await f.draw([
+    {
+      op: 'frame',
+      key: 'v',
+      title: 'Another way',
+      near: 'pen1',
+      side: 'left',
+      width: 300,
+      height: 90,
+    },
+  ]);
+  const [x, , width, height] = framed.placed.v!;
+  assert.ok(x! + width! <= 100, `${x}+${width} stands left of the stroke at 100`);
+  assert.deepEqual([width, height], [300, 90]);
+});
+
+test('told of a mark on the board, an agent’s cursor goes to the mark', async (t) => {
+  const f = await fixture(t);
+  const drawn = await f.agentDraw([{ op: 'box', key: 'a', text: 'by the agent', at: [0, 0] }]);
+  await f.agent.callTool({
+    name: 'board.read',
+    arguments: { action: 'get', get: { board: f.board } },
+  });
+  // The person circles the agent's box: a closed stroke around it.
+  const box = (await f.scene()).find((el) => el.id === drawn.created.a)!;
+  const ring = {
+    id: 'ring',
+    type: 'freedraw',
+    version: 1,
+    versionNonce: 1,
+    isDeleted: false,
+    x: box.x - 20,
+    y: box.y - 20,
+    width: box.width + 40,
+    height: box.height + 40,
+    points: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
+      const a = (i / 8) * 2 * Math.PI;
+      return [
+        (box.width + 40) / 2 + (Math.cos(a) * (box.width + 40)) / 2,
+        (box.height + 40) / 2 + (Math.sin(a) * (box.height + 40)) / 2,
+      ];
+    }),
+  } as El;
+  await f.save([ring]);
+  const got = JSON.parse(
+    (
+      (await f.agent.callTool({
+        name: 'board.read',
+        arguments: { action: 'get', get: { board: f.board } },
+      })) as { content: { text: string }[] }
+    ).content[0]!.text,
+  ) as { hand?: string[] };
+  assert.match(got.hand?.join(' ') ?? '', /circled\?/);
+  const scene = (await f.tools.call('board.scene', f.owner, { id: f.board })) as BoardScene;
+  const [cursor] = scene.looking!;
+  assert.deepEqual(
+    [cursor!.region.x, cursor!.region.y, cursor!.region.width, cursor!.region.height],
+    [ring.x, ring.y, ring.width, ring.height],
+  );
+});

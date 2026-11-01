@@ -1,3 +1,4 @@
+import { bounds } from './elements.js';
 import { boxOf, inStroke } from './models.js';
 import type { BoardChange, BoardElement } from './types.js';
 
@@ -110,7 +111,11 @@ function nearest(shapes: BoardElement[], x: number, y: number) {
  * `live` is the board now. `after` is the revision they are told from; changes up to it only say
  * how a shape stood.
  */
-export function handLog(changes: BoardChange[], live: BoardElement[], after: number): string[] {
+export const handLog = (changes: BoardChange[], live: BoardElement[], after: number) =>
+  handRead(changes, live, after).lines;
+/** The log, and where the newest mark on another's shape stands: a stroke on or around one, or
+ *  words beside one, since `after`. An agent told of a mark is sent there. */
+export function handRead(changes: BoardChange[], live: BoardElement[], after: number) {
   const stood = new Map<string, BoardElement>();
   const touched = new Map<string, BoardElement>();
   for (const { revision, kind, shapes } of changes)
@@ -176,5 +181,23 @@ export function handLog(changes: BoardChange[], live: BoardElement[], after: num
     chars += line.length;
   }
   const more = said.length - kept.length;
-  return more ? [`…and ${more} more: board.read get since ${after} lists them`, ...kept] : kept;
+  const marked = [...touched.values()].filter(
+    (el) =>
+      !el.isDeleted &&
+      (drawn.includes(el) ||
+        ((el.type === 'text' || el.type === 'arrow') && !el.containerId && !stood.get(el.id))),
+  );
+  const onOther = (el: BoardElement) => {
+    const { x, y } = middle(el);
+    const near = nearest(others, x, y);
+    return (
+      !!near &&
+      Math.hypot(middle(near).x - x, middle(near).y - y) < NAMES + Math.max(el.width, el.height) / 2
+    );
+  };
+  const mark = marked.filter(onOther).map(boxOf);
+  return {
+    lines: more ? [`…and ${more} more: board.read get since ${after} lists them`, ...kept] : kept,
+    ...(mark.length && { mark: bounds(mark)! }),
+  };
 }
