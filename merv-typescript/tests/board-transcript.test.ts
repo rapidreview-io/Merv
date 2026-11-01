@@ -82,8 +82,13 @@ test('Claude Code: calls meet their results, a failure is what the file records,
   assert.equal(whole.gaps.orphanResults, 1);
   assert.deepEqual(whole.gaps.notRead, { attachment: 1, 'brand-new-thing': 1 });
   const seen = overview(whole);
-  assert.equal(seen.failures.total, 1);
-  assert.deepEqual(seen.retries.first, [{ tool: 'Bash', steps: [4, 5] }]);
+  assert.equal(seen.totals.failures, 1);
+  assert.deepEqual(
+    seen.along.marks
+      .filter((mark) => mark.kind === 'retry')
+      .map(({ step, until }) => [step, until]),
+    [[4, 5]],
+  );
   assert.deepEqual(seen.gaps.callsWithoutResult.first, [5]);
   assert.deepEqual(seen.gaps.compactions, [7]);
   assert.deepEqual(seen.files.changed, [{ path: 'src/round.js', edits: 1 }]);
@@ -361,15 +366,33 @@ test('a long run stays bounded: overview, phases and pages of steps', () => {
   const seen = overview(whole);
   assert.ok(seen.phases.length <= 24);
   assert.ok(JSON.stringify(seen).length < 20_000, `${JSON.stringify(seen).length}`);
-  assert.equal(seen.failures.first.length, 30);
-  assert.ok(seen.failures.total > 30);
+  assert.equal(seen.along.marks.filter((mark) => mark.kind === 'failure').length, 30);
+  assert.ok(seen.totals.failures > 30);
   assert.ok(JSON.stringify(whole).length < 16 * 1024 * 1024);
   const page = stepsOf(whole, 1, 5000);
   assert.ok(JSON.stringify(page).length < 40_000);
   assert.equal(page.next, page.steps.length + 1);
   assert.deepEqual(stepsOf(whole, 9_000, 9_010).steps, []);
-  // A step past its page's room still comes alone, so no read returns nothing.
-  assert.equal(stepsOf(whole, 3, 3).steps[0]!.id, 3);
+  // A step past its page's room still comes alone and whole, so no read returns nothing.
+  const alone = stepsOf(whole, 3, 3).steps[0] as { id: number; line?: number };
+  assert.equal(alone.id, 3);
+  assert.ok(alone.line);
+  assert.ok(JSON.stringify(stepsOf(whole, 1, 5000)).length < 15_000);
+});
+
+test('the overview draws the run along time, every mark at its place on the line', () => {
+  const at = (hour: string) => ({
+    ...person(`said at ${hour}`),
+    timestamp: `2026-10-31T${hour}:00:00.000Z`,
+  });
+  const { along } = overview(readTranscript(lines(at('10'), at('11'), at('20'))));
+  assert.match(along.pace!, /^M\d+ \d+( L\d+ \d+){47}$/);
+  assert.deepEqual(
+    along.marks.filter((mark) => mark.kind === 'person').map((mark) => mark.x),
+    [0, 120, 1200],
+  );
+  const hole = along.marks.find((mark) => mark.kind === 'pause')!;
+  assert.deepEqual([hole.x, hole.until, hole.minutes], [0, 120, 60]);
 });
 
 test('a line stamped out of order makes one pause, not two', () => {
@@ -379,8 +402,11 @@ test('a line stamped out of order makes one pause, not two', () => {
   });
   const pauses = overview(
     readTranscript(lines(stamped('11:00'), stamped('16:00'), stamped('11:50'), stamped('16:01'))),
-  ).time.pauses;
-  assert.deepEqual(pauses, [{ after: 1, minutes: 300 }]);
+  ).along.marks.filter((mark) => mark.kind === 'pause');
+  assert.deepEqual(
+    pauses.map(({ step, minutes, x, until }) => [step, minutes, x, until]),
+    [[1, 300, 0, 1196]],
+  );
 });
 
 test('missing times stay missing and are counted, never invented', () => {

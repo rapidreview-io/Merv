@@ -1,4 +1,5 @@
 import { screenImage, recentImages } from './tool-image.js';
+import { toolOutput } from './fit.js';
 import { retryTransient, type RetryOptions } from './model-retry.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
@@ -49,8 +50,7 @@ const NEXT_TIMEOUT_MS = 30_000;
 // streaming turn makes at most about ten a second, however fast its words come.
 const FLUSH_MS = 100;
 const MOVING_MS = 1_000;
-// What a turn's tools return, at most: every result counts, and only reads are cut once it is
-// spent (a write's receipt always arrives whole).
+// What a turn's tools return, at most: see toolOutput.
 const TOOL_OUTPUT_BYTES = 128_000;
 /** Tool calls one answer may make; the next is refused before it runs, and the model is told to
  * answer with what it has. */
@@ -413,7 +413,8 @@ async function executeTurn(
     ),
   );
   const room = Math.max(0, 3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)) - fixed);
-  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, Math.floor(room / 3));
+  const toolBytes = Math.min(TOOL_OUTPUT_BYTES, Math.floor(room / 3));
+  const spend = toolOutput(toolBytes);
   const window = Math.min(HISTORY_BYTES, room - toolBytes);
   // Compaction summarizes the conversation once a call's context passes 90% of the window (Codex's
   // model_auto_compact_token_limit), keeping its newest 20,000 tokens or so beside the summary.
@@ -634,18 +635,12 @@ async function executeTurn(
       const visual = screenImage(output.result);
       const result = visual ? visual.metadata : output.result;
       const text = JSON.stringify(result) ?? 'null';
-      const size = Buffer.byteLength(text);
-      const cut = tool.readOnly !== false && size > toolBytes;
-      const kept = cut ? Buffer.from(text).subarray(0, toolBytes).toString() : text;
-      const shown = cut ? `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]` : text;
-      toolBytes = Math.max(0, toolBytes - size);
+      const { shown, cut } = spend(text, { cuts: tool.readOnly !== false, free: !!visual });
       outcomes.push({
         callId: canonicalCallId,
         name: tool.name,
         input: input as PiToolOutcome['input'],
-        output: (shown === text
-          ? result
-          : { truncated: true, text: kept }) as PiToolOutcome['output'],
+        output: (cut ?? result) as PiToolOutcome['output'],
       });
       return {
         content: [
