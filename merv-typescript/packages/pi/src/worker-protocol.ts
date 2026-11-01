@@ -18,7 +18,7 @@ import {
   nextInput,
   switchMachineInput,
 } from './schema.js';
-import { personInterrupts } from '@merv/api/audience';
+import { agentSaying, personInterrupts } from '@merv/api/audience';
 import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, notRun, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
@@ -599,10 +599,15 @@ export class PiWorkerProtocol {
       value.name === 'machine.switch'
         ? this.switchMachine(conversation, command, value.input)
         : personInterrupts.run(listening.signal, () =>
-            this.core.tools.call(
-              value.name,
-              conversationCaller(conversation, command),
-              value.input,
+            agentSaying.run(
+              (text) =>
+                this.core.report(conversation.id, command.id, 'tool', 'Making a change', text),
+              () =>
+                this.core.tools.call(
+                  value.name,
+                  conversationCaller(conversation, command),
+                  value.input,
+                ),
             ),
           )
     )

@@ -248,6 +248,9 @@ export class ToolRegistry implements Tools {
   private readonly callerRules = new Map<CallerKind, CallerRules>();
   private readonly guide: { text: string }[] = [];
   private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
+  private readonly noters = new Set<
+    (caller: Caller, conversation: string) => Promise<string | undefined>
+  >();
   private stopping = false;
   issues: Issues = silent;
   readonly reported = new WeakSet<object>();
@@ -674,6 +677,18 @@ export class ToolRegistry implements Tools {
       this.readers.map(({ read }) => read(caller).catch(() => undefined)),
     );
     return parts.filter(Boolean).join('\n\n');
+  }
+
+  contributeNote(read: (caller: Caller, conversation: string) => Promise<string | undefined>) {
+    this.noters.add(read);
+    return () => void this.noters.delete(read);
+  }
+
+  async notes(caller: Caller, conversation: string): Promise<string> {
+    const parts = await Promise.all(
+      [...this.noters].map((read) => read(caller, conversation).catch(() => undefined)),
+    );
+    return parts.filter(Boolean).join('\n');
   }
 
   /** The rules of the plugin that issued this caller, if any; fails closed without them. */

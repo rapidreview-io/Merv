@@ -23,6 +23,8 @@ export interface Doing {
   playing: boolean;
   /** Whether Pi is on a turn nothing else on the page says so of. */
   thinking: boolean;
+  /** What the one drawing last said about it, in place of saying that it draws. */
+  saying?: string;
 }
 
 /** The line for this moment, or nothing when nothing is happening. */
@@ -33,9 +35,10 @@ export function statusLine({
   waiting,
   playing,
   thinking,
+  saying,
 }: Doing) {
   if (waiting) return name ? `${waiting} waiting from ${name}` : `${waiting} waiting`;
-  if (name && (playing || drewMs < DRAWING_MS)) return `${name} is drawing`;
+  if (name && (playing || drewMs < DRAWING_MS)) return saying || `${name} is drawing`;
   if (looking) return `${looking} is looking`;
   if (thinking) return 'Pi is thinking';
   if (name && drewMs < DREW_MS) return `${name} drew ${Math.round(drewMs / 1000)} s ago`;
@@ -62,8 +65,9 @@ export function BoardTalk({
     return () => clearInterval(beating);
   }, []);
   const open = docked(agent, roomy);
-  const line = statusLine({ ...doing(), thinking: !!agent?.pi?.active && !open });
   const pi = agent?.pi;
+  const now = doing();
+  const line = statusLine({ ...now, thinking: !!pi?.active && !open });
   return (
     <>
       {line && (
@@ -72,18 +76,20 @@ export function BoardTalk({
             {line}
             {!following() && <span className="board-status-follow">Follow</span>}
           </button>
-          {pi?.active && line === 'Pi is drawing' && (
-            <button
-              type="button"
-              className="board-status-stop"
-              onClick={() => {
-                stepIn();
-                void pi.stop();
-              }}
-            >
-              Stop
-            </button>
-          )}
+          {pi?.active &&
+            (line === 'Pi is drawing' || (now.name === 'Pi' && line === now.saying)) && (
+              <button
+                type="button"
+                className="board-status-stop"
+                onClick={() => {
+                  stepIn();
+                  agent?.voice.hush();
+                  void pi.stop();
+                }}
+              >
+                Stop
+              </button>
+            )}
         </div>
       )}
       {agent && !open && !readOnly() && (

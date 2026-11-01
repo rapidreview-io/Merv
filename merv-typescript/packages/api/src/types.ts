@@ -263,6 +263,13 @@ export interface Tools {
   /** Each reader's text for this caller in contribution order, joined by blank lines; a reader
    *  that fails or has nothing to say is left out. */
   context(caller: Caller): Promise<string>;
+  /** Adds a reader of what a person did since a conversation last looked, told with each message
+   *  they send it, a turn's first or one said during it. */
+  contributeNote(
+    read: (caller: Caller, conversation: string) => Promise<string | undefined>,
+  ): () => void;
+  /** Each such reader's text for this message, one to a line; those with nothing are left out. */
+  notes(caller: Caller, conversation: string): Promise<string>;
   /** Adds a drawer of the records whose ids begin with `prefix`: a self-contained page of one, as
    *  the caller may see it, for an agent to look at without anyone's screen (409 when taken). */
   contributePicture(prefix: string, draw: PictureDrawer): () => void;

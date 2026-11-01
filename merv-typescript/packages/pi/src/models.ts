@@ -111,6 +111,9 @@ export interface PiStage {
   since: string;
   /** A short human phrase for a tool call: what it is (`Reading`), never the tool's name. */
   detail?: string;
+  /** What the agent last said aloud in this turn: every page's voice and status line take it from
+   *  here, so a snapshot carries it as a stage event does. */
+  saying?: string;
 }
 /** A model a person may pick for a conversation (MERV_PI_MODELS), without the relay's effort. */
 export type PiModel = Omit<PiModelConfig, 'effort'>;

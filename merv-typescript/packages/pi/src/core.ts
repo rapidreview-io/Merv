@@ -482,9 +482,11 @@ export class PiCore {
   show(id: string, next: Omit<PiStage, 'since'> & { since?: string }, commandId?: string): PiStage {
     const live = this.live.get(id);
     const last = live?.stage ?? { name: 'idle', since: next.since ?? this.time() };
-    if (last.name === next.name && last.detail === next.detail) return last;
+    if (last.name === next.name && last.detail === next.detail && last.saying === next.saying)
+      return last;
     const stage: PiStage = { name: next.name, since: next.since ?? this.time() };
     if (next.detail) stage.detail = next.detail;
+    if (next.saying) stage.saying = next.saying;
     if (next.name === 'idle') this.live.delete(id);
     else this.live.set(id, { ...live, stage });
     const event = commandId ? { type: 'stage' as const, stage } : { type: 'changed' as const };
@@ -492,8 +494,15 @@ export class PiCore {
     return stage;
   }
   /** What the worker does within its turn: kept in memory and shown at once. */
-  report(id: string, commandId: string, name: PiStageName, detail?: string): void {
-    const turn = { name, since: this.time(), commandId, detail };
+  report(id: string, commandId: string, name: PiStageName, detail?: string, saying?: string): void {
+    const was = this.live.get(id)?.turn;
+    const turn = {
+      name,
+      since: this.time(),
+      commandId,
+      detail,
+      saying: saying ?? (was?.commandId === commandId ? was.saying : undefined),
+    };
     this.live.set(id, { ...this.live.get(id), turn });
     this.show(id, turn, commandId);
   }

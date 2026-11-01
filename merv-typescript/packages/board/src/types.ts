@@ -1,6 +1,7 @@
 import type { Caller, Transaction } from '@merv/contracts';
 import type { DrawInput, OutcomeInput, OutcomeSentInput } from './input.js';
 import type {
+  BoardChange,
   BoardElement,
   BoardHistory,
   BoardScene,
@@ -54,6 +55,7 @@ export interface Board {
   ): Promise<{ board: BoardSummary; accepted: number }>;
   /** A member's page of the board's history, oldest first, after a revision. */
   history(caller: Caller, id: string, after?: number): Promise<BoardHistory>;
+  changesAfter(caller: Caller, id: string, after: number): Promise<BoardChange[]>;
   /** Keeps an image's bytes under its file id in the caller's project, once: PNG, JPEG, WebP or
    *  GIF by their content, at most 10 MiB. */
   storeImage(

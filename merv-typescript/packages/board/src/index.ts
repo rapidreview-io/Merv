@@ -52,6 +52,8 @@ const [KEEP_MS, PURGE] = [30 * 86_400_000, 500];
 const [STEP_MS, STEP_BYTES] = [5_000, 1_000_000];
 /** The most steps of history one read answers, and the bytes past which it stops. */
 const [HISTORY_PAGE, HISTORY_BYTES] = [100, 2_000_000];
+/** The most shapes one read recalls the earlier state of. */
+const MOST_RECALLED = 32;
 /** The most outcomes one board holds, the characters one holds, and the sends it remembers. */
 const [MOST_OUTCOMES, OUTCOME_CHARS, SENDS_KEPT] = [50, 200_000, 20];
 /** An outcome's row as a line; Postgres may answer a BIGINT as text. */
@@ -185,6 +187,31 @@ export class BoardService implements Board {
         total: count!.total,
         ...(count!.left > rows.length && { next: rows.at(-1)!.revision }),
       };
+    });
+  }
+  /** What changed after a revision, a bounded page of it, and how each shape it names stood then. */
+  async changesAfter(caller: Caller, boardId: string, after: number) {
+    const { changes } = await this.history(caller, boardId, after);
+    const ids = [...new Set(changes.flatMap(({ shapes }) => shapes.map((el) => el.id)))];
+    return await forRead(this.state, async (tx) => {
+      const stood: BoardChange[] = [];
+      for (const shape of ids.slice(0, MOST_RECALLED)) {
+        const row = await tx.get<{ revision: number; shapes: string }>(
+          'SELECT revision,shapes FROM board_history WHERE board_id=? AND revision<=? AND strpos(shapes,?)>0 ORDER BY revision DESC LIMIT 1',
+          boardId,
+          after,
+          shape,
+        );
+        if (row)
+          stood.push({
+            revision: Number(row.revision),
+            actorId: '',
+            at: '',
+            kind: 'before',
+            shapes: (JSON.parse(row.shapes) as BoardElement[]).filter((el) => el.id === shape),
+          });
+      }
+      return [...stood, ...changes];
     });
   }
   /** Collaboration is for project members, not platform inspection or runner control identities. */

@@ -48,6 +48,7 @@ import { BoardPresence } from './board-presence';
 import { BoardProposal } from './board-proposal';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
+import { useAgent } from './pi';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -169,6 +170,14 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   );
   /** Shows what others drew, as they drew it, on a canvas above the board. */
   const player = useRef<Player>();
+  // A hand coming down stops the voice talking over it, as it stops the pen.
+  const agent = useAgent();
+  const hush = useRef(agent?.voice.hush);
+  hush.current = agent?.pi?.active ? agent.voice.hush : undefined;
+  const steered = agent?.voice.steered;
+  useEffect(() => {
+    if (steered) player.current?.hurry();
+  }, [steered]);
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();
@@ -674,6 +683,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
           );
           if (down && !handDown.current) {
             player.current?.hurry();
+            hush.current?.();
             void call('board.hand', { id }).catch(() => undefined);
           }
           handDown.current = down;

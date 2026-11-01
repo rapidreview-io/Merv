@@ -14,7 +14,8 @@ import type { Conversation } from './pi-conversation';
 
 /** How long a session may go without anyone speaking, and no answer pending, before it closes. */
 const IDLE_MS = 120_000;
-/** How long after the voice's last word it counts as listening again. */
+/** How long after the voice's last word it counts as listening again, and after a line is handed
+ *  over that it counts as saying it (it begins in under a second). */
 const QUIET_MS = 1_400;
 /** GPT-Live takes at most 500 tokens an append. */
 const SAYABLE = 1_800;
@@ -37,6 +38,9 @@ interface Live {
   quiet?: ReturnType<typeof setTimeout>;
   /** The request Pi is answering: GPT-Live's delegation, the turn sent for it and where. */
   pending?: { delegation: string; text: string; after: number; id: string | null };
+  /** What Pi said while the voice was busy: only the newest waits, and nothing waits on it. */
+  line?: string;
+  next?: ReturnType<typeof setTimeout>;
 }
 
 /** An answer written for the screen, as words to be said: no markup, no tables, no code. */
@@ -67,7 +71,7 @@ function resultOf(command: PiCommand): string {
   const parts = [answer ? sayable(answer) : ''];
   if (command.status === 'interrupted')
     parts.push(`Pi stopped before it finished (${command.error ?? 'interrupted'}).`);
-  return parts.filter(Boolean).join(' ') || 'Pi finished without saying anything.';
+  return `Result: ${parts.filter(Boolean).join(' ') || 'Pi finished without saying anything.'}`;
 }
 
 const level = (analyser?: AnalyserNode) => {
@@ -88,6 +92,8 @@ export function useVoice(pi: Conversation | null) {
   const [said, setSaid] = useState('');
   const [problem, setProblem] = useState('');
   const [muted, setMuted] = useState(false);
+  /** How many times the person has spoken over a turn: what is being drawn hurries to its end. */
+  const [steered, setSteered] = useState(0);
   const live = useRef<Live | null>(null);
   const conversation = useRef(pi);
   conversation.current = pi;
@@ -106,6 +112,7 @@ export function useVoice(pi: Conversation | null) {
     live.current = null;
     if (held) {
       clearTimeout(held.quiet);
+      clearTimeout(held.next);
       for (const track of held.mic?.getTracks() ?? []) track.stop();
       held.pc.close();
       held.audio.srcObject = null;
@@ -128,7 +135,39 @@ export function useVoice(pi: Conversation | null) {
     } else teardown();
   };
 
-  /** A request GPT-Live handed over: it becomes a Pi turn on the conversation's own model. */
+  /** Says what Pi is saying as it works, as soon as the voice and the person leave room. */
+  const utter = () => {
+    const held = live.current;
+    if (!held?.line) return;
+    clearTimeout(held.next);
+    const wait = held.last + QUIET_MS - Date.now();
+    if (wait > 0) return void (held.next = setTimeout(utter, wait));
+    send('session.commentary.append', held.line, held.pending?.delegation ?? null);
+    held.line = undefined;
+    held.last = Date.now();
+  };
+  const saying = pi?.snapshot?.stage.saying;
+  useEffect(() => {
+    if (!live.current || !saying) return;
+    live.current.line = saying;
+    utter();
+  }, [saying]);
+
+  /** A person stepped in some way the voice could not hear: it stops, and what waits is dropped. */
+  const hush = () => {
+    const held = live.current;
+    if (!held) return;
+    held.line = undefined;
+    if (Date.now() - held.last > QUIET_MS) return;
+    send(
+      'session.instructions.append',
+      'The person stepped in. Stop what you are saying now. Later messages from Pi are still to be said.',
+      null,
+    );
+  };
+
+  /** A request GPT-Live handed over: it becomes a Pi turn on the conversation's own model, or, said
+   *  while one runs, goes to that turn, which then hears it, stops its pen and answers for both. */
   const delegate = async (delegation: string) => {
     const held = live.current;
     if (!held) return;
@@ -137,18 +176,18 @@ export function useVoice(pi: Conversation | null) {
     const pi = conversation.current;
     if (!pi) return;
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
-    if (held.pending || pi.active)
-      return send(
-        'session.commentary.append',
-        'Pi is still working on the last request; I will tell you when it is done.',
-        delegation,
-      );
-    held.pending = { delegation, text, after: pi.snapshot?.commands.length ?? 0, id: pi.selected };
+    held.line = undefined;
+    if (pi.active) setSteered((times) => times + 1);
+    const before = held.pending;
+    const after = (pi.snapshot?.commands.length ?? 0) - (pi.active ? 1 : 0);
+    held.pending = before
+      ? { ...before, delegation }
+      : { delegation, text, after, id: pi.selected };
     setState('working');
     const sent = await pi.send(text);
     if (!sent && live.current === held) {
-      held.pending = undefined;
-      setState('listening');
+      held.pending = before;
+      setState(before ? 'working' : 'listening');
       send('session.commentary.append', 'Pi could not take that request just now.', delegation);
     }
   };
@@ -163,6 +202,8 @@ export function useVoice(pi: Conversation | null) {
         break;
       case 'session.input_transcript.delta':
         held.last = Date.now();
+        // The person's voice cuts the voice by itself: what was waiting is out of date now.
+        held.line = undefined;
         held.heard += delta;
         setHeard((before) => (held.speaker === 'person' ? before + delta : delta.trimStart()));
         held.speaker = 'person';
@@ -296,6 +337,7 @@ export function useVoice(pi: Conversation | null) {
       );
     if (!turn || (turn.status !== 'completed' && turn.status !== 'interrupted')) return;
     held.pending = undefined;
+    held.line = undefined;
     held.last = Date.now();
     send('session.commentary.append', resultOf(turn), pending.delegation);
     setState('listening');
@@ -352,6 +394,8 @@ export function useVoice(pi: Conversation | null) {
     muted,
     start: () => void start(),
     stop,
+    hush,
+    steered,
     mute: () => {
       const held = live.current;
       if (!held) return;

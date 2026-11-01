@@ -2,29 +2,30 @@ import { personInterrupts } from '@merv/api/audience';
 
 /** How long after a page's last ask it still counts as open: its asks come every 1.5 s or sooner. */
 const WATCHED_MS = 4_000;
-/** The longest an answer is held, well within every client's tool timeout (Codex allows 60 s). */
-const MOST_HOLD_MS = 10_000;
+/** The longest an answer is held, within every client's tool timeout (Codex allows 60 s). */
+const MOST_HOLD_MS = 40_000;
 /** About how long a page takes to ask for what was just drawn, before its pen can start. */
 const PICKUP_MS = 300;
 /** How often a hold checks that the page is still asking. */
 const CHECK_MS = 500;
 /** How long an agent told of a person's hand may not draw there unless it reads the board first. */
 const READ_FIRST_MS = 20_000;
-/** What is remembered of what people did, and of how many agents, for each board. */
-const [MOST_HANDS, MOST_BOARDS] = [16, 1000];
+/** How many agents are remembered for each board, and how many boards. */
+const [MOST_AGENTS, MOST_BOARDS] = [16, 1000];
+/** How many readers, and boards each, have how far they have seen of a board remembered. */
+const [MOST_READERS, BOARDS_A_READER] = [1000, 4];
 
 /** A person stepped in while an agent was drawing: they said something, stopped it, or drew. */
 export interface SteppedIn {
   how: 'said' | 'stopped' | 'drew';
-  /** The shapes they drew or changed, as far as they are saved yet. */
-  shapes?: string[];
+  /** What they did on the board, in words, as far as it is saved yet (`handLog`). */
+  hand?: string[];
 }
 interface Desk {
   polled: number;
   /** When the pen will have finished what has been drawn here, by the same numbers as the page. */
   penDone: number;
-  /** What people did, in order, and how far each agent has been told. */
-  hands: { seq: number; shapes: string[] }[];
+  /** How many times people have done something, and how far each agent has been told. */
   seq: number;
   told: Map<string, number>;
   /** Who was told of a person's hand, and until when they must read before they draw. */
@@ -42,13 +43,14 @@ interface Desk {
 export class BoardWatch {
   private desks = new Map<string, Desk>();
   private closed = false;
+  /** How far each agent's conversation has seen each board. */
+  private sights = new Map<string, Map<string, number>>();
   private desk(board: string): Desk {
     let desk = this.desks.get(board);
     if (!desk) {
       desk = {
         polled: 0,
         penDone: 0,
-        hands: [],
         seq: 0,
         told: new Map(),
         barred: new Map(),
@@ -66,11 +68,10 @@ export class BoardWatch {
   asked(board: string): void {
     this.desk(board).polled = Date.now();
   }
-  /** A person drew or changed these shapes, or (with none yet saved) has begun to. */
-  hand(board: string, shapes: string[] = []): void {
+  /** A person drew or changed something, or (with none of it saved yet) has begun to. */
+  hand(board: string): void {
     const desk = this.desk(board);
-    desk.hands.push({ seq: ++desk.seq, shapes });
-    if (desk.hands.length > MOST_HANDS) desk.hands.shift();
+    desk.seq++;
     for (const wake of desk.wake) wake();
   }
   /**
@@ -111,12 +112,10 @@ export class BoardWatch {
   /** What a person drew since `told`, which `agent` must now read before it draws here. */
   private tell(desk: Desk, agent: string, told: number): SteppedIn | undefined {
     desk.told.set(agent, desk.seq);
-    if (desk.told.size > MOST_HANDS) desk.told.delete(desk.told.keys().next().value!);
-    const hands = desk.hands.filter(({ seq }) => seq > told);
-    if (!hands.length) return undefined;
+    if (desk.told.size > MOST_AGENTS) desk.told.delete(desk.told.keys().next().value!);
+    if (desk.seq <= told) return undefined;
     desk.barred.set(agent, Date.now() + READ_FIRST_MS);
-    const shapes = [...new Set(hands.flatMap((hand) => hand.shapes))].slice(0, 32);
-    return { how: 'drew', ...(shapes.length && { shapes }) };
+    return { how: 'drew' };
   }
   /**
    * Whether a person has drawn here since `agent` last read: if so its next draw does not run. A
@@ -131,6 +130,21 @@ export class BoardWatch {
   /** `agent` read the board, as it was told to. */
   read(board: string, agent: string): void {
     this.desks.get(board)?.barred.delete(agent);
+  }
+  /** The boards `reader` knows, each with the revision it has seen of it. */
+  seen(reader: string): [string, number][] {
+    return [...(this.sights.get(reader) ?? [])];
+  }
+  /** `reader` has seen `board` as of `revision`; with `first`, only if it had not seen it before. */
+  see(reader: string, board: string, revision: number, first = false): void {
+    const sights = this.sights.get(reader) ?? new Map<string, number>();
+    const had = sights.get(board);
+    sights.delete(board);
+    sights.set(board, first && had !== undefined ? had : revision);
+    if (sights.size > BOARDS_A_READER) sights.delete(sights.keys().next().value!);
+    this.sights.delete(reader);
+    this.sights.set(reader, sights);
+    if (this.sights.size > MOST_READERS) this.sights.delete(this.sights.keys().next().value!);
   }
   /** Main is going down: every answer held comes back now. */
   close(): void {

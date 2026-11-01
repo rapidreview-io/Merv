@@ -413,8 +413,12 @@ export class PiService implements Pi {
     this.core.ready();
     // The model only guards the send, and what the page points at only goes with it: a retry is
     // the same message whatever the page showed.
-    const { model, pointing, ...value } = parse(sendInput, input);
+    const { model, pointing: pointed, ...value } = parse(sendInput, input);
     const renter = await this.hosts.hostCaller();
+    await this.core.read((tx) => this.owned(caller, id, tx));
+    // What the person did goes first: what they now point at may be what it made.
+    const noted = await this.core.tools.notes(caller, id);
+    const pointing = [noted, pointed].filter(Boolean).join('\n') || undefined;
     const { command, hostId, spoken } = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const existing = await this.core.row<PiCommandRecord>(tx, turnAt, id, value.commandId);
