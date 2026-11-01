@@ -38,10 +38,13 @@ interface Live {
   quiet?: ReturnType<typeof setTimeout>;
   /** The request Pi is answering: GPT-Live's delegation, the turn sent for it and where. */
   pending?: { delegation: string; text: string; after: number; id: string | null };
-  /** What Pi said while the voice was busy: only the newest waits, and nothing waits on it. */
-  line?: string;
+  /** What Pi said while the voice was busy: the newest few wait, and nothing waits on them. */
+  lines: string[];
   next?: ReturnType<typeof setTimeout>;
 }
+
+/** How many of Pi's lines may wait for the voice to leave room; older ones are dropped. */
+const MOST_LINES = 3;
 
 /** An answer written for the screen, as words to be said: no markup, no tables, no code. */
 export function sayable(markdown: string): string {
@@ -138,17 +141,17 @@ export function useVoice(pi: Conversation | null) {
   /** Says what Pi is saying as it works, as soon as the voice and the person leave room. */
   const utter = () => {
     const held = live.current;
-    if (!held?.line) return;
+    if (!held?.lines.length) return;
     clearTimeout(held.next);
     const wait = held.last + QUIET_MS - Date.now();
     if (wait > 0) return void (held.next = setTimeout(utter, wait));
-    send('session.commentary.append', held.line, held.pending?.delegation ?? null);
-    held.line = undefined;
+    send('session.commentary.append', held.lines.shift()!, held.pending?.delegation ?? null);
     held.last = Date.now();
+    if (held.lines.length) held.next = setTimeout(utter, QUIET_MS);
   };
   const speak = (line: string) => {
     if (!live.current) return;
-    live.current.line = line;
+    live.current.lines = [...live.current.lines.slice(-(MOST_LINES - 1)), line];
     utter();
   };
   const saying = pi?.snapshot?.stage.saying;
@@ -160,7 +163,7 @@ export function useVoice(pi: Conversation | null) {
   const hush = () => {
     const held = live.current;
     if (!held) return;
-    held.line = undefined;
+    held.lines = [];
     if (Date.now() - held.last > QUIET_MS) return;
     send(
       'session.instructions.append',
@@ -179,7 +182,7 @@ export function useVoice(pi: Conversation | null) {
     const pi = conversation.current;
     if (!pi) return;
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
-    held.line = undefined;
+    held.lines = [];
     if (pi.active) setSteered((times) => times + 1);
     // A request waiting in another conversation is not this one's: its answer is left unsaid.
     const before = held.pending?.id === pi.selected ? held.pending : undefined;
@@ -207,7 +210,7 @@ export function useVoice(pi: Conversation | null) {
       case 'session.input_transcript.delta':
         held.last = Date.now();
         // The person's voice cuts the voice by itself: what was waiting is out of date now.
-        held.line = undefined;
+        held.lines = [];
         held.heard += delta;
         setHeard((before) => (held.speaker === 'person' ? before + delta : delta.trimStart()));
         held.speaker = 'person';
@@ -262,7 +265,7 @@ export function useVoice(pi: Conversation | null) {
       const pc = new RTCPeerConnection();
       const dc = pc.createDataChannel('oai-events');
       // Held while the microphone is asked for: End ends it there, a refusal closes it.
-      held = { pc, dc, audio, context, heard: '', last: Date.now() };
+      held = { pc, dc, audio, context, heard: '', last: Date.now(), lines: [] };
       live.current = held;
       const mic = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -341,7 +344,7 @@ export function useVoice(pi: Conversation | null) {
       );
     if (!turn || (turn.status !== 'completed' && turn.status !== 'interrupted')) return;
     held.pending = undefined;
-    held.line = undefined;
+    held.lines = [];
     held.last = Date.now();
     send('session.commentary.append', resultOf(turn), pending.delegation);
     setState('listening');

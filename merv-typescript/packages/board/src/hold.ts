@@ -6,6 +6,11 @@ const WATCHED_MS = 4_000;
 const MOST_HOLD_MS = 40_000;
 /** About how long a page takes to ask for what was just drawn, before its pen can start. */
 const PICKUP_MS = 300;
+/**
+ * How far the pen may have left to draw when an answer comes: the model writes its next call while
+ * the pen draws this one, so neither waits, and a person who steps in stops it within this much.
+ */
+const AHEAD_MS = 6_000;
 /** How often a hold checks that the page is still asking. */
 const CHECK_MS = 500;
 /** How long an agent told of a person's hand may not draw there unless it reads the board first. */
@@ -80,7 +85,7 @@ export class BoardWatch {
     for (const wake of desk.wake) wake();
   }
   /**
-   * Answers once the pen would have finished `ms` more of drawing, or at once if nobody is watching,
+   * Answers once the pen is within AHEAD_MS of finishing `ms` more of drawing, or at once if nobody is watching,
    * early if a person steps in or stops watching, and says if a person stepped in since this agent
    * was last told. `patient` is false for what must never wait, as a leased worker's call.
    */
@@ -93,7 +98,8 @@ export class BoardWatch {
     if (watched() && ms) {
       const now = Date.now();
       desk.penDone = Math.max(desk.penDone, now + PICKUP_MS) + ms;
-      if (patient && !stepped())
+      const waits = desk.penDone - AHEAD_MS - now;
+      if (patient && waits > 0 && !stepped())
         await new Promise<void>((resolve) => {
           const end = () => {
             clearTimeout(timer);
@@ -102,7 +108,7 @@ export class BoardWatch {
             said?.removeEventListener('abort', end);
             resolve();
           };
-          const timer = setTimeout(end, Math.min(desk.penDone - now, MOST_HOLD_MS));
+          const timer = setTimeout(end, Math.min(waits, MOST_HOLD_MS));
           const check = setInterval(() => watched() || end(), CHECK_MS);
           desk.wake.add(end);
           said?.addEventListener('abort', end);

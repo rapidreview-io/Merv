@@ -60,6 +60,8 @@ const [ASK_MS, ASK_DRAWING_MS] = [1500, 400];
 const DRAWING_MS = 20_000;
 /** The most what others drew may be shown behind, in milliseconds of playing it. */
 const BEHIND_MS = 4000;
+/** How far behind an agent's pen keeps a hand's pace: Board answers it while it still has this one call to draw. */
+const PEN_BEHIND_MS = 45_000;
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -304,7 +306,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const made = new Player(
       stageOf(api, () => busy(api), land),
       reveal.current,
-      BEHIND_MS,
+      PEN_BEHIND_MS,
     );
     player.current = made;
     const here = new BoardPresence(api);
