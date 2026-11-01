@@ -1,7 +1,8 @@
-/* The native hyperlink container keeps its URL, edit, and remove controls. */
+/* The reader stands in Excalidraw's own link popup, which keeps its address row for a web card.
+   The patch places the popup at its card's corner; `usePlacement` moves it beside the card. */
 .excalidraw .excalidraw-hyperlinkContainer.merv-rich-hyperlink {
   flex-wrap: wrap;
-  width: min(380px, calc(100% - 32px)) !important;
+  width: min(420px, calc(100% - 32px)) !important;
   height: auto;
   max-height: calc(100% - 32px);
   overflow: auto;
@@ -10,84 +11,113 @@
   border-radius: 14px;
   padding: 0 !important;
   box-shadow: 0 16px 44px #00000020;
+  translate: var(--merv-dx, 0px) var(--merv-dy, 0px);
   animation: board-reference-in 140ms ease-out;
 }
+/* The address row under what is written: the whole address, in one place. */
+.merv-rich-hyperlink > .excalidraw-hyperlinkContainer-link {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 11px 8px 11px 24px;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.merv-rich-hyperlink > .excalidraw-hyperlinkContainer__buttons {
+  padding-right: 10px;
+}
+.merv-rich-hyperlink > .board-link-details:not(.is-own) {
+  border-bottom: 1px solid var(--color-gray-20, #e8e8ed);
+}
 .board-link-details {
+  position: relative;
   flex: 0 0 100%;
   width: 100%;
   font:
-    14.5px/1.7 system-ui,
+    15px/1.6 system-ui,
     sans-serif;
   color: var(--text-primary-color, #25252b);
 }
+/* The head: the title, with the controls in the corner beside it. */
 .board-link-details header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  min-height: 28px;
-  padding: 8px 8px 0 14px;
-  font-size: 12px;
-  color: var(--text-secondary-color, #707078);
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 12px 0 24px;
 }
-/* With no title of its own, the × stands in the corner and the words wrap beside it. */
+.board-link-details h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 3px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.board-link-details h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.board-link-details h3 a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* With no title the controls keep the corner and the first lines of text give way to them. */
 .board-link-details header.is-bare {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 12px;
+  right: 12px;
   z-index: 1;
-  min-height: 0;
   padding: 0;
 }
 .board-link-details header.is-bare + .board-link-details-body {
-  padding-top: 14px;
+  padding-top: 20px;
 }
 .board-link-details header.is-bare + .board-link-details-body::before {
   content: '';
   float: right;
-  width: 84px;
-  height: 22px;
+  width: calc(var(--controls) * 28px + 2px);
+  height: 20px;
 }
-.board-link-details {
-  position: relative;
-}
-.board-link-details header > .board-reference-actions {
+.board-reference-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 2px;
-  opacity: 0.72;
+  color: var(--text-secondary-color, #707078);
 }
 .board-link-details button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   background: transparent;
   color: inherit;
   border: 0;
-  padding: 4px 8px;
+  border-radius: 7px;
   cursor: pointer;
-  border-radius: 6px;
 }
 .board-link-details button:hover {
   background: var(--color-gray-10, #f2f2f5);
+  color: var(--text-primary-color, #25252b);
 }
 .board-link-details button:focus-visible {
   outline: 2px solid currentColor;
 }
 .board-link-details-body {
-  padding: 6px 14px 20px;
-  max-height: 400px;
+  padding: 10px 24px 22px;
+  max-height: 440px;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-.board-link-details.is-expanded .board-link-details-body {
-  max-height: min(65vh, 620px);
-}
-.board-link-details h3 {
-  margin: 0 0 12px;
-  font-size: 19px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.012em;
-}
-.board-reference-notes {
-  margin: 0 0 16px;
+.board-reference-notes .md {
+  font-size: inherit;
+  line-height: inherit;
 }
 .board-reference-notes .md > :first-child {
   margin-top: 0;
@@ -98,7 +128,15 @@
 .board-reference-notes p,
 .board-reference-notes ul,
 .board-reference-notes ol {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
+}
+.board-reference-notes :is(h1, h2, h3, h4) {
+  margin: 1.1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+.board-reference-notes + .board-url-preview {
+  margin-top: 16px;
 }
 .board-url-preview {
   display: block;
@@ -107,12 +145,22 @@
 }
 .board-url-preview strong {
   display: block;
-  margin: 5px 0;
   font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.board-url-preview:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .board-url-preview p {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary-color, #707078);
+}
+.board-link-details .board-card-members {
+  margin: -4px -8px 0;
 }
 .board-link-details .doc-frame {
   margin: 0;
@@ -121,19 +169,13 @@
 @keyframes board-reference-in {
   from {
     opacity: 0;
-    transform: translateY(3px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .excalidraw .merv-rich-hyperlink {
-    animation: none;
-  }
-}
-/* Portals escape Excalidraw's small anchor container and stacking context. */
+
+/* Read in full: a sheet in the middle of the window, or the whole window for a document. */
 .board-reference-overlay {
   position: fixed;
   inset: 0;
@@ -153,7 +195,7 @@
 .board-reference-overlay > .is-reading {
   inset: 0;
   margin: auto;
-  width: min(660px, calc(100vw - 32px));
+  width: min(680px, calc(100vw - 32px));
   height: fit-content;
   max-height: calc(100dvh - 32px);
 }
@@ -162,38 +204,64 @@
   width: 100%;
   height: 100dvh;
   border-radius: 0;
-  padding: 12px max(12px, calc((100vw - 1100px) / 2));
 }
-.board-reference-overlay .board-link-details.is-expanded .board-link-details-body {
-  max-height: none;
-  overflow: auto;
+.board-reference-overlay .is-expanded header {
+  padding: 28px 28px 0 40px;
+}
+.board-reference-overlay .is-expanded header.is-bare {
+  padding: 0;
+  top: 24px;
+  right: 24px;
+}
+.board-reference-overlay .is-expanded h3 {
+  margin-top: 0;
+  font-size: 24px;
+  line-height: 1.25;
+}
+.board-reference-overlay .is-expanded .board-link-details-body {
   flex: 1;
   min-height: 0;
-  padding: 8px max(20px, calc((100% - 720px) / 2)) 40px;
-  font-size: 16.5px;
-  line-height: 1.75;
+  max-height: none;
+  padding: 14px 40px 40px;
+  font-size: 17px;
+  line-height: 1.7;
 }
-.board-reference-overlay .board-link-details h3 {
-  margin-bottom: 18px;
-  font-size: 27px;
-  line-height: 1.22;
+.board-reference-overlay .is-expanded .file-embedded-body {
+  padding: 10px 40px 40px;
 }
-.board-reference-overlay .board-link-details.is-reading .board-link-details-body {
-  max-height: min(680px, calc(100dvh - 90px));
+.board-reference-overlay .is-fullscreen :is(header, .board-link-details-body, .file-embedded-body) {
+  width: 100%;
+  max-width: 840px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+@media (max-width: 640px) {
+  .board-reference-overlay .is-expanded header {
+    padding: 18px 10px 0 20px;
+  }
+  .board-reference-overlay .is-expanded header.is-bare {
+    top: 12px;
+    right: 12px;
+  }
+  .board-reference-overlay .is-expanded :is(.board-link-details-body, .file-embedded-body) {
+    padding: 10px 20px 24px;
+    font-size: 16px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
+  .excalidraw .merv-rich-hyperlink,
   .board-reference-overlay > .board-link-details {
     animation: none;
   }
 }
 
-/* Use the same explicit palette inside the canvas and in expanded portals. */
+/* One explicit palette inside the canvas and in the sheet, in each of the board's themes. */
 .board-reference-overlay,
 .board-link-details {
   --color-surface-lowest: #fff;
   --text-primary-color: #25252b;
   --text-secondary-color: #707078;
-  --color-gray-10: #f6f6f8;
+  --color-gray-10: #f2f2f5;
   --color-gray-20: #e8e8ed;
   --bg-elev: #fff;
   --bg-soft: #f6f6f8;
@@ -203,16 +271,19 @@
 .board-reference-overlay.board-reference-dark,
 .board-link-details.board-reference-dark {
   --color-surface-lowest: #232329;
-  --text-primary-color: #e4e4e8;
-  --text-secondary-color: #b9b9c2;
+  --text-primary-color: #e8e8ec;
+  --text-secondary-color: #a9a9b3;
   --color-gray-10: #313139;
-  --color-gray-20: #45454f;
+  --color-gray-20: #3d3d47;
   --bg-elev: #232329;
   --bg-soft: #313139;
   --text: #f0f0f2;
   color-scheme: dark;
 }
-/* Embedded artifacts share one filename/actions row with the reader controls. */
+.excalidraw:has(.merv-rich-hyperlink .board-reference-dark) .merv-rich-hyperlink {
+  border-color: #3d3d47;
+}
+/* An embedded file shares the head with the reader; its name is the title there. */
 .board-link-details .file-embedded {
   display: flex;
   flex-direction: column;
@@ -224,39 +295,21 @@
 }
 .board-link-details .file-embedded > header {
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--color-gray-20, #e8e8ed);
-  margin-bottom: 12px;
-}
-.board-reference-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 500;
-}
-.board-reference-actions {
-  flex-shrink: 0;
 }
 .board-link-details .file-embedded-body {
   min-height: 0;
   overflow: auto;
-  max-height: 380px;
-  padding: 6px 14px 20px;
+  max-height: 440px;
+  padding: 10px 24px 22px;
 }
-.board-link-details.is-expanded .file-embedded {
-  flex: 1;
-}
+.board-link-details.is-expanded .file-embedded,
 .board-link-details.is-expanded .file-embedded-body {
-  max-height: none;
   flex: 1;
+  max-height: none;
 }
 
 /* Keep styling controls hidden while a reference remains selected. */
 .board-reading-reference .selected-shape-actions,
 .excalidraw:has(.merv-rich-hyperlink .board-link-details) .selected-shape-actions {
   display: none;
-}
-.excalidraw:has(.merv-rich-hyperlink .board-reference-dark) .merv-rich-hyperlink {
-  border-color: #45454f;
 }

@@ -14,7 +14,9 @@ export function linkExpansionMode(
 ): 'none' | 'reading' | 'fullscreen' {
   if (artifactId) return 'fullscreen';
   const content = text?.trim() ?? '';
-  if (!content) return 'none';
-  // Long notes or many structured lines need a document-sized reading surface.
-  return content.length > 1600 || content.split('\n').length > 24 ? 'fullscreen' : 'reading';
+  const lines = content.split('\n').length;
+  // What fits the popup unscrolled is read there; long notes or many structured lines need a
+  // document-sized reading surface.
+  if (content.length <= 700 && lines <= 12) return 'none';
+  return content.length > 1600 || lines > 24 ? 'fullscreen' : 'reading';
 }
