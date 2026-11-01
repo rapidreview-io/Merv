@@ -10,6 +10,25 @@ const within = <T>(whole: number, make: (n: number) => T): T => {
     shown = Math.min(shown - 1, Math.floor((shown * (resultBytes - 200)) / bytes));
   return make(shown);
 };
+/** A turn's tool results against what it may still spend. Only reads are cut, and one that is cut
+ * says so plainly, so the model cannot carry on as if it had read it. A look's pixels are not text
+ * and neither they nor their few words of metadata spend or starve here. */
+export function toolOutput(budget: number) {
+  let left = budget;
+  return (text: string, { cuts, free }: { cuts: boolean; free: boolean }) => {
+    if (free) return { shown: text };
+    const whole = Buffer.byteLength(text);
+    const room = left;
+    left = Math.max(0, left - whole);
+    if (!cuts || whole <= room) return { shown: text };
+    const kept = Buffer.from(text)
+      .subarray(0, room)
+      .toString()
+      .replace(/\uFFFD$/, '');
+    const note = `[Tool output limit for this answer reached: ${whole - room} of ${whole} bytes of this result are missing, and every further read will come back empty. Stop reading: finish with what you have, and tell the person what you could not read.]`;
+    return { shown: `${kept}\n${note}`, cut: { truncated: true, text: kept, note } };
+  };
+}
 /** Objects inside arrays keep only their scalar fields, their strings clipped to 300 characters
  * at a whole character:
  * every record's id, title and status in a list far too long to show whole. */
