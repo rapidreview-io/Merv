@@ -261,7 +261,7 @@ test('a draw is held only while a person watches, and says when they step in', a
     { op: 'arrow', say: 'Then where it goes.', from: 'one', to: 'two' },
   ]);
   assert.equal(spoken.steppedIn, undefined);
-  assert.deepEqual(heardLines, []);
+  assert.equal(heardLines.length, 0);
   const lines = async () =>
     Object.fromEntries(
       (await board.scene(owner, made.id)).elements.flatMap((el) => {
