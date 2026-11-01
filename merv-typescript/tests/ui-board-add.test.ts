@@ -43,6 +43,10 @@ test('the line says who is doing what, while it is happening and only then', () 
   assert.equal(statusLine({ ...idle, name: 'Pi', drewMs: 3_200 }), 'Pi drew 3 s ago');
   assert.equal(statusLine({ ...idle, name: 'Pi', drewMs: 200 }), 'Pi is drawing');
   assert.equal(statusLine({ ...idle, name: 'Pi', playing: true }), 'Pi is drawing');
+  assert.equal(
+    statusLine({ ...idle, name: 'Claude Code', playing: true, saying: 'The river first.' }),
+    'The river first.',
+  );
   assert.equal(statusLine({ ...idle, name: 'Pi', waiting: 4 }), '4 waiting from Pi');
   assert.equal(statusLine({ ...idle, waiting: 4 }), '4 waiting');
   assert.equal(statusLine({ ...idle, looking: 'Worker' }), 'Worker is looking');

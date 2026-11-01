@@ -117,6 +117,7 @@ function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[]
       ...steps.map((text, i) =>
         act('board.write', 'draw', {
           ...(on ? { board: on } : { title: 'In steps' }),
+          saying: `${text} comes next, and everything after it leans on this.`,
           ops: [{ op: 'box', text, at: [(i % 4) * 240, Math.floor(i / 4) * 160], width: 200 }],
         }),
       ),

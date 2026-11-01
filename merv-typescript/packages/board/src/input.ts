@@ -208,6 +208,8 @@ export const drawSchema = z.strictObject({
   board: id.optional(),
   title: title.optional(),
   ops: z.array(opSchema).max(100).default([]),
+  /** One sentence said aloud as the pen starts, for whoever the agent is working with. */
+  saying: z.string().trim().min(1).max(140).optional(),
 });
 export type DrawInput = z.input<typeof drawSchema>;
 

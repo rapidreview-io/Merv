@@ -85,6 +85,8 @@ export interface BoardLooking {
   at: number;
   /** It drew there, so a stroke being traced there is its own. */
   drew?: true;
+  /** The sentence its last draw came with, which the page shows while the pen goes. */
+  saying?: string;
 }
 
 /**

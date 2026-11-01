@@ -199,6 +199,7 @@ export function Standing({ pi, dot }: { pi: Conversation; dot?: boolean }) {
 /** The conversation's turns, drawn alike on the page and in the dock. */
 export function Transcript({ pi }: { pi: Conversation }) {
   const { snapshot, host, active, visible } = pi;
+  const voiceOff = (useAgent()?.voice.state ?? 'off') === 'off';
   const { unavailable, selected, blocked, following, follow } = pi;
   // Drawn afresh, on the page or in the dock, it opens at its latest words.
   useLayoutEffect(() => {
@@ -262,6 +263,10 @@ export function Transcript({ pi }: { pi: Conversation }) {
           {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
           {visible.progress && <p className="muted">{visible.progress}</p>}
         </article>
+      )}
+      {/* With the voice on, the voice's own caption says it. */}
+      {active && snapshot?.stage.saying && voiceOff && (
+        <p className="muted">{snapshot.stage.saying}</p>
       )}
       {active && !unavailable && (
         // Where the eye waits; the bar above already says it aloud.

@@ -8642,7 +8642,9 @@ html:has(.board-page) body {
   left: 50%;
   bottom: 64px;
   transform: translateX(-50%);
-  white-space: nowrap;
+  /* A short name on one line; what Pi says, at most two or three. */
+  width: max-content;
+  max-width: min(calc(100% - 32px), 56ch);
   display: flex;
   gap: var(--space-2);
 }

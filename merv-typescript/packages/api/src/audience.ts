@@ -9,3 +9,5 @@ export const isAgentAudience = (caller: Caller): boolean =>
   !!caller.session || !!caller.conversation || agentAudience.getStore() === true;
 /** Aborted, with 'said' or 'stopped', when the person behind this invocation steps in meanwhile. */
 export const personInterrupts = new AsyncLocalStorage<AbortSignal>();
+/** Says a sentence aloud for the agent behind this invocation, if anything is listening to it. */
+export const agentSaying = new AsyncLocalStorage<(text: string) => void>();

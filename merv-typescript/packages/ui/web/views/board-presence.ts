@@ -60,6 +60,7 @@ export class BoardPresence {
       drewMs: this.drawn.at ? now - this.drawn.at : Infinity,
       looking: !!cursor && !cursor.drew && now - cursor.heardAt < LOOK_MS ? cursor.name : '',
       region: cursor?.region,
+      saying: cursor?.saying,
     };
   }
   /** What the page was just told of where agents are. */
