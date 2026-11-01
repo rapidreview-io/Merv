@@ -1593,6 +1593,9 @@
       "reader": {
         "status": 403,
         "error": "forbidden"
+      },
+      "agent": {
+        "error": "tool_forbidden"
       }
     },
     "workflow.status_and_next": {
@@ -1856,6 +1859,18 @@
           "waiting",
           "workers"
         ]
+      },
+      "agent": {
+        "ok": [
+          "blockers",
+          "dispatch",
+          "observedAt",
+          "projectId",
+          "scope",
+          "sessions",
+          "waiting",
+          "workers"
+        ]
       }
     },
     "usage.read": {
@@ -1881,6 +1896,9 @@
           "scope",
           "totals"
         ]
+      },
+      "agent": {
+        "error": "tool_forbidden"
       }
     },
     "customer_experiments.read": {

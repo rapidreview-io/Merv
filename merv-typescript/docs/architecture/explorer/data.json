@@ -516,6 +516,11 @@
           "name": "board.set",
           "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
           "readOnly": false
+        },
+        {
+          "name": "board.share",
+          "description": "Make or revoke a read-only link to this board and its history.",
+          "readOnly": false
         }
       ]
     },
@@ -591,6 +596,11 @@
         {
           "name": "board.set",
           "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
+          "readOnly": false
+        },
+        {
+          "name": "board.share",
+          "description": "Make or revoke a read-only link to this board and its history.",
           "readOnly": false
         }
       ]

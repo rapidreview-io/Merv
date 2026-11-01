@@ -3,7 +3,7 @@
   "tools": {
     "artifact.read": 5296,
     "artifact.write": 3647,
-    "board.read": 3395,
+    "board.read": 3765,
     "board.write": 11740,
     "code.git_credential": 1131,
     "code.read": 6694,
