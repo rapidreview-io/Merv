@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { personInterrupts } from '@merv/api/audience';
+import { agentSaying, personInterrupts } from '@merv/api/audience';
 import type { Caller } from '@merv/contracts';
 import { BoardWatch } from '../packages/board/src/hold.js';
 import { PEN, penMs, penUnits, type BoardElement } from '@merv/board/models';
@@ -90,10 +90,10 @@ test('a hold ends with its time, at the cap, when the page stops asking and when
   passed = settled(watch.hold('w', 'agent', 1_000, true));
   assert.equal(await passed(3_000), false);
 
-  // However long the drawing, ten seconds at the most, while the page keeps asking.
+  // However long the drawing, forty seconds at the most, while the page keeps asking.
   watch.asked('cap');
   passed = settled(watch.hold('cap', 'agent', 120_000, true));
-  for (let at = 0; at < 9; at++) {
+  for (let at = 0; at < 39; at++) {
     assert.equal(await passed(1_000), false);
     watch.asked('cap');
   }
@@ -119,11 +119,10 @@ test('a person stepping in ends a hold and says how, once to each agent', async 
   const held = watch.hold('b', 'one', 60_000, true);
   watch.hand('b');
   assert.deepEqual(await held, { how: 'drew' });
-  // Calls it already sent do not land, until it has read what was told; what they then saved comes
-  // with its shapes.
+  // Calls it already sent do not land, until it has read what was told.
   assert.deepEqual(watch.ahead('b', 'one'), { how: 'drew' });
-  watch.hand('b', ['s1', 's2']);
-  assert.deepEqual(watch.ahead('b', 'one'), { how: 'drew', shapes: ['s1', 's2'] });
+  watch.hand('b');
+  assert.deepEqual(watch.ahead('b', 'one'), { how: 'drew' });
   watch.read('b', 'one');
   assert.equal(watch.ahead('b', 'one'), undefined);
   // An agent new to the board is told only what comes after it arrives.
@@ -172,29 +171,72 @@ test('a draw is held only while a person watches, and says when they step in', a
   // The page's own card is never held.
   await tools.call('board.scene', owner, { id: made.id });
   const began = Date.now();
-  await tools.call('board.write:draw', owner, {
+  const card = (await tools.call('board.write:draw', owner, {
     board: made.id,
-    ops: [{ op: 'box', text: 'Mine', at: [0, 300], width: 200, height: 80 }],
-  });
+    ops: [{ op: 'box', key: 'mine', text: 'Mine', at: [0, 300], width: 200, height: 80 }],
+  })) as { created: Record<string, string> };
+  const mine = card.created.mine;
   assert.ok(Date.now() - began < 500);
   // That card was a person's hand: the agent's next draw does not run, and it is told so at once,
-  // and goes on being told until it has read the board.
+  // in words, and goes on being told until it has read the board.
   const revisionThen = (await board.scene(owner, made.id)).board.revision;
   const told = await draw(600);
   assert.equal((told.steppedIn as { how?: string }).how, 'drew');
+  assert.deepEqual((told.steppedIn as { hand?: string[] }).hand, [`labelled ${mine} "Mine"`]);
   assert.ok(told.notRun && told.ms < 500);
   assert.ok((await draw(600)).notRun);
   assert.equal((await board.scene(owner, made.id)).board.revision, revisionThen);
   await tools.call('board.read:get', pi, { board: made.id });
-  // Open and quiet: as long as the pen.
+  // Open and quiet: as long as the pen, and what it says goes out before the pen is waited for.
   await tools.call('board.scene', owner, { id: made.id });
-  const pen = await draw(900);
+  let saidAfter = -1;
+  const speaking = Date.now();
+  const spoken = (await agentSaying.run(
+    () => (saidAfter = Date.now() - speaking),
+    () =>
+      tools.call('board.write:draw', pi, {
+        board: made.id,
+        ops: [{ op: 'box', text: 'Said', at: [900, 0], width: 200, height: 80 }],
+        saying: 'The river first.',
+      }),
+  )) as { steppedIn?: unknown };
+  assert.ok(saidAfter >= 0 && saidAfter < Date.now() - speaking - 300, `said at ${saidAfter}`);
+  assert.equal(spoken.steppedIn, undefined);
+  await assert.rejects(
+    tools.call('board.write:draw', pi, { board: made.id, ops: [], saying: 'x'.repeat(141) }),
+  );
+  // A message is told what they did since this conversation last saw the board, once.
+  await tools.call('board.save', owner, {
+    id: made.id,
+    elements: [
+      shape('note1', {
+        type: 'text',
+        text: 'no',
+        x: 900,
+        y: 120,
+        version: 2,
+        seed: 1,
+        versionNonce: 2,
+        groupIds: [],
+        customData: {},
+      }),
+    ],
+  });
+  const note = await tools.notes(owner, 'pi');
+  assert.match(note, new RegExp(`^\\[board ${made.id}, since you last looked: wrote "no" near `));
+  assert.equal(await tools.notes(owner, 'pi'), '');
+  assert.ok((await draw(1500)).notRun);
+  // An agent back at the board reads what it has not been told; here nothing is left to tell.
+  const read = (await tools.call('board.read:get', pi, { board: made.id })) as { hand?: string[] };
+  assert.equal(read.hand, undefined);
+  await tools.call('board.scene', owner, { id: made.id });
+  const pen = await draw(1500);
   assert.ok(pen.ms >= 400, `held ${pen.ms} ms`);
   assert.equal(pen.steppedIn, undefined);
   // Open, and their hand comes down meanwhile: at once, and nothing more is stored.
   await tools.call('board.scene', owner, { id: made.id });
   const before = (await board.scene(owner, made.id)).board.revision;
-  const during = draw(1200);
+  const during = draw(1800);
   while ((await board.scene(owner, made.id)).board.revision === before);
   await tools.call('board.hand', owner, { id: made.id });
   const heard = await during;

@@ -182,7 +182,10 @@ const shape = (value: unknown): unknown =>
   Array.isArray(value)
     ? { array: value.length ? shape(value[0]) : 'empty' }
     : value && typeof value === 'object'
-      ? Object.keys(value).sort()
+      ? // `hand` says what people did on a board: there only when they did something.
+        Object.keys(value)
+          .filter((key) => key !== 'hand')
+          .sort()
       : typeof value;
 
 test('every retired name answers as it did, over MCP, from a page and to a leased worker', async (t) => {
