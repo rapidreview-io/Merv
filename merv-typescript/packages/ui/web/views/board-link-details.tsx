@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { linkArtifactId, linkExpansionMode } from './board-link-layout';
 import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
@@ -6,7 +6,7 @@ import { ArtifactBody } from './artifacts';
 import { MetricsCharts } from './metrics';
 import { useTool } from '../api';
 import { Icon } from '../icons';
-import { useReferences } from '../markdown';
+import { Markdown, useReferences } from '../markdown';
 import { rowOf, useRows } from '../navigation';
 import { Link } from 'react-router-dom';
 import type { BoardSummary } from '@merv/board/models';
@@ -19,6 +19,9 @@ export type LinkDetails = {
   preview?: { title: string; description?: string };
   artifactId?: string;
 };
+
+/** A page card opens only its own words: it has no address to show, edit or follow. */
+export const PAGE_LINK = 'merv:page';
 
 export function BoardLinkDetails({
   element,
@@ -53,10 +56,11 @@ export function BoardLinkDetails({
     Array.isArray(target) && target.length > 1 && target.every((one) => typeof one === 'string')
       ? (target as string[])
       : undefined;
+  const page = link === PAGE_LINK;
   const web = !members && /^https?:\/\//i.test(link);
   const artifactId = members ? undefined : linkArtifactId(details.artifactId, link);
   // An experiment's card shows its runs' curves, where the Metrics plugin keeps them.
-  const record = !members && link.startsWith('merv:') ? link.slice(5) : '';
+  const record = !members && !page && link.startsWith('merv:') ? link.slice(5) : '';
   const opens = useReferences(useMemo(() => (record ? [record] : []), [record])).get(record)?.to;
   const rows = useRows();
   const experiments = rowOf(rows, 'experiment')?.path;
@@ -69,28 +73,8 @@ export function BoardLinkDetails({
   const charted = !artifactId && !!runs?.length;
   const written = linkExpansionMode(details.text, artifactId);
   const mode = charted && written === 'none' ? 'reading' : written;
-  const anchor = useRef<HTMLElement>(null);
   const dialog = useRef<HTMLElement>(null);
   const expandControl = useRef<HTMLButtonElement>(null);
-  const [position, setPosition] = useState({ left: 16, top: 16 });
-  useLayoutEffect(() => {
-    if (!expanded) return;
-    const place = () => {
-      const rect = anchor.current?.getBoundingClientRect();
-      if (rect)
-        setPosition({
-          left: Math.max(16, Math.min(rect.left - 190, window.innerWidth - 776)),
-          top: Math.max(16, Math.min(rect.top, window.innerHeight - 636)),
-        });
-    };
-    place();
-    window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
-    };
-  }, [expanded]);
   useEffect(() => {
     if (!expanded) return;
     dialog.current?.querySelector<HTMLButtonElement>('button')?.focus();
@@ -141,9 +125,8 @@ export function BoardLinkDetails({
   );
   const content = (
     <section
-      ref={expanded ? dialog : anchor}
-      className={`board-link-details board-reference-${theme}${expanded ? ` is-expanded is-${mode}` : ''}`}
-      style={expanded && mode === 'reading' ? position : undefined}
+      ref={expanded ? dialog : undefined}
+      className={`board-link-details board-reference-${theme}${page ? ' is-page' : ''}${expanded ? ` is-expanded is-${mode}` : ''}`}
       role={expanded ? 'dialog' : 'region'}
       aria-modal={expanded || undefined}
       aria-label="Reference details"
@@ -175,17 +158,23 @@ export function BoardLinkDetails({
             header,
             hideMatchingHeading: true,
             before: details.text ? (
-              <p className="board-reference-notes">{details.text}</p>
+              <div className="board-reference-notes">
+                <Markdown source={details.text} />
+              </div>
             ) : undefined,
           }}
         />
       ) : (
         <>
-          {header(members ? `${members.length} items` : 'Reference')}
+          {header(members ? `${members.length} items` : '')}
 
           <div className="board-link-details-body">
             {!web && !artifactId && details.title && <h3>{details.title}</h3>}
-            {details.text && <p className="board-reference-notes">{details.text}</p>}
+            {details.text && (
+              <div className="board-reference-notes">
+                <Markdown source={details.text} />
+              </div>
+            )}
             {web && (
               <a
                 className="board-url-preview"
@@ -219,7 +208,7 @@ export function BoardLinkDetails({
   if (!expanded) return content;
   return (
     <>
-      <section ref={anchor} className="board-link-details" aria-hidden="true" />
+      <section className="board-link-details" aria-hidden="true" />
       {createPortal(
         <div
           className={`board-reference-overlay board-reference-${theme}`}

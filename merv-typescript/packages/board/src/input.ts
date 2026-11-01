@@ -145,6 +145,15 @@ export const opSchema = z.discriminatedUnion('op', [
     ...place,
   }),
   z.strictObject({
+    op: z.literal('page'),
+    key,
+    say,
+    /** Its title, on the card; what it opens to read needs no record or address behind it. */
+    text,
+    body: z.string().trim().min(1).max(20000),
+    ...place,
+  }),
+  z.strictObject({
     op: z.literal('arrow'),
     key,
     say,
