@@ -25,7 +25,7 @@
   justify-content: space-between;
   align-items: center;
   min-height: 28px;
-  padding: 10px 10px 0 22px;
+  padding: 8px 8px 0 14px;
   font-size: 12px;
   color: var(--text-secondary-color, #707078);
 }
@@ -49,7 +49,7 @@
   outline: 2px solid currentColor;
 }
 .board-link-details-body {
-  padding: 8px 22px 24px;
+  padding: 6px 14px 20px;
   max-height: 400px;
   overflow: auto;
   overscroll-behavior: contain;
@@ -81,9 +81,6 @@
 }
 .board-url-preview {
   display: block;
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--color-gray-10, #f6f6f8);
   text-decoration: none;
   color: inherit !important;
 }
@@ -155,7 +152,7 @@
   overflow: auto;
   flex: 1;
   min-height: 0;
-  padding: 12px max(24px, calc((100% - 560px) / 2)) 48px;
+  padding: 8px max(20px, calc((100% - 720px) / 2)) 40px;
   font-size: 16.5px;
   line-height: 1.75;
 }
@@ -228,7 +225,7 @@
   min-height: 0;
   overflow: auto;
   max-height: 380px;
-  padding: 0 10px 14px;
+  padding: 6px 14px 20px;
 }
 .board-link-details.is-expanded .file-embedded {
   flex: 1;
