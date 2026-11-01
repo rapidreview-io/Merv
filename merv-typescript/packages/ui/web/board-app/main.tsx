@@ -1,13 +1,12 @@
+import './as-board';
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { hasToken, setProject, setToken } from '../api';
-import { speech } from '../speech';
 import '../styles.css';
 import './board-app.css';
 import { BoardApp } from './app';
 
-Object.assign(speech, { app: 'Board', agent: 'Pi', boardOnly: true });
 const SharedBoard = lazy(() => import('../views/board-shared'));
 const shared = window.location.pathname === '/ui/board-share';
 

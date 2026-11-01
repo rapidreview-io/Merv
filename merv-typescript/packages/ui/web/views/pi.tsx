@@ -320,7 +320,8 @@ export function Transcript({ pi }: { pi: Conversation }) {
           {UNAVAILABLE}
         </p>
       ) : (
-        !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
+        !snapshot?.commands.length &&
+        !speech.boardOnly && <p className="muted">Ask a question to begin.</p>
       )}
     </div>
   );

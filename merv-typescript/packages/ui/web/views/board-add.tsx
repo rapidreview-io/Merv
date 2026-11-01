@@ -48,8 +48,14 @@ export const AddButton = ({ onClick }: { onClick(): void }) => (
     key="merv-add"
     type="button"
     className="ToolIcon_type_button ToolIcon_size_medium ToolIcon board-add"
-    title={speech.boardOnly ? 'Add a board or link' : `Add a board, file, record, collection or link — ${ADD_KEY}`}
-    aria-label={speech.boardOnly ? 'Add a board or link' : 'Add a board, file, record, collection or link'}
+    title={
+      speech.boardOnly
+        ? 'Add a board or link'
+        : `Add a board, file, record, collection or link — ${ADD_KEY}`
+    }
+    aria-label={
+      speech.boardOnly ? 'Add a board or link' : 'Add a board, file, record, collection or link'
+    }
     onClick={onClick}
   >
     <div className="ToolIcon__icon" aria-hidden="true">
@@ -507,9 +513,10 @@ export function CardPicker({
                 <span className="finder-when">{row.meta}</span>
               </div>
             ))}
-            {(tab === 'records' ? home.data : boards.data && (files.data || !keepsFiles)) && rows.length === 0 && (
-              <p className="finder-none">{all.length ? 'Nothing matches.' : EMPTY[tab]}</p>
-            )}
+            {(tab === 'records' ? home.data : boards.data && (files.data || !keepsFiles)) &&
+              rows.length === 0 && (
+                <p className="finder-none">{all.length ? 'Nothing matches.' : EMPTY[tab]}</p>
+              )}
           </div>
           {tab === 'collection' && (
             <div className="board-add-foot">

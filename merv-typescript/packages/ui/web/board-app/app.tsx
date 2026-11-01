@@ -12,6 +12,7 @@ import { SessionProvider } from '../session';
 import { BoardStage } from '../views/board';
 import { PiProvider } from '../views/pi';
 import { BoardHead } from './head';
+import { drawSample } from './sample';
 import { BoardBar, Conversation } from './talk';
 import type { ComponentProps } from 'react';
 
@@ -20,14 +21,21 @@ const LAST = 'board:last';
 /** A person's first project is made once, whichever tab or retry asks. */
 const FIRST_PROJECT = 'board-app-first';
 
+/** A new board, or the empty one already waiting: empty boards do not pile up in the list. */
 export async function newBoard() {
+  const { boards } = await call<{ boards: BoardSummary[] }>('board.read', {});
+  const empty = boards.find(({ title, revision }) => title === 'Untitled' && !revision);
+  if (empty) return empty.id;
   const made = await call<{ board: BoardSummary }>('board.write:draw', { title: 'Untitled' });
   refreshTools('board.read');
   return made.board.id;
 }
 
 /** Where a sign-in goes with no project chosen: their one project, made if there is none. */
-function OneProject({ account, choose }: ComponentProps<NonNullable<ComponentProps<typeof SessionProvider>['Chooser']>>) {
+function OneProject({
+  account,
+  choose,
+}: ComponentProps<NonNullable<ComponentProps<typeof SessionProvider>['Chooser']>>) {
   useEffect(() => {
     const [first] = account.projects;
     if (first) return choose(first.id);
@@ -49,9 +57,10 @@ function Landing() {
     if (!list) return;
     const last = safely(() => localStorage.getItem(LAST), null);
     const known = list.find((board) => board.id === last) ?? list[0];
-    void (known ? Promise.resolve(known.id) : newBoard()).then((id) =>
-      navigate(`/boards/${id}`, { replace: true }),
-    );
+    // Someone's first visit opens on the sample, playing: this is what it does, before any words.
+    void (
+      known ? Promise.resolve(`${known.id}`) : drawSample().then((id) => `${id}?play`, newBoard)
+    ).then((to) => navigate(`/boards/${to}`, { replace: true }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!list]);
   return boards.error ? <PageLoad {...boards} /> : null;
@@ -66,12 +75,17 @@ function Board() {
       id={id}
       title={(board) => board.title}
       head={(board, outcomes) => (
-        <BoardHead board={board} outcomes={outcomes} talk={() => setTalking(!talking)} />
+        <BoardHead
+          board={board}
+          outcomes={outcomes}
+          talk={() => setTalking(!talking)}
+          talking={talking}
+        />
       )}
     >
-      {() => (
+      {(board) => (
         <>
-          <BoardBar board={id} open={() => setTalking(true)} />
+          <BoardBar board={board} open={() => setTalking(true)} />
           {talking && <Conversation close={() => setTalking(false)} />}
         </>
       )}

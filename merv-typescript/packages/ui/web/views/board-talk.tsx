@@ -68,7 +68,10 @@ export function BoardTalk({
   const open = docked(agent, roomy);
   const pi = agent?.pi;
   const now = doing();
-  const line = statusLine({ ...now, thinking: !!pi?.active && !open });
+  const said = statusLine({ ...now, thinking: !!pi?.active && !open });
+  // Where the drawing is in view, that it was drawn says nothing.
+  const quiet = speech.boardOnly && !!said && said.endsWith('s ago') && following();
+  const line = quiet ? null : said;
   return (
     <>
       {line && (

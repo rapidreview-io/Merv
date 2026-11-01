@@ -42,8 +42,18 @@ function database() {
       docker('start', name);
     } catch {
       docker(
-        'run', '-d', '--name', name, '-p', `127.0.0.1:${dbPort}:5432`,
-        '-e', 'POSTGRES_USER=board', '-e', 'POSTGRES_PASSWORD=board', '-e', 'POSTGRES_DB=board',
+        'run',
+        '-d',
+        '--name',
+        name,
+        '-p',
+        `127.0.0.1:${dbPort}:5432`,
+        '-e',
+        'POSTGRES_USER=board',
+        '-e',
+        'POSTGRES_PASSWORD=board',
+        '-e',
+        'POSTGRES_DB=board',
         'postgres:17',
       );
     }
@@ -77,7 +87,10 @@ function database() {
 
 async function main() {
   database();
-  if (process.argv.includes('--build') || !existsSync(join(root, 'packages/ui/dist-board/index.html')))
+  if (
+    process.argv.includes('--build') ||
+    !existsSync(join(root, 'packages/ui/dist-board/index.html'))
+  )
     run('npx', 'vite', 'build', '--config', 'packages/ui/vite.board.config.ts');
   if (!existsSync(join(root, 'packages/board/dist/fonts.json')))
     run('node', 'scripts/build-board-renderer.mjs');

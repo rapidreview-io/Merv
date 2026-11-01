@@ -86,7 +86,7 @@ export const boardAppPlugin = {
     await fleet.initialize();
     ctx.effect(() => () => {
       machines.close();
-      fleet.close();
+      return fleet.close();
     });
     ctx.provide('fleet', fleet);
     ctx.provide('boardApp', { machines, ...(person && { solo: person }) });
@@ -102,8 +102,10 @@ export const boardAppPlugin = {
       host: { projectId: host.projectId, credentialEnv: 'MERV_BOARD_HOST_KEY' },
       machines: [{ key: 'standard', label: 'Standard', slots: 8, agent: false }],
     });
-    for (const plugin of [piToolsPlugin, piApiPlugin, piUiPlugin]) ctx.plugin(plugin);
     await pi.await();
+    await Promise.all(
+      [piToolsPlugin, piApiPlugin, piUiPlugin].map((plugin) => ctx.plugin(plugin).await()),
+    );
 
     if (person)
       ctx.effect(() =>

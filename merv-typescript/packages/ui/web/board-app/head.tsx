@@ -6,7 +6,7 @@ import { call, refreshTools, useTool } from '../api';
 import { Ago, SearchField, useDismiss, useMoreMenu } from '../components';
 import { Icon } from '../icons';
 import { useSession } from '../session';
-import { onWorn, wear, worn } from '../theme';
+import { onWorn, useRoomy, wear, worn } from '../theme';
 import { asksToAdd } from '../views/board-add';
 import { BoardTitle } from '../views/board';
 import { OutcomeWord, useOutcomes } from '../views/board-outcome';
@@ -42,14 +42,24 @@ function Switcher({ current, close }: { current: string; close(): void }) {
     const at = items.indexOf(document.activeElement as HTMLElement);
     items[Math.max(0, Math.min(items.length - 1, at + step))]?.focus();
   };
-  useEffect(() => box.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus(), [!read.data]);
+  useEffect(
+    () => box.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus(),
+    [!read.data],
+  );
   return (
     <div className="boards-sheet" ref={box} role="dialog" aria-label="Boards" onKeyDown={keys}>
       {all.length > FEW && (
         <SearchField label="Find a board" placeholder="Title" value={query} onChange={setQuery} />
       )}
       <div className="boards-list" role="listbox" aria-label="Boards">
-        <button type="button" role="option" aria-selected={false} className="boards-row boards-new" disabled={making} onClick={start}>
+        <button
+          type="button"
+          role="option"
+          aria-selected={false}
+          className="boards-row boards-new"
+          disabled={making}
+          onClick={start}
+        >
           <Icon name="plus" size={16} />
           New board
         </button>
@@ -76,11 +86,13 @@ function BoardMenu({
   outcomes,
   rename,
   talk,
+  roomy,
 }: {
   board: BoardSummary;
   outcomes: ReturnType<typeof useOutcomes>;
   rename(): void;
   talk(): void;
+  roomy: boolean;
 }) {
   const navigate = useNavigate();
   const { signOut, account } = useSession();
@@ -105,9 +117,8 @@ function BoardMenu({
   return menu(
     <>
       {item('Rename', () => (close(), rename()))}
-      {item('Conversation', () => (close(), talk()))}
-      {!outcomes.lines.length &&
-        item('Outcome', () => (close(), void outcomes.fresh().catch(() => undefined)))}
+      {!roomy && item('Conversation', () => (close(), talk()))}
+      {!roomy && item('Outcome', () => (close(), void outcomes.toggle().catch(() => undefined)))}
       {link
         ? item('Revoke link', () => void share(true).catch(() => undefined))
         : item('Copy watch link', () => void share(false).catch(() => undefined))}
@@ -127,11 +138,15 @@ export function BoardHead({
   board,
   outcomes,
   talk,
+  talking,
 }: {
   board: BoardSummary;
   outcomes: ReturnType<typeof useOutcomes>;
   talk(): void;
+  talking: boolean;
 }) {
+  const navigate = useNavigate();
+  const roomy = useRoomy();
   const [switching, setSwitching] = useState(false);
   const [editing, setEditing] = useState(false);
   // ⌘K goes to another board from anywhere but a field being written in; the + has its own button.
@@ -162,11 +177,36 @@ export function BoardHead({
             <Icon name="chevrons" size={16} />
           </button>
         )}
+        <button
+          type="button"
+          className="btn-icon board-line-new"
+          aria-label="New board"
+          title="New board"
+          onClick={() => void newBoard().then((id) => navigate(`/boards/${id}`))}
+        >
+          <Icon name="plus" size={16} />
+        </button>
         {switching && <Switcher current={board.id} close={() => setSwitching(false)} />}
       </div>
       <span className="board-line-end">
-        {outcomes.lines.length > 0 && <OutcomeWord place={outcomes} />}
-        <BoardMenu board={board} outcomes={outcomes} rename={() => setEditing(true)} talk={talk} />
+        {roomy && (
+          <button
+            type="button"
+            className="btn-text board-outcome-word"
+            aria-pressed={talking}
+            onClick={talk}
+          >
+            Conversation
+          </button>
+        )}
+        {roomy && <OutcomeWord place={outcomes} />}
+        <BoardMenu
+          board={board}
+          outcomes={outcomes}
+          rename={() => setEditing(true)}
+          talk={talk}
+          roomy={roomy}
+        />
       </span>
     </header>
   );

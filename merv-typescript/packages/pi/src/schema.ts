@@ -132,7 +132,9 @@ export const piSurface = z.strictObject({
   tools: z.array(z.string()).min(1).max(64),
   /** Each says it in this app's words: the installed plugins' guide, a tool, the voice's brief. */
   guide: z.custom<(text: string) => string>((value) => typeof value === 'function'),
-  tool: z.custom<(tool: ToolDescription) => ToolDescription>((value) => typeof value === 'function'),
+  tool: z.custom<(tool: ToolDescription) => ToolDescription>(
+    (value) => typeof value === 'function',
+  ),
   voice: z.custom<(text: string) => string>((value) => typeof value === 'function'),
 });
 export type PiSurface = z.output<typeof piSurface>;

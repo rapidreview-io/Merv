@@ -4,6 +4,8 @@
  * conversation is a pane, asked for. Each board has its own, named for the board.
  */
 import { useEffect, useState } from 'react';
+import type { BoardSummary } from '@merv/board/models';
+import { call, refreshTools } from '../api';
 import { Icon } from '../icons';
 import { MarkdownPieces } from '../markdown';
 import { Model } from '../views/pi-cards';
@@ -36,7 +38,19 @@ function Said({ open }: { open(): void }) {
   );
 }
 
-export function BoardBar({ board, open }: { board: string; open(): void }) {
+/** What a board still called Untitled is called once it is asked something; Pi may name it better. */
+const named = (words: string) => {
+  const line = words.replace(/\s+/g, ' ').trim();
+  return line.length <= 48 ? line : `${line.slice(0, 48).replace(/\s+\S*$/, '')}…`;
+};
+
+export function BoardBar({
+  board: { id: board, title },
+  open,
+}: {
+  board: Pick<BoardSummary, 'id' | 'title'>;
+  open(): void;
+}) {
   const agent = useAgent();
   const pi = agent?.pi;
   const voice = agent?.voice;
@@ -58,6 +72,15 @@ export function BoardBar({ board, open }: { board: string; open(): void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listed, board]);
+  const asked = here === board ? pi?.snapshot?.commands[0]?.messages[0]?.text : undefined;
+  useEffect(() => {
+    if (title !== 'Untitled' || !asked) return;
+    void call('board.set', { id: board, title: named(asked) }).then(
+      () => refreshTools('board.read', 'board.scene'),
+      () => undefined,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, title]);
   if (!pi || !voice) return <div className="board-bar" />;
   // Said by voice, the voice's own orb floats; Show chat there is the conversation here.
   if (voice.state !== 'off')
@@ -94,7 +117,12 @@ export function BoardBar({ board, open }: { board: string; open(): void }) {
             />
           )}
           {active && !draft.trim() ? (
-            <button type="button" className="board-orb board-orb--stop" title="Stop" onClick={() => void pi.stop()}>
+            <button
+              type="button"
+              className="board-orb board-orb--stop"
+              title="Stop"
+              onClick={() => void pi.stop()}
+            >
               <span className="sr-only">Stop</span>
             </button>
           ) : draft.trim() ? (

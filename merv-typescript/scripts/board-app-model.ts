@@ -17,7 +17,15 @@ function drawn(asked: string, read: (tool: string) => unknown, note = ''): Step[
   return [
     act('board.write', 'draw', {
       ...on,
-      ops: [{ op: 'text', key: 'idea', text: asked.slice(0, 80), size: 'l', say: 'Start with the question itself.' }],
+      ops: [
+        {
+          op: 'text',
+          key: 'idea',
+          text: asked.slice(0, 80),
+          size: 'l',
+          say: 'Start with the question itself.',
+        },
+      ],
     }),
     act('board.write', 'draw', {
       ...where,
@@ -29,13 +37,24 @@ function drawn(asked: string, read: (tool: string) => unknown, note = ''): Step[
           near: 'idea',
           side: 'below',
           strokes: [
-            { path: 'M30 60 C10 45 10 15 40 10 C70 15 70 45 50 60 Z', color: 'yellow', fill: 'yellow' },
+            {
+              path: 'M30 60 C10 45 10 15 40 10 C70 15 70 45 50 60 Z',
+              color: 'yellow',
+              fill: 'yellow',
+            },
             { path: 'M32 66 L48 66 M34 72 L46 72' },
           ],
           say: 'Here is the spark we keep coming back to.',
         },
         { op: 'note', key: 'why', text: 'Why it matters', near: 'bulb', side: 'right' },
-        { op: 'note', key: 'how', text: 'What would show it', near: 'why', side: 'right', color: 'blue' },
+        {
+          op: 'note',
+          key: 'how',
+          text: 'What would show it',
+          near: 'why',
+          side: 'right',
+          color: 'blue',
+        },
         { op: 'arrow', from: 'why', to: 'how', say: 'One leads to the other.' },
       ],
     }),

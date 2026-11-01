@@ -731,14 +731,16 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
           <MainMenu.DefaultItems.ChangeCanvasBackground />
           <MainMenu.DefaultItems.Help />
         </MainMenu>
-        <WelcomeScreen>
-          <WelcomeScreen.Center>
-            <WelcomeScreen.Center.Heading>
-              Sketch an idea, or ask Pi to draw it with you.
-            </WelcomeScreen.Center.Heading>
-          </WelcomeScreen.Center>
-          <WelcomeScreen.Hints.ToolbarHint />
-        </WelcomeScreen>
+        {!speech.boardOnly && (
+          <WelcomeScreen>
+            <WelcomeScreen.Center>
+              <WelcomeScreen.Center.Heading>
+                Sketch an idea, or ask Pi to draw it with you.
+              </WelcomeScreen.Center.Heading>
+            </WelcomeScreen.Center>
+            <WelcomeScreen.Hints.ToolbarHint />
+          </WelcomeScreen>
+        )}
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
       {api && <BoardSelection api={api} />}

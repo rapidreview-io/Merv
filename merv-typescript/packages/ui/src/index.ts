@@ -130,7 +130,8 @@ export const uiPlugin = {
   inject: ['api', 'tools'],
   apply(ctx: Context, config: { assets?: string; bundle?: 'board' } = {}) {
     const assets =
-      config.assets ?? (config.bundle ? fileURLToPath(new URL('../dist-board/', import.meta.url)) : defaultAssets);
+      config.assets ??
+      (config.bundle ? fileURLToPath(new URL('../dist-board/', import.meta.url)) : defaultAssets);
     const ui = new UiRegistry(assets);
     // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
     const isolated = async <T>(read: () => Promise<T>): Promise<T> => {

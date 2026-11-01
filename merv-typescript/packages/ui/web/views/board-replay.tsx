@@ -351,6 +351,14 @@ export function BoardReplay({
   };
   const toggling = useRef(toggle);
   toggling.current = toggle;
+  // A board opened with ?play starts as it opens, once: the board app's sample on a first visit.
+  useEffect(() => {
+    const url = new URL(location.href);
+    if (!speech.boardOnly || !url.searchParams.has('play')) return;
+    url.searchParams.delete('play');
+    window.history.replaceState(window.history.state, '', url);
+    toggling.current();
+  }, []);
   const reachNow = () => {
     if (phaseNow.current === 'opening') return cancel();
     shown.current?.pause();

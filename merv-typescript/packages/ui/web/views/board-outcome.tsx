@@ -616,9 +616,10 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   const arrived = useRef(place.arriving);
   const more = useMoreMenu();
   const SENDS: Record<Way, () => Promise<void>> = { fleet, claude: open, copy };
-  const ways: Way[] = keeps && !speech.boardOnly
-    ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
-    : ['copy'];
+  const ways: Way[] =
+    keeps && !speech.boardOnly
+      ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
+      : ['copy'];
   const sent = record?.sent ?? [];
   const showsTitle = !titled;
   const named = title ?? (record?.title === UNTITLED ? '' : (record?.title ?? line?.title ?? ''));
@@ -753,7 +754,25 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
                 }}
               />
             )}
-            {offerDraft && (
+            {offerDraft && speech.boardOnly && (
+              <p className="board-outcome-start">
+                {[
+                  ['Plan', 'a plan'],
+                  ['PRD', 'a PRD'],
+                  ['Prompt', 'a prompt for another agent'],
+                ].map(([word, kind]) => (
+                  <button
+                    key={word}
+                    type="button"
+                    className="btn-text"
+                    onClick={() => draft(kind!)}
+                  >
+                    {word}
+                  </button>
+                ))}
+              </p>
+            )}
+            {offerDraft && !speech.boardOnly && (
               <p className="board-outcome-start">
                 What did this board lead to? Write it here
                 {roomy && (
@@ -762,7 +781,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
                     {[
                       ['a plan', 'a plan'],
                       ['a PRD', 'a PRD'],
-                      ...(speech.boardOnly ? [] : [['an experiment', 'an experiment plan']]),
+                      ['an experiment', 'an experiment plan'],
                       ['a prompt', 'a prompt for another agent'],
                     ].map(([word, kind], index) => (
                       <span key={word}>
