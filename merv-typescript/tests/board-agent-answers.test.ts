@@ -304,6 +304,28 @@ test('keys last past their call, the newest shape holding a key used again', asy
   });
 });
 
+test('a page card holds its own words, and an agent cannot link a board to itself', async (t) => {
+  const f = await fixture(t);
+  const drawn = await f.agentDraw([{ op: 'page', key: 'why', text: 'Why', body: '**Because.**' }]);
+  const card = (await f.scene()).find((el) => el.id === drawn.created.why)!;
+  assert.equal(card.link, 'merv:page');
+  const shape = (await f.read()).shapes.find(
+    (one) => one.id === drawn.created.why,
+  ) as unknown as El;
+  assert.equal(shape.kind, 'page');
+  assert.equal(shape.text, 'Why');
+  assert.deepEqual(shape.details, { title: 'Why', text: '**Because.**' });
+  await assert.rejects(f.draw([{ op: 'page', text: 'Empty', body: ' ' }]));
+  const refused = (await f.agent.callTool({
+    name: 'board.write',
+    arguments: {
+      action: 'draw',
+      draw: { board: f.board, ops: [{ op: 'link', target: f.board, text: 'Self' }] },
+    },
+  })) as { content: { text: string }[] };
+  assert.match(refused.content[0]!.text, /board it stands on/);
+});
+
 test('a field beside the action’s object is told where it goes', async (t) => {
   const f = await fixture(t);
   for (const input of [{ draw: { ops: [] } }, {}])

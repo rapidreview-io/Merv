@@ -3,6 +3,7 @@ import {
   check,
   createService,
   forRead,
+  MervError,
   newId,
   now,
   recorded,
@@ -495,8 +496,15 @@ export class BoardService implements Board {
       const before = await this.elements(board.id, undefined, tx);
       const drawing = new Drawing(before, agent);
       const waiting = [...images];
-      for (const op of input.ops)
+      for (const op of input.ops) {
+        if (agent && op.op === 'link' && [op.target].flat().includes(board.id))
+          throw new MervError(
+            'board_link_to_itself',
+            'A link cannot open the board it stands on. For words of your own, use page: text is its title, body what it opens to.',
+            400,
+          );
         drawing.apply(op, op.op === 'image' ? waiting.shift() : undefined);
+      }
       const changed = drawing.result();
       const merged = changed.length
         ? await this.merge(caller, board, changed, 'draw', tx)

@@ -38,7 +38,7 @@ import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
 import { pointWith } from './pi-transport';
-import { BoardLinkDetails } from './board-link-details';
+import { BoardLinkDetails, PAGE_LINK } from './board-link-details';
 import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
 import { inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
@@ -601,7 +601,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     ),
     onLinkOpen: (element, event) => {
       const link = element.link ?? '';
-      if (!link.startsWith('merv:')) return;
+      if (!link.startsWith('merv:') || link === PAGE_LINK) return;
       // A card names a record by id; it opens where a link to that record would.
       event.preventDefault();
       void placeOf({ record: link.slice('merv:'.length) }, rows).then(

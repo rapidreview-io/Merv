@@ -51,6 +51,8 @@ const partOf = (part: El, card: El) =>
   card.customData?.target !== undefined &&
   !!card.groupIds?.[0] &&
   part.groupIds?.[0] === card.groupIds[0];
+/** A page's card has no address, but the link is what opens a card's popup. */
+const PAGE_LINK = 'merv:page';
 const cardKind = (target: string): keyof typeof CARD_ICONS =>
   /^https?:/.test(target)
     ? 'web'
@@ -843,12 +845,14 @@ export class Drawing {
           }),
         );
       }
+      case 'page':
       case 'link': {
         // A card: what it opens as one object in Excalidraw's own shapes, grouped so they move
         // as one: the card, its kind's icon, one fact beside it and the title under them. A list
-        // of targets is one card that holds them all.
-        const targets = typeof op.target === 'string' ? [op.target] : op.target;
-        const kind = targets.length > 1 ? 'collection' : cardKind(targets[0]!);
+        // of targets is one card that holds them all; a page holds its own words instead.
+        const page = op.op === 'page';
+        const targets = page ? [] : typeof op.target === 'string' ? [op.target] : op.target;
+        const kind = page ? 'page' : targets.length > 1 ? 'collection' : cardKind(targets[0]!);
         const { name, title, height } = cardTitle(op.text);
         const at = this.place({ width: 280, height }, op);
         const groupIds = [elementId()];
@@ -860,8 +864,10 @@ export class Drawing {
           strokeWidth: 1,
           roughness: 0,
           roundness: { type: 3 },
-          link: kind === 'web' ? targets[0] : `merv:${targets[0]}`,
-          customData: { target: op.target, ...(op.details && { details: op.details }) },
+          link: page ? PAGE_LINK : kind === 'web' ? targets[0] : `merv:${targets[0]}`,
+          customData: page
+            ? { target: '', details: { title: op.text, text: op.body } }
+            : { target: op.target, ...(op.details && { details: op.details }) },
         });
         const part = { frameId: at.frameId, groupIds, customData: { card: true } };
         for (const stroke of strokesOf(CARD_ICONS[kind]))
@@ -869,13 +875,14 @@ export class Drawing {
             stroke.points.map(([x, y]) => [at.x + 16 + x * 0.75, at.y + 15 + y * 0.75]),
             { ...part, strokeColor: '#495057', strokeWidth: 1.5 },
           );
-        const fact =
-          op.fact ??
-          (kind === 'web'
-            ? new URL(targets[0]!).hostname
-            : { board: 'Board', page: 'File', collection: `${targets.length} items`, record: '' }[
-                kind
-              ]);
+        const fact = page
+          ? 'Note'
+          : (op.fact ??
+            (kind === 'web'
+              ? new URL(targets[0]!).hostname
+              : { board: 'Board', page: 'File', collection: `${targets.length} items`, record: '' }[
+                  kind
+                ]));
         if (fact)
           this.text({ x: at.x + 42, y: at.y + 16, ...measure(fact, 14) }, fact, 14, {
             ...part,
@@ -1294,15 +1301,18 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
     )
     .map((el) => ({
       id: el.id,
-      kind: el.customData?.target
-        ? 'link'
-        : el.type === 'rectangle' &&
-            el.strokeColor === 'transparent' &&
-            el.customData?.semanticKind !== 'box'
-          ? 'note'
-          : el.type === 'rectangle'
-            ? 'box'
-            : el.type,
+      kind:
+        el.customData?.target === ''
+          ? 'page'
+          : el.customData?.target
+            ? 'link'
+            : el.type === 'rectangle' &&
+                el.strokeColor === 'transparent' &&
+                el.customData?.semanticKind !== 'box'
+              ? 'note'
+              : el.type === 'rectangle'
+                ? 'box'
+                : el.type,
       ...(said(el) && { text: said(el) }),
       ...(el.customData?.target && { target: el.customData.target }),
       ...(el.customData?.details && { details: el.customData.details }),
@@ -1355,7 +1365,9 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
   const asked = <T extends { id: string; at?: number[]; size?: number[] }>(entries: T[]) =>
     entries.flatMap((entry) => {
       const el = byId.get(entry.id);
-      const who = whose.get(entry.id) ?? (el?.customData?.target && whose.get(el.groupIds?.[0]));
+      const who =
+        whose.get(entry.id) ??
+        (el?.customData?.target !== undefined && whose.get(el.groupIds?.[0]));
       const { text: words, title, label, alt } = entry as Record<string, unknown>;
       const said = [words, title, label, alt].join(' ').toLowerCase();
       const [x = 0, y = 0] = entry.at ?? [];

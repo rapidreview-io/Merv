@@ -7,15 +7,16 @@
   overflow: auto;
   box-sizing: border-box;
   border: 1px solid var(--color-gray-20, #e8e8ed);
-  border-radius: 12px;
-  box-shadow: 0 10px 32px #00000016;
+  border-radius: 14px;
+  padding: 0 !important;
+  box-shadow: 0 16px 44px #00000020;
   animation: board-reference-in 140ms ease-out;
 }
 .board-link-details {
   flex: 0 0 100%;
   width: 100%;
   font:
-    14px/1.5 system-ui,
+    14.5px/1.7 system-ui,
     sans-serif;
   color: var(--text-primary-color, #25252b);
 }
@@ -23,13 +24,15 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px 10px;
+  min-height: 28px;
+  padding: 10px 10px 0 22px;
   font-size: 12px;
   color: var(--text-secondary-color, #707078);
 }
 .board-link-details header > .board-reference-actions {
   display: flex;
-  gap: 8px;
+  gap: 2px;
+  opacity: 0.72;
 }
 .board-link-details button {
   background: transparent;
@@ -43,26 +46,38 @@
   background: var(--color-gray-10, #f2f2f5);
 }
 .board-link-details button:focus-visible {
-  outline: 2px solid #7764d9;
+  outline: 2px solid currentColor;
 }
 .board-link-details-body {
-  padding: 0 10px 14px;
-  max-height: 380px;
+  padding: 8px 22px 24px;
+  max-height: 400px;
   overflow: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .board-link-details.is-expanded .board-link-details-body {
   max-height: min(65vh, 620px);
 }
 .board-link-details h3 {
-  margin: 0 0 10px;
-  font-size: 18px;
+  margin: 0 0 12px;
+  font-size: 19px;
   font-weight: 600;
   line-height: 1.3;
+  letter-spacing: -0.012em;
 }
 .board-reference-notes {
-  white-space: pre-wrap;
   margin: 0 0 16px;
+}
+.board-reference-notes .md > :first-child {
+  margin-top: 0;
+}
+.board-reference-notes .md > :last-child {
+  margin-bottom: 0;
+}
+.board-reference-notes p,
+.board-reference-notes ul,
+.board-reference-notes ol {
+  margin: 0 0 0.9em;
 }
 .board-url-preview {
   display: block;
@@ -109,21 +124,23 @@
   position: fixed;
   inset: 0;
   z-index: 10000;
-  background: #00000024;
+  background: #00000052;
 }
 .board-reference-overlay > .board-link-details {
   position: fixed;
   background: var(--color-surface-lowest, #fff);
-  border-radius: 12px;
-  box-shadow: 0 12px 48px #00000025;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px #00000038;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  padding: 12px;
   animation: board-reference-in 140ms ease-out;
 }
 .board-reference-overlay > .is-reading {
-  width: min(760px, calc(100vw - 32px));
+  inset: 0;
+  margin: auto;
+  width: min(660px, calc(100vw - 32px));
+  height: fit-content;
   max-height: calc(100dvh - 32px);
 }
 .board-reference-overlay > .is-fullscreen {
@@ -131,18 +148,24 @@
   width: 100%;
   height: 100dvh;
   border-radius: 0;
-  padding: 24px max(24px, calc((100vw - 1100px) / 2));
+  padding: 12px max(12px, calc((100vw - 1100px) / 2));
 }
 .board-reference-overlay .board-link-details.is-expanded .board-link-details-body {
   max-height: none;
   overflow: auto;
   flex: 1;
   min-height: 0;
-  font-size: 16px;
-  line-height: 1.65;
+  padding: 12px max(24px, calc((100% - 560px) / 2)) 48px;
+  font-size: 16.5px;
+  line-height: 1.75;
+}
+.board-reference-overlay .board-link-details h3 {
+  margin-bottom: 18px;
+  font-size: 27px;
+  line-height: 1.22;
 }
 .board-reference-overlay .board-link-details.is-reading .board-link-details-body {
-  max-height: min(580px, calc(100dvh - 110px));
+  max-height: min(680px, calc(100dvh - 90px));
 }
 @media (prefers-reduced-motion: reduce) {
   .board-reference-overlay > .board-link-details {
@@ -166,7 +189,7 @@
 .board-reference-overlay.board-reference-dark,
 .board-link-details.board-reference-dark {
   --color-surface-lowest: #232329;
-  --text-primary-color: #f0f0f2;
+  --text-primary-color: #e4e4e8;
   --text-secondary-color: #b9b9c2;
   --color-gray-10: #313139;
   --color-gray-20: #45454f;
