@@ -69,9 +69,9 @@ alone does not establish permission to issue credentials.
 
 ## Money and limits
 
-The only budget agents manage is GPU rental compute. Use `sandboxes.spend` to read GPU
-rental actuals, active lease commitments and hardware/work attribution. Compare the relevant
-rentals with the explicitly approved GPU allocation; namespace history is not a wave budget.
-Include failed rentals and GPUs used for CPU work. Keep unknown attribution explicit.
-Independent experiments can rent GPUs concurrently within their allocations. A shared dollar
-cap does not require an empty namespace or an exclusive dispatcher slot.
+The only budget agents manage is GPU rental compute, held by the project's Sandboxes cap.
+Use `sandboxes.spend` to read GPU rental actuals, active lease commitments and hardware/work
+attribution; include failed rentals and GPUs used for CPU work, and keep unknown attribution
+explicit. Experiments rent what their approved designs need, concurrently, within that cap and
+with no grant of their own. Do not answer a worker with a new allocation; set a limit only when
+the person asks for one, in dollars or GPU-hours, never as a count of rentals.
