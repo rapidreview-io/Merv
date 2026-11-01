@@ -55,6 +55,11 @@ test('a shape takes the same time wherever it is reckoned, by the kind it is and
     });
   const [, second] = penUnits([sketch('s1'), sketch('s2')], none);
   assert.equal(second!.steps[0]!.rest, PEN.lift);
+  // A shape beside the last goes on from it; one apart from it is the next thing, after a beat.
+  const [, beside] = penUnits([shape('a'), shape('b', { x: 240 })], none);
+  const [, apart] = penUnits([shape('a'), shape('b', { x: 800 })], none);
+  assert.ok(beside!.steps[0]!.rest < PEN.pause);
+  assert.ok(apart!.steps[0]!.rest >= PEN.pause);
   // What stands is changed, not drawn; so is nothing kept to draw again.
   assert.equal(penMs(penUnits([shape('a')], () => true)), PEN.edit);
 });

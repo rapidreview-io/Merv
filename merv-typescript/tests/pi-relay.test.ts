@@ -857,3 +857,23 @@ test('streams complete SSE frames incrementally but sanitizes upstream SSE error
     'event: error\ndata: {"type":"error","code":"upstream_failed","message":"The model provider failed this call"}\n\n',
   );
 });
+
+test('Sol Ultrafast is its own model that reaches OpenAI as Sol at the ultrafast tier', () => {
+  const relay = piModelRelay({
+    models: [{ id: 'gpt-6.1-sol-ultrafast', label: 'GPT-6.1 Sol Ultrafast', effort: 'medium' }],
+    authority: { authorize: async () => null, validate: async () => undefined },
+  } as unknown as PiRelayConfig);
+  const asked = { ...request, model: 'gpt-6.1-sol-ultrafast' };
+  const sent = relay.payload(asked, { ...grant(), model: asked.model }) as Record<string, unknown>;
+  assert.equal(sent.model, 'gpt-6.1-sol');
+  assert.equal(sent.service_tier, 'ultrafast');
+  const plain = piModelRelay({
+    models: [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'medium' }],
+    authority: { authorize: async () => null, validate: async () => undefined },
+  } as unknown as PiRelayConfig);
+  const sol = plain.payload(
+    { ...request, model: 'gpt-6.1-sol' },
+    { ...grant(), model: 'gpt-6.1-sol' },
+  ) as Record<string, unknown>;
+  assert.equal(sol.service_tier, undefined);
+});

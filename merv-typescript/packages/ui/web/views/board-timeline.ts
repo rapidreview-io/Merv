@@ -60,6 +60,8 @@ export const toneOf = (hands: readonly Hand[], hand: number) =>
 const [REST_SHARE, LEAST_REST, MOST_REST] = [0.05, 60, 700];
 /** The least between one hand and another, so the waveform falls between them. */
 const NEW_HAND_REST = 300;
+/** The least between an agent's answers, as a person pauses between one point and the next. */
+const AGENT_REST = 900;
 /** Past this a silence is cut, and takes this long. */
 const [CUT_AFTER_MS, CUT_REST] = [20 * 60_000, 500];
 /** How long a board plays at the least and most, whatever it holds: long ones play faster. */
@@ -157,19 +159,17 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
     working = hand;
     if (last !== undefined) {
       const silence = Math.max(0, at - last);
+      const same =
+        change.actorId === changes[step - 1]?.actorId && change.kind === changes[step - 1]?.kind;
       const rest =
         silence > CUT_AFTER_MS
           ? CUT_REST
-          : Math.min(
-              MOST_REST,
-              Math.max(
-                change.actorId === changes[step - 1]?.actorId &&
-                  change.kind === changes[step - 1]?.kind
-                  ? LEAST_REST
-                  : NEW_HAND_REST,
-                silence * REST_SHARE,
-              ),
-            );
+          : same && change.kind !== 'save'
+            ? Math.max(AGENT_REST, Math.min(MOST_REST, silence * REST_SHARE))
+            : Math.min(
+                MOST_REST,
+                Math.max(same ? LEAST_REST : NEW_HAND_REST, silence * REST_SHARE),
+              );
       if (silence > CUT_AFTER_MS) cuts.push({ from: clock, to: clock + rest, ms: silence });
       clock += rest;
     }
