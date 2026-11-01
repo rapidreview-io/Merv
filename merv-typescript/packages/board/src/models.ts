@@ -157,6 +157,9 @@ export const PEN = {
   /** The pen lifting between shapes, between the parts of one, and a unit of distance on the way. */
   rest: 160,
   lift: 50,
+  /** Done with one thing, the beat before the next, and how far apart two things are at the least. */
+  pause: 700,
+  apart: 60,
   travel: 0.25,
   mostTravel: 200,
   /** A card's parts are quick: it is one thing, not a drawing. */
@@ -197,6 +200,12 @@ const floodOf = (shape: BoardElement) =>
       ? PEN.fill
       : PEN.settle;
 const middle = ({ x, y, width, height }: BoardElement) => [x + width / 2, y + height / 2] as const;
+/** How far apart two shapes' boxes are, or 0 where they touch. */
+const gapOf = (a: BoardElement, b: BoardElement) =>
+  Math.hypot(
+    Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width)),
+    Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height)),
+  );
 const partOfCard = (shape: BoardElement) => {
   const data = shape.customData as { card?: unknown; target?: unknown } | undefined;
   return !!data?.card || data?.target !== undefined;
@@ -245,7 +254,7 @@ export const penUnits = (
           ? PEN.lift
           : !last
             ? 0
-            : PEN.rest +
+            : (gapOf(last, shape) > PEN.apart ? PEN.pause : PEN.rest) +
               Math.min(PEN.mostTravel, Math.hypot(toX - fromX, toY - fromY) * PEN.travel);
       last = shape;
       return { shape, rest, ms: (drawn + flood) * quick, flood: flood * quick };

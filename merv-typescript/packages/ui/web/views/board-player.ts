@@ -18,6 +18,7 @@ import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidra
 import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
 import {
+  PEN,
   penMs,
   penUnits,
   stacked,
@@ -209,6 +210,9 @@ export class Player {
     const standing = this.stage.standing();
     for (const unit of this.queue) for (const shape of unit.shapes) standing.add(shape.id);
     const units = penUnits(shapes, (id) => standing.has(id));
+    // Live, a next answer waits a beat after the one still being drawn; replay's clock has its own.
+    const first = units[0]?.steps[0];
+    if (first && this.queue.length && this.behind !== Infinity) first.rest += PEN.pause;
     this.queue.push(...units.map((unit) => ({ ...unit, at: 0 })));
     this.left += penMs(units);
     // Too far behind to draw it all honestly: the oldest land, and the pen stays with the newest.
