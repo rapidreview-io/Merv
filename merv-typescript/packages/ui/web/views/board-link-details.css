@@ -29,6 +29,27 @@
   font-size: 12px;
   color: var(--text-secondary-color, #707078);
 }
+/* With no title of its own, the × stands in the corner and the words wrap beside it. */
+.board-link-details header.is-bare {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  min-height: 0;
+  padding: 0;
+}
+.board-link-details header.is-bare + .board-link-details-body {
+  padding-top: 14px;
+}
+.board-link-details header.is-bare + .board-link-details-body::before {
+  content: '';
+  float: right;
+  width: 84px;
+  height: 22px;
+}
+.board-link-details {
+  position: relative;
+}
 .board-link-details header > .board-reference-actions {
   display: flex;
   gap: 2px;
@@ -81,7 +102,7 @@
 }
 .board-url-preview {
   display: block;
-  text-decoration: none;
+  text-decoration: none !important;
   color: inherit !important;
 }
 .board-url-preview strong {
@@ -92,10 +113,6 @@
 .board-url-preview p {
   margin: 6px 0 0;
   font-size: 13px;
-}
-.board-url-host {
-  font-size: 11px;
-  color: var(--text-secondary-color, #707078);
 }
 .board-link-details .doc-frame {
   margin: 0;
