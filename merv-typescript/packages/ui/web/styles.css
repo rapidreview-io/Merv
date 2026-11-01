@@ -9038,9 +9038,9 @@ html[data-theme='dark'] .board-replay-own {
 .board-canvas .excalidraw .default-sidebar-trigger {
   display: none;
 }
-/* A card that holds several things, or only its own words, has no one address to show, edit or
-   take away. */
-.excalidraw .merv-rich-hyperlink:has(.board-card-members, .is-page) > :not(.board-link-details) {
+/* A card of the project's own (a note, a record, a file, a board, several things) has no address
+   to show, edit or take away: its reader is the whole popup. */
+.excalidraw .merv-rich-hyperlink:has(.is-own) > :not(.board-link-details) {
   display: none;
 }
 /* The panel opens under the toolbar, in the middle, where what is added will land: what to add
