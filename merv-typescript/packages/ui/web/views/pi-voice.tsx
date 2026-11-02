@@ -19,7 +19,7 @@ const IDLE_MS = 120_000;
 const QUIET_MS = 1_400;
 /** How long a drawing turn's answer gives the page to bring its last ink, how long the answer waits
  *  on the pen at most, and how often it looks. */
-const [LAST_INK_MS, MOST_PEN_WAIT_MS, PEN_LOOK_MS] = [1_000, 60_000, 250];
+const [LAST_INK_MS, MOST_PEN_WAIT_MS, PEN_LOOK_MS] = [1_500, 60_000, 250];
 /** GPT-Live takes at most 500 tokens an append. */
 const SAYABLE = 1_800;
 
@@ -360,7 +360,9 @@ export function useVoice(pi: Conversation | null) {
     const now = Date.now();
     const since = now - (held.ended ??= now);
     const drew = turn.outcomes.some((outcome) => outcome.name === 'board.write');
+    // A turn typed since then has the pen now: this answer waits on nothing.
     if (
+      !conversation.current?.active &&
       since < MOST_PEN_WAIT_MS &&
       ((drew && since < LAST_INK_MS) ||
         drawing.current() ||

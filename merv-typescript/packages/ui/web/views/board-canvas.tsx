@@ -62,6 +62,8 @@ const DRAWING_MS = 20_000;
 const BEHIND_MS = 4000;
 /** How far behind an agent's pen keeps a hand's pace: Board answers it while it still has this one call to draw. */
 const PEN_BEHIND_MS = 45_000;
+/** How long after Pi's turn ends its last ink may still be on its way to this page, with its lines. */
+const LAST_INK_MS = 3_000;
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -180,6 +182,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   // what another agent says is for the line on the board.
   const turning = useRef(false);
   turning.current = !!agent?.pi?.active;
+  const turned = useRef(0);
   const voiced = useRef(false);
   voiced.current ||= turning.current;
   const steered = agent?.voice.steered;
@@ -443,7 +446,9 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     // Quicker while an agent draws, so ink starts soon after the shape was made.
     let asked = 0;
     const every = setInterval(() => {
-      if (!player.current?.waiting && !turning.current) voiced.current = false;
+      if (turning.current) turned.current = Date.now();
+      else if (!player.current?.waiting && Date.now() - turned.current > LAST_INK_MS)
+        voiced.current = false;
       const drew = (presence.current?.doing().drewMs ?? Infinity) < DRAWING_MS;
       if (Date.now() - asked < (drew || player.current?.waiting ? ASK_DRAWING_MS : ASK_MS)) return;
       asked = Date.now();
