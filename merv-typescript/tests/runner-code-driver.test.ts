@@ -602,7 +602,7 @@ test('closed writer recovers only its requested immutable submission without mov
     ),
   );
   await assert.rejects(
-    f.code.submissions.recoveryParent(f.admin.projectId, sessionId, 2),
+    f.code.submissions.requireRecoverable(f.admin.projectId, sessionId, 2),
     failed('code_submission_required'),
   );
   // Submission identities are immutable: use a separate malformed retained record.
@@ -620,7 +620,7 @@ test('closed writer recovers only its requested immutable submission without mov
     ),
   );
   await assert.rejects(
-    f.code.submissions.recoveryParent(f.admin.projectId, 'ses_wrong_lease', 1),
+    f.code.submissions.requireRecoverable(f.admin.projectId, 'ses_wrong_lease', 1),
     failed('code_submission_required'),
   );
   const recovery = (await m.transport.call('capture-credential', {
@@ -700,13 +700,17 @@ test('closed writer recovers only its requested immutable submission without mov
 
 test('an earlier runner seals a requested submission on a closed writer through its own calls', async (t) => {
   // Retained hosts run the driver from before stopped-submission recovery: it asks for capture
-  // only while the writer reads open, then pushes its unchanged branch head with both refs.
+  // only while the writer reads open, then pushes its branch head with both submission refs.
   const f = await writerFixture(t);
   const sessionId = 'ses_earlier_runner';
   await f.lease(sessionId);
   const m = machine(t, f);
   const launch = m.launch(sessionId);
   const handle = await m.start().prepare(launch, m.session(sessionId));
+  writeFileSync(join(handle.path, 'committed.txt'), 'the agent committed this\n');
+  git(handle.path, ['add', 'committed.txt']);
+  git(handle.path, ['commit', '-qm', 'agent work never pushed']);
+  const parent = git(handle.path, ['rev-parse', 'HEAD']).trim();
   writeFileSync(join(handle.path, 'pending-evidence.txt'), 'retain this submitted evidence\n');
   await f.event('session.workspace_attached', sessionId);
   await f.end(sessionId);
@@ -723,34 +727,25 @@ test('an earlier runner seals a requested submission on a closed writer through 
       new Date().toISOString(),
     ),
   );
-  const canonicalBefore = (await f.unit()).canonicalHead;
   const control = { sessionId, runnerId: 'runner-1', hostRef: launch.id };
   const status = (await m.transport.call('submission-status', control)) as {
     requested: boolean;
     writerClosed: boolean;
   };
   assert.deepEqual([status.requested, status.writerClosed], [true, false]);
-  const grant = (await m.transport.call('capture-credential', { ...control, stopped: true })) as {
-    url: string;
-    token: string;
-  };
+  const credential = async () =>
+    (await m.transport.call('capture-credential', { ...control, stopped: true })) as {
+      url: string;
+      token: string;
+    };
+  const grant = await credential();
   const index = { ...process.env, GIT_INDEX_FILE: join(m.directory, 'earlier-runner.index') };
   await exec('git', ['read-tree', 'HEAD'], { cwd: handle.path, env: index });
   await exec('git', ['add', '-A', '--', '.'], { cwd: handle.path, env: index });
   const tree = (await exec('git', ['write-tree'], { cwd: handle.path, env: index })).stdout.trim();
   const url = m.transport.remoteUrl(grant.url);
-  await exec(
-    'git',
-    [
-      'push',
-      '--atomic',
-      '--porcelain',
-      url,
-      `${f.root}:refs/heads/merv/work/${f.unitId}`,
-      `${f.root}:refs/merv/submissions/${sessionId}/parent`,
-      `${tree}:refs/merv/submissions/${sessionId}/tree`,
-    ],
-    {
+  const push = (refs: string[]) =>
+    exec('git', ['push', '--atomic', '--porcelain', url, ...refs], {
       cwd: handle.path,
       env: {
         ...process.env,
@@ -761,18 +756,33 @@ test('an earlier runner seals a requested submission on a closed writer through 
         GIT_CONFIG_KEY_0: `http.${url}.extraHeader`,
         GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`merv:${grant.token}`).toString('base64')}`,
       },
-    },
+    });
+  const branch = `refs/heads/merv/work/${f.unitId}`;
+  const submission = `refs/merv/submissions/${sessionId}`;
+  // The branch moves only to the parent this same push seals.
+  const before = (await f.unit()).canonicalHead;
+  await assert.rejects(
+    push([`${parent}:${branch}`, `${f.root}:${submission}/parent`, `${tree}:${submission}/tree`]),
+    /cannot change working refs|rejected/,
   );
+  assert.equal((await f.unit()).canonicalHead, before);
+  await push([
+    `${parent}:${branch}`,
+    `${parent}:${submission}/parent`,
+    `${tree}:${submission}/tree`,
+  ]);
+  assert.equal((await f.unit()).canonicalHead, parent);
+  // A retry after the push landed (its seal lost) is authorized from where the branch now is.
+  await credential();
   const sealed = (await m.transport.call('submissions', {
     ...control,
     generation: 1,
     leaseId: sessionId,
-    parentOid: f.root,
+    parentOid: parent,
     treeOid: tree,
     stopped: true,
   })) as { capture: { status: string; workspace?: { treeOid?: string } } };
   assert.equal(sealed.capture.status, 'ready');
   assert.equal(sealed.capture.workspace?.treeOid, tree);
-  assert.equal((await f.unit()).canonicalHead, canonicalBefore);
   assert.equal((await f.unit()).writerState, 'closed');
 });

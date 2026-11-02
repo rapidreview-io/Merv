@@ -110,12 +110,10 @@ export abstract class DriverTransfer extends DriverCheckout {
       frozen?: boolean;
       writerClosed?: boolean;
     };
-    let submissionOnly = false;
     if (!status.frozen && (!status.writerClosed || status.requested)) {
       const granted = (await this.ask(() =>
         this.transport.call('capture-credential', { ...control, stopped: true }),
-      )) as { url: string; token: string; submissionOnly?: true };
-      submissionOnly = granted.submissionOnly === true;
+      )) as { url: string; token: string };
       const access = this.access(row.launch_id);
       if (
         this.transport.remoteUrl(granted.url) !== access.url ||
@@ -178,7 +176,7 @@ export abstract class DriverTransfer extends DriverCheckout {
       if (submitted.parentOid !== parent) throw new WorkspaceError('workspace_submission_changed');
       if (!status.frozen)
         await push([
-          ...(submissionOnly ? [] : [`${parent}:refs/heads/${row.branch}`]),
+          `${parent}:refs/heads/${row.branch}`,
           `${parent}:refs/merv/submissions/${row.session_id}/parent`,
           `${submitted.treeOid}:refs/merv/submissions/${row.session_id}/tree`,
         ]);
