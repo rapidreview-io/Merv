@@ -71,7 +71,7 @@ const paper: Demo = {
       ),
     ],
     [
-      box('it', [720, 250], 'yellow', 'it'),
+      box('it', [820, 250], 'yellow', 'it'),
       box(
         'animal',
         [440, 250],

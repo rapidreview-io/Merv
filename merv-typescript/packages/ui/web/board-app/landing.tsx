@@ -37,6 +37,8 @@ const editor: ComponentProps<typeof Excalidraw> = {
 /** A person's words come as fast as a person says them; the agent answers a moment after. */
 const WORD_MS = 420;
 const ANSWER_MS = 700;
+/** How far apart a demo's steps are, before the pen's own time. */
+const STEP_MS = 800;
 type Playing = { pause(): void; play(): void };
 /** What is being said, a line at a time. While the person speaks the pen waits for them. */
 function useSpoken() {
@@ -94,6 +96,20 @@ function Demo({
   const [over, setOver] = useState(false);
   const [asked, setAsked] = useState(false);
   const { spoken, say, speak } = useSpoken();
+  // A demo was drawn all at once by the server: its waits are no one thinking, so they go.
+  const closed = useCallback(
+    async (after?: number) => {
+      const page = await history(after);
+      return {
+        ...page,
+        changes: page.changes.map((change, index) => ({
+          ...change,
+          at: new Date(index * STEP_MS).toISOString(),
+        })),
+      };
+    },
+    [history],
+  );
   useEffect(() => say(ask, '', () => setAsked(true)), [ask, say]);
   return (
     <div className={`board-landing-demo${over ? ' is-over' : ''}`}>
@@ -114,7 +130,7 @@ function Demo({
             clearTimeout(held.current);
             held.current = setTimeout(done, HOLD_MS);
           }}
-          readHistory={history}
+          readHistory={closed}
         />
       )}
       <div className="board-landing-spoken" aria-live="polite">
