@@ -24,6 +24,15 @@ const app = await createApp({
       .filter((plugin) => renting || plugin.id !== 'sandboxes-host')
       .map((plugin) => {
         const config = plugin.config as Record<string, unknown> | undefined;
+        if (plugin.id === 'sandboxes-host')
+          return {
+            ...plugin,
+            config: {
+              ...config,
+              dataDir: process.env.SANDBOXES_DATA_DIR,
+              publicOrigin: process.env.SANDBOXES_PUBLIC_API_URL,
+            },
+          };
         if (plugin.id === 'api')
           return { ...plugin, config: { ...config, allowedOrigins: origins } };
         if (plugin.id === 'identity')

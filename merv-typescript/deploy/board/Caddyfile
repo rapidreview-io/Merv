@@ -5,3 +5,8 @@
 		flush_interval -1
 	}
 }
+{$BOARD_ADDRESS}:8443 {
+	reverse_proxy sandboxes-control:8000 {
+		flush_interval -1
+	}
+}
