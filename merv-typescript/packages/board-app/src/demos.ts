@@ -505,7 +505,7 @@ const grokking: Demo = {
         'Held-out data shows very little until a hundred thousand. Nothing to see for ages.',
         'green',
       ),
-      words('validation: little until 100,000', [680, 270], 's', undefined, 'green'),
+      words('validation: little until 100,000', [715, 270], 's', undefined, 'green'),
       draw([line(740, 330, 740, 340), line(940, 330, 940, 340)]),
       words('1,000', [720, 342], 's'),
       words('100,000', [910, 342], 's'),
