@@ -1,0 +1,7 @@
+{$BOARD_ADDRESS} {
+	encode gzip
+	redir / /ui/ 302
+	reverse_proxy app:3090 {
+		flush_interval -1
+	}
+}

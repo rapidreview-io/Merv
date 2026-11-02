@@ -1,0 +1,34 @@
+# One server: the board app, its database, and Caddy for TLS. Secrets are in /etc/merv-board/env.
+services:
+  app:
+    build: { context: ../.., dockerfile: deploy/board/Dockerfile }
+    restart: unless-stopped
+    env_file: /etc/merv-board/env
+    environment:
+      MERV_DB_URL: postgresql://board:${BOARD_DB_PASSWORD}@db:5432/board
+    volumes: [data:/data]
+    depends_on:
+      db: { condition: service_healthy }
+    deploy: { resources: { limits: { memory: 8g } } }
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: board
+      POSTGRES_PASSWORD: ${BOARD_DB_PASSWORD}
+      POSTGRES_DB: board
+    volumes: [pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U board]
+      interval: 5s
+      retries: 20
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    environment:
+      BOARD_ADDRESS: ${BOARD_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+volumes: { data: {}, pg: {}, caddy: {} }
