@@ -204,7 +204,8 @@ export function BoardReplay({
   const leave = useCallback(
     (linger: boolean) => {
       finishClip();
-      shown.current?.rest();
+      // A demo was never anyone's board to go back to: it ends where the drawing ended.
+      shown.current?.rest(demo);
       mode(false);
       putBack();
       setSaid(null);
@@ -215,7 +216,7 @@ export function BoardReplay({
       } else sink();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, sink],
+    [demo, mode, sink],
   );
   /** Picked up again before it had gone, unless the person has started drawing since. */
   const again = () => {

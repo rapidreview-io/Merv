@@ -314,8 +314,11 @@ export class Projection {
     this.seek(to < 0 ? 0 : to >= steps.length ? length : steps[to]! + 0.5);
     this.settle();
   }
-  /** It is over: the board is itself again under this as it fades, its camera as it was unless moved. */
-  rest() {
+  /**
+   * It is over: the board is itself again under this as it fades, its camera as it was unless moved
+   * or told to stay.
+   */
+  rest(stay = false) {
     this.playing = false;
     this.rewinding = this.waiting = 0;
     this.starting = false;
@@ -324,7 +327,7 @@ export class Projection {
     this.player.stop();
     this.tag = undefined;
     this.showTag();
-    if (!this.touched) this.setCamera(this.entered);
+    if (!this.touched && !stay) this.setCamera(this.entered);
     this.hooks.changed();
   }
   /** The person's hand went to the camera: nothing of this may be told over it. */
