@@ -14,7 +14,6 @@ import { BoardStage } from '../views/board';
 import { PiProvider } from '../views/pi';
 import { BoardHead } from './head';
 import { Landing as FrontPage } from './landing';
-import { drawSample } from './sample';
 import { BoardBar, Conversation } from './talk';
 import type { ComponentProps } from 'react';
 
@@ -59,10 +58,9 @@ function Landing() {
     if (!list) return;
     const last = safely(() => localStorage.getItem(LAST), null);
     const known = list.find((board) => board.id === last) ?? list[0];
-    // Someone's first visit opens on the sample, playing: this is what it does, before any words.
-    void (
-      known ? Promise.resolve(`${known.id}`) : drawSample().then((id) => `${id}?play`, newBoard)
-    ).then((to) => navigate(`/boards/${to}`, { replace: true }));
+    void (known ? Promise.resolve(known.id) : newBoard()).then((to) =>
+      navigate(`/boards/${to}`, { replace: true }),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!list]);
   return boards.error ? <PageLoad {...boards} /> : null;

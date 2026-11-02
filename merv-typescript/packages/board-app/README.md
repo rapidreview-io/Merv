@@ -29,8 +29,7 @@ and one person's spending capped at $20 a day.
 | `ui/vite.board.config.ts` | Builds it to `ui/dist-board`, beside Merv's `dist`                                           |
 
 A person has one project, made and chosen as they first sign in, and never named to them. Each board
-has its own conversation (`pi.create` keyed by the board's id). A first visit opens on a sample board
-playing (`web/board-app/sample.ts`).
+has its own conversation (`pi.create` keyed by the board's id)..
 
 `words.ts` rewrites named sentences of the agent guide rather than copying it, so a sentence reworded
 upstream shows up as a failure of `tests/board-app.test.ts`, which holds that nothing Pi is told or

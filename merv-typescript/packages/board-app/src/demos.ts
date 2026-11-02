@@ -1,296 +1,283 @@
 /**
- * What the board shows before anyone has done anything: true ideas that click when they are drawn,
- * as a pen says them. Each is ordinary board content, one call a thought, as Pi is told to draw:
- * the first is also the board a person starts with, and the landing page plays them all in turn.
+ * What the landing page plays: a person asks, and the agent answers on the board, explaining as it
+ * goes. Each is ordinary board content, one call a thought, as Pi is told to draw. An image names a
+ * file in ../assets, which the server keeps as a file of the host project when it draws the demo.
  */
 export interface Demo {
   title: string;
+  /** What the person says first, printed before anything is drawn. */
+  ask: string;
   /** The operations of each call, in order. */
   calls: object[][];
 }
 
-/** A line as a demo plays it: what the person says, printed as they say it, then what the agent says. */
-export const talk = (person: string, agent: string) => `${person}\n${agent}`;
-/** The agent's part of a line, for a demo drawn as an ordinary board. */
-export const agentsPart = (ops: object[]) =>
-  ops.map((op) => ('say' in op ? { ...op, say: String(op.say).split('\n').at(-1) } : op));
-
-const circle = (x: number, y: number, r: number) =>
-  `M${(x - r).toFixed(1)} ${y.toFixed(1)} a${r} ${r} 0 1 0 ${2 * r} 0 a${r} ${r} 0 1 0 ${-2 * r} 0 Z`;
-const segment = (x1: number, y1: number, x2: number, y2: number) =>
-  `M${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)}`;
-const sketch = (paths: string[], stroke: object, extra: object = {}) => ({
-  op: 'sketch',
-  size: 'native',
-  at: [0, 0],
-  strokes: paths.map((path) => ({ path, ...stroke })),
-  ...extra,
-});
-const words = (text: string, at: [number, number], size: string, say?: string) => ({
+/** A line as a demo plays it: what the person says, printed as they say it, then the agent's answer. */
+const talk = (person: string, agent: string) => `${person}\n${agent}`;
+type At = [number, number];
+const words = (text: string, at: At, size: string, say?: string) => ({
   op: 'text',
   text,
   size,
   at,
   ...(say && { say }),
 });
-/** A call holds so many strokes: long runs come in a few, the first of them saying what they are. */
-const inCalls = (paths: string[], stroke: object, say: string, size = 80) =>
-  Array.from({ length: Math.ceil(paths.length / size) }, (_, part) => [
-    sketch(paths.slice(part * size, (part + 1) * size), stroke, part ? {} : { say }),
-  ]);
+const note = (text: string, at: At, color: string, say?: string, key?: string) => ({
+  op: 'note',
+  text,
+  at,
+  color,
+  ...(say && { say }),
+  ...(key && { key }),
+});
+const box = (text: string, at: At, color: string, key: string, say?: string) => ({
+  op: 'box',
+  text,
+  at,
+  color,
+  key,
+  ...(say && { say }),
+});
 
-/** A room of 23: people picture 23, a match needs a pair, and the pairs, drawn, fill the circle. */
-function birthdays(): Demo {
-  const [PEOPLE, R, Y] = [23, 170, 90];
-  const spot = (i: number): [number, number] => {
-    const turn = (i / PEOPLE) * 2 * Math.PI - Math.PI / 2;
-    return [R + R * Math.cos(turn), Y + R + R * Math.sin(turn)];
-  };
-  const chord = (a: number, b: number) => segment(...spot(a), ...spot(b));
-  const pairs: string[] = [];
-  for (let a = 0; a < PEOPLE; a++)
-    for (let b = a + 1; b < PEOPLE; b++) if (a || b !== 9) pairs.push(chord(a, b));
-  // The chance of a match by people in the room, as bars.
-  const odds = [
-    [5, 3],
-    [10, 12],
-    [15, 25],
-    [23, 51],
-    [30, 71],
-    [40, 89],
-    [50, 97],
-  ] as const;
-  const [BARS, FLOOR] = [420, 560];
-  return {
-    title: 'Why 23 people are enough',
-    calls: [
-      [
-        words(
-          'In a room of 23, two share a birthday. Even odds.\nWhy so few?',
-          [0, 0],
-          'm',
-          talk(
-            'Two people here share a birthday. Is that weird?',
-            'Everyone guesses you would need far more people.',
-          ),
-        ),
-      ],
-      [
-        sketch(
-          Array.from({ length: PEOPLE }, (_, i) => circle(...spot(i), 6)),
-          { fill: 'black', width: 'thin' },
-          { key: 'room', say: 'Here are the 23 people. It looks like a small room.' },
-        ),
-      ],
-      [
-        sketch(
-          [chord(0, 9)],
-          { color: 'red', width: 'medium' },
-          {
-            key: 'pair',
-            say: talk('Hang on, only 23 of us?', 'But a match needs a pair, not a person.'),
-          },
-        ),
-      ],
-      ...inCalls(
-        pairs,
-        { color: 'blue', width: 'thin' },
-        talk('How many pairs is that?', 'So count the pairs. Every line is one.'),
-      ),
-      [
-        words(
-          '253 pairs',
-          [420, 170],
-          'l',
-          'Two hundred and fifty three chances, not twenty three.',
-        ),
-        words(
-          'each one a 1 in 365 shot',
-          [420, 225],
-          's',
-          'Each is a long shot. Together they are a coin flip.',
-        ),
-      ],
-      [
-        words(
-          'Chance of a match, by people in the room',
-          [BARS, FLOOR - 250],
-          's',
-          talk('So how fast does it climb?', 'Faster than anyone expects.'),
-        ),
-        sketch([segment(BARS, FLOOR, BARS + 400, FLOOR)], { width: 'medium' }),
-      ],
-      ...odds.map(([people, percent], i) => {
-        const x = BARS + 14 + i * 56;
-        const top = FLOOR - percent * 2;
-        return [
-          sketch(
-            [`M${x} ${FLOOR} L${x} ${top} L${x + 34} ${top} L${x + 34} ${FLOOR} Z`],
-            {
-              color: people === 23 ? 'red' : 'blue',
-              fill: people === 23 ? 'red' : 'blue',
-              width: 'thin',
-            },
-            people === 23
-              ? { say: 'Twenty three is where it crosses one half.' }
-              : people === 50
-                ? { say: 'By fifty it is nearly certain.' }
-                : {},
-          ),
-          words(`${percent}%`, [x, top - 28], 's'),
-          words(`${people}`, [x + 6, FLOOR + 8], 's'),
-        ];
-      }),
-      [
-        words(
-          'We count people. Chance counts pairs.',
-          [0, FLOOR + 70],
-          'l',
-          talk('Oh. I was counting the wrong thing.', 'We count people. Chance counts pairs.'),
-        ),
-      ],
+/** A famous paper, on the board, and the one idea in it. */
+const paper: Demo = {
+  title: 'Attention Is All You Need, explained',
+  ask: 'I keep hearing about this paper. Can you explain it like I am new to this?',
+  calls: [
+    [
+      {
+        op: 'image',
+        asset: 'attention-page.png',
+        at: [0, 0],
+        width: 340,
+        alt: 'First page of Attention Is All You Need',
+        say: 'Here is the paper. There is one idea in it that matters, so let us start there.',
+      },
     ],
-  };
-}
-
-/** A two-joint arm: the hand sweeps out a ring, and the hole in it is the links' difference. */
-function arm(): Demo {
-  const [X, Y, UPPER, FORE] = [270, 330, 150, 90];
-  const elbow = (turn: number): [number, number] => [
-    X + UPPER * Math.cos(turn),
-    Y + UPPER * Math.sin(turn),
-  ];
-  const sweep = (x: number, y: number, a: number, b: number, count: number) =>
-    Array.from({ length: count }, (_, i) => {
-      const turn = (i / count) * 2 * Math.PI;
-      return circle(x + a * Math.cos(turn), y + a * Math.sin(turn), b);
-    });
-  const [ex, ey] = elbow(-0.7);
-  const hand: [number, number] = [ex + FORE * Math.cos(0.5), ey + FORE * Math.sin(0.5)];
-  const [X2, A] = [860, 120];
-  return {
-    title: 'Why a robot arm can’t touch its own shoulder',
-    calls: [
-      [
-        words(
-          'Two links, two joints.\nWhere can the hand reach?',
-          [0, 0],
-          'm',
-          talk(
-            'Draw me the simplest robot arm.',
-            'Two links and two joints. That is all it takes.',
-          ),
-        ),
-      ],
-      [
-        sketch(
-          [circle(X, Y, 10)],
-          { fill: 'black', width: 'thin' },
-          {
-            say: 'The shoulder is bolted down.',
-          },
-        ),
-      ],
-      [
-        sketch(
-          [segment(X, Y, ex, ey)],
-          { width: 'bold' },
-          {
-            say: 'A long upper arm.',
-          },
-        ),
-        sketch([circle(ex, ey, 7)], { fill: 'black', width: 'thin' }),
-      ],
-      [
-        sketch(
-          [segment(ex, ey, ...hand)],
-          { width: 'bold', color: 'orange' },
-          {
-            say: 'And a shorter forearm, with the hand at its tip.',
-          },
-        ),
-        sketch([circle(...hand, 7)], { fill: 'orange', color: 'orange', width: 'thin' }),
-      ],
-      [
-        sketch(
-          [circle(ex, ey, FORE)],
-          { color: 'orange', width: 'medium' },
-          {
-            say: 'Hold the shoulder still and swing the elbow. The hand draws a circle.',
-          },
-        ),
-      ],
-      ...inCalls(
-        sweep(X, Y, UPPER, FORE, 48),
-        { color: 'blue', width: 'thin' },
+    [
+      words('The problem', [400, 0], 'm'),
+      note(
+        'Older models read a sentence one word at a time',
+        [400, 45],
+        'gray',
+        'Older models read a sentence one word at a time, and long sentences wear them out.',
+      ),
+    ],
+    [
+      words(
+        'The animal didn’t cross the street because it was too tired.',
+        [400, 190],
+        'm',
+        talk('Wear them out how?', 'Take this sentence. What does the word it mean?'),
+      ),
+    ],
+    [
+      box('it', [720, 250], 'yellow', 'it'),
+      box(
+        'animal',
+        [440, 250],
+        'green',
+        'animal',
+        'You know it means the animal. The model has to work that out.',
+      ),
+      { op: 'arrow', from: 'it', to: 'animal', label: 'looks back at' },
+    ],
+    [
+      words('The big idea', [400, 350], 'm'),
+      note(
+        'Every word looks at every other word, all at once. That is attention.',
+        [400, 395],
+        'blue',
         talk(
-          'What if the shoulder moves too?',
-          'Every position gives another circle, and they pile up.',
+          'So what does this paper do differently?',
+          'Every word looks at every other word, all at once.',
         ),
-        8,
       ),
-      [
-        sketch(
-          [circle(X, Y, UPPER + FORE)],
-          { color: 'red', width: 'medium' },
-          {
-            say: 'The outside edge is the arm stretched straight out.',
-          },
-        ),
-        words('fully stretched', [X + 150, Y - 250], 's'),
-      ],
-      [
-        sketch(
-          [circle(X, Y, UPPER - FORE)],
-          { color: 'red', width: 'medium' },
-          {
-            say: talk('What is that hole in the middle?', 'A place nothing ever touches.'),
-          },
-        ),
-        words('never reached', [X - 44, Y + 74], 's'),
-      ],
-      [
-        words(
-          'Folded all the way, the hand is still\nupper minus fore away from the shoulder.',
-          [X2 - A - 60, Y - 300],
-          's',
-          'Fold it as tight as it goes, and the hand still stops short. That gap is the difference between the two links.',
-        ),
-      ],
-      [
-        words(
-          'So make them equal.',
-          [X2 - A - 60, Y - 230],
-          'm',
-          talk('What if both links were the same length?', 'Let us try it.'),
-        ),
-        sketch([circle(X2, Y, 10)], { fill: 'black', width: 'thin' }),
-      ],
-      ...inCalls(
-        sweep(X2, Y, A, A, 48),
-        { color: 'green', width: 'thin' },
-        'Same sweep. Watch the middle.',
-        8,
-      ),
-      [
-        sketch(
-          [circle(X2, Y, 2 * A)],
-          { color: 'red', width: 'medium' },
-          {
-            say: 'The hole closes. The hand can reach its own shoulder.',
-          },
-        ),
-      ],
-      [
-        words(
-          'The hole is the difference between the links.',
-          [0, Y + 290],
-          'l',
-          talk('So the hole is just the difference?', 'Yes. It was never about the joints.'),
-        ),
-      ],
     ],
-  };
-}
+    [
+      words('How a word knows where to look', [0, 500], 'm'),
+      note(
+        'Query: what am I looking for?',
+        [0, 545],
+        'yellow',
+        talk(
+          'How does a word know where to look?',
+          'Each word asks a question: what am I looking for?',
+        ),
+      ),
+      note(
+        'Key: what do I have to offer?',
+        [230, 545],
+        'green',
+        'Every other word holds up a label.',
+      ),
+      note(
+        'Value: what I pass along',
+        [460, 545],
+        '#e9d5ff',
+        'Where they match, that word’s meaning flows across.',
+      ),
+    ],
+    [
+      note(
+        'Word order goes in as a signal added to each word',
+        [700, 545],
+        'orange',
+        talk(
+          'If it reads everything at once, how does it know word order?',
+          'Good catch. The order is added to each word as a signal.',
+        ),
+      ),
+    ],
+    [
+      words('Why it mattered', [0, 700], 'm'),
+      note(
+        'No word-by-word reading, so training runs in parallel',
+        [0, 745],
+        'green',
+        'With no word-by-word reading, training runs in parallel, which made it far faster.',
+      ),
+      note(
+        'It beat the best translation systems of its day',
+        [260, 745],
+        'green',
+        'And it beat the best translation systems of its day.',
+      ),
+    ],
+    [
+      words(
+        'This design is called the Transformer.',
+        [540, 750],
+        'l',
+        talk(
+          'Wait. Is this the T in GPT?',
+          'Yes. Generative pretrained transformer. It started here.',
+        ),
+      ),
+    ],
+  ],
+};
 
-export const DEMOS: Demo[] = [birthdays(), arm()];
+/** One row of the market map: its logo, its name, and the one thing to know. */
+const company = (
+  y: number,
+  asset: string,
+  name: string,
+  fact: string,
+  color: string,
+  say: string,
+) => [
+  { op: 'image', asset, at: [0, y], width: 56, alt: `${name} logo`, say },
+  words(name, [72, y + 12], 'm'),
+  note(fact, [220, y - 6], color),
+];
+
+/** Market research with a person, ending on what to go and find out. */
+const market: Demo = {
+  title: 'AI note takers: who is out there',
+  ask: 'I am thinking of building an AI note taker. Help me understand who is already out there.',
+  calls: [
+    [
+      words(
+        'AI meeting note takers',
+        [0, 0],
+        'l',
+        'Let us map it. Here are four you will run into first.',
+      ),
+    ],
+    company(
+      70,
+      'granola.png',
+      'Granola',
+      'Runs on your computer. No bot in the call.',
+      'green',
+      'Granola records from your own computer, so nothing joins the call.',
+    ),
+    company(
+      190,
+      'otter.png',
+      'Otter',
+      'Joins your meetings. Known for live transcripts.',
+      'blue',
+      'Otter joins your meetings and is known for live transcripts.',
+    ),
+    company(
+      310,
+      'fireflies.png',
+      'Fireflies',
+      'A bot joins. Sends notes into tools like Salesforce.',
+      '#e9d5ff',
+      'Fireflies sends a bot and pushes notes into sales tools.',
+    ),
+    company(
+      430,
+      'fathom.png',
+      'Fathom',
+      'A bot joins by default. Known for a generous free plan.',
+      'orange',
+      'Fathom joins by default too, and is known for its free plan.',
+    ),
+    [
+      words(
+        'One question splits them',
+        [640, 0],
+        'm',
+        talk(
+          'They sound the same to me. What is the real difference?',
+          'One question splits this market. Does a bot join your call?',
+        ),
+      ),
+      box('A bot joins\nOtter, Fireflies, Fathom', [640, 60], 'blue', 'bot'),
+      box('No bot\nGranola', [930, 60], 'green', 'free'),
+    ],
+    [
+      note(
+        'Everyone can see it, and it plugs into work tools',
+        [640, 190],
+        'blue',
+        'A bot is visible to everyone, but it plugs into the tools a team already uses.',
+      ),
+      note(
+        'Discreet, but you have to tell people yourself',
+        [930, 190],
+        'green',
+        'No bot is discreet, but telling people they are recorded falls on you.',
+      ),
+    ],
+    [
+      words(
+        'So what do we go and find out?',
+        [640, 350],
+        'm',
+        talk(
+          'So where is the opening for me?',
+          'I would not guess yet. Here is what I would go and find out.',
+        ),
+      ),
+      note(
+        'Who has left a note taker, and why?',
+        [640, 400],
+        'yellow',
+        'First, who has stopped using one, and why?',
+      ),
+      note(
+        'Who is not allowed to use a bot at work?',
+        [930, 400],
+        'yellow',
+        'Second, who is not allowed to bring a bot to work?',
+      ),
+    ],
+    [
+      words(
+        'Next: talk to ten people who stopped.',
+        [640, 540],
+        'l',
+        talk(
+          'Okay. Who should I talk to first?',
+          'Ten people who stopped using one. Let us write the questions.',
+        ),
+      ),
+    ],
+  ],
+};
+
+export const DEMOS: Demo[] = [paper, market];

@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { Excalidraw, MainMenu } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import { DEMOS } from '@merv/board-app/demos';
 import { Icon } from '../icons';
 import { GoogleButton } from '../session';
 import { BoardReplay } from '../views/board-replay';
@@ -33,33 +34,57 @@ const editor: ComponentProps<typeof Excalidraw> = {
   children: <MainMenu />,
 };
 
-/** The person's words come as fast as they would be spoken, and the agent answers after them. */
-const WORD_MS = 300;
-const ANSWER_MS = 500;
-/** What is being said in a demo, a line at a time: the person's words as they speak, then the agent's. */
+/** A person's words come as fast as a person says them; the agent answers a moment after. */
+const WORD_MS = 420;
+const ANSWER_MS = 700;
+type Playing = { pause(): void; play(): void };
+/** What is being said, a line at a time. While the person speaks the pen waits for them. */
 function useSpoken() {
   const [spoken, setSpoken] = useState({ person: '', agent: '' });
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
-  const speak = useCallback((line: string) => {
+  const say = useCallback((person: string, agent: string, done: () => void) => {
     clearTimeout(timer.current);
-    const [person, agent] = line.includes('\n') ? line.split('\n') : ['', line];
-    const words = person!.split(' ');
+    const words = person.split(' ');
     const type = (count: number) => {
       setSpoken({ person: words.slice(0, count).join(' '), agent: '' });
       timer.current =
         count < words.length
           ? setTimeout(() => type(count + 1), WORD_MS)
-          : setTimeout(() => setSpoken({ person: person!, agent: agent! }), ANSWER_MS);
+          : setTimeout(() => {
+              setSpoken({ person, agent });
+              done();
+            }, ANSWER_MS);
     };
-    if (person) type(1);
-    else setSpoken({ person: '', agent: agent! });
+    type(1);
   }, []);
-  return [spoken, speak] as const;
+  const speak = useCallback(
+    (line: string, playing: Playing) => {
+      const [person, agent] = line.includes('\n') ? line.split('\n') : ['', line];
+      if (!person) {
+        clearTimeout(timer.current);
+        return setSpoken((now) => ({ person: now.person, agent: agent! }));
+      }
+      playing.pause();
+      say(person, agent!, () => playing.play());
+    },
+    [say],
+  );
+  return { spoken, say, speak };
 }
 
-/** One demo, from nothing to done, and it says when it is. */
-function Demo({ token, done, title }: { token: string; done(): void; title(name: string): void }) {
+/** One demo: the person asks, and only then does the board begin; it says when it is done. */
+function Demo({
+  token,
+  ask,
+  done,
+  title,
+}: {
+  token: string;
+  ask: string;
+  done(): void;
+  title(name: string): void;
+}) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const { scene, history } = useSharedBoard(token, api);
   const held = useRef<ReturnType<typeof setTimeout>>();
@@ -67,11 +92,13 @@ function Demo({ token, done, title }: { token: string; done(): void; title(name:
   useEffect(() => void (named && title(named)), [named, title]);
   useEffect(() => () => clearTimeout(held.current), []);
   const [over, setOver] = useState(false);
-  const [spoken, speak] = useSpoken();
+  const [asked, setAsked] = useState(false);
+  const { spoken, say, speak } = useSpoken();
+  useEffect(() => say(ask, '', () => setAsked(true)), [ask, say]);
   return (
     <div className={`board-landing-demo${over ? ' is-over' : ''}`}>
       <Excalidraw {...editor} excalidrawAPI={setApi} />
-      {api && scene && (
+      {api && scene && asked && (
         <BoardReplay
           demo
           speak={speak}
@@ -146,6 +173,7 @@ export function Landing({ google }: { google: ReactNode }) {
             <Demo
               key={at}
               token={tokens[at]!}
+              ask={DEMOS[at]!.ask}
               title={setTitle}
               done={() => setAt((now) => (now + 1) % tokens.length)}
             />

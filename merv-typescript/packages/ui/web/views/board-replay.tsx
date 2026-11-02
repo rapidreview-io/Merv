@@ -62,7 +62,7 @@ export function BoardReplay({
   /** Starts at once and from nothing, with no way to stop it: the landing page. */
   demo?: boolean;
   /** Takes the lines said as it plays, in place of the replay's own caption. */
-  speak?(line: string): void;
+  speak?(line: string, playing: { pause(): void; play(): void }): void;
   readHistory?(after?: number): Promise<BoardHistory>;
   /** The board's own Excalidraw, which keeps going underneath. */
   live: ExcalidrawImperativeAPI;
@@ -301,7 +301,7 @@ export function BoardReplay({
             redraw((count) => count + 1);
           },
           ended: () => latest.current.leave(true),
-          say: (line) => (speak ?? say)(line),
+          say: (line) => (speak ? speak(line, shown.current!) : say(line)),
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {
@@ -363,14 +363,10 @@ export function BoardReplay({
   };
   const toggling = useRef(toggle);
   toggling.current = toggle;
-  // A board opened with ?play starts as it opens, once: the board app's sample on a first visit.
+  // A demo starts as it opens.
   useEffect(() => {
-    const url = new URL(location.href);
-    if (demo) return toggling.current();
-    if (!speech.boardOnly || !url.searchParams.has('play')) return;
-    url.searchParams.delete('play');
-    window.history.replaceState(window.history.state, '', url);
-    toggling.current();
+    if (demo) toggling.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const reachNow = () => {
     if (phaseNow.current === 'opening') return cancel();

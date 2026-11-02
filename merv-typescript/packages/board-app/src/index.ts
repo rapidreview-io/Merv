@@ -138,12 +138,29 @@ export const boardAppPlugin = {
         projectId: host.projectId,
       };
       const tokens: string[] = [];
+      const files = new Map<string, string>();
+      // A demo's image names a file in ../assets; a board takes it as a file of the project.
+      const asFile = async (op: object) => {
+        if (!('asset' in op)) return op;
+        const { asset, ...rest } = op as { asset: string };
+        if (!files.has(asset)) {
+          const { id } = (await ctx.tools.call('artifact.write:create', caller as never, {
+            title: asset,
+            encoding: 'base64',
+            mediaType: 'image/png',
+            requestId: `demo-${of.slice(0, 16)}-${asset}`,
+            content: await readFile(new URL(`../assets/${asset}`, import.meta.url), 'base64'),
+          })) as { id: string };
+          files.set(asset, id);
+        }
+        return { ...rest, artifactId: files.get(asset) };
+      };
       for (const { title, calls } of DEMOS) {
         let id: string | undefined;
         for (const ops of calls) {
           const drawn = (await ctx.tools.call('board.write:draw', caller as never, {
             ...(id ? { board: id } : { title }),
-            ops,
+            ops: await Promise.all(ops.map(asFile)),
           })) as { board: { id: string } };
           id = drawn.board.id;
         }

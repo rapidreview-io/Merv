@@ -462,20 +462,21 @@
 .board-landing-demo {
   display: contents;
 }
-.board-landing-demo:not(.is-over):not(:has([role='slider'])) .excalidraw {
+.board-landing-demo:not(.is-over):not(:has([role='slider'])) .excalidraw canvas {
   visibility: hidden;
 }
-/* What is said in a demo, at the board's foot: the person on the left, in their own colour. */
+/* What is said in a demo: the person higher up and to the left, the agent at the foot. */
 .board-landing-spoken {
   position: absolute;
   z-index: 999;
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  width: min(560px, calc(100% - 340px));
+  width: min(620px, calc(100% - 300px));
+  height: 150px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  justify-content: flex-end;
   pointer-events: none;
 }
 .board-landing-spoken p {
@@ -490,7 +491,9 @@
   line-height: 1.35;
 }
 .board-landing-spoken .is-person {
-  align-self: flex-start;
+  position: absolute;
+  top: 0;
+  left: 0;
   background: #2563eb;
   border-color: transparent;
   color: #fff;
