@@ -358,6 +358,8 @@ export class Player {
           head.said = true;
           const line = lineOf(head);
           if (line) this.say?.(line);
+          // Whoever heard it may have paused the pen for it: it spends nothing of this frame then.
+          if (this.stage.held()) break;
         }
         const takes = step ? step.rest + step.ms : head.quiet ? 0 : head.ms;
         if (this.spent + budget < takes) {
