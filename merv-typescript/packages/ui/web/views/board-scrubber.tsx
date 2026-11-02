@@ -117,9 +117,11 @@ export function Scrubber({
       const pen = canvas.getContext('2d')!;
       const style = getComputedStyle(root.current);
       const inkOf = (hand: number) =>
-        style.getPropertyValue(
-          line.hands[hand]?.person ? '--replay-person' : AGENT_TONES[toneOf(line.hands, hand)]!,
-        );
+        style
+          .getPropertyValue(
+            line.hands[hand]?.person ? '--replay-person' : AGENT_TONES[toneOf(line.hands, hand)]!,
+          )
+          .trim();
       const rule = Math.max(1, Math.round(ratio));
       const floor = h - rule;
       pen.clearRect(0, 0, w, h);
@@ -146,8 +148,9 @@ export function Scrubber({
         fill.lineTo(xAt(at), floor);
         fill.closePath();
         const fade = pen.createLinearGradient(0, floor - room, 0, floor);
-        fade.addColorStop(0, `color-mix(in srgb, ${tone} 78%, transparent)`);
-        fade.addColorStop(1, `color-mix(in srgb, ${tone} 26%, transparent)`);
+        // Plain hex with its opacity: Safari before 18 throws on a color-mix here.
+        fade.addColorStop(0, `${tone}c7`);
+        fade.addColorStop(1, `${tone}42`);
         pen.fillStyle = fade;
         pen.fill(fill);
         pen.strokeStyle = tone;
