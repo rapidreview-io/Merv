@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import type { Caller, DelegationSource, Sql, Transaction } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 
@@ -244,7 +245,7 @@ export interface ModelRelayConfig<
   payload(raw: unknown, grant: G): Record<string, unknown> | null;
   /** Headers the upstream call carries for that body, besides the relay's own. */
   headers?(body: Record<string, unknown>): Record<string, string>;
-  lane(grant: G): string;
+  lane(grant: G, headers: IncomingHttpHeaders): string;
   maxRequestBytes: number;
   totalTimeoutMs: number;
   maxRequestsPerGrant?: number;

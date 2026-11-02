@@ -15,3 +15,5 @@ export const turnCeilingMs = 3 * 60 * 60_000;
 
 /** What a change the model asked for before it heard the person answers instead of being made. */
 export const notRun = 'The person just spoke: read what they said, then decide.';
+/** The header that sends a model call down its conversation's summary lane, beside the turn's. */
+export const piSummaryLane = 'x-merv-pi-lane';
