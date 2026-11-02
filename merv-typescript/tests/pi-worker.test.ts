@@ -1216,10 +1216,11 @@ const after = (until: Promise<unknown>, body: string) =>
 const unanswered = (request: Request) =>
   new Response(
     new ReadableStream({
-      start: (controller) =>
-        request.signal.addEventListener('abort', () =>
-          controller.error(new DOMException('Aborted', 'AbortError')),
-        ),
+      start(controller) {
+        const end = () => controller.error(new DOMException('Aborted', 'AbortError'));
+        if (request.signal.aborted) end();
+        else request.signal.addEventListener('abort', end);
+      },
     }),
   );
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

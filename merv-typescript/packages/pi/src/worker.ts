@@ -751,15 +751,18 @@ async function executeTurn(
       });
       // Its call is the turn's second at once: the relay gives summaries their own lane.
       const stream = session.agent.streamFunction;
+      // On the call itself: an abort before the library's own controller exists would be lost.
       beside.agent.streamFunction = (model, context, options) =>
-        stream(model, context, { ...options, headers: { [piSummaryLane]: '1' } });
-      const stop = () => beside.abortCompaction();
-      backups.signal.addEventListener('abort', stop, { once: true });
+        stream(model, context, {
+          ...options,
+          signal: options?.signal
+            ? AbortSignal.any([options.signal, backups.signal])
+            : backups.signal,
+          headers: { [piSummaryLane]: '1' },
+        });
       try {
-        if (backups.signal.aborted) return undefined;
         return (started.done = await beside.compact());
       } finally {
-        backups.signal.removeEventListener('abort', stop);
         beside.dispose();
       }
     };
