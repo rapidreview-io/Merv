@@ -17,6 +17,9 @@ const IDLE_MS = 120_000;
 /** How long after the voice's last word it counts as listening again, and after a line is handed
  *  over that it counts as saying it (it begins in under a second). */
 const QUIET_MS = 1_400;
+/** How long a drawing turn's answer gives the page to bring its last ink, how long the answer waits
+ *  on the pen at most, and how often it looks. */
+const [LAST_INK_MS, MOST_PEN_WAIT_MS, PEN_LOOK_MS] = [1_000, 60_000, 250];
 /** GPT-Live takes at most 500 tokens an append. */
 const SAYABLE = 1_800;
 
@@ -41,6 +44,9 @@ interface Live {
   /** What Pi said while the voice was busy: the newest few wait, and nothing waits on them. */
   lines: string[];
   next?: ReturnType<typeof setTimeout>;
+  /** When the request's turn was seen to end, while its answer waits for the pen and the voice. */
+  ended?: number;
+  answering?: ReturnType<typeof setTimeout>;
 }
 
 /** How many of Pi's lines may wait for the voice to leave room; older ones are dropped. */
@@ -98,6 +104,8 @@ export function useVoice(pi: Conversation | null) {
   /** How many times the person has spoken over a turn: what is being drawn hurries to its end. */
   const [steered, setSteered] = useState(0);
   const live = useRef<Live | null>(null);
+  /** Whether an open board's pen still has this turn's ink to draw, and so lines to say. */
+  const drawing = useRef(() => false);
   const conversation = useRef(pi);
   conversation.current = pi;
 
@@ -116,6 +124,7 @@ export function useVoice(pi: Conversation | null) {
     if (held) {
       clearTimeout(held.quiet);
       clearTimeout(held.next);
+      clearTimeout(held.answering);
       for (const track of held.mic?.getTracks() ?? []) track.stop();
       held.pc.close();
       held.audio.srcObject = null;
@@ -183,9 +192,13 @@ export function useVoice(pi: Conversation | null) {
     if (!pi) return;
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
     held.lines = [];
-    if (pi.active) setSteered((times) => times + 1);
-    // A request waiting in another conversation is not this one's: its answer is left unsaid.
-    const before = held.pending?.id === pi.selected ? held.pending : undefined;
+    // A turn over but still drawing and still to answer stops as one that runs does.
+    if (pi.active || held.pending) setSteered((times) => times + 1);
+    clearTimeout(held.answering);
+    held.ended = undefined;
+    // A request waiting in another conversation is not this one's, and one whose turn is over is
+    // superseded: its answer is left unsaid.
+    const before = pi.active && held.pending?.id === pi.selected ? held.pending : undefined;
     const after = (pi.snapshot?.commands.length ?? 0) - (pi.active ? 1 : 0);
     held.pending = before
       ? { ...before, delegation }
@@ -330,8 +343,8 @@ export function useVoice(pi: Conversation | null) {
     }
   };
 
-  /** Once the turn sent for a request has ended in its conversation, its answer goes back for
-   *  GPT-Live to say. */
+  /** Once the turn sent for a request has ended in its conversation and its pen and lines are done,
+   *  its answer goes back for GPT-Live to say: words and ink run together, and the answer comes last. */
   const answered = (snapshot?: PiSnapshot | null) => {
     const held = live.current;
     const pending = held?.pending;
@@ -343,9 +356,27 @@ export function useVoice(pi: Conversation | null) {
         command.messages.some((m) => m.role === 'user' && m.text.trim() === pending.text),
       );
     if (!turn || (turn.status !== 'completed' && turn.status !== 'interrupted')) return;
+    clearTimeout(held.answering);
+    const now = Date.now();
+    const since = now - (held.ended ??= now);
+    const drew = turn.outcomes.some((outcome) => outcome.name === 'board.write');
+    if (
+      since < MOST_PEN_WAIT_MS &&
+      ((drew && since < LAST_INK_MS) ||
+        drawing.current() ||
+        held.lines.length ||
+        now - held.last < QUIET_MS)
+    ) {
+      held.answering = setTimeout(
+        () => live.current === held && answered(conversation.current?.snapshot),
+        PEN_LOOK_MS,
+      );
+      return;
+    }
     held.pending = undefined;
+    held.ended = undefined;
     held.lines = [];
-    held.last = Date.now();
+    held.last = now;
     send('session.commentary.append', resultOf(turn), pending.delegation);
     setState('listening');
   };
@@ -404,6 +435,9 @@ export function useVoice(pi: Conversation | null) {
     hush,
     speak,
     steered,
+    drawing,
+    /** A line is waiting its turn to be said: the pen waits with it, so words and ink stay together. */
+    behind: () => !!live.current?.lines.length,
     mute: () => {
       const held = live.current;
       if (!held) return;

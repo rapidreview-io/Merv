@@ -10,7 +10,7 @@ const shape = z.string().min(1).max(100);
 const name = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
 const key = name.optional();
 /** A short line heard as the pen reaches the op that carries it, which keeps it on what it makes. */
-const say = z.string().trim().min(1).max(100).refine(visible).optional();
+const say = z.string().trim().min(1).max(160).refine(visible).optional();
 export const COLORS = {
   yellow: '#ffec99',
   blue: '#a5d8ff',
