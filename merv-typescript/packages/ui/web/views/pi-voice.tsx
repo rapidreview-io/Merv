@@ -105,7 +105,7 @@ export function useVoice(pi: Conversation | null) {
   const [steered, setSteered] = useState(0);
   const live = useRef<Live | null>(null);
   /** Whether an open board's pen still has this turn's ink to draw, and so lines to say. */
-  const drawing = useRef(() => false);
+  const drawing = useRef<() => boolean>(() => false);
   const conversation = useRef(pi);
   conversation.current = pi;
 
