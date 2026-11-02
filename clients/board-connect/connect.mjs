@@ -12,7 +12,7 @@
  * a diffstat and a branch name. Never sent: paths, file contents, diffs or any credential.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { client, ndJsonStream } from '@agentclientprotocol/sdk';
@@ -96,6 +96,10 @@ function worktree(run) {
   const dir = join(repo, '.board-worktrees', short(run));
   if (!existsSync(dir)) {
     mkdirSync(join(repo, '.board-worktrees'), { recursive: true });
+    // Kept out of the repo's own status, without touching a tracked file.
+    const exclude = join(repo, '.git', 'info', 'exclude');
+    if (!existsSync(exclude) || !readFileSync(exclude, 'utf8').includes('.board-worktrees'))
+      appendFileSync(exclude, '\n.board-worktrees/\n');
     const made = git(repo, 'worktree', 'add', '-q', '-B', `board/${short(run)}`, dir, 'HEAD');
     if (made.status !== 0) throw new Error(`worktree: ${made.stderr.trim()}`);
   }
