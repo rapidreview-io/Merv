@@ -1,6 +1,6 @@
 /**
- * What someone signed out sees: the board itself, with Pi drawing on it, one demo and then the next
- * and round again. It looks like the app because it is the app's board, played. Reaching for it in
+ * What someone signed out sees: the board itself, with Pi drawing on it, demo after demo and round
+ * again. It looks like the app because it is the app's board, played. Reaching for it in
  * any way slides in the way to sign in, and the drawing goes on behind.
  */
 import '@excalidraw/excalidraw/index.css';
@@ -171,7 +171,8 @@ function Demo({ token, ask, done }: { token: string; ask: string; done(): void }
 
 export function Landing({ google }: { google: ReactNode }) {
   const [tokens, setTokens] = useState<string[]>([]);
-  const [at, setAt] = useState(0);
+  const [round, setRound] = useState(0);
+  const at = round % (tokens.length || 1);
   const [asking, setAsking] = useState(false);
   useEffect(() => {
     void fetch('/board-demos', { credentials: 'omit' })
@@ -213,10 +214,10 @@ export function Landing({ google }: { google: ReactNode }) {
         <div className="board-canvas">
           {tokens[at] && (
             <Demo
-              key={at}
+              key={round}
               token={tokens[at]!}
               ask={DEMOS[at]!.ask}
-              done={() => setAt((now) => (now + 1) % tokens.length)}
+              done={() => setRound((now) => now + 1)}
             />
           )}
           <div className="board-bar" aria-hidden="true">
