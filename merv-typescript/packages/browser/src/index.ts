@@ -360,7 +360,11 @@ export class BrowserService {
     if (session.refused && (failed || !/^https?:/.test(landed))) await left(session.refused);
     session.refused = undefined;
     // What the guard resolved may not be what the browser reached: a host can answer differently.
-    const reached = await session.document?.serverAddr().catch(() => null);
+    // Cloudflare's browser reaches everything through a proxy of its own on loopback, so there it
+    // says nothing about the site.
+    const reached = this.endpoint?.own
+      ? null
+      : await session.document?.serverAddr().catch(() => null);
     if (reached && !this.addressOk(reached.ipAddress)) await left('a private address');
     await page.waitForLoadState('domcontentloaded').catch(() => undefined);
     // Playwright 1.57 has no public way to a snapshot with refs; its version is pinned.
