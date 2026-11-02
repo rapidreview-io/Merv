@@ -112,7 +112,7 @@ export const reportPresentation =
  * submissions into gates and spent the result rounds on them (2026-10-05).
  */
 const operationalAdmission =
-  ' Operational admission is distinct from scientific approval. Agents manage only their authorized GPU rental compute allocation. After design PASS, independent experiments may rent GPUs concurrently within their allocations and fresh per-rental quote, capacity, bounded-lease and remaining-liability checks. A shared dollar cap does not require an empty namespace or a dispatcher slot. Only an explicitly retained resource constraint can require exclusive scheduling; when one applies, identify its authority and supported waiting/handoff path, and do not fabricate a grant or silently remove the constraint. Design review checks those mechanisms rather than demanding that a future slot already exist. Missing GPU spending authority or an unavailable required service remains a blocker. Do not use results submission as an admission gate.';
+  ' Operational admission is distinct from scientific approval. After design PASS, rent the GPUs the approved design needs, concurrently when that saves time, within the project’s Sandboxes cap, which Sandboxes enforces at every rental; an experiment needs no grant of its own. Only a limit the owner set for this work binds it further, in dollars or GPU-hours, never as a count of rentals. An unavailable required service remains a blocker. Do not use results submission as an admission gate.';
 
 export const workflowGates: Partial<Record<ActiveState, string>> = {
   planned:

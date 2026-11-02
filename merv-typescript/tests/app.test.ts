@@ -358,8 +358,8 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         today: '2026-09-25',
       }),
     ].join('\n');
-    // Agent guidance exposes only the authorized GPU rental budget, with no project-specific cap.
-    assert.match(researchGuide, /authorized GPU rental compute budget/);
+    // Agent guidance exposes only GPU rental compute under the project's cap, with no figure.
+    assert.match(researchGuide, /GPU rental compute, held by the project's Sandboxes cap/);
     assert.doesNotMatch(researchGuide, /session\.write budget|Fleet daily token limit|\$500/);
     assert.equal(named.split('The only budget agents manage').length, 2);
     const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);

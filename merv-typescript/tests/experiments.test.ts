@@ -737,12 +737,8 @@ test('stage assignments preserve original requests and distinguish dispatch from
     const prompt = assignment.context!.prompt;
     if (['planned', 'design_review', 'running'].includes(e.workflow.state)) {
       assert.match(assignment.brief, /Operational admission is distinct from scientific approval/);
-      assert.match(
-        assignment.brief,
-        /shared dollar cap does not require an empty namespace or a dispatcher slot/,
-      );
-      assert.match(assignment.brief, /Missing GPU spending authority.*remains a blocker/);
-      assert.match(assignment.brief, /independent experiments may rent GPUs concurrently/);
+      assert.match(assignment.brief, /within the project’s Sandboxes cap/);
+      assert.match(assignment.brief, /never as a count of rentals/);
     }
     if (['planned', 'design_review'].includes(e.workflow.state))
       assert.match(assignment.brief, /additional scientific approval/);
