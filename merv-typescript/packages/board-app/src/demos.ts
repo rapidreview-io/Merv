@@ -94,10 +94,10 @@ const paper: Demo = {
       ),
     ],
     [
-      words('How a word knows where to look', [0, 500], 'm'),
+      words('How a word knows where to look', [0, 560], 'm'),
       note(
         'Query: what am I looking for?',
-        [0, 545],
+        [0, 605],
         'yellow',
         talk(
           'How does a word know where to look?',
@@ -106,13 +106,13 @@ const paper: Demo = {
       ),
       note(
         'Key: what do I have to offer?',
-        [230, 545],
+        [260, 605],
         'green',
         'Every other word holds up a label.',
       ),
       note(
         'Value: what I pass along',
-        [460, 545],
+        [520, 605],
         '#e9d5ff',
         'Where they match, that word’s meaning flows across.',
       ),
@@ -120,7 +120,7 @@ const paper: Demo = {
     [
       note(
         'Word order goes in as a signal added to each word',
-        [700, 545],
+        [780, 605],
         'orange',
         talk(
           'If it reads everything at once, how does it know word order?',
@@ -129,16 +129,16 @@ const paper: Demo = {
       ),
     ],
     [
-      words('Why it mattered', [0, 700], 'm'),
+      words('Why it mattered', [0, 760], 'm'),
       note(
         'No word-by-word reading, so training runs in parallel',
-        [0, 745],
+        [0, 805],
         'green',
         'With no word-by-word reading, training runs in parallel, which made it far faster.',
       ),
       note(
         'It beat the best translation systems of its day',
-        [260, 745],
+        [260, 805],
         'green',
         'And it beat the best translation systems of its day.',
       ),
@@ -146,7 +146,7 @@ const paper: Demo = {
     [
       words(
         'This design is called the Transformer.',
-        [540, 750],
+        [560, 820],
         'l',
         talk(
           'Wait. Is this the T in GPT?',

@@ -35,8 +35,8 @@ import { speech } from '../speech';
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
-/** A demo goes a little under a pen's pace, for each to run past a minute and be followed. */
-const DEMO_SPEED = 0.8;
+/** How fast a demo's pen goes: at a person's writing pace a board of words takes ten minutes. */
+const DEMO_SPEED = 3;
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
