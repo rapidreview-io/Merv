@@ -11,6 +11,7 @@ import { ErrorBoundary, PageLoad } from '../components';
 import { SessionProvider } from '../session';
 import { useRoomy } from '../theme';
 import { BoardStage } from '../views/board';
+import { HandoffPane, hostHandoff, type HandoffOpen } from '../views/board-handoff';
 import { PiProvider } from '../views/pi';
 import { BoardMenu } from './head';
 import { Landing as FrontPage } from './landing';
@@ -69,21 +70,33 @@ function Landing() {
 function Board() {
   const { id = '' } = useParams();
   const [talking, setTalking] = useState(false);
+  // One column beside the board: the chat, or a hand-off session (board-handoff).
+  const [sessions, setSessions] = useState<HandoffOpen | null>(null);
   const roomy = useRoomy();
   useEffect(() => void safely(() => localStorage.setItem(LAST, id)), [id]);
+  useEffect(() => hostHandoff(setSessions), []);
+  useEffect(() => setSessions(null), [id]);
+  const aside = sessions ? (
+    <HandoffPane board={id} open={sessions} close={() => setSessions(null)} />
+  ) : (
+    talking && <Conversation close={() => setTalking(false)} />
+  );
   return (
     <BoardStage
       id={id}
       title={(board) => board.title}
-      beside={(outcomes) =>
-        talking && roomy && !outcomes.shown && <Conversation close={() => setTalking(false)} />
-      }
+      beside={(outcomes) => roomy && !outcomes.shown && aside}
       menu={(board, outcomes) => <BoardMenu board={board} outcomes={outcomes} />}
     >
       {(board) => (
         <>
-          <BoardBar board={board} talking={talking} show={setTalking} />
-          {talking && !roomy && <Conversation close={() => setTalking(false)} />}
+          <BoardBar
+            board={board}
+            talking={talking}
+            show={setTalking}
+            sessions={() => setSessions((held) => (held ? null : {}))}
+          />
+          {!roomy && aside}
         </>
       )}
     </BoardStage>

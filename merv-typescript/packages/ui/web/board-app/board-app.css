@@ -424,3 +424,137 @@
   font-weight: 600;
   cursor: text;
 }
+
+/* Hand-off sessions (views/board-handoff.tsx), in the column the chat takes. */
+.board-handoff-machine {
+  font-size: var(--text-xs);
+}
+.board-handoff-machine.is-on {
+  color: var(--supports, #2f9e44);
+}
+.board-handoff-list {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+.board-handoff-list > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.board-handoff-list > button[aria-current] {
+  background: var(--bg-soft);
+}
+.board-handoff-list > button > .muted {
+  grid-column: 2;
+  font-size: var(--text-xs);
+}
+.board-handoff-brief {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.board-handoff-list > p {
+  padding: var(--space-3);
+}
+/* A drawn dot for the state: hollow while it waits, filled while it runs, a ring when it asks. */
+.board-handoff-dot {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+.board-handoff-dot.is-running {
+  background: currentColor;
+}
+.board-handoff-dot.is-needs-you,
+.board-handoff-dot.is-needs {
+  box-shadow: 0 0 0 3px #f0883233;
+  border-color: #e8590c;
+}
+.board-handoff-dot.is-done {
+  border-color: #2f9e44;
+  background: #2f9e44;
+}
+.board-handoff-dot.is-failed,
+.board-handoff-dot.is-offline {
+  border-style: dashed;
+  color: var(--muted);
+}
+.board-handoff-start {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  overflow-y: auto;
+}
+.board-handoff-start label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.board-handoff-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.board-handoff-choices .btn[aria-pressed='true'] {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.board-handoff-picture {
+  max-height: 160px;
+  object-fit: contain;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+.board-handoff-command {
+  padding: var(--space-2);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+}
+.board-handoff-standing,
+.board-handoff-line {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.board-handoff-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.board-handoff-line.is-ask {
+  white-space: normal;
+}
+.board-handoff-result pre {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+}
+.board-handoff-ask {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.board-handoff-ask p {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+.board-handoff .pi-compose {
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}

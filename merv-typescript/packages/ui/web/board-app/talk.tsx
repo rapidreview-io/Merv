@@ -12,6 +12,7 @@ import { call, refreshTools, safely } from '../api';
 import { Icon } from '../icons';
 import { useRoomy } from '../theme';
 import { ADD_KEY, asksToAdd } from '../views/board-add';
+import { useHandoffEnabled } from '../views/board-handoff';
 import { Composer, Standing, Transcript, useAgent } from '../views/pi';
 
 /** Whether this browser talks to Pi: 'on' once it has, 'off' once it was told to stop. */
@@ -69,11 +70,15 @@ export function BoardBar({
   board: { id: board, title },
   talking,
   show,
+  sessions,
 }: {
   board: Pick<BoardSummary, 'id' | 'title'>;
   talking: boolean;
   show(shown: boolean): void;
+  /** Opens the board's hand-off sessions, where the app has them. */
+  sessions?(): void;
 }) {
+  const handoff = useHandoffEnabled();
   const agent = useAgent();
   const pi = agent?.pi;
   const voice = agent?.voice;
@@ -228,6 +233,17 @@ export function BoardBar({
       >
         <Icon name="chat" size={16} />
       </button>
+      {handoff && sessions && (
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="Sessions"
+          title="Sessions"
+          onClick={sessions}
+        >
+          <Icon name="sessions" size={16} />
+        </button>
+      )}
       {live && (
         <button
           type="button"

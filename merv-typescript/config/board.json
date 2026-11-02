@@ -10,6 +10,11 @@
       "required": false
     },
     {
+      "id": "board-handoff",
+      "name": "@merv/board/handoff",
+      "required": false
+    },
+    {
       "id": "board",
       "name": "@merv/board"
     },

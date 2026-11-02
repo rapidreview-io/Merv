@@ -1,7 +1,7 @@
 /**
  * A proposal of an agent's, selected, takes a keep and a dismiss above it: keeping makes its shapes
  * ordinary, and dismissing deletes them, each a change of theirs like any other: saved, in history
- * and undoable.
+ * and undoable. Any other selection takes a hand-off, where the app hosts one (board-handoff).
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CaptureUpdateAction, getCommonBounds, newElementWith } from '@excalidraw/excalidraw';
@@ -11,6 +11,7 @@ import type {
   ExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { Icon } from '../icons';
+import { HandoffButton } from './board-handoff';
 
 const isProposed = (el: ExcalidrawElement) => !!el.customData?.proposed;
 
@@ -33,8 +34,9 @@ function clearOfPanel(island: HTMLElement, at: { left: number; top: number }) {
     : { left: at.left, top: bottom };
 }
 
-export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
+export function BoardSelection({ api, board }: { api: ExcalidrawImperativeAPI; board: string }) {
   const [at, setAt] = useState<Stood | null>(null);
+  const [chosen, setChosen] = useState<readonly ExcalidrawElement[]>([]);
   const island = useRef<HTMLDivElement>(null);
   const [clear, setClear] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
@@ -44,9 +46,13 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
     () =>
       api.onChange((elements, state) => {
         const chosen = elements.filter((el) => state.selectedElementIds[el.id] && !el.isDeleted);
+        setChosen((held) =>
+          held.length === chosen.length && held.every((el, i) => el.id === chosen[i]!.id)
+            ? held
+            : chosen,
+        );
         if (
           !chosen.length ||
-          !chosen.every(isProposed) ||
           state.selectedElementsAreBeingDragged ||
           state.isResizing ||
           state.isRotating ||
@@ -67,7 +73,7 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
       }),
     [api],
   );
-  if (!at) return null;
+  if (!at || !chosen.length) return null;
   // Drawn where the selection puts it, and seen once measured clear of the panel.
   const style = {
     ...(clear ?? { left: at.left, top: at.top }),
@@ -127,6 +133,12 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
         customData: kept,
       }),
       false,
+    );
+  if (!chosen.every(isProposed))
+    return (
+      <div className="board-selection" style={style} ref={island}>
+        <HandoffButton api={api} board={board} chosen={chosen} />
+      </div>
     );
   return (
     <div className="board-selection" style={style} ref={island}>

@@ -103,6 +103,13 @@ async function main() {
   });
   if (scripted) app.ctx.boardApp.machines!.fetchImpl = boardModel;
   console.log(`${app.ctx.api.url}/ui/${scripted ? '   (scripted Pi: no model key)' : ''}`);
+  // With hand-off on, the one person's own credential connects their machine: this is their
+  // terminal, and the page on it is handed the same credential.
+  const solo = app.ctx.boardApp.solo;
+  if (process.env.MERV_BOARD_HANDOFF && solo)
+    console.log(
+      `Connect a machine: node clients/board-connect/connect.mjs --server ${app.ctx.api.url} --project ${solo.projectId} --key ${solo.token} --repo <folder>`,
+    );
   const stop = () => void app.stop().then(() => process.exit(0));
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);

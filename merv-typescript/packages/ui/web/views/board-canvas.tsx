@@ -765,7 +765,7 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
         )}
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
-      {api && <BoardSelection api={api} />}
+      {api && <BoardSelection api={api} board={id} />}
       <BoardTalk
         doing={() => {
           const said = presence.current?.doing();
