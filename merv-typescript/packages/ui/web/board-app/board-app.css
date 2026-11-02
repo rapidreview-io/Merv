@@ -188,6 +188,7 @@
 
 /* The landing page: the board, played; nothing on it answers but the way to sign in. */
 /* Unseen, not gone: the scrubber still measures itself to draw. */
+.board-landing .board-floor,
 .board-landing .board-scrub,
 .board-landing .board-scrub *,
 .board-landing .board-scrub-ends,
