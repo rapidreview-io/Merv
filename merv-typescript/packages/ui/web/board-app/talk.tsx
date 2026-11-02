@@ -6,20 +6,64 @@
  * the board.
  */
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { BoardSummary } from '@merv/board/models';
 import { call, refreshTools, safely } from '../api';
 import { Icon } from '../icons';
+import { useRoomy } from '../theme';
+import { ADD_KEY, asksToAdd } from '../views/board-add';
 import { Composer, Standing, Transcript, useAgent } from '../views/pi';
 
 /** Whether this browser talks to Pi: 'on' once it has, 'off' once it was told to stop. */
 const VOICE = 'board:voice';
 /** Whether this browser has been through hello: set once Merv has said something to them. */
 const HI = 'board:hi';
+/** Whether this browser has the plus still to be shown: 'due' from a first sign-in, then 'done'. */
+const PLUS = 'board:plus';
+/** How long the plus waits on a Hi that has not come and has not failed either. */
+const PLUS_WAIT = 60_000;
 /** What a board still called Untitled is called once it is asked something; Pi may name it better. */
 const named = (words: string) => {
   const line = words.replace(/\s+/g, ' ').trim();
   return line.length <= 48 ? line : `${line.slice(0, 48).replace(/\s+\S*$/, '')}…`;
 };
+
+/** The plus, pointed at where it is now: gone with OK, or by using it. */
+function PlusTip({ done }: { done(): void }) {
+  const roomy = useRoomy();
+  const [at, setAt] = useState<{ top: number; right: number }>();
+  useEffect(() => {
+    const place = () => {
+      const plus = document.querySelector('.board-add')?.getBoundingClientRect();
+      setAt(
+        plus?.width ? { top: plus.bottom + 10, right: innerWidth - plus.right - 8 } : undefined,
+      );
+    };
+    const pressed = (event: KeyboardEvent) => asksToAdd(event) && done();
+    const clicked = ({ target }: MouseEvent) =>
+      (target as Element).closest?.('.board-add') && done();
+    place();
+    const moving = setInterval(place, 500);
+    addEventListener('keydown', pressed, true);
+    addEventListener('click', clicked, true);
+    return () => {
+      clearInterval(moving);
+      removeEventListener('keydown', pressed, true);
+      removeEventListener('click', clicked, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!at) return null;
+  return createPortal(
+    <p className="board-bar-hi board-tip" role="status" style={at}>
+      <span>Add files, links and other boards here.{roomy && ` Or press ${ADD_KEY}.`}</span>
+      <button type="button" className="btn btn--sm" onClick={done}>
+        OK
+      </button>
+    </p>,
+    document.body,
+  );
+}
 
 export function BoardBar({
   board: { id: board, title },
@@ -91,7 +135,29 @@ export function BoardBar({
     voice?.speak("Hi, I'm Merv. What are we working on?");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hi, up, said]);
-  if (!pi || !voice) return <div className="board-bar" />;
+  // Someone new is shown the plus after the Hi, or without it once the voice fails or is too long.
+  const [plus, setPlus] = useState(() => {
+    const was = safely(() => localStorage.getItem(PLUS), null);
+    if (was || safely(() => localStorage.getItem(HI), null)) return was === 'due';
+    safely(() => localStorage.setItem(PLUS, 'due'));
+    return true;
+  });
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    if (!plus) return;
+    const wait = setTimeout(() => setWaited(true), PLUS_WAIT);
+    return () => clearTimeout(wait);
+  }, [plus]);
+  const failed = !!pi?.error || !!voice?.problem || !!pi?.unavailable || !!pi?.blocked;
+  const tip = plus && (failed || waited || (!hi && state !== 'speaking')) && (
+    <PlusTip
+      done={() => {
+        safely(() => localStorage.setItem(PLUS, 'done'));
+        setPlus(false);
+      }}
+    />
+  );
+  if (!pi || !voice) return <div className="board-bar">{tip}</div>;
   // Until the voice is up and a machine is there to do what it hears, Merv is getting ready.
   const getting =
     !pi.error &&
@@ -101,6 +167,7 @@ export function BoardBar({
       (live && state !== 'closing' && pi.snapshot?.host?.state !== 'ready'));
   return (
     <div className="board-bar">
+      {tip}
       {(pi.error || voice.problem) && (
         <p className="board-said--bad" role="alert">
           {pi.error || voice.problem}

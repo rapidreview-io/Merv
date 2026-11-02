@@ -48,7 +48,7 @@ export const asksToAdd = (
   !event.shiftKey &&
   !event.altKey &&
   event.key.toLowerCase() === 'k';
-const ADD_KEY = /Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
+export const ADD_KEY = /Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘K' : 'Ctrl+K';
 
 export const AddButton = ({ onClick }: { onClick(): void }) => (
   <button
