@@ -10,3 +10,8 @@ merv-board.eastus2.cloudapp.azure.com:8443 {
 		flush_interval -1
 	}
 }
+merv-board.eastus2.cloudapp.azure.com:9443 {
+	reverse_proxy storage:9000 {
+		flush_interval -1
+	}
+}

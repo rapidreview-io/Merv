@@ -28,12 +28,21 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-    ports: ['80:80', '443:443', '8443:8443']
+    ports: ['80:80', '443:443', '8443:8443', '9443:9443']
     environment:
       BOARD_ADDRESS: ${BOARD_ADDRESS}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy:/data
+  # Files: S3 for the app, and for browsers sending large files straight here through Caddy (:9443).
+  storage:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${BOARD_STORAGE_USER}
+      MINIO_ROOT_PASSWORD: ${BOARD_STORAGE_PASSWORD}
+    volumes: [storage:/data]
   # Its own Sandboxes, for real machines (renting.sh): on under COMPOSE_PROFILES=renting.
   sandboxes-db:
     profiles: [renting]
@@ -81,4 +90,4 @@ services:
     ports: ['2222:2222']
     depends_on:
       sandboxes-control: { condition: service_healthy }
-volumes: { data: {}, pg: {}, caddy: {}, sandboxes-data: {}, sandboxes-pg: {} }
+volumes: { data: {}, pg: {}, caddy: {}, storage: {}, sandboxes-data: {}, sandboxes-pg: {} }
