@@ -20,7 +20,10 @@ const actInput = z.strictObject({
           type: z.strictObject({ ref, text: z.string().max(500) }),
           say,
         }),
-        z.strictObject({ scroll: z.strictObject({ dy: z.number().min(-20_000).max(20_000) }), say }),
+        z.strictObject({
+          scroll: z.strictObject({ dy: z.number().min(-20_000).max(20_000) }),
+          say,
+        }),
         z.strictObject({ press: z.string().max(20), say }),
         z.strictObject({ wait: z.number().int().min(1).max(8000), say }),
       ]),
@@ -29,7 +32,11 @@ const actInput = z.strictObject({
     .max(10),
   say,
 });
-const lookInput = z.strictObject({ ref: ref.optional(), question: z.string().max(500).optional(), say });
+const lookInput = z.strictObject({
+  ref: ref.optional(),
+  question: z.string().max(500).optional(),
+  say,
+});
 const side = z.enum(['right', 'left', 'above', 'below']);
 const shotInput = z.strictObject({
   board: z.string().trim().min(1).max(200),
@@ -62,7 +69,10 @@ const described = (actions: Record<string, Omit<NounAction, 'description'>>) =>
     ]),
   );
 
-export function browserTools(ctx: Context, browser: BrowserService): NounDefinition & { name: string } {
+export function browserTools(
+  ctx: Context,
+  browser: BrowserService,
+): NounDefinition & { name: string } {
   return {
     name: 'browser',
     tier: 'core',
@@ -150,7 +160,16 @@ export function browserTools(ctx: Context, browser: BrowserService): NounDefinit
                 ...(say && { say }),
               },
               ...(caption
-                ? [{ op: 'text', key: 'caption', text: caption, size: 's', near: 'shot', side: 'below' }]
+                ? [
+                    {
+                      op: 'text',
+                      key: 'caption',
+                      text: caption,
+                      size: 's',
+                      near: 'shot',
+                      side: 'below',
+                    },
+                  ]
                 : []),
               {
                 op: 'link',
@@ -164,7 +183,15 @@ export function browserTools(ctx: Context, browser: BrowserService): NounDefinit
             ],
           })) as Record<string, unknown>;
           const { placed, overlaps, steppedIn, notRun } = drawn;
-          return { title: name, url, ...(cropped && { cropped }), placed, overlaps, steppedIn, notRun };
+          return {
+            title: name,
+            url,
+            ...(cropped && { cropped }),
+            placed,
+            overlaps,
+            steppedIn,
+            notRun,
+          };
         },
       },
       close: {

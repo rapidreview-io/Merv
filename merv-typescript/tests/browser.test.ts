@@ -9,7 +9,18 @@ import { after, before, test } from 'node:test';
 import { chromium } from 'playwright-core';
 import { BrowserService } from '@merv/browser';
 import { browserTools } from '@merv/browser/tools';
-import { challenged, closedAddress, guard, outlineOf, pageLines, secretField } from '@merv/browser/guard';
+import {
+  challenged,
+  closedAddress,
+  guard,
+  outlineOf,
+  pageLines,
+  secretField,
+} from '@merv/browser/guard';
+import { agentSaying } from '@merv/api/audience';
+import { surface } from '@merv/board-app/words';
+import { piInstructions } from '@merv/pi/prompt';
+import { screenImage } from '@merv/pi/tool-image';
 import { createApp } from '../src/app.js';
 import { openState } from './fixtures/state.js';
 
@@ -57,7 +68,13 @@ test('the guard refuses every form of a private address', async () => {
 });
 
 test('secret fields, blocked pages and the outline', () => {
-  const field = (over: object) => ({ tag: 'input', type: 'text', autocomplete: '', words: '', ...over });
+  const field = (over: object) => ({
+    tag: 'input',
+    type: 'text',
+    autocomplete: '',
+    words: '',
+    ...over,
+  });
   for (const over of [
     { type: 'password' },
     { autocomplete: 'cc-number' },
@@ -83,7 +100,8 @@ test('secret fields, blocked pages and the outline', () => {
 test('with no endpoint the app has no browser tool and no words of it', async (t) => {
   const url = process.env.MERV_BROWSER_CDP_URL;
   t.after(() => void (process.env.MERV_BROWSER_CDP_URL = url));
-  for (const name of ['MERV_BROWSER_CDP_URL', 'MERV_BROWSER_RENDER_TOKEN']) delete process.env[name];
+  for (const name of ['MERV_BROWSER_CDP_URL', 'MERV_BROWSER_RENDER_TOKEN'])
+    delete process.env[name];
   const state = await openState(mkdtempSync(join(tmpdir(), 'merv-browser-')));
   t.after(() => state.close());
   assert.equal(new BrowserService({}, state).enabled, false);
@@ -118,6 +136,12 @@ const site = createServer((req, res) => {
     res.writeHead(302, { location: `http://127.0.0.1:${port}/secret` });
     return res.end();
   }
+  if (req.url === '/framed') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    return res.end(
+      `<title>Framed</title><iframe src="http://other.test:${port}/redirect"></iframe>`,
+    );
+  }
   if (req.url === '/forbidden') {
     res.writeHead(403);
     return res.end();
@@ -149,7 +173,7 @@ before(async () => {
     '--remote-debugging-port=0',
     `--user-data-dir=${profile}`,
     '--no-first-run',
-    '--host-resolver-rules=MAP public.test 127.0.0.1',
+    '--host-resolver-rules=MAP *.test 127.0.0.1',
   ]);
   const url = await new Promise<string>((done, fail) => {
     let said = '';
@@ -202,7 +226,11 @@ test('a real Chrome: open, find, act, look, popups', async () => {
   assert.equal(looked.bytes.subarray(0, 2).toString('hex'), 'ffd8');
   // A new window opens in the one window there is.
   const again = await service.open(me, at('/'));
-  await service.act(me, [{ click: ref(again.outline, 'link "New window"') }, { wait: 1000 }], () => undefined);
+  await service.act(
+    me,
+    [{ click: ref(again.outline, 'link "New window"') }, { wait: 1000 }],
+    () => undefined,
+  );
   assert.equal((await service.find(me, 'second')).title, 'Second');
   const full = await service.shot(me, { full: true });
   assert.ok(full.bytes.length < 2 * 1024 ** 2);
@@ -234,6 +262,12 @@ test('a real Chrome: a redirect to a private address never reaches it', async ()
   hits.length = 0;
   await assert.rejects(service.open(me, at('/redirect')), /does not open a private address/);
   assert.deepEqual(hits, ['/redirect'], 'the hop to /secret was not requested');
+  hits.length = 0;
+  // In a frame of another site, which Chrome draws in another process.
+  await service.open(me, at('/framed'));
+  await new Promise((done) => setTimeout(done, 1000));
+  assert.ok(hits.includes('/redirect'), 'the frame loaded');
+  assert.ok(!hits.includes('/secret'), 'its hop to /secret was not requested');
   const blocked = await service.open(me, at('/forbidden'));
   assert.ok(blocked.blocked, '403 is blocked');
   await assert.rejects(service.shot(me, {}), /challenge/);
@@ -250,7 +284,13 @@ test('budgets: a person, everyone, shots and sessions', async () => {
   const day = new Date().toISOString().slice(0, 10);
   const set = (actor: string, ms: number, shots = 0) =>
     state.transaction((tx) =>
-      tx.run('INSERT INTO browser_usage(day,actor_id,ms,shots) VALUES(?,?,?,?)', day, actor, ms, shots),
+      tx.run(
+        'INSERT INTO browser_usage(day,actor_id,ms,shots) VALUES(?,?,?,?)',
+        day,
+        actor,
+        ms,
+        shots,
+      ),
     );
   await set('spent', 15 * 60_000);
   await assert.rejects(service.open(caller('spent'), at('/')), /browser minutes used up/);
@@ -289,6 +329,19 @@ test('shot goes through artifact and draw under the caller, and stays on their b
   const me = { actorId: person.actor.id, projectId: person.project.id };
   const other = await ctx.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'You' });
   const them = { actorId: other.actor.id, projectId: other.project.id };
+  // With a browser here, the board's agent is offered it, in words of the board's own.
+  const offered = surface.tool(
+    (await ctx.tools.describe(me as never, false, { names: ['browser'] })).find(
+      ({ name }) => name === 'browser',
+    )!,
+  );
+  const MERV =
+    /\b(tasks?|experiments?|sandbox(es)?|fleets?|projects?|papers?|records?|workers?|reviews?|machines?|research)\b/i;
+  assert.doesNotMatch(JSON.stringify(offered), MERV);
+  const prompt = piInstructions(ctx.tools.instructions(), surface);
+  assert.match(prompt, /browser\.look/);
+  assert.doesNotMatch(prompt, MERV);
+  assert.doesNotMatch(prompt, /\bPi\b/);
   const { board } = (await ctx.tools.call('board.write:draw', me as never, {
     title: 'Pages',
     ops: [{ op: 'text', key: 'top', text: 'Top' }],
@@ -296,15 +349,30 @@ test('shot goes through artifact and draw under the caller, and stays on their b
   // The registered tool needs a public page: this test's browser sees the guard's own world.
   const tool = browserTools(ctx, fresh());
   const open = tool.actions!.open!.handler as never as (c: unknown, i: unknown) => Promise<unknown>;
-  const shot = tool.actions!.shot!.handler as never as (c: unknown, i: unknown) => Promise<{
+  const shot = tool.actions!.shot!.handler as never as (
+    c: unknown,
+    i: unknown,
+  ) => Promise<{
     placed: Record<string, unknown>;
     url: string;
   }>;
+  // As the worker takes it: a look's image is an image, and a say is heard as the call starts.
+  const look = tool.actions!.look!.handler as never as (c: unknown, i: unknown) => Promise<unknown>;
+  const heard: string[] = [];
+  await open(me, { url: at('/second') });
+  const seen = await agentSaying.run(
+    (line) => heard.push(line),
+    () => look(me, { say: 'Having a look.' }),
+  );
+  assert.ok(screenImage(seen), 'it passes as a picture');
+  assert.deepEqual(heard, ['Having a look.']);
   await open(them, { url: at('/second') });
   await assert.rejects(shot(them, { board: board.id }), /not|unknown|forbidden|access/i);
   await open(me, { url: at('/second') });
   const placed = await shot(me, { board: board.id, caption: 'From the test' });
   assert.ok(placed.placed.shot && placed.placed.source);
-  const scene = (await ctx.tools.call('board.read:get', me as never, { board: board.id })) as object;
+  const scene = (await ctx.tools.call('board.read:get', me as never, {
+    board: board.id,
+  })) as object;
   assert.match(JSON.stringify(scene), /public\.test/);
 });

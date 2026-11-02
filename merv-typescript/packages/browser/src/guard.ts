@@ -73,7 +73,10 @@ export function guard(ownHosts: string[], resolve: Resolve = resolved): Guard {
     if (['data:', 'blob:', 'about:'].includes(url.protocol)) return undefined;
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'not http or https';
     if (url.username || url.password) return 'an address with credentials in it';
-    const host = url.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+    const host = url.hostname
+      .replace(/^\[|\]$/g, '')
+      .replace(/\.$/, '')
+      .toLowerCase();
     let entry = known.get(host);
     if (!entry || Date.now() - entry.at > 60_000) {
       entry = { at: Date.now(), why: hostRefused(host) };

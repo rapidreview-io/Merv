@@ -43,7 +43,11 @@ export const browserConfig = z.strictObject({
   /** Everyone's together: what bounds the bill, since people cost nothing to make. */
   deploymentMinutesPerDay: z.number().positive().default(300),
   sessions: z.number().int().positive().default(10),
-  idleMs: z.number().int().positive().default(20 * 60_000),
+  idleMs: z
+    .number()
+    .int()
+    .positive()
+    .default(20 * 60_000),
   actionMs: z.number().int().positive().default(8000),
   mostShotBytes: z
     .number()
@@ -217,6 +221,10 @@ export class BrowserService {
       const session = await this.session(actor);
       try {
         return await run(session);
+      } catch (error) {
+        // A page going away under a call is the page's doing: the model hears it plainly.
+        if (error instanceof MervError) throw error;
+        throw new MervError('browser_page', `The page did not answer: ${firstLine(error)}`, 502);
       } finally {
         const now = Date.now();
         const spent = Math.min(now - session.charged, MOST_CHARGE_MS);
@@ -354,9 +362,11 @@ export class BrowserService {
     // What the guard resolved may not be what the browser reached: a host can answer differently.
     const reached = await session.document?.serverAddr().catch(() => null);
     if (reached && !this.addressOk(reached.ipAddress)) await left('a private address');
-    const snapshot = (await (
+    await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+    // Playwright 1.57 has no public way to a snapshot with refs; its version is pinned.
+    const snapshot = await (
       page as unknown as { _snapshotForAI(o: { timeout: number }): Promise<{ full: string }> }
-    )._snapshotForAI({ timeout: this.settings.actionMs })) as { full: string };
+    )._snapshotForAI({ timeout: this.settings.actionMs });
     session.lines = pageLines(snapshot.full);
     const title = await page.title();
     const text = session.lines.filter((line) => !/^- (link|button)/.test(line)).join(' ');
@@ -418,14 +428,20 @@ export class BrowserService {
       session.refused = undefined;
       for (const step of steps) {
         if (step.say) say(step.say);
+        // A click or a key may navigate, a moment later: give it that moment, then its load.
+        const navigated =
+          'click' in step || 'press' in step
+            ? page
+                .waitForEvent('framenavigated', {
+                  timeout: 1000,
+                  predicate: (frame) => frame === page.mainFrame(),
+                })
+                .catch(() => undefined)
+            : undefined;
         try {
           await this.step(page, step);
           done += 1;
-          if ('click' in step || 'press' in step)
-            // A click that navigates: wait for what it opens, as long as an action may take.
-            await page
-              .waitForLoadState('domcontentloaded', { timeout: this.settings.actionMs })
-              .catch(() => undefined);
+          await navigated;
         } catch (error) {
           failed = error;
           failure = firstLine(error);
@@ -529,7 +545,12 @@ export class BrowserService {
           429,
         );
       const { blocked, url } = await this.view(session);
-      check(!blocked, 'browser_blocked', `${url} is showing a challenge: there is nothing to keep`, 422);
+      check(
+        !blocked,
+        'browser_blocked',
+        `${url} is showing a challenge: there is nothing to keep`,
+        422,
+      );
       const picture = await this.picture(session, input, [85, 70, 50], mostShotBytes);
       await this.charge(caller.actorId, 0, 1);
       return picture;
