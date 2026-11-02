@@ -40,6 +40,8 @@ const SETTLE_MS = 350;
 const [LEAST_ZOOM, WIDE_VIEW, NEAREST_NARROW] = [0.3, 1000, 0.4];
 /** Past this many shapes standing, what is drawn is only scaled while a hand moves the camera. */
 const SCALED_ABOVE = 200;
+/** How far out a demo goes for one view: it goes on to the next part of the board rather than shrink. */
+const DEMO_LEAST_ZOOM = 0.7;
 /** How many of what it told the board's camera it remembers, while that takes them up. */
 const TOLD_KEPT = 8;
 /** A unit too short to trace at this speed just lands, and how many may be in the pen at once. */
@@ -129,6 +131,8 @@ export class Projection {
   private told: Camera[];
   private moved = false;
   private background = '';
+  /** How far out it may go to keep work in one view. */
+  private least = LEAST_ZOOM;
   /** Whether the person moved the camera themselves, which it then leaves to them. */
   private touched = false;
   /** Whether the board is itself again, whose camera this now only follows. */
@@ -330,6 +334,12 @@ export class Projection {
     if (!this.touched && !stay) this.setCamera(this.entered);
     this.hooks.changed();
   }
+  /** Starts at full size, whatever the finished board was fitted to, and stays near it as it goes. */
+  closeIn() {
+    this.least = DEMO_LEAST_ZOOM;
+    this.setCamera({ ...cameraOf(this.live), zoom: 1 });
+    this.steer();
+  }
   /** The person's hand went to the camera: nothing of this may be told over it. */
   handOn() {
     this.touched = true;
@@ -488,7 +498,7 @@ export class Projection {
     clear.height -= this.hooks.below();
     const end = chunks.find((chunk) => from >= chunk.first && from < chunk.end)?.end ?? from + 1;
     const wide = Math.min(1, clear.width / WIDE_VIEW);
-    const least = Math.max(0.1, LEAST_ZOOM * wide);
+    const least = Math.max(0.1, this.least * wide);
     let reach = first.reach;
     let to = from + 1;
     for (; to < end; to++) {

@@ -61,12 +61,17 @@ const LETTER_MS = 70;
 const ANSWER_MS = 700;
 /** How far apart a demo's steps are, before the pen's own time. */
 const STEP_MS = 800;
+/** How long a line stands before the next may replace it: the pen waits for it if it gets there first. */
+const READ_MS = 700;
+const READ_WORD_MS = 250;
+const readingOf = (line: string) => READ_MS + line.split(' ').length * READ_WORD_MS;
 type Playing = { pause(): void; play(): void };
 /** What is being said, a line at a time. While the person speaks the pen waits for them. */
 function useSpoken() {
   const [spoken, setSpoken] = useState({ person: '', agent: '' });
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
+  const read = useRef(0);
   const say = useCallback((person: string, agent: string, done: () => void) => {
     clearTimeout(timer.current);
     const type = (count: number) => {
@@ -84,12 +89,18 @@ function useSpoken() {
   const speak = useCallback(
     (line: string, playing: Playing) => {
       const [person, agent] = line.includes('\n') ? line.split('\n') : ['', line];
-      if (!person) {
-        clearTimeout(timer.current);
-        return setSpoken((now) => ({ person: now.person, agent: agent! }));
-      }
+      const answered = () => {
+        read.current = Date.now() + readingOf(agent!);
+        playing.play();
+      };
+      const begin = () => {
+        if (person) return say(person, agent!, answered);
+        setSpoken((now) => ({ person: now.person, agent: agent! }));
+        answered();
+      };
+      clearTimeout(timer.current);
       playing.pause();
-      say(person, agent!, () => playing.play());
+      timer.current = setTimeout(begin, Math.max(0, read.current - Date.now()));
     },
     [say],
   );

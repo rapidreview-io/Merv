@@ -222,6 +222,37 @@ const room = (x: number, y: number) => [
   ...person(x + 105, y + 55),
 ];
 
+/** An arrow along a line, its head where it ends. */
+const pointing = (x1: number, y1: number, x2: number, y2: number) => {
+  const back = x2 < x1 ? 14 : -14;
+  return [line(x1, y1, x2, y2), line(x2, y2, x2 + back, y2 - 9), line(x2, y2, x2 + back, y2 + 9)];
+};
+const eye = (x: number, y: number) => [
+  `M${x} ${y + 45} Q${x + 70} ${y - 15} ${x + 140} ${y + 45} Q${x + 70} ${y + 105} ${x} ${y + 45} Z`,
+  circle(x + 70, y + 45, 18),
+];
+/** Frames in a row, the last of them still a guess. */
+const frames = (x: number, y: number) => [
+  rect(x, y + 15, 55, 60),
+  rect(x + 70, y + 15, 55, 60),
+  rect(x + 140, y + 15, 55, 60),
+];
+const wheel = (x: number, y: number) => [
+  circle(x + 70, y + 45, 45),
+  circle(x + 70, y + 45, 9),
+  line(x + 25, y + 45, x + 61, y + 45),
+  line(x + 79, y + 45, x + 115, y + 45),
+  line(x + 70, y + 54, x + 70, y + 90),
+];
+/** A monster, and the shot it should have fired. */
+const monster = (x: number, y: number) => [
+  circle(x + 45, y + 65, 40),
+  circle(x + 30, y + 55, 6),
+  circle(x + 60, y + 55, 6),
+  `M${x + 25} ${y + 85} Q${x + 45} ${y + 72} ${x + 65} ${y + 85}`,
+  line(x + 95, y + 65, x + 155, y + 65),
+];
+
 /** Several papers explained, with who wrote them, ending on which to read first. */
 const worldModels: Demo = {
   title: 'World models',
@@ -300,6 +331,70 @@ const worldModels: Demo = {
         ),
       ),
       draw([line(0, 302, 180, 302), line(0, 307, 180, 307)], 'Start with this one.', 'red'),
+    ],
+    [
+      words(
+        'How the dream works',
+        [-1100, 60],
+        'l',
+        talk("Okay, let's go with that. Zoom in on it.", 'Sure. There are three parts to it.'),
+      ),
+      draw(pointing(-10, 190, -260, 190), "Here's what's inside that dream.", 'red'),
+    ],
+    [
+      draw(eye(-1100, 125), 'First, eyes. They squeeze the screen into 32 numbers.'),
+      words('Eyes', [-1100, 240], 'm'),
+      words('squeeze the screen', [-1100, 275], 's'),
+      words('into 32 numbers', [-1100, 300], 's'),
+    ],
+    [
+      draw(frames(-820, 125), 'Then memory. It guesses what those numbers will be next.'),
+      words('?', [-672, 165], 'm', 'That guess is the dream.'),
+      words('Memory', [-820, 240], 'm'),
+      words('guesses the next', [-820, 275], 's'),
+      words('32 numbers', [-820, 300], 's'),
+    ],
+    [
+      draw(wheel(-540, 125), "Last, hands. Just 867 numbers, so they're easy to train."),
+      words('Hands', [-540, 240], 'm'),
+      words('just 867 numbers', [-540, 275], 's'),
+      words('choose what to do', [-540, 300], 's'),
+    ],
+    [
+      draw(
+        dreaming(-1100, 370),
+        'So they trained the hands inside the dream, with no real game running.',
+      ),
+      words('Train in the dream', [-1100, 505], 'm'),
+    ],
+    [
+      draw(
+        monster(-820, 370),
+        talk(
+          "Couldn't it just cheat?",
+          "It did. It found a way to stop the dream's monsters from ever shooting.",
+        ),
+      ),
+      draw([line(-740, 420, -680, 450), line(-740, 450, -680, 420)], undefined, 'red'),
+      words('It cheated', [-820, 505], 'm'),
+      words('so they made', [-820, 540], 's'),
+      words(
+        'the dream messier',
+        [-820, 565],
+        's',
+        'So they made the dream messier, and harder to fool.',
+      ),
+    ],
+    [
+      draw(game(-540, 370), 'Then they put it in the real game for the first time.'),
+      words('The real game', [-540, 505], 'm'),
+      words('750 steps to pass', [-540, 540], 's'),
+      words(
+        'it lasted about 1100',
+        [-540, 565],
+        's',
+        'It needed 750 steps to pass. It lasted about 1100.',
+      ),
     ],
   ],
 };

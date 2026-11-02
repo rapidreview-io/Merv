@@ -13,6 +13,10 @@ import { Composer, Standing, Transcript, useAgent } from '../views/pi';
 
 /** Whether this browser talks to Pi: 'on' once it has, 'off' once it was told to stop. */
 const VOICE = 'board:voice';
+/** Whether this browser has been through hello: set once Merv has said something to them. */
+const HI = 'board:hi';
+/** How long a first-timer has to say hi once Merv can hear it, before Merv says it first. */
+const HI_WAIT_MS = 5_000;
 /** What a board still called Untitled is called once it is asked something; Pi may name it better. */
 const named = (words: string) => {
   const line = words.replace(/\s+/g, ' ').trim();
@@ -73,6 +77,25 @@ export function BoardBar({
     if (safely(() => localStorage.getItem(VOICE), null) !== 'off') voice?.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, live]);
+  // A first sign-in is told to say hi. Merv answers once it is up, or says it first, so they hear it.
+  const [hi, setHi] = useState(() => !safely(() => localStorage.getItem(HI), null));
+  const said = !!voice?.said;
+  const quiet = !!voice?.heard;
+  const up = state === 'listening' && pi?.snapshot?.host?.state === 'ready';
+  useEffect(() => {
+    if (!hi || !said) return;
+    safely(() => localStorage.setItem(HI, 'said'));
+    setHi(false);
+  }, [hi, said]);
+  useEffect(() => {
+    if (!hi || !up || said || quiet) return;
+    const first = setTimeout(
+      () => voice?.speak("Hi, I'm Merv. What are we working on?"),
+      HI_WAIT_MS,
+    );
+    return () => clearTimeout(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hi, up, said, quiet]);
   if (!pi || !voice) return <div className="board-bar" />;
   // Until the voice is up and a machine is there to do what it hears, Merv is getting ready.
   const getting =
@@ -88,10 +111,17 @@ export function BoardBar({
           {pi.error || voice.problem}
         </p>
       )}
-      {getting && (
-        <p className="board-bar-getting" role="status">
-          Getting Merv ready
+      {hi && !pi.error && !voice.problem ? (
+        <p className="board-bar-hi" role="status">
+          {live || getting ? 'This is Merv. Say hi.' : 'This is Merv. Click it, then say hi.'}
+          {getting && <small>Getting Merv ready</small>}
         </p>
+      ) : (
+        getting && (
+          <p className="board-bar-getting" role="status">
+            Getting Merv ready
+          </p>
+        )
       )}
       {pi.active ? (
         <button
@@ -142,6 +172,8 @@ export function BoardBar({
           title="End voice"
           onClick={() => {
             safely(() => localStorage.setItem(VOICE, 'off'));
+            safely(() => localStorage.setItem(HI, 'said'));
+            setHi(false);
             voice.stop();
           }}
         >

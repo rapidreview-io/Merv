@@ -168,6 +168,25 @@
     transform: rotate(360deg);
   }
 }
+/* A first sign-in: what the blue bubble is, and what to say to it. */
+.board-bar-hi {
+  position: absolute;
+  top: -4px;
+  right: calc(100% + var(--space-3));
+  margin: 0;
+  padding: 8px 14px;
+  white-space: nowrap;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  font-size: 15px;
+}
+.board-bar-hi small {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
 .board-bar-getting {
   position: absolute;
   top: 6px;
@@ -324,11 +343,11 @@
   flex: 1;
   min-height: 0;
 }
-/* The board holds the finished drawing from the start: it stays unseen until the drawing begins. */
+/* The board holds the finished drawing from the start: it stays unseen until the replay is over. */
 .board-landing-demo {
   display: contents;
 }
-.board-landing-demo:not(.is-over):not(:has([role='slider'])) .excalidraw canvas {
+.board-landing-demo:not(.is-over) .excalidraw canvas:not(.board-replay-layer canvas) {
   visibility: hidden;
 }
 /* What is said in a demo: the person higher up and to the left, the agent at the foot. */

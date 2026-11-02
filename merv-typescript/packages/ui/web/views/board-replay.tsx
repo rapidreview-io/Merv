@@ -36,7 +36,7 @@ import { speech } from '../speech';
 const [LINGER_MS, SINK_MS] = [1400, 560];
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
 /** How fast a demo's pen goes: at a person's writing pace a board of words takes ten minutes. */
-const DEMO_SPEED = 3;
+const DEMO_SPEED = 1.5;
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
@@ -327,12 +327,15 @@ export function BoardReplay({
       );
       shown.current = projection;
       projection.match(live.getFiles());
+      // A demo is drawn from nothing: it must not show its end, even for the frame before it rewinds.
+      if (demo) projection.seek(0);
       // Two frames: one for it to paint what it was given, one for that to reach the screen.
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
           flushSync(() => setPhase('on'));
           projection.run();
           if (demo) {
+            projection.closeIn();
             projection.seek(0);
             projection.setSpeed(DEMO_SPEED);
             projection.play();
