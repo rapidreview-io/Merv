@@ -12,6 +12,7 @@ import piToolsPlugin from '@merv/pi/tools';
 import piUiPlugin from '@merv/pi/ui';
 import { HereMachines, profiles } from './machines.js';
 import { DEMOS } from './demos.js';
+import { boardHands } from './hands.js';
 import { surface } from './words.js';
 
 const config = z.strictObject({
@@ -21,6 +22,9 @@ const config = z.strictObject({
   solo: z.boolean().default(false),
   /** A person's model dollars in a UTC day; nothing else limits what a public app spends. */
   dailyUsdPerPerson: z.number().positive().default(20),
+  /** Lets Merv run programs on this server (hands.ts), and with solo alone: off unless asked for,
+   * and never for a public server, since only a real sandbox could hold what it runs. */
+  runCode: z.boolean().default(process.env.MERV_BOARD_RUN_CODE === '1'),
   /** Where machines reach this server, where it is not where it listens. */
   publicUrl: z.string().url().optional(),
   /** Real machines, rented through Sandboxes (`@merv/sandboxes/host`, its first plugin) from these
@@ -64,9 +68,11 @@ const fromLocal = (host: string | undefined) =>
 export const boardAppPlugin = {
   name: 'merv-board-app',
   Config: config,
-  inject: ['state', 'scope', 'tools', 'blobs', 'api', 'board'],
+  inject: ['state', 'scope', 'tools', 'blobs', 'api', 'board', 'artifacts'],
   async apply(ctx: Context, input: Config) {
-    const { directory, solo, dailyUsdPerPerson, rent, publicUrl } = config.parse(input);
+    const { directory, solo, dailyUsdPerPerson, rent, publicUrl, runCode } = config.parse(input);
+    if (runCode && !solo) throw new Error('Running code is for one person on their own computer');
+    boardHands(ctx, { runsCode: runCode });
     // What this app issued, kept beside its files: a credential is only ever shown once.
     const file = join(directory, 'board-app.json');
     const kept = (await readFile(file, 'utf8').then(JSON.parse, () => ({}))) as {

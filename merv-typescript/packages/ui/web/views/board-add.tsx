@@ -178,10 +178,13 @@ export function CardPicker({
   board,
   close,
   add,
+  dropped,
 }: {
   board: string;
   close(): void;
   add(items: CardPick[]): void;
+  /** Files let go on the canvas: they go at once, as if let go on this panel. */
+  dropped?: File[];
 }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -295,6 +298,7 @@ export function CardPicker({
     if (refused.length) setSent({ note: refused.join('\n'), failed: true });
     else close();
   };
+  useEffect(() => void (dropped && upload(dropped)), []); // eslint-disable-line react-hooks/exhaustive-deps
   const dragging = (event: DragEvent) => event.dataTransfer.types.includes('Files');
   const field = () => box.current?.querySelector<HTMLInputElement>('input:not([type=file])');
   // Arrows walk the rows wherever the focus is; Enter takes the row they reached; Space outside the

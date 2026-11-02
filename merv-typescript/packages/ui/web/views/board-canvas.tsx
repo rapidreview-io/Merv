@@ -482,6 +482,7 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
   // The panel takes ⌘K ahead of Excalidraw, whose own use of it opens the link editor (still on the
   // chosen shape's Link button): wherever the board has the keys, and never from something being
   // written in, a dialog of Excalidraw's or a replay.
+  const [dropped, setDropped] = useState<File[]>();
   const openPanel = () => {
     follow.current?.release();
     api?.updateScene({ appState: { showHyperlinkPopup: false } });
@@ -643,6 +644,16 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
   return (
     <div
       className={`board-canvas${readingReference ? ' board-reading-reference' : ''}${replaying ? ' is-replaying' : ''}`}
+      // Excalidraw takes the images it can draw; any other file becomes a card, an agent's session too.
+      onDropCapture={(event) => {
+        const files = [...event.dataTransfer.files];
+        if (replaying || adding || !files.length || files.every(({ type }) => /^image\//.test(type)))
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDropped(files);
+        openPanel();
+      }}
     >
       {problem && (
         <p className="pi-error board-problem" role="alert">
@@ -652,8 +663,10 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
       {adding && (
         <CardPicker
           board={id}
+          dropped={dropped}
           close={() => {
             setAdding(false);
+            setDropped(undefined);
             focusBoard();
           }}
           add={(items) => {
