@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import type { ModelRelayFailure, ModelRelayUsage } from '../packages/fleet/src/types.js';
+import { piSummaryLane } from '../packages/pi/src/limits.js';
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 
 type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
@@ -876,4 +877,28 @@ test('Sol Ultrafast is its own model that reaches OpenAI as Sol at the ultrafast
     { ...grant(), model: 'gpt-6.1-sol' },
   ) as Record<string, unknown>;
   assert.equal(sol.service_tier, undefined);
+});
+
+test("a summary runs beside its conversation's call, one at a time", async (t) => {
+  let release!: (value: string) => void;
+  const key = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const f = await fixture({ providerKey: () => key });
+  t.after(() => f.close());
+  const summaryHeaders = {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+    [piSummaryLane]: '1',
+  };
+  const first = send(f);
+  const summary = send(f, request, { headers: summaryHeaders });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal((await send(f)).status, 429);
+  assert.equal((await send(f, request, { headers: summaryHeaders })).status, 429);
+  release('private-provider-key');
+  assert.equal((await first).status, 200);
+  assert.equal((await summary).status, 200);
+  await Promise.all([(await first).text(), (await summary).text()]);
+  assert.equal(f.upstreamCalls.length, 2);
 });

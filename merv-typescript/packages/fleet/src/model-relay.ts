@@ -391,8 +391,8 @@ export class ModelRelay<
         validatedAt = Date.now();
       };
       await validate();
-      if (this.lanes.has(this.config.lane(grant))) reject(429, 'relay_busy');
-      lane = this.config.lane(grant);
+      if (this.lanes.has(this.config.lane(grant, req.headers))) reject(429, 'relay_busy');
+      lane = this.config.lane(grant, req.headers);
       this.lanes.add(lane);
       admitted = grant;
       admittedAt = Date.now();
@@ -414,7 +414,7 @@ export class ModelRelay<
       const binding = JSON.stringify(grant);
       if (previous && previous.binding !== binding) reject(403, 'grant_forbidden');
       // Calls in flight may each add a new grant across reserve, so the entry cap is soft by up to
-      // maxConcurrent; one lane per grant keeps each grant's count exact.
+      // maxConcurrent; a feature's lanes per grant may undercount each grant by as many.
       if (
         (previous?.count ?? 0) >= this.options.maxRequestsPerGrant ||
         (!previous && this.grants.size >= this.options.maxGrantEntries)
