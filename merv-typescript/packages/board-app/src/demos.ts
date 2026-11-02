@@ -156,4 +156,152 @@ const market: Demo = {
   ],
 };
 
-export const DEMOS: Demo[] = [market];
+/** Who made what: a thing's name, and the people behind it. */
+const kind = (x: number, y: number, name: string, who: string, say?: string) => [
+  words(name, [x, y], 'm'),
+  words(who, [x, y + 35], 's', say),
+];
+const person = (x: number, y: number) => [
+  circle(x, y, 8),
+  line(x, y + 8, x, y + 32),
+  line(x - 10, y + 18, x + 10, y + 18),
+  line(x, y + 32, x - 8, y + 48),
+  line(x, y + 32, x + 8, y + 48),
+];
+/** Someone asleep, with a car in their dream. */
+const dreaming = (x: number, y: number) => [
+  circle(x + 30, y + 80, 28),
+  line(x + 16, y + 78, x + 26, y + 78),
+  line(x + 36, y + 78, x + 46, y + 78),
+  circle(x + 68, y + 52, 4),
+  circle(x + 84, y + 40, 7),
+  circle(x + 160, y + 45, 55),
+  `M${x + 125} ${y + 55} L${x + 135} ${y + 35} L${x + 180} ${y + 35} L${x + 195} ${y + 55} Z`,
+  circle(x + 140, y + 60, 6),
+  circle(x + 180, y + 60, 6),
+];
+/** Moves looked ahead from where it stands. */
+const moves = (x: number, y: number) =>
+  [50, 120, 190].flatMap((dx) => [
+    line(x + 120, y + 14, x + dx, y + 60),
+    circle(x + dx, y + 66, 6),
+    line(x + dx, y + 72, x + dx - 18, y + 108),
+    line(x + dx, y + 72, x + dx + 18, y + 108),
+  ]);
+/** A picture of a hill with a piece hidden, and the piece guessed in words. */
+const hidden = (x: number, y: number) => [
+  rect(x, y, 170, 120),
+  `M${x} ${y + 95} Q${x + 20} ${y + 72} ${x + 40} ${y + 60}`,
+  `M${x + 95} ${y + 44} Q${x + 135} ${y + 58} ${x + 170} ${y + 90}`,
+  circle(x + 140, y + 28, 12),
+  rect(x + 40, y + 20, 55, 50),
+  line(x + 180, y + 60, x + 225, y + 60),
+  line(x + 225, y + 60, x + 213, y + 52),
+  line(x + 225, y + 60, x + 213, y + 68),
+];
+/** A game on a screen, and the controller that steers it. */
+const game = (x: number, y: number) => [
+  rect(x, y, 190, 115),
+  line(x + 10, y + 95, x + 90, y + 95),
+  line(x + 115, y + 70, x + 180, y + 70),
+  ...person(x + 45, y + 45),
+  rect(x + 215, y + 55, 100, 55),
+  line(x + 232, y + 82, x + 254, y + 82),
+  line(x + 243, y + 71, x + 243, y + 93),
+  circle(x + 280, y + 75, 5),
+  circle(x + 298, y + 90, 5),
+];
+/** A room seen from its open side, with someone in it. */
+const room = (x: number, y: number) => [
+  rect(x, y, 210, 125),
+  rect(x + 50, y + 28, 110, 68),
+  line(x, y, x + 50, y + 28),
+  line(x + 210, y, x + 160, y + 28),
+  line(x, y + 125, x + 50, y + 96),
+  line(x + 210, y + 125, x + 160, y + 96),
+  ...person(x + 105, y + 55),
+];
+
+/** Several papers explained, with who wrote them, ending on which to read first. */
+const worldModels: Demo = {
+  title: 'World models',
+  ask: "What's a world model? Everyone seems to mean something different.",
+  calls: [
+    [
+      words(
+        'World models',
+        [0, 0],
+        'l',
+        "It's an AI's guess at what happens next. People build them for different reasons.",
+      ),
+    ],
+    [words('Help an AI decide', [0, 70], 'm', 'Some are there to help an AI decide.')],
+    [
+      draw(
+        dreaming(0, 110),
+        'Ha and Schmidhuber trained an agent inside its own dream, then let it into the real game.',
+      ),
+      ...kind(
+        0,
+        245,
+        'Practice in a dream',
+        'Ha & Schmidhuber, 2018; Hafner (Dreamer), 2019',
+        'Danijar Hafner took that much further with Dreamer.',
+      ),
+    ],
+    [
+      draw(moves(490, 110), "MuZero doesn't care what the game looks like."),
+      ...kind(
+        490,
+        245,
+        'Only what helps it win',
+        'Schrittwieser, Silver (MuZero), DeepMind, 2019',
+        'It only predicts what helps it win, and that was enough for Go and chess.',
+      ),
+    ],
+    [
+      draw(hidden(980, 110), 'Yann LeCun thinks predicting every pixel is a waste.'),
+      words('?', [1040, 145], 'm'),
+      words(
+        'a hill, probably',
+        [1215, 155],
+        's',
+        'So you hide part of a picture and guess the gist.',
+      ),
+      ...kind(980, 245, 'Skip the pixels', 'LeCun, 2022; Assran (I-JEPA), Meta, 2023'),
+    ],
+    [
+      words(
+        'Make a world you can see',
+        [0, 350],
+        'm',
+        talk(
+          'And the ones that make videos?',
+          'Different job. These make a world you can look at.',
+        ),
+      ),
+    ],
+    [
+      draw(game(0, 390), 'Genie watched videos of games online, and you can play what it makes.'),
+      ...kind(0, 525, 'Video you can play', 'Bruce, Parker-Holder (Genie), DeepMind, 2024'),
+    ],
+    [
+      draw(room(490, 390), "Fei-Fei Li's company makes 3D places you can walk around in."),
+      ...kind(490, 525, 'A 3D place to walk in', 'Fei-Fei Li (Marble), World Labs, 2025'),
+    ],
+    [
+      words(
+        'Read first: Ha & Schmidhuber',
+        [980, 440],
+        'm',
+        talk(
+          'Which one should I read first?',
+          "Ha and Schmidhuber. It's short, and you can play with it.",
+        ),
+      ),
+      draw([line(0, 302, 180, 302), line(0, 307, 180, 307)], 'Start with this one.', 'red'),
+    ],
+  ],
+};
+
+export const DEMOS: Demo[] = [worldModels, market];
