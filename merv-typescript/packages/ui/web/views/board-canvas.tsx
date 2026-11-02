@@ -62,6 +62,8 @@ const DRAWING_MS = 20_000;
 const BEHIND_MS = 4000;
 /** How far behind an agent's pen keeps a hand's pace: Board answers it while it still has this one call to draw. */
 const PEN_BEHIND_MS = 45_000;
+/** How long after Pi's turn ends its last ink may still be on its way to this page, with its lines. */
+const LAST_INK_MS = 3_000;
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -174,11 +176,15 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const player = useRef<Player>();
   // A hand coming down stops the voice talking over it, as it stops the pen.
   const agent = useAgent();
-  const hush = useRef(agent?.voice.hush);
-  hush.current = agent?.pi?.active ? agent.voice.hush : undefined;
-  // Only Pi's turn has the voice: what another agent says is for the line on the board.
-  const speak = useRef(agent?.voice.speak);
-  speak.current = agent?.pi?.active ? agent.voice.speak : undefined;
+  const voice = useRef(agent?.voice);
+  voice.current = agent?.voice;
+  // Only Pi's turn has the voice, up to the last of the ink it left the pen when the turn ended:
+  // what another agent says is for the line on the board.
+  const turning = useRef(false);
+  turning.current = !!agent?.pi?.active;
+  const turned = useRef(0);
+  const voiced = useRef(false);
+  voiced.current ||= turning.current;
   const steered = agent?.voice.steered;
   useEffect(() => {
     if (steered) player.current?.hurry();
@@ -306,7 +312,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
       presence.current?.drew();
     };
     const made = new Player(
-      stageOf(api, () => busy(api), land),
+      stageOf(api, () => busy(api) || (voiced.current && !!voice.current?.behind()), land),
       reveal.current,
       PEN_BEHIND_MS,
     );
@@ -316,8 +322,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     made.pen = here.pen;
     made.say = (line) => {
       here.said(line);
-      speak.current?.(line);
+      if (voiced.current) voice.current?.speak(line);
     };
+    const pen = voice.current?.drawing;
+    if (pen) pen.current = () => made.waiting > 0;
     const hand = new BoardPointing(api, id);
     hand.landed(first?.elements ?? []);
     pointing.current = hand;
@@ -340,6 +348,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     for (const kind of hands)
       board.addEventListener(kind, camera.release, { capture: true, passive: true });
     return () => {
+      if (pen) pen.current = () => false;
       made.stop();
       here.stop();
       hand.stop();
@@ -437,6 +446,9 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     // Quicker while an agent draws, so ink starts soon after the shape was made.
     let asked = 0;
     const every = setInterval(() => {
+      if (turning.current) turned.current = Date.now();
+      else if (!player.current?.waiting && Date.now() - turned.current > LAST_INK_MS)
+        voiced.current = false;
       const drew = (presence.current?.doing().drewMs ?? Infinity) < DRAWING_MS;
       if (Date.now() - asked < (drew || player.current?.waiting ? ASK_DRAWING_MS : ASK_MS)) return;
       asked = Date.now();
@@ -698,7 +710,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
           if (down && !handDown.current) {
             handDownAt.current = Date.now();
             player.current?.hurry();
-            hush.current?.();
+            if (voiced.current) voice.current?.hush();
             void call('board.hand', { id }).catch(() => undefined);
           }
           // A mark on an agent's drawing asks it to answer there: the view waits on that spot.
