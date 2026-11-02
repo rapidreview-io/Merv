@@ -645,7 +645,7 @@ async function executeTurn(
       return {
         content: [
           { type: 'text' as const, text: shown },
-          ...(visual ? [{ type: 'image' as const, ...visual.image }] : []),
+          ...(visual?.images ?? []).map((image) => ({ type: 'image' as const, ...image })),
         ],
         details: undefined,
       };

@@ -499,3 +499,23 @@ test('Pi is offered both abilities and may use them', async (t) => {
   const paper = await f.file('paper.pdf', pdf([words('For Pi')]));
   assert.equal((await f.text(f.pi, { artifactId: paper.id })).pages[0]!.text, 'For Pi');
 });
+
+test('a PDF is read in page ranges, as images, a few at a time', async (t) => {
+  const f = await fixture(t);
+  const { id: artifactId } = await f.file(
+    'six.pdf',
+    pdf(['One', 'Two', 'Three', 'Four', 'Five', 'Six'].map(words)),
+  );
+  const pages = (input: object) =>
+    f.app.ctx.tools.call('artifact.read:pages', f.owner, { artifactId, ...input }) as Promise<{
+      through: number;
+      pageCount: number;
+      next?: number;
+      images: { mimeType: string }[];
+    }>;
+  const first = await pages({});
+  assert.deepEqual([first.through, first.pageCount, first.next, first.images.length], [4, 6, 5, 4]);
+  assert.equal(first.images[0]!.mimeType, 'image/jpeg');
+  const end = await pages({ from: 5, to: 9 });
+  assert.deepEqual([end.through, end.next, end.images.length], [6, undefined, 2]);
+});
