@@ -29,7 +29,7 @@ const bounded = (text: string) =>
  * network and this machine's files. So this goes only to someone already on their own computer
  * (index.ts), never to a public server.
  */
-async function run(language: keyof typeof RUNNERS, code: string) {
+export async function run(language: keyof typeof RUNNERS, code: string, capMs = CAP_MS) {
   const { file, command, args } = RUNNERS[language];
   const folder = await mkdtemp(join(tmpdir(), 'merv-run-'));
   try {
@@ -58,7 +58,7 @@ async function run(language: keyof typeof RUNNERS, code: string) {
         // Its whole group: what it started goes with it, and a pipe held open waits for nothing.
         if (child.pid) process.kill(-child.pid, 'SIGKILL');
         resolve(null);
-      }, CAP_MS);
+      }, capMs);
       child.once('error', (error) => {
         clearTimeout(cap);
         output.stderr += `${command} did not start: ${error.message}`;
@@ -71,7 +71,7 @@ async function run(language: keyof typeof RUNNERS, code: string) {
     });
     return {
       exitCode,
-      ...(exitCode === null && { timedOut, limitSeconds: CAP_MS / 1000 }),
+      ...(exitCode === null && { timedOut, limitSeconds: capMs / 1000 }),
       seconds: (Date.now() - started) / 1000,
       stdout: bounded(output.stdout),
       stderr: bounded(output.stderr),
@@ -185,7 +185,7 @@ export function boardHands(ctx: Context, { runsCode }: { runsCode: boolean }) {
   if (!runsCode) return;
   ctx.effect(() =>
     ctx.tools.contributeInstructions(
-      'Asked anything a program can answer, run one with code.run first and say only what it printed; numbers become curves, never pasted text: have it print the points and draw them with sketch strokes.',
+      'Asked anything a program can answer, run one with code.run first and say only what it printed; numbers become curves, never pasted text: have it print every point and draw them in black pen with one sketch stroke, red only for the one thing to see, and then draw why it comes out that way with the thing itself, the objects and how they connect, which is what makes it click.',
     ),
   );
   ctx.effect(() =>
@@ -197,6 +197,16 @@ export function boardHands(ctx: Context, { runsCode }: { runsCode: boolean }) {
       handler: async (caller: Caller, { language, code }: z.infer<typeof runInput>) => {
         ownConversation(caller);
         const { picture, ...ran } = await run(language, code);
+        // A program ran on this machine: the log says so, and that the answer came from one.
+        console.error(
+          JSON.stringify({
+            event: 'code_run',
+            language,
+            exitCode: ran.exitCode,
+            seconds: ran.seconds,
+            output: ran.stdout.slice(0, 300),
+          }),
+        );
         if (!picture) return ran;
         if (picture.length > MOST_PICTURE)
           return { ...ran, pictureRefused: 'out.png is over 2 MB' };

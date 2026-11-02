@@ -387,10 +387,10 @@ test('the overview draws the run along time, every mark at its place on the line
   assert.match(along.pace!, /^M\d+ \d+( L\d+ \d+){47}$/);
   assert.deepEqual(
     along.marks.filter((mark) => mark.kind === 'person').map((mark) => mark.x),
-    [0, 120, 1200],
+    [0, 600, 1200],
   );
   const hole = along.marks.find((mark) => mark.kind === 'pause')!;
-  assert.deepEqual([hole.x, hole.until, hole.minutes], [0, 120, 60]);
+  assert.deepEqual([hole.x, hole.until, hole.minutes], [0, 600, 60]);
 });
 
 test('a line stamped out of order makes one pause, not two', () => {
@@ -403,7 +403,7 @@ test('a line stamped out of order makes one pause, not two', () => {
   ).along.marks.filter((mark) => mark.kind === 'pause');
   assert.deepEqual(
     pauses.map(({ step, minutes, x, until }) => [step, minutes, x, until]),
-    [[1, 300, 0, 1196]],
+    [[1, 300, 0, 800]],
   );
 });
 

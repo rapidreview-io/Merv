@@ -7,6 +7,7 @@ import { profileGrants, restricted } from '@merv/pi/profile-tools';
 import { piInstructions, turnNotes } from '@merv/pi/prompt';
 import { voiceInstructions } from '@merv/pi/voice';
 import { surface } from '@merv/board-app/words';
+import { run } from '@merv/board-app/hands';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { stateConfig } from './fixtures/state.js';
@@ -56,6 +57,8 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
   // screen.read is offered to conversations alone; a turn's offer is what pi.prompt shows.
   assert.deepEqual(offered.map(({ name }) => name).sort(), [
     'artifact.read',
+    'arxiv.fetch',
+    'arxiv.search',
     'board.read',
     'board.write',
   ]);
@@ -68,4 +71,16 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
     assert.deepEqual(said, [], tool.name);
   }
   assert.match(JSON.stringify(offered), /"image"/, 'files reach the board as pictures');
+  assert.equal(ctx.tools.tool('code.run'), undefined, 'running code is off unless asked for');
+});
+
+test('a program run for the board is bounded and sees none of the server', async () => {
+  process.env.MERV_WOW_SECRET = 'held';
+  const said = await run('node', 'console.log(process.env.MERV_WOW_SECRET ?? "none", 6 * 7)');
+  assert.equal(said.stdout.trim(), 'none 42');
+  assert.equal(said.exitCode, 0);
+  const long = await run('node', 'console.log("x".repeat(50000))');
+  assert.ok(long.stdout.length < 8100);
+  const stuck = await run('node', 'setInterval(() => {}, 1000)', 300);
+  assert.equal(stuck.timedOut, true);
 });

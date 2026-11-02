@@ -647,7 +647,12 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
       // Excalidraw takes the images it can draw; any other file becomes a card, an agent's session too.
       onDropCapture={(event) => {
         const files = [...event.dataTransfer.files];
-        if (replaying || adding || !files.length || files.every(({ type }) => /^image\//.test(type)))
+        if (
+          replaying ||
+          adding ||
+          !files.length ||
+          files.every(({ type }) => /^image\//.test(type))
+        )
           return;
         event.preventDefault();
         event.stopPropagation();

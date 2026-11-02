@@ -24,6 +24,7 @@ and one person's spending capped at $20 a day.
 | ------------------------- | -------------------------------------------------------------------------------------------- |
 | `src/index.ts`            | Composes Pi and its tools, makes Pi's host project, and hands a lone person their credential |
 | `src/machines.ts`         | What Fleet rents: a worker in this process. Pi needs Fleet; Fleet here needs no Sandboxes    |
+| `src/hands.ts`            | arXiv search and PDFs; `code.run` with `MERV_BOARD_RUN_CODE=1` and solo only: no sandbox     |
 | `src/words.ts`            | Pi's `surface`: what it is told and offered here, in this app's words                        |
 | `ui/web/board-app/`       | The page: a title that switches boards, a line at the canvas's foot for Pi, nothing else     |
 | `ui/vite.board.config.ts` | Builds it to `ui/dist-board`, beside Merv's `dist`                                           |
