@@ -1212,6 +1212,16 @@ const after = (until: Promise<unknown>, body: string) =>
       },
     }),
   );
+/** A model reply never sent: only an abort ends it, as it ends a real fetch. */
+const unanswered = (request: Request) =>
+  new Response(
+    new ReadableStream({
+      start: (controller) =>
+        request.signal.addEventListener('abort', () =>
+          controller.error(new DOMException('Aborted', 'AbortError')),
+        ),
+    }),
+  );
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const answers = (requests: Record<string, unknown>[]) =>
   requests.filter((body) => !summarizing(body));
@@ -1228,15 +1238,7 @@ test('past 75% a summary starts beside the turn, which never waits for it and ab
     (body, sent, request) => {
       if (summarizing(body)) {
         summaryRequest = request;
-        // Never answered; only an abort ends it, as it ends a real fetch.
-        return new Response(
-          new ReadableStream({
-            start: (controller) =>
-              request.signal.addEventListener('abort', () =>
-                controller.error(new DOMException('Aborted', 'AbortError')),
-              ),
-          }),
-        );
+        return unanswered(request);
       }
       if (answers(sent).length === 1) return new Response(filled(sse([call]), 210_000));
       return after(pause(100), filled(sse([message('Answer')], 'Answer'), 215_000));
@@ -1358,4 +1360,44 @@ test('a turn restored past 75% begins a summary at once, unless the turn before 
     assert.equal(server.bodies('fail').length, 0);
     assert.equal(requests.filter(summarizing).length, interrupted ? 0 : 1);
   }
+});
+
+test('after a summary the turn cut off, short turns start no other until the context has grown', async () => {
+  // Each reply fills so much, one turn each: past 237,200 (210,000 and a tenth of the window) the
+  // next begins; once Pi has compacted (the 250,000), the mark no longer holds.
+  const fills = [210_000, 215_000, 230_000, 240_000, 250_000, 212_000];
+  let replies = 0;
+  const { server, completions } = conversation(
+    fills.length,
+    earlier(6, 40_000),
+    (body, _sent, request) => {
+      if (summarizing(body))
+        return replies === 5 ? new Response(sse([message(summary)], summary)) : unanswered(request);
+      return after(pause(100), filled(sse([message('Answer')], 'Answer'), fills[replies++]));
+    },
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  // Where each turn's checkpoint says the last unfinished summary began.
+  const marks = completions().map(
+    (done) =>
+      (
+        savedBy(done).entries.findLast((entry) => entry.type === 'custom') as unknown as {
+          data: { tokens: number };
+        }
+      ).data.tokens,
+  );
+  assert.deepEqual(marks, [210_000, 210_000, 210_000, 240_000, 240_000, 212_000]);
+});
+
+test('a turn restored past 75% that cut its summary off starts no other at the next turn', async () => {
+  let summaries = 0;
+  const { server } = conversation(2, earlier(8, 105_000), (body, _sent, request) => {
+    if (!summarizing(body)) return after(pause(100), sse([message('Answer')], 'Answer'));
+    summaries++;
+    return unanswered(request);
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(summaries, 1);
 });
