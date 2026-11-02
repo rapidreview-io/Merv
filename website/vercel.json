@@ -30,6 +30,14 @@
   ],
   "rewrites": [
     {
+      "source": "/ui",
+      "destination": "https://merv-board.eastus2.cloudapp.azure.com/ui/index.html"
+    },
+    {
+      "source": "/ui/",
+      "destination": "https://merv-board.eastus2.cloudapp.azure.com/ui/index.html"
+    },
+    {
       "source": "/:path*",
       "destination": "https://merv-board.eastus2.cloudapp.azure.com/:path*"
     }
