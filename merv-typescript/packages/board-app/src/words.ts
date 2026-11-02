@@ -53,6 +53,16 @@ const TOOLS: [string | RegExp, string][] = [
   ['List this project’s immutable artifacts', 'List their immutable artifacts'],
   [/ Workers reading >[^.]*\./, ''],
   ['a Merv record id or a web address', 'a board or file id or a web address'],
+  [/; use literature tools for papers/, ''],
+  [/ For papers, use a literature search tool when one is offered\./, ''],
+  ['that is not in this project or a scholarly paper index', 'that is not on their boards'],
+  ['release notes, benchmarks, project pages', 'release notes, benchmarks, product pages'],
+  ['docs/news/releases/benchmarks/project pages', 'docs/news/releases/benchmarks/product pages'],
+  [/unpublished project text/g, 'private text'],
+  [/project text/g, 'private text'],
+  [/daily project web budget/g, 'daily web budget'],
+  [/the project’s daily web budget/g, 'the daily web budget'],
+  [/\bMerv\b(?= for|;| never)/g, 'here'],
 ];
 
 const replaced = (text: string, table: readonly [string | RegExp, string][]) =>
@@ -96,6 +106,9 @@ export const surface: PiSurface = {
     'artifact.read:look',
     'artifact.read:pages',
     'screen.read:show',
+    // Where a deployment has them; a name with no tool behind it offers nothing.
+    'web.read',
+    'browser',
   ],
   guide: (text) =>
     replaced(text, GUIDE)

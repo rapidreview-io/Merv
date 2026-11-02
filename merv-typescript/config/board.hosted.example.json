@@ -80,6 +80,33 @@
       }
     },
     {
+      "id": "web-tools",
+      "name": "@merv/web/tools",
+      "required": false
+    },
+    {
+      "id": "web",
+      "name": "@merv/web",
+      "required": false,
+      "config": {
+        "keyEnv": "MERV_TAVILY_API_KEY",
+        "fallback": {
+          "keyEnv": "MERV_PI_MODEL_API_KEY"
+        },
+        "dailyCallsPerProject": 50,
+        "dailyCalls": 1000,
+        "fallbackDailyCalls": 200
+      }
+    },
+    {
+      "id": "browser-tools",
+      "name": "@merv/browser/tools"
+    },
+    {
+      "id": "browser",
+      "name": "@merv/browser"
+    },
+    {
       "id": "artifacts-tools",
       "name": "@merv/artifacts/tools"
     },

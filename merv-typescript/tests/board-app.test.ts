@@ -58,6 +58,7 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
     'artifact.read',
     'board.read',
     'board.write',
+    'web.read',
   ]);
   const screen = surface.tool({ name: 'screen.read', description: 'x', inputSchema: {} } as never);
   assert.doesNotMatch(JSON.stringify(screen), MERV, 'screen.read');
