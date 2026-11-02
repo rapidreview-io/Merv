@@ -15,8 +15,6 @@ import { Composer, Standing, Transcript, useAgent } from '../views/pi';
 const VOICE = 'board:voice';
 /** Whether this browser has been through hello: set once Merv has said something to them. */
 const HI = 'board:hi';
-/** How long a first-timer has to say hi once Merv can hear it, before Merv says it first. */
-const HI_WAIT_MS = 5_000;
 /** What a board still called Untitled is called once it is asked something; Pi may name it better. */
 const named = (words: string) => {
   const line = words.replace(/\s+/g, ' ').trim();
@@ -77,25 +75,22 @@ export function BoardBar({
     if (safely(() => localStorage.getItem(VOICE), null) !== 'off') voice?.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, live]);
-  // A first sign-in is told to say hi. Merv answers once it is up, or says it first, so they hear it.
+  // A first sign-in is told Merv will say hi, and it does the moment it is up.
   const [hi, setHi] = useState(() => !safely(() => localStorage.getItem(HI), null));
   const said = !!voice?.said;
-  const quiet = !!voice?.heard;
   const up = state === 'listening' && pi?.snapshot?.host?.state === 'ready';
+  const greeted = useRef(false);
   useEffect(() => {
     if (!hi || !said) return;
     safely(() => localStorage.setItem(HI, 'said'));
     setHi(false);
   }, [hi, said]);
   useEffect(() => {
-    if (!hi || !up || said || quiet) return;
-    const first = setTimeout(
-      () => voice?.speak("Hi, I'm Merv. What are we working on?"),
-      HI_WAIT_MS,
-    );
-    return () => clearTimeout(first);
+    if (!hi || !up || said || greeted.current) return;
+    greeted.current = true;
+    voice?.speak("Hi, I'm Merv. What are we working on?");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hi, up, said, quiet]);
+  }, [hi, up, said]);
   if (!pi || !voice) return <div className="board-bar" />;
   // Until the voice is up and a machine is there to do what it hears, Merv is getting ready.
   const getting =
@@ -113,7 +108,9 @@ export function BoardBar({
       )}
       {hi && !pi.error && !voice.problem ? (
         <p className="board-bar-hi" role="status">
-          {live || getting ? 'This is Merv. Say hi.' : 'This is Merv. Click it, then say hi.'}
+          {live || getting
+            ? "This is Merv. It'll say hi when it's ready."
+            : 'This is Merv. Click it to start.'}
           {getting && <small>Getting Merv ready</small>}
         </p>
       ) : (
