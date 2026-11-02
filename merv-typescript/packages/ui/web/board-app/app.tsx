@@ -12,7 +12,7 @@ import { SessionProvider } from '../session';
 import { useRoomy } from '../theme';
 import { BoardStage } from '../views/board';
 import { PiProvider } from '../views/pi';
-import { BoardHead } from './head';
+import { BoardMenu } from './head';
 import { Landing as FrontPage } from './landing';
 import { BoardBar, Conversation } from './talk';
 import type { ComponentProps } from 'react';
@@ -78,7 +78,7 @@ function Board() {
       beside={(outcomes) =>
         talking && roomy && !outcomes.shown && <Conversation close={() => setTalking(false)} />
       }
-      head={(board, outcomes) => <BoardHead board={board} outcomes={outcomes} />}
+      menu={(board, outcomes) => <BoardMenu board={board} outcomes={outcomes} />}
     >
       {(board) => (
         <>

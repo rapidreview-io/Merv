@@ -358,6 +358,8 @@ export class Player {
           head.said = true;
           const line = lineOf(head);
           if (line) this.say?.(line);
+          // Whoever heard it may have paused the pen for it: it spends nothing of this frame then.
+          if (this.stage.held()) break;
         }
         const takes = step ? step.rest + step.ms : head.quiet ? 0 : head.ms;
         if (this.spent + budget < takes) {
@@ -436,6 +438,8 @@ export class Player {
     const head = this.queue[0];
     const step = head?.steps[head.at];
     if (!head?.ink || !head.marks || !step || head.quiet) return;
+    // The pen has come to this unit but not begun it: no mark yet, not even the round end of one.
+    if (!head.at && this.spent <= step.rest) return;
     const { ink, marks } = head;
     // A zoom has moved on: the next frames draw it again at the scale now shown.
     if (Math.abs(ink.scale / scale - 1) > 0.08) void this.inked(head);

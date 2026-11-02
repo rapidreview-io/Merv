@@ -7,6 +7,7 @@
  * Excalidraw's fonts are served from this app, never a CDN; embeds are off, since a board loads
  * nothing from elsewhere.
  */
+import type { ReactNode } from 'react';
 import '@excalidraw/excalidraw/index.css';
 import {
   useCallback,
@@ -135,9 +136,11 @@ const PICTURE_SHAPE = 0.75;
 type CanvasProps = {
   id: string;
   onOutcomes?(lines: BoardScene['outcomes']): void;
+  /** What the board's menu holds, where the app has its own. */
+  menu?: ReactNode;
 };
 
-function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
+function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -742,9 +745,13 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         renderToolbarEnd={() => <AddButton key="merv-add" onClick={openPanel} />}
       >
         <MainMenu>
-          <MainMenu.DefaultItems.SaveAsImage />
-          <MainMenu.DefaultItems.ChangeCanvasBackground />
-          <MainMenu.DefaultItems.Help />
+          {menu ?? (
+            <>
+              <MainMenu.DefaultItems.SaveAsImage />
+              <MainMenu.DefaultItems.ChangeCanvasBackground />
+              <MainMenu.DefaultItems.Help />
+            </>
+          )}
         </MainMenu>
         {!speech.boardOnly && (
           <WelcomeScreen>
