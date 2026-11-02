@@ -50,7 +50,7 @@ const pentagon = Array.from({ length: 5 }, (_, i) => {
 });
 const paper: Demo = {
   title: 'Attention Is All You Need, explained',
-  ask: 'I keep hearing about this paper. Can you explain it like I am new to this?',
+  ask: 'Explain the attention paper.',
   calls: [
     [
       {
@@ -223,7 +223,7 @@ const company = (y: number, asset: string, name: string, fact: string, say: stri
 /** Market research with a person, ending on what to go and find out. */
 const market: Demo = {
   title: 'AI note takers: who is out there',
-  ask: 'I am thinking of building an AI note taker. Help me understand who is already out there.',
+  ask: 'Research the AI note taker market.',
   calls: [
     [
       words(
