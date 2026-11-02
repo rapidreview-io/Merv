@@ -75,22 +75,10 @@ function useSpoken() {
 }
 
 /** One demo: the person asks, and only then does the board begin; it says when it is done. */
-function Demo({
-  token,
-  ask,
-  done,
-  title,
-}: {
-  token: string;
-  ask: string;
-  done(): void;
-  title(name: string): void;
-}) {
+function Demo({ token, ask, done }: { token: string; ask: string; done(): void }) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const { scene, history } = useSharedBoard(token, api);
   const held = useRef<ReturnType<typeof setTimeout>>();
-  const named = scene?.title;
-  useEffect(() => void (named && title(named)), [named, title]);
   useEffect(() => () => clearTimeout(held.current), []);
   const [over, setOver] = useState(false);
   const [asked, setAsked] = useState(false);
@@ -143,7 +131,6 @@ function Demo({
 export function Landing({ google }: { google: ReactNode }) {
   const [tokens, setTokens] = useState<string[]>([]);
   const [at, setAt] = useState(0);
-  const [title, setTitle] = useState('');
   const [asking, setAsking] = useState(false);
   useEffect(() => {
     void fetch('/board-demos', { credentials: 'omit' })
@@ -169,27 +156,15 @@ export function Landing({ google }: { google: ReactNode }) {
       removeEventListener('wheel', touch, true);
     };
   }, []);
-  const reach = () => setAsking(true);
   return (
     <div className="board-page board-landing">
       <div className="board-main">
-        <header className="board-line">
-          <div className="board-line-title">
-            <span className="board-switch">{title}</span>
-          </div>
-          <span className="board-line-end">
-            <button type="button" className="btn-text" onClick={reach}>
-              Sign in
-            </button>
-          </span>
-        </header>
         <div className="board-canvas">
           {tokens[at] && (
             <Demo
               key={at}
               token={tokens[at]!}
               ask={DEMOS[at]!.ask}
-              title={setTitle}
               done={() => setAt((now) => (now + 1) % tokens.length)}
             />
           )}
@@ -200,7 +175,7 @@ export function Landing({ google }: { google: ReactNode }) {
             </span>
           </div>
           {/* Everything on the board is reached through this, and nothing behind it is. */}
-          <div className="board-landing-catch" onDragOver={reach} />
+          <div className="board-landing-catch" onDragOver={() => setAsking(true)} />
         </div>
       </div>
       <aside

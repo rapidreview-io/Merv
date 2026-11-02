@@ -193,13 +193,16 @@ function BoardShare({ board }: { board: BoardSummary }) {
 export function BoardStage({
   id,
   head,
+  menu,
   back,
   title = (board) => `${board.title} · Merv`,
   children,
   beside,
 }: {
   id: string;
-  head(board: BoardSummary, outcomes: ReturnType<typeof useOutcomes>): ReactNode;
+  head?(board: BoardSummary, outcomes: ReturnType<typeof useOutcomes>): ReactNode;
+  /** What the board's own menu holds, where the app has one. */
+  menu?(board: BoardSummary, outcomes: ReturnType<typeof useOutcomes>): ReactNode;
   back?: { to: string; label: string };
   title?(board: BoardSummary): string;
   /** Over the canvas, and in a column of its own beside it. */
@@ -224,9 +227,14 @@ export function BoardStage({
         data-full={shown && full ? '' : undefined}
       >
         <div className="board-main">
-          {head(board, outcomes)}
+          {head?.(board, outcomes)}
           <Suspense fallback={<p className="muted board-loading">Opening the board…</p>}>
-            <Canvas key={board.id} id={board.id} onOutcomes={outcomes.report} />
+            <Canvas
+              key={board.id}
+              id={board.id}
+              onOutcomes={outcomes.report}
+              menu={menu?.(board, outcomes)}
+            />
           </Suspense>
           {children?.(board)}
         </div>

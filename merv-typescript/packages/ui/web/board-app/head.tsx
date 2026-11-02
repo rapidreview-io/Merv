@@ -1,110 +1,39 @@
-/** A board's one line: its title, which is the way to any other board, and its menu. */
-import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+/** The board's one menu, at Excalidraw's own button: where the person is, the way to any other board, and the rest. */
+import { useState } from 'react';
+import { MainMenu } from '@excalidraw/excalidraw';
 import { useNavigate } from 'react-router-dom';
 import type { BoardSummary } from '@merv/board/models';
 import { call, refreshTools, useTool } from '../api';
-import { Ago, SearchField, useDismiss, useMoreMenu } from '../components';
-import { Icon } from '../icons';
 import { useSession } from '../session';
-import { onWorn, useRoomy, wear, worn } from '../theme';
 import { BoardTitle } from '../views/board';
-import { OutcomeWord, useOutcomes } from '../views/board-outcome';
+import type { useOutcomes } from '../views/board-outcome';
 import { useAgent } from '../views/pi';
 import { newBoard } from './app';
 
-/** Past this many boards the list gets a search. */
-const FEW = 8;
+/** How many other boards the menu names; the newest come first. */
+const BOARDS = 6;
+/** What keeps the menu open after a choice that has more to say. */
+const stay = (event: Event) => event.preventDefault();
 
-function Switcher({ current, close }: { current: string; close(): void }) {
-  const navigate = useNavigate();
-  const box = useRef<HTMLDivElement>(null);
-  const read = useTool<{ boards: BoardSummary[] }>('board.read', {});
-  const [query, setQuery] = useState('');
-  const [making, setMaking] = useState(false);
-  useDismiss(true, box, close, true);
-  const all = read.data?.boards ?? [];
-  const search = query.trim().toLowerCase();
-  const rows = all.filter((board) => board.title.toLowerCase().includes(search));
-  const open = (id: string) => {
-    close();
-    navigate(`/boards/${id}`);
-  };
-  const start = () => {
-    setMaking(true);
-    void newBoard().then(open, () => setMaking(false));
-  };
-  // The arrows go through the rows; the first is what opens the panel's keys.
-  const keys = (event: KeyboardEvent) => {
-    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
-    if (!step) return;
-    event.preventDefault();
-    const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    items[Math.max(0, Math.min(items.length - 1, at + step))]?.focus();
-  };
-  useEffect(
-    () => box.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus(),
-    [!read.data],
-  );
-  return (
-    <div className="boards-sheet" ref={box} role="dialog" aria-label="Boards" onKeyDown={keys}>
-      {all.length > FEW && (
-        <SearchField label="Find a board" placeholder="Title" value={query} onChange={setQuery} />
-      )}
-      <div className="boards-list" role="listbox" aria-label="Boards">
-        <button
-          type="button"
-          role="option"
-          aria-selected={false}
-          className="boards-row boards-new"
-          disabled={making}
-          onClick={start}
-        >
-          <Icon name="plus" size={16} />
-          New board
-        </button>
-        {rows.map((board) => (
-          <button
-            key={board.id}
-            type="button"
-            role="option"
-            aria-selected={board.id === current}
-            className="boards-row"
-            onClick={() => open(board.id)}
-          >
-            <span className="boards-title">{board.title}</span>
-            <Ago at={board.updatedAt} />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BoardMenu({
+export function BoardMenu({
   board,
   outcomes,
-  rename,
-  roomy,
 }: {
   board: BoardSummary;
   outcomes: ReturnType<typeof useOutcomes>;
-  rename(): void;
-  roomy: boolean;
 }) {
   const navigate = useNavigate();
   const { signOut, account } = useSession();
-  const theme = useSyncExternalStore(onWorn, worn);
   const pi = useAgent()?.pi;
   const models = pi?.snapshot?.models;
   const chosen = pi?.snapshot?.conversation.model;
-  const { open, close, item, menu } = useMoreMenu();
+  const others = (useTool<{ boards: BoardSummary[] }>('board.read', {}).data?.boards ?? [])
+    .filter(({ id }) => id !== board.id)
+    .slice(0, BOARDS);
+  const [editing, setEditing] = useState(false);
   const [sure, setSure] = useState(false);
   const [link, setLink] = useState('');
-  useEffect(() => void (open || setSure(false)), [open]);
   const archive = async () => {
-    if (!sure) return setSure(true);
-    close();
     await call('board.set', { id: board.id, archived: true });
     refreshTools('board.read');
     navigate('/');
@@ -115,79 +44,60 @@ function BoardMenu({
     setLink(url);
     if (url) await navigator.clipboard?.writeText(url).catch(() => undefined);
   };
-  return menu(
-    <>
-      {item('Rename', () => (close(), rename()))}
-      {!roomy && item('Outcome', () => (close(), void outcomes.toggle().catch(() => undefined)))}
-      {link
-        ? item('Revoke link', () => void share(true).catch(() => undefined))
-        : item('Copy watch link', () => void share(false).catch(() => undefined))}
-      {link && (
-        <p className="file-menu-facts board-menu-note" role="status">
-          Copied. Anyone with it can watch this board, erased work too.
-        </p>
-      )}
-      {!!models?.length &&
-        models.length > 1 &&
-        item(`Model · ${models.find(({ id }) => id === chosen)?.label ?? ''}`, () => {
-          const next = models[(models.findIndex(({ id }) => id === chosen) + 1) % models.length]!;
-          void pi!.pickModel(next.id);
-        })}
-      {item(`Theme · ${theme}`, () => wear(theme === 'dark' ? 'light' : 'dark'))}
-      {account.kind === 'user' && item('Sign out', signOut)}
-      {item(sure ? 'Archive: press again' : 'Archive', () => void archive().catch(() => undefined))}
-    </>,
-  );
-}
-
-export function BoardHead({
-  board,
-  outcomes,
-}: {
-  board: BoardSummary;
-  outcomes: ReturnType<typeof useOutcomes>;
-}) {
-  const navigate = useNavigate();
-  const roomy = useRoomy();
-  const [switching, setSwitching] = useState(false);
-  const [editing, setEditing] = useState(false);
   return (
-    <header className="board-line">
-      <div className="board-line-title">
+    <>
+      <MainMenu.ItemCustom>
         {editing ? (
           <BoardTitle board={board} editing done={() => setEditing(false)} />
         ) : (
-          <button
-            type="button"
-            className="board-switch"
-            aria-haspopup="dialog"
-            aria-expanded={switching}
-            onClick={() => setSwitching(!switching)}
-          >
-            <span>{board.title}</span>
-            <Icon name="chevrons" size={16} />
+          <button type="button" className="board-menu-title" onClick={() => setEditing(true)}>
+            {board.title}
           </button>
         )}
-        <button
-          type="button"
-          className="btn-icon board-line-new"
-          aria-label="New board"
-          title="New board"
-          onClick={() => void newBoard().then((id) => navigate(`/boards/${id}`))}
+      </MainMenu.ItemCustom>
+      <MainMenu.Separator />
+      <MainMenu.Item onSelect={() => void newBoard().then((id) => navigate(`/boards/${id}`))}>
+        New board
+      </MainMenu.Item>
+      {others.map(({ id, title }) => (
+        <MainMenu.Item key={id} onSelect={() => navigate(`/boards/${id}`)}>
+          {title}
+        </MainMenu.Item>
+      ))}
+      <MainMenu.Separator />
+      <MainMenu.Item onSelect={() => void outcomes.toggle().catch(() => undefined)}>
+        Outcome
+      </MainMenu.Item>
+      <MainMenu.Item
+        onSelect={(event) => {
+          stay(event);
+          void share(!!link).catch(() => undefined);
+        }}
+      >
+        {link ? 'Link copied. Revoke it' : 'Copy watch link'}
+      </MainMenu.Item>
+      {!!models && models.length > 1 && (
+        <MainMenu.Item
+          onSelect={(event) => {
+            stay(event);
+            const next = models[(models.findIndex(({ id }) => id === chosen) + 1) % models.length]!;
+            void pi!.pickModel(next.id);
+          }}
         >
-          <Icon name="plus" size={16} />
-        </button>
-        {switching && <Switcher current={board.id} close={() => setSwitching(false)} />}
-      </div>
-      <span className="board-line-end">
-        {roomy && <OutcomeWord place={outcomes} />}
-        <BoardMenu
-          board={board}
-          outcomes={outcomes}
-          rename={() => setEditing(true)}
-          roomy={roomy}
-        />
-      </span>
-    </header>
+          Model · {models.find(({ id }) => id === chosen)?.label}
+        </MainMenu.Item>
+      )}
+      <MainMenu.Separator />
+      <MainMenu.Item
+        onSelect={(event) => {
+          if (sure) return void archive().catch(() => undefined);
+          stay(event);
+          setSure(true);
+        }}
+      >
+        {sure ? 'Archive: press again' : 'Archive this board'}
+      </MainMenu.Item>
+      {account.kind === 'user' && <MainMenu.Item onSelect={signOut}>Sign out</MainMenu.Item>}
+    </>
   );
 }

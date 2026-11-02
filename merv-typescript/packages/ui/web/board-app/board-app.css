@@ -2,115 +2,6 @@
 .board-page {
   height: 100dvh;
 }
-.board-line {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  height: 44px;
-  padding: 0 var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-elev);
-}
-.board-line-title {
-  position: relative;
-  min-width: 0;
-  flex: 1;
-  display: flex;
-}
-.board-switch {
-  all: unset;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  max-width: 100%;
-  padding: 4px var(--space-2);
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  cursor: pointer;
-}
-.board-switch > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.board-switch:hover,
-.board-switch[aria-expanded='true'] {
-  background: var(--bg-soft);
-}
-.board-switch:focus-visible {
-  outline: 2px solid var(--accent);
-}
-.board-switch svg {
-  flex: none;
-  color: var(--muted);
-}
-.board-line-end {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.boards-sheet {
-  position: absolute;
-  z-index: 30;
-  top: 40px;
-  left: 0;
-  width: 360px;
-  max-height: min(70dvh, 560px);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 28px rgb(0 0 0 / 0.12);
-  overflow: hidden;
-}
-.boards-sheet .search {
-  flex: none;
-  margin: var(--space-2);
-}
-.boards-list {
-  overflow-y: auto;
-  padding: var(--space-1);
-}
-.boards-row {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-.boards-row:hover,
-.boards-row:focus-visible {
-  background: var(--bg-soft);
-}
-.boards-row[aria-selected='true'] .boards-title {
-  font-weight: 600;
-}
-.boards-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-.boards-new {
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-2);
-  color: var(--text);
-}
 /* The foot of the canvas: above Excalidraw's own footer, clear of its zoom and the replay's play. */
 .board-main {
   position: relative;
@@ -210,15 +101,6 @@
   bottom: 72px;
 }
 @media (max-width: 730px) {
-  .boards-sheet {
-    position: fixed;
-    inset: 44px 0 0 0;
-    width: auto;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
   .board-page .board-status {
     bottom: auto;
   }
@@ -230,7 +112,7 @@
 .board-main > .board-talk-pane {
   position: absolute;
   z-index: 6;
-  inset: 44px 0 0 0;
+  inset: 0;
 }
 /* Excalidraw's own help is in its menu; Play takes the corner. */
 .board-page .excalidraw .help-icon {
@@ -240,10 +122,6 @@
   .board-play {
     right: 14px;
   }
-}
-.board-line-new {
-  flex: none;
-  color: var(--muted);
 }
 .board-outcome-start .btn-text {
   margin-right: var(--space-3);
@@ -445,34 +323,6 @@
   flex: 1;
   min-height: 0;
 }
-/* The line over the board stands out of the way until the pointer goes to the very top. A screen
-   with no pointer to hover keeps it. */
-@media (hover: hover) {
-  .board-page .board-main {
-    position: relative;
-  }
-  .board-page .board-line {
-    position: absolute;
-    z-index: 1001;
-    top: 0;
-    left: 0;
-    right: 0;
-    opacity: 0;
-    transform: translateY(calc(-100% + 8px));
-    transition:
-      transform 160ms ease-out,
-      opacity 160ms ease-out;
-  }
-  .board-page .board-line:hover,
-  .board-page .board-line:focus-within,
-  .board-page .board-line:has([aria-expanded='true']) {
-    opacity: 1;
-    transform: none;
-  }
-  .board-main > .board-talk-pane {
-    top: 0;
-  }
-}
 /* The board holds the finished drawing from the start: it stays unseen until the drawing begins. */
 .board-landing-demo {
   display: contents;
@@ -518,4 +368,16 @@
     width: calc(100% - 24px);
     bottom: 72px;
   }
+}
+/* The board's name at the head of its menu, which is how it is renamed. */
+.board-menu-title {
+  all: unset;
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  cursor: text;
 }
