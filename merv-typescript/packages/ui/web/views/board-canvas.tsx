@@ -190,6 +190,10 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   useEffect(() => {
     if (steered) player.current?.hurry();
   }, [steered]);
+  const halted = agent?.voice.halted;
+  useEffect(() => {
+    if (halted) player.current?.hurry();
+  }, [halted]);
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();

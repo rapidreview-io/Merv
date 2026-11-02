@@ -98,10 +98,7 @@ export function BoardBar({
           type="button"
           className="board-orb board-orb--stop"
           title="Stop"
-          onClick={() => {
-            voice.hush();
-            void pi.stop();
-          }}
+          onClick={voice.halt}
         >
           <span className="sr-only">Stop</span>
         </button>

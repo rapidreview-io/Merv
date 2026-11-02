@@ -23,6 +23,9 @@ const [LAST_INK_MS, MOST_PEN_WAIT_MS, PEN_LOOK_MS] = [1_500, 60_000, 250];
 /** GPT-Live takes at most 500 tokens an append. */
 const SAYABLE = 1_800;
 
+/** A person saying to stop, and nothing else. */
+const STOP =
+  /^\s*(?:please\s+|no\s+|okay\s+|ok\s+|hey\s+|merv\s+)*(?:stop|wait|hold on|hang on|pause|cancel|enough)(?:\s+(?:it|that|drawing|there|now|please|merv|right now))*[\s.!,]*$/i;
 export type VoiceState = 'off' | 'connecting' | 'listening' | 'working' | 'speaking' | 'closing';
 
 interface Live {
@@ -35,6 +38,8 @@ interface Live {
   output?: AnalyserNode;
   /** What the person said since the last request was handed to Pi. */
   heard: string;
+  /** They said stop, and what the voice hands over for it is that and no more. */
+  halted?: boolean;
   /** Who spoke last, so a caption starts afresh when the other one speaks. */
   speaker?: 'person' | 'voice';
   last: number;
@@ -103,6 +108,7 @@ export function useVoice(pi: Conversation | null) {
   const [muted, setMuted] = useState(false);
   /** How many times the person has spoken over a turn: what is being drawn hurries to its end. */
   const [steered, setSteered] = useState(0);
+  const [halted, setHalted] = useState(0);
   const live = useRef<Live | null>(null);
   /** Whether an open board's pen still has this turn's ink to draw, and so lines to say. */
   const drawing = useRef<() => boolean>(() => false);
@@ -181,6 +187,18 @@ export function useVoice(pi: Conversation | null) {
     );
   };
 
+  /** Everything stops now: the voice, what it had still to say, the pen and the turn. */
+  const halt = () => {
+    const held = live.current;
+    hush();
+    setHalted((times) => times + 1);
+    if (held) {
+      held.pending = undefined;
+      clearTimeout(held.answering);
+    }
+    void conversation.current?.stop();
+  };
+
   /** A request GPT-Live handed over: it becomes a Pi turn on the conversation's own model, or, said
    *  while one runs, goes to that turn, which then hears it, stops its pen and answers for both. */
   const delegate = async (delegation: string) => {
@@ -188,6 +206,11 @@ export function useVoice(pi: Conversation | null) {
     if (!held) return;
     const text = held.heard.trim();
     held.heard = '';
+    if (held.halted) {
+      held.halted = false;
+      setState('listening');
+      return send('session.commentary.append', 'Stopped.', delegation);
+    }
     const pi = conversation.current;
     if (!pi) return;
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
@@ -225,6 +248,16 @@ export function useVoice(pi: Conversation | null) {
         // The person's voice cuts the voice by itself: what was waiting is out of date now.
         held.lines = [];
         held.heard += delta;
+        // Stop is the person's own, and the model between them is no place to wait for it: the page
+        // hears it in the words, and stops all of it at once.
+        if (
+          STOP.test(held.heard) &&
+          !held.halted &&
+          (conversation.current?.active || held.pending)
+        ) {
+          held.halted = true;
+          halt();
+        }
         setHeard((before) => (held.speaker === 'person' ? before + delta : delta.trimStart()));
         held.speaker = 'person';
         if (!held.pending) setState('listening');
@@ -445,8 +478,11 @@ export function useVoice(pi: Conversation | null) {
     start: () => void start(),
     stop,
     hush,
+    halt,
     speak,
     steered,
+    /** Counts the times the person said to stop: what is drawing stops being played. */
+    halted,
     drawing,
     /** A line is waiting its turn to be said: the pen waits with it, so words and ink stay together. */
     behind: () => !!live.current?.lines.length,
