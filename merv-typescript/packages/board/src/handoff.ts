@@ -172,6 +172,16 @@ export const boardHandoffPlugin = {
       const held = await get<Connector>(caller, 'connector', caller.actorId);
       return held && { ...held, online: Date.now() - Date.parse(held.seen) < ONLINE_MS };
     };
+    // One change to a run at a time: the machine's reports and the person's words arrive together.
+    const locks = new Map<string, Promise<unknown>>();
+    const serial = <T>(key: string, work: () => Promise<T>): Promise<T> => {
+      const next = (locks.get(key) ?? Promise.resolve()).then(work, work);
+      locks.set(
+        key,
+        next.catch(() => undefined),
+      );
+      return next;
+    };
     const runOf = async (caller: Caller, key: string) => {
       const run = await get<Run>(caller, 'run', key);
       check(run && run.owner === caller.actorId, 'not_found', 'Session not found', 404);
@@ -210,6 +220,34 @@ export const boardHandoffPlugin = {
         { op: 'edit', id: run.tag, text: standing(run, (await connectorOf(caller))?.online) },
       ]);
     const shown = ({ words: _w, commands: _c, ...run }: Run) => run;
+    /** A machine gone quiet with sessions running: their tags say offline until it is heard again. */
+    const sweep = async () => {
+      const quiet = await state.transaction((tx) =>
+        tx.all<{ project_id: string; owner: string; record: string }>(
+          "SELECT project_id,owner,record FROM board_handoff WHERE kind='connector'",
+        ),
+      );
+      for (const row of quiet) {
+        if (Date.now() - Date.parse((JSON.parse(row.record) as Connector).seen) < ONLINE_MS)
+          continue;
+        const caller = { actorId: row.owner, projectId: row.project_id } as Caller;
+        for (const run of await all<Run>(caller, 'run', row.owner)) {
+          if (!ACTIVE.has(run.state) || run.offline) continue;
+          await serial(run.id, async () => {
+            const live = (await get<Run>(caller, 'run', run.id)) ?? run;
+            live.offline = true;
+            await saveRun(caller, live);
+            await draw(caller, live.board, [
+              { op: 'edit', id: live.tag, text: standing(live, false) },
+            ]);
+          });
+        }
+      }
+    };
+    ctx.effect(() => {
+      const timer = setInterval(() => void sweep().catch(() => undefined), 5000);
+      return () => clearInterval(timer);
+    });
     const command = async (caller: Caller, run: Run, made: Omit<Command, 'id'>) => {
       run.commands.push({ id: newId('cmd'), ...made });
       await saveRun(caller, run);
@@ -325,15 +363,17 @@ export const boardHandoffPlugin = {
         for: 'people' as const,
         handler: async (caller: Caller, input: z.infer<typeof saySchema>) => {
           await admit(caller);
-          person(caller);
-          const run = await runOf(caller, input.run);
-          check(run.state !== 'queued', 'handoff_busy', 'It has not started yet', 409);
-          const steer = run.state === 'running' || run.state === 'asking';
-          await addEvent(caller, run, { kind: 'you', text: input.text });
-          if (!steer) run.state = 'running';
-          await command(caller, run, { kind: steer ? 'steer' : 'say', text: input.text });
-          await show(caller, run);
-          return { steered: steer };
+          return serial(input.run, async () => {
+            person(caller);
+            const run = await runOf(caller, input.run);
+            check(run.state !== 'queued', 'handoff_busy', 'It has not started yet', 409);
+            const steer = run.state === 'running' || run.state === 'asking';
+            await addEvent(caller, run, { kind: 'you', text: input.text });
+            if (!steer) run.state = 'running';
+            await command(caller, run, { kind: steer ? 'steer' : 'say', text: input.text });
+            await show(caller, run);
+            return { steered: steer };
+          });
         },
       },
       {
@@ -343,11 +383,13 @@ export const boardHandoffPlugin = {
         for: 'people' as const,
         handler: async (caller: Caller, input: z.infer<typeof stopSchema>) => {
           await admit(caller);
-          person(caller);
-          const run = await runOf(caller, input.run);
-          check(ACTIVE.has(run.state), 'handoff_idle', 'It is not running', 409);
-          await command(caller, run, { kind: 'stop' });
-          return {};
+          return serial(input.run, async () => {
+            person(caller);
+            const run = await runOf(caller, input.run);
+            check(ACTIVE.has(run.state), 'handoff_idle', 'It is not running', 409);
+            await command(caller, run, { kind: 'stop' });
+            return {};
+          });
         },
       },
       {
@@ -357,23 +399,25 @@ export const boardHandoffPlugin = {
         for: 'people' as const,
         handler: async (caller: Caller, input: z.infer<typeof answerSchema>) => {
           await admit(caller);
-          person(caller);
-          const run = await runOf(caller, input.run);
-          const ask = run.ask;
-          check(ask?.id === input.ask, 'handoff_ask', 'That question is no longer open', 409);
-          const option = ask.options.find((one) => one.id === input.option);
-          check(option, 'handoff_option', 'Not one of its options', 400);
-          delete run.ask;
-          run.state = 'running';
-          await addEvent(caller, run, {
-            kind: 'ask',
-            id: `ask:${ask.id}`,
-            text: ask.title,
-            status: option.kind.startsWith('allow') ? 'allowed' : 'denied',
+          return serial(input.run, async () => {
+            person(caller);
+            const run = await runOf(caller, input.run);
+            const ask = run.ask;
+            check(ask?.id === input.ask, 'handoff_ask', 'That question is no longer open', 409);
+            const option = ask.options.find((one) => one.id === input.option);
+            check(option, 'handoff_option', 'Not one of its options', 400);
+            delete run.ask;
+            run.state = 'running';
+            await addEvent(caller, run, {
+              kind: 'ask',
+              id: `ask:${ask.id}`,
+              text: ask.title,
+              status: option.kind.startsWith('allow') ? 'allowed' : 'denied',
+            });
+            await command(caller, run, { kind: 'answer', ask: ask.id, option: option.id });
+            await show(caller, run);
+            return {};
           });
-          await command(caller, run, { kind: 'answer', ask: ask.id, option: option.id });
-          await show(caller, run);
-          return {};
         },
       },
       // The machine's own two: a poll that carries what it offers, and reports of what happened.
@@ -389,27 +433,39 @@ export const boardHandoffPlugin = {
           await put(caller, 'connector', caller.actorId, caller.actorId, connector);
           const runs = await all<Run>(caller, 'run', caller.actorId);
           const restarted = before && before.started !== input.started;
-          const out: object[] = [];
-          for (const run of runs) {
-            if (
-              restarted &&
-              ACTIVE.has(run.state) &&
-              run.state !== 'queued' &&
-              !run.commands.length
-            ) {
-              // The machine came back without the session: it is lost until spoken to again.
-              run.state = 'failed';
-              run.error = 'Your machine restarted. Say something to carry on.';
+          // Heard again after a quiet spell: tags that said offline say what they did.
+          for (const run of runs)
+            if (run.offline && !restarted) {
+              delete run.offline;
               await saveRun(caller, run);
               await show(caller, run);
-              continue;
             }
-            if (run.state !== 'queued' && !run.commands.length) continue;
-            const { commands } = run;
-            run.commands = [];
-            await saveRun(caller, run);
-            const picture = run.session ? undefined : await get<object>(caller, 'picture', run.id);
-            out.push({ ...run, commands, ...(picture && { picture }) });
+          const out: object[] = [];
+          for (const held of runs) {
+            await serial(held.id, async () => {
+              const run = (await get<Run>(caller, 'run', held.id)) ?? held;
+              if (
+                restarted &&
+                ACTIVE.has(run.state) &&
+                run.state !== 'queued' &&
+                !run.commands.length
+              ) {
+                // The machine came back without the session: it is lost until spoken to again.
+                run.state = 'failed';
+                run.error = 'Your machine restarted. Say something to carry on.';
+                await saveRun(caller, run);
+                await show(caller, run);
+                return;
+              }
+              if (run.state !== 'queued' && !run.commands.length) return;
+              const { commands } = run;
+              run.commands = [];
+              await saveRun(caller, run);
+              const picture = run.session
+                ? undefined
+                : await get<object>(caller, 'picture', run.id);
+              out.push({ ...run, commands, ...(picture && { picture }) });
+            });
           }
           return { runs: out };
         },
@@ -420,28 +476,33 @@ export const boardHandoffPlugin = {
         inputSchema: reportSchema,
         handler: async (caller: Caller, input: z.infer<typeof reportSchema>) => {
           await admit(caller);
-          const run = await runOf(caller, input.run);
-          for (const event of input.events ?? []) await addEvent(caller, run, event);
-          if (input.session) run.session = input.session;
-          if (input.ask) {
-            run.ask = input.ask;
-            await addEvent(caller, run, {
-              kind: 'ask',
-              id: `ask:${input.ask.id}`,
-              text: input.ask.title,
-              status: 'open',
-            });
-          }
-          if (input.result) run.result = input.result;
-          if (input.error) run.error = input.error;
-          if (input.state) {
-            if (input.state !== 'asking') delete run.ask;
-            if (input.state === 'running') delete run.error;
-            run.state = input.state;
-          }
-          await saveRun(caller, run);
-          if (input.state || input.ask) await show(caller, run);
-          return {};
+          return serial(input.run, async () => {
+            const run = await runOf(caller, input.run);
+            for (const event of input.events ?? []) await addEvent(caller, run, event);
+            if (input.session) run.session = input.session;
+            if (input.ask) {
+              run.ask = input.ask;
+              await addEvent(caller, run, {
+                kind: 'ask',
+                id: `ask:${input.ask.id}`,
+                text: input.ask.title,
+                status: 'open',
+              });
+            }
+            if (input.result) run.result = input.result;
+            if (input.error) run.error = input.error;
+            if (input.state) {
+              if (input.state !== 'asking') delete run.ask;
+              if (input.state === 'running') {
+                delete run.error;
+                delete run.offline;
+              }
+              run.state = input.state;
+            }
+            await saveRun(caller, run);
+            if (input.state || input.ask) await show(caller, run);
+            return {};
+          });
         },
       },
     ];

@@ -528,6 +528,10 @@
   background: var(--bg-soft);
   border-radius: var(--radius-sm);
 }
+/* Nothing in the scrolling column gives up its height to the rest. */
+.board-handoff .pi-messages > * {
+  flex: none;
+}
 .board-handoff-standing,
 .board-handoff-line {
   margin: 0;

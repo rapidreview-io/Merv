@@ -29,6 +29,8 @@ export interface Run {
   ask?: Ask;
   /** The harness's own session id, so a follow-up finds the same session. */
   session?: string;
+  /** Whether its tag says offline: the machine went quiet while this ran. */
+  offline?: boolean;
   result?: { summary: string; branch: string; dir: string; stat: string };
   error?: string;
   commands: Command[];

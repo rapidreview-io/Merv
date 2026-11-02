@@ -100,6 +100,8 @@ export function HandoffButton({
         // Without a picture the words still go.
       }
       host?.({ start: { elements: [...ids], words, picture } });
+      // The pane has the selection now; the board's own panel for it can go.
+      api.updateScene({ appState: { selectedElementIds: {}, selectedGroupIds: {} } });
     } finally {
       setBusy(false);
     }
@@ -320,6 +322,8 @@ function Session({ run: listed, online }: { run: Run; online: boolean }) {
   );
   const run = read.data?.run ?? listed;
   const events = read.data?.events ?? [];
+  // The list beside hears a change of state as soon as the session does.
+  useEffect(() => refreshTools('handoff.read'), [run.state, run.ask?.id]);
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<string>();
   const list = useRef<HTMLDivElement>(null);
