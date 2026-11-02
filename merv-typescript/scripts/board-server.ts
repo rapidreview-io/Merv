@@ -12,6 +12,8 @@ const { BOARD_SUPABASE_URL, BOARD_RENT, SANDBOXES_DATABASE_URL, PORT = '3090' } 
 const { plugins } = JSON.parse(
   readFileSync(new URL('../config/board.hosted.example.json', import.meta.url), 'utf8'),
 ) as ApplicationConfig;
+/** Where people reach it, the one machines use first: BOARD_ORIGINS, comma separated. */
+const origins = (process.env.BOARD_ORIGINS ?? '').split(',').filter(Boolean);
 const renting = SANDBOXES_DATABASE_URL && BOARD_RENT;
 const app = await createApp({
   directory: process.env.BOARD_DATA ?? '/data',
@@ -22,6 +24,8 @@ const app = await createApp({
       .filter((plugin) => renting || plugin.id !== 'sandboxes-host')
       .map((plugin) => {
         const config = plugin.config as Record<string, unknown> | undefined;
+        if (plugin.id === 'api')
+          return { ...plugin, config: { ...config, allowedOrigins: origins } };
         if (plugin.id === 'identity')
           return {
             ...plugin,
@@ -31,7 +35,11 @@ const app = await createApp({
           const { rent: _, ...rest } = config!;
           return {
             ...plugin,
-            config: { ...rest, ...(renting && { rent: JSON.parse(BOARD_RENT!) }) },
+            config: {
+              ...rest,
+              publicUrl: origins[0],
+              ...(renting && { rent: JSON.parse(BOARD_RENT!) }),
+            },
           };
         }
         return plugin;

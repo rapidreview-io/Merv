@@ -21,6 +21,8 @@ const config = z.strictObject({
   solo: z.boolean().default(false),
   /** A person's model dollars in a UTC day; nothing else limits what a public app spends. */
   dailyUsdPerPerson: z.number().positive().default(20),
+  /** Where machines reach this server, where it is not where it listens. */
+  publicUrl: z.string().url().optional(),
   /** Real machines, rented through Sandboxes (`@merv/sandboxes/host`, its first plugin) from these
    * profiles; the host project must be linked there. Without it a worker runs in this process. */
   rent: z
@@ -64,7 +66,7 @@ export const boardAppPlugin = {
   Config: config,
   inject: ['state', 'scope', 'tools', 'blobs', 'api', 'board'],
   async apply(ctx: Context, input: Config) {
-    const { directory, solo, dailyUsdPerPerson, rent } = config.parse(input);
+    const { directory, solo, dailyUsdPerPerson, rent, publicUrl } = config.parse(input);
     // What this app issued, kept beside its files: a credential is only ever shown once.
     const file = join(directory, 'board-app.json');
     const kept = (await readFile(file, 'utf8').then(JSON.parse, () => ({}))) as {
@@ -115,7 +117,7 @@ export const boardAppPlugin = {
     const url = new URL(ctx.api.url!);
     if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1';
     const pi = ctx.plugin(piPlugin, {
-      baseUrl: url.origin,
+      baseUrl: publicUrl ?? url.origin,
       surface,
       dailyUsdPerPerson,
       models: [...openai, ...(process.env.MERV_PI_ANTHROPIC_API_KEY ? claude : [])],

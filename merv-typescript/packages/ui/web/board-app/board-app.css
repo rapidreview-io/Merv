@@ -462,7 +462,7 @@
 .board-landing-demo {
   display: contents;
 }
-.board-landing-demo:not(.is-over):not(:has(.board-replay-own.is-in)) > .excalidraw {
+.board-landing-demo:not(.is-over):not(:has([role='slider'])) .excalidraw {
   visibility: hidden;
 }
 /* What is said in a demo, at the board's foot: the person on the left, in their own colour. */
