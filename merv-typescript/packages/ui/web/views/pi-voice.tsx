@@ -292,7 +292,17 @@ export function useVoice(pi: Conversation | null) {
         const [stream] = event.streams;
         if (!stream || live.current !== held) return;
         audio.srcObject = stream;
-        void audio.play().catch(() => undefined);
+        // Started with no press (the board app, on sign-in), a browser may hold the sound until one.
+        void audio.play().catch(() => {
+          const allow = () => {
+            removeEventListener('pointerdown', allow, true);
+            removeEventListener('keydown', allow, true);
+            void context.resume();
+            void audio.play().catch(() => undefined);
+          };
+          addEventListener('pointerdown', allow, true);
+          addEventListener('keydown', allow, true);
+        });
         const output = context.createAnalyser();
         output.fftSize = 512;
         context.createMediaStreamSource(stream).connect(output);

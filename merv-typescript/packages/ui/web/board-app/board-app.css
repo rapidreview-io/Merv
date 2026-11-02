@@ -271,21 +271,36 @@
     transform: scale(1.1);
   }
 }
-/* Someone who has never talked here: the orb asks, a few times, and then waits. */
-.board-orb--invite {
-  animation: board-orb-invite 1.6s ease-out 4;
+/* Getting ready: a ring turns round the orb, and it says so beside it. */
+.board-orb.is-getting {
+  position: relative;
+  animation: none;
 }
-@keyframes board-orb-invite {
-  from {
-    box-shadow: 0 0 0 0 rgb(37 99 235 / 50%);
-  }
+.board-orb.is-getting::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: #7ab0ff;
+  animation: board-orb-turn 900ms linear infinite;
+}
+@keyframes board-orb-turn {
   to {
-    box-shadow: 0 0 0 14px rgb(37 99 235 / 0%);
+    transform: rotate(360deg);
   }
+}
+.board-bar-getting {
+  position: absolute;
+  top: 6px;
+  right: calc(100% + var(--space-2));
+  margin: 0;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--muted);
 }
 @media (prefers-reduced-motion: reduce) {
-  .board-orb--live,
-  .board-orb--invite {
+  .board-orb--live {
     animation: none;
   }
 }

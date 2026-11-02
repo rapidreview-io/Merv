@@ -1,6 +1,6 @@
 /**
  * Pi, on the board: a few controls at the canvas's side, the only place it is. The orb is the voice,
- * which is on from the first gesture for someone who has talked here before; while Pi works it is
+ * which is on as soon as the board is; while Pi works it is
  * Stop. What Pi says while drawing stands over the board. The chat window is where words are read and
  * typed, opened and shut from here, and neither touches the voice. Each board has its own, named for
  * the board.
@@ -64,36 +64,33 @@ export function BoardBar({
   useEffect(() => {
     if (state === 'listening') safely(() => localStorage.setItem(VOICE, 'on'));
   }, [state]);
-  // A browser needs a gesture before a microphone or a voice: someone who has talked here, and has
-  // not been told otherwise, starts with their first one. Once a page, so idling never comes back.
+  // Voice is on from the moment the board is, unless this browser was told to stop. Once a page, so
+  // that idling or a refused microphone never asks again by itself.
   const armed = useRef(false);
   useEffect(() => {
     if (!ready || armed.current || live) return;
-    if (safely(() => localStorage.getItem(VOICE), null) !== 'on') return;
     armed.current = true;
-    const events = ['pointerdown', 'keydown'];
-    const first = () => {
-      for (const kind of events) removeEventListener(kind, first, true);
-      voice?.start();
-    };
-    void navigator.permissions
-      ?.query({ name: 'microphone' as PermissionName })
-      .then(({ state: allowed }) => {
-        if (allowed === 'granted') for (const kind of events) addEventListener(kind, first, true);
-      })
-      .catch(() => undefined);
-    return () => {
-      for (const kind of events) removeEventListener(kind, first, true);
-    };
+    if (safely(() => localStorage.getItem(VOICE), null) !== 'off') voice?.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, live]);
   if (!pi || !voice) return <div className="board-bar" />;
-  const fresh = safely(() => localStorage.getItem(VOICE), null) === null;
+  // Until the voice is up and a machine is there to do what it hears, Merv is getting ready.
+  const getting =
+    !pi.error &&
+    !voice.problem &&
+    (!ready ||
+      state === 'connecting' ||
+      (live && state !== 'closing' && pi.snapshot?.host?.state !== 'ready'));
   return (
     <div className="board-bar">
       {(pi.error || voice.problem) && (
         <p className="board-said--bad" role="alert">
           {pi.error || voice.problem}
+        </p>
+      )}
+      {getting && (
+        <p className="board-bar-getting" role="status">
+          Getting Merv ready
         </p>
       )}
       {pi.active ? (
@@ -111,7 +108,7 @@ export function BoardBar({
       ) : live ? (
         <button
           type="button"
-          className={`board-orb board-orb--live${voice.muted ? ' is-muted' : ''}`}
+          className={`board-orb board-orb--live${voice.muted ? ' is-muted' : ''}${getting ? ' is-getting' : ''}`}
           data-state={state}
           aria-pressed={voice.muted}
           title={voice.muted ? 'Unmute' : 'Mute'}
@@ -122,9 +119,9 @@ export function BoardBar({
       ) : (
         <button
           type="button"
-          className={`board-orb${fresh ? ' board-orb--invite' : ''}`}
+          className={`board-orb${getting ? ' is-getting' : ''}`}
           title="Talk"
-          disabled={!ready}
+          disabled={getting}
           onClick={voice.start}
         >
           <span className="sr-only">Talk to Merv</span>
