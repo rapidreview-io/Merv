@@ -10,10 +10,14 @@ import {
   calculateContextTokens,
   createAgentSession,
   createExtensionRuntime,
+  estimateTokens,
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type CompactionResult,
   type ResourceLoader,
+  type SessionBeforeCompactEvent,
+  type SessionBeforeCompactResult,
   type SessionEntry,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
@@ -27,7 +31,7 @@ import { streamSimple as streamAnthropic } from '@earendil-works/pi-ai/api/anthr
 import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api/openai-responses';
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
-import { messageChars, notRun } from './limits.js';
+import { messageChars, notRun, piSummaryLane } from './limits.js';
 import { piProvider } from './models.js';
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import type {
@@ -111,8 +115,33 @@ export interface WorkerOptions {
 }
 
 /** A turn's notes (its machine, a failed move) follow the fixed prompt for that turn only. */
-const resources = (instructions: string, notes: string[]): ResourceLoader => ({
-  getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+const resources = (
+  instructions: string,
+  notes: string[],
+  compaction?: (
+    event: SessionBeforeCompactEvent,
+  ) => Promise<SessionBeforeCompactResult | undefined>,
+): ResourceLoader => ({
+  getExtensions: () => ({
+    // The library's only way to take a summary made elsewhere is an extension's hook.
+    extensions: compaction
+      ? [
+          {
+            path: '<worker>',
+            resolvedPath: '<worker>',
+            hidden: true,
+            handlers: new Map([['session_before_compact', [compaction]]]),
+            tools: new Map(),
+            messageRenderers: new Map(),
+            commands: new Map(),
+            flags: new Map(),
+            shortcuts: new Map(),
+          } as unknown as ReturnType<ResourceLoader['getExtensions']>['extensions'][number],
+        ]
+      : [],
+    errors: [],
+    runtime: createExtensionRuntime(),
+  }),
   getSkills: () => ({ skills: [], diagnostics: [] }),
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -513,6 +542,7 @@ async function executeTurn(
   /** Ends the turn: nothing more is sent, and the session stops. */
   const stop = (error: Error) => {
     failure = error;
+    backups.abort();
     session.abort().catch(() => {});
     return error;
   };
@@ -654,19 +684,69 @@ async function executeTurn(
   // A role with a terminal works in its conversation's own folder on this machine, with the
   // library's own bash, read, write, ls and grep; every other role has none.
   const cwd = work.shell ? await conversationFolder(work.command.conversationId) : '/pi-worker';
-  const { session } = await createAgentSession({
+  const opening = {
     cwd,
     modelRuntime: runtime,
     model,
-    scopedModels: [{ model, thinkingLevel: 'off' }],
-    thinkingLevel: 'off',
-    noTools: 'all',
+    scopedModels: [{ model, thinkingLevel: 'off' as const }],
+    thinkingLevel: 'off' as const,
+    noTools: 'all' as const,
     tools: [...tools.map((tool) => tool.name), ...(work.shell ? PI_SHELL_TOOLS : [])],
     customTools: tools,
-    resourceLoader: resources(instructions, work.notes),
-    sessionManager: manager,
     settingsManager: settings,
+  };
+  // Past three quarters of the window a summary starts beside the turn, from a copy of the branch
+  // as it stands. When Pi compacts it takes that summary, waiting if it must, so all after its
+  // first kept entry stays word for word; one that failed leaves Pi to make its own. Each is spent
+  // before another starts.
+  type Backup = { made: Promise<CompactionResult | undefined>; done?: CompactionResult };
+  let backup: Backup | undefined;
+  const backups = new AbortController();
+  const { session } = await createAgentSession({
+    ...opening,
+    resourceLoader: resources(instructions, work.notes, async ({ preparation }) => {
+      const made = await backup?.made;
+      backup = undefined;
+      return made && { compaction: { ...made, tokensBefore: preparation.tokensBefore } };
+    }),
+    sessionManager: manager,
   });
+  const summarizeBeside = (tokens: number) => {
+    if (
+      backup ||
+      narrow ||
+      work.previousInterrupted ||
+      tokens <= contextWindow * 0.75 ||
+      tokens > contextWindow - reserveTokens
+    )
+      return;
+    const copy = SessionManager.inMemory('/pi-worker', undefined, [
+      manager.getHeader()!,
+      ...manager.getBranch(),
+    ] as Parameters<typeof SessionManager.inMemory>[2]);
+    const summarize = async () => {
+      const { session: beside } = await createAgentSession({
+        ...opening,
+        resourceLoader: resources(instructions, work.notes),
+        sessionManager: copy,
+      });
+      // Its call is the turn's second at once: the relay gives summaries their own lane.
+      const stream = session.agent.streamFunction;
+      beside.agent.streamFunction = (model, context, options) =>
+        stream(model, context, { ...options, headers: { [piSummaryLane]: '1' } });
+      const stop = () => beside.abortCompaction();
+      backups.signal.addEventListener('abort', stop, { once: true });
+      try {
+        if (backups.signal.aborted) return undefined;
+        return (started.done = await beside.compact());
+      } finally {
+        backups.signal.removeEventListener('abort', stop);
+        beside.dispose();
+      }
+    };
+    const started: Backup = { made: summarize().catch(() => undefined) };
+    backup = started;
+  };
   const modelEndpoint = new URL(
     claude ? '/pi-model/anthropic/v1/messages' : '/pi-model/responses',
     work.modelBaseUrl,
@@ -682,6 +762,7 @@ async function executeTurn(
     )
       throw new Error('Forbidden model destination');
     const body = await outgoing.text();
+    const lane = outgoing.headers.get(piSummaryLane);
     // A Request's own signal stops following its source once that Request is collected.
     const signal = init?.signal ?? outgoing.signal;
     return retryTransient(
@@ -693,6 +774,7 @@ async function executeTurn(
             authorization: `Bearer ${work.modelToken}`,
             'content-type': 'application/json',
             accept: 'text/event-stream',
+            ...(lane && { [piSummaryLane]: lane }),
           },
           body,
           signal,
@@ -716,7 +798,7 @@ async function executeTurn(
           apiKey: work.modelToken,
           fetch: relayFetch,
           // No betas: the relay passes none.
-          headers: { 'anthropic-beta': '' },
+          headers: { 'anthropic-beta': '', ...options?.headers },
           env: {},
           // Each call resends the instructions and tools: Anthropic caches them for 5 minutes.
           cacheRetention: 'short',
@@ -735,6 +817,7 @@ async function executeTurn(
             // From the last call on, the model answers instead of asking for another.
             toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
             apiKey: work.modelToken,
+            headers: options?.headers,
             fetch: relayFetch,
             env: {},
             cacheRetention: 'none',
@@ -786,6 +869,8 @@ async function executeTurn(
       if (at >= 0) unheard.splice(at, 1);
       return;
     }
+    if (event.type === 'message_end' && event.message.role === 'assistant')
+      return summarizeBeside(calculateContextTokens(event.message.usage));
     if (event.type !== 'message_update') return;
     const update = event.assistantMessageEvent;
     if (update.type === 'text_delta') enqueue('text', update.delta);
@@ -828,6 +913,11 @@ async function executeTurn(
         index === at ? { ...message, content: [{ type: 'text', text: given }] } : message,
       ) as typeof context;
     };
+    // A turn restored past the point starts one at once. Estimated: the last call's usage may
+    // predate a summary the checkpoint holds.
+    summarizeBeside(
+      session.messages.reduce((tokens, message) => tokens + estimateTokens(message), 0),
+    );
     await session.prompt(prompt, { expandPromptTemplates: false });
     for (;;) {
       while (!failure && !signal.aborted && (events.length || sending)) {
@@ -845,6 +935,18 @@ async function executeTurn(
       await session.prompt(next!, { expandPromptTemplates: false });
     }
     if (failure || signal.aborted) throw failure ?? new Error('Turn cancelled');
+    // A summary finished and paid for is used now: turns restore from the checkpoint, so it could
+    // not wait for the 90%, and each later turn would pay for another.
+    const spare = backup?.done;
+    if (spare)
+      manager.appendCompaction(
+        spare.summary,
+        spare.firstKeptEntryId,
+        spare.tokensBefore,
+        spare.details,
+        true,
+        spare.usage,
+      );
     const branch = manager.getBranch();
     const turn = branch.slice(begun ? branch.findIndex((entry) => entry.id === begun) + 1 : 0);
     const omitted = new Set(
@@ -922,6 +1024,7 @@ async function executeTurn(
       checkpointHash: saved.hash,
     };
   } finally {
+    backups.abort();
     clearInterval(pulse);
     clearTimeout(due);
     unsubscribe();

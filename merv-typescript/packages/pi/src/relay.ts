@@ -1,9 +1,10 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import Anthropic from '@anthropic-ai/sdk';
 import { check, clip, type State } from '@merv/contracts';
 import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig, ModelTokens } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
-import { turnCeilingMs } from './limits.js';
+import { piSummaryLane, turnCeilingMs } from './limits.js';
 import { piProvider, piUpstream } from './models.js';
 import {
   piAnthropicSchema,
@@ -129,8 +130,9 @@ export const piSpend = (
   };
 };
 
-/** What both of Pi's relays share: one model call at a time per conversation, as a person's
- *  conversations share one machine, under a grant that names a model of `efforts`. */
+/** What both of Pi's relays share: one model call at a time per conversation, and one summary
+ *  beside it (each charged as any call), as a person's conversations share one machine, under a
+ *  grant that names a model of `efforts`. */
 const piRelay = (efforts: ReadonlyMap<string, string>, authority: PiRelayConfig['authority']) => ({
   maxRequestBytes: relayRequestBytes,
   totalTimeoutMs: turnCeilingMs,
@@ -144,7 +146,8 @@ const piRelay = (efforts: ReadonlyMap<string, string>, authority: PiRelayConfig[
     },
   },
   grant: (raw: unknown) => piRelayGrantSchema.parse(raw),
-  lane: (grant: PiRelayGrant) => grant.conversationId,
+  lane: (grant: PiRelayGrant, headers: IncomingHttpHeaders) =>
+    headers[piSummaryLane] ? `${grant.conversationId}:summary` : grant.conversationId,
 });
 
 /** Pi's relay to OpenAI, in the Pi-shaped Responses request its worker sends. */

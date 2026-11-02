@@ -893,7 +893,7 @@ function slotServer(
   slots: number,
   handlers: {
     next(count: number, body: Record<string, unknown>): PiNextReply | Response;
-    model(name: string, body: Record<string, unknown>): Response;
+    model(name: string, body: Record<string, unknown>, request: Request): Response;
     tool?(body: Record<string, unknown>): unknown;
     /** What any other route answers in place of `accepted`. */
     replies?: Record<string, object>;
@@ -913,6 +913,7 @@ function slotServer(
       return handlers.model(
         [...JSON.stringify(body.input).matchAll(/Question (\w+)/g)].at(-1)?.[1] ?? '',
         body,
+        incoming,
       );
     if (route === 'next') {
       const reply = handlers.next(bodies('next').length, body);
@@ -1086,7 +1087,11 @@ const summarizing = (body: Record<string, unknown>) =>
 function conversation(
   turns: number,
   checkpoint: PiWork['checkpoint'],
-  model: (body: Record<string, unknown>, requests: Record<string, unknown>[]) => Response,
+  model: (
+    body: Record<string, unknown>,
+    requests: Record<string, unknown>[],
+    request: Request,
+  ) => Response,
   change: Partial<PiWork> = {},
 ) {
   const requests: Record<string, unknown>[] = [];
@@ -1108,9 +1113,9 @@ function conversation(
         },
       };
     },
-    model(_name, body) {
+    model(_name, body, request) {
       requests.push(body);
-      return model(body, requests);
+      return model(body, requests, request);
     },
   });
   return {
@@ -1194,4 +1199,163 @@ test('a failed summary keeps the conversation: the turn and the checkpoint fall 
       .bodies('progress')
       .every((body) => !JSON.stringify(body.events).includes('Compacted earlier conversation')),
   );
+});
+
+/** A model reply sent only once `until` settles. */
+const after = (until: Promise<unknown>, body: string) =>
+  new Response(
+    new ReadableStream({
+      async start(controller) {
+        await until.catch(() => undefined);
+        controller.enqueue(new TextEncoder().encode(body));
+        controller.close();
+      },
+    }),
+  );
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const answers = (requests: Record<string, unknown>[]) =>
+  requests.filter((body) => !summarizing(body));
+const compacted = (saved: ReturnType<typeof decodeCheckpoint>) =>
+  saved.entries.filter((entry) => entry.type === 'compaction');
+const savedBy = (done: PiCompletion) =>
+  decodeCheckpoint({ content: done.checkpoint, hash: done.checkpointHash });
+
+test('past 75% a summary starts beside the turn, which never waits for it and aborts it as it ends', async () => {
+  let summaryRequest: Request | undefined;
+  const { server, requests, completions } = conversation(
+    1,
+    earlier(6, 40_000),
+    (body, sent, request) => {
+      if (summarizing(body)) {
+        summaryRequest = request;
+        // Never answered; only an abort ends it, as it ends a real fetch.
+        return new Response(
+          new ReadableStream({
+            start: (controller) =>
+              request.signal.addEventListener('abort', () =>
+                controller.error(new DOMException('Aborted', 'AbortError')),
+              ),
+          }),
+        );
+      }
+      if (answers(sent).length === 1) return new Response(filled(sse([call]), 210_000));
+      return after(pause(100), filled(sse([message('Answer')], 'Answer'), 215_000));
+    },
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.filter(summarizing).length, 1);
+  // Down its own lane; the turn's calls stay on theirs.
+  assert.equal(summaryRequest!.headers.get('x-merv-pi-lane'), '1');
+  assert.equal(summaryRequest!.signal.aborted, true);
+  assert.equal(compacted(savedBy(completions()[0])).length, 0);
+  assert.ok(completions()[0].checkpoint.includes('Question old1 '));
+});
+
+test('at 90% the finished summary swaps in at once, and all after its first kept entry stays', async () => {
+  const { server, requests, completions } = conversation(1, earlier(6, 40_000), (body, sent) => {
+    if (summarizing(body)) return new Response(sse([message(summary)], summary));
+    const reply = answers(sent).length;
+    if (reply === 1) return new Response(filled(sse([call]), 210_000));
+    // Written after the summary was asked for, and past the 244,800 where Pi compacts.
+    if (reply === 2) return after(pause(150), filled(sse([call]), 250_000));
+    return new Response(sse([message('Answer')], 'Answer'));
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.filter(summarizing).length, 1);
+  const last = JSON.stringify(answers(requests).at(-1)!.input);
+  assert.ok(last.includes(summary) && !last.includes('Question old1 '));
+  // What came after the summary began is there word for word: both tool calls and their results.
+  assert.ok(last.includes('Question t1'));
+  assert.equal([...last.matchAll(/function_call_output/g)].length, 2);
+  assert.ok(
+    server
+      .bodies('progress')
+      .some((body) => JSON.stringify(body.events).includes('Compacted earlier conversation')),
+  );
+  assert.equal(compacted(savedBy(completions()[0])).length, 1);
+});
+
+test('at 90% an unfinished summary is waited for, never started twice', async () => {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => (release = resolve));
+  let released = false;
+  const { server, requests } = conversation(1, earlier(6, 40_000), (body, sent) => {
+    if (summarizing(body)) return after(ready, sse([message(summary)], summary));
+    const reply = answers(sent).length;
+    if (reply === 1) return new Response(filled(sse([call]), 210_000));
+    if (reply === 2) {
+      setTimeout(() => {
+        released = true;
+        release();
+      }, 300);
+      return new Response(filled(sse([call]), 250_000));
+    }
+    // The call after the 90% waited for the summary.
+    assert.equal(released, true);
+    return new Response(sse([message('Answer')], 'Answer'));
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.filter(summarizing).length, 1);
+  assert.ok(JSON.stringify(answers(requests).at(-1)!.input).includes(summary));
+});
+
+test('a summary that failed leaves Pi to make its own at 90%, as it always did', async () => {
+  let tried = 0;
+  const { server, requests, completions } = conversation(1, earlier(6, 40_000), (body, sent) => {
+    if (summarizing(body))
+      return ++tried === 1
+        ? json({ error: { message: 'unavailable' } }, 500)
+        : new Response(sse([message(summary)], summary));
+    const reply = answers(sent).length;
+    if (reply === 1) return new Response(filled(sse([call]), 210_000));
+    if (reply === 2) return after(pause(100), filled(sse([call]), 220_000));
+    // Under the 90% no other was started in its place.
+    if (reply === 3) {
+      assert.equal(tried, 1);
+      return after(pause(100), filled(sse([call]), 250_000));
+    }
+    return new Response(sse([message('Answer')], 'Answer'));
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.filter(summarizing).length, 2);
+  assert.ok(JSON.stringify(answers(requests).at(-1)!.input).includes(summary));
+  assert.equal(compacted(savedBy(completions()[0])).length, 1);
+});
+
+test('a summary finished before the turn ends is used then, and the next turn pays for no other', async () => {
+  const { server, requests, completions } = conversation(2, earlier(6, 40_000), (body, sent) => {
+    if (summarizing(body)) return new Response(sse([message(summary)], summary));
+    const reply = answers(sent).length;
+    if (reply === 1) return new Response(filled(sse([call]), 210_000));
+    if (reply === 2) return after(pause(150), filled(sse([message('Answer')], 'Answer'), 215_000));
+    return new Response(filled(sse([message('Answer')], 'Answer'), 30_000));
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.filter(summarizing).length, 1);
+  assert.equal(compacted(savedBy(completions()[0])).length, 1);
+  const next = JSON.stringify(requests.at(-1)!.input);
+  assert.ok(next.includes(summary) && next.includes('Question t1') && next.includes('Question t2'));
+});
+
+test('a turn restored past 75% begins a summary at once, unless the turn before it was interrupted', async () => {
+  // Eight exchanges of 105,000 characters: about 210,000 tokens.
+  for (const interrupted of [false, true]) {
+    const { server, requests } = conversation(
+      1,
+      earlier(8, 105_000),
+      (body) =>
+        summarizing(body)
+          ? new Response(sse([message(summary)], summary))
+          : after(pause(150), sse([message('Answer')], 'Answer')),
+      interrupted ? { previousInterrupted: true } : {},
+    );
+    await server.run();
+    assert.equal(server.bodies('fail').length, 0);
+    assert.equal(requests.filter(summarizing).length, interrupted ? 0 : 1);
+  }
 });
