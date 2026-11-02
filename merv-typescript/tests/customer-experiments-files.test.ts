@@ -48,8 +48,10 @@ test('file keys normalise to relative paths and refuse escapes, control characte
 });
 
 test('files end 48 hours after completion, failure, or seven quiet days before payment', () => {
+  // One clock for the whole test: a second reading can land a millisecond later.
   const day = 86400_000,
-    ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    now = Date.now(),
+    ago = (ms: number) => new Date(now - ms).toISOString();
   const record = { createdAt: ago(10 * day) };
   const done = deletionSchedule(
     record,
@@ -72,7 +74,7 @@ test('files end 48 hours after completion, failure, or seven quiet days before p
     ago(8 * day),
   );
   assert.equal(quiet?.reason, 'abandoned');
-  assert.equal(Date.parse(quiet!.endedAt), Date.now() - 8 * day + 7 * day);
+  assert.equal(Date.parse(quiet!.endedAt), now - 8 * day + 7 * day);
   // A customer returning before deletion keeps the request open.
   assert.equal(
     deletionSchedule(record, { version: 3, state: 'planning', updatedAt: ago(9 * day) }, ago(day)),

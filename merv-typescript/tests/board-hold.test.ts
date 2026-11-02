@@ -299,7 +299,7 @@ test('a draw is held only while a person watches, and says when they step in', a
   await assert.rejects(
     tools.call('board.write:draw', pi, {
       board: made.id,
-      ops: [{ op: 'text', text: 'x', say: 'x'.repeat(101) }],
+      ops: [{ op: 'text', text: 'x', say: 'x'.repeat(161) }],
     }),
   );
   await assert.rejects(

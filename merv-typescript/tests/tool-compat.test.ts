@@ -4,7 +4,8 @@
  * called by a person's agent over MCP, by a page over POST /tools, by a leased worker under a
  * published policy (whose listing is name for name the base one), and by a Pi turn frozen before
  * the release. Results are compared with the captured shapes, never with the noun actions;
- * system.status and code.status retain the approved additive budgets and git fields.
+ * system.status and code.status retain the approved additive budgets and git fields. Budgets are
+ * administrative accounting: a page sees them, an agent never does (tests/agent-budget-surface).
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -299,7 +300,7 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
       );
     });
   }
-  await t.test('project budgets survive legacy and noun status over pages and MCP', async () => {
+  await t.test('project budgets survive legacy and noun status, on pages only', async () => {
     const updated = await tool('usage.set_budget', boot.token, { maxTokens: 150_000 });
     assert.equal(updated.status, 200);
     const budget = updated.body.result;
@@ -328,8 +329,8 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
       const answer = await client.callTool(call);
       assert.ok(!answer.isError);
       const result = JSON.parse((answer.content as { text: string }[])[0]!.text);
-      assert.deepEqual({ ok: shape(result) }, captured.contracts['system.status']!.owner);
-      assert.deepEqual(result.budgets, [budget], `${call.name} MCP budgets`);
+      assert.deepEqual({ ok: shape(result) }, captured.contracts['system.status']!.agent);
+      assert.equal(result.budgets, undefined, `${call.name} MCP budgets`);
     }
   });
   // A kept flat name reads its old flat input as the action it routes to.
@@ -407,9 +408,16 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   );
   assert.deepEqual(
     (await app.ctx.tools.describe(owner)).map(({ name }) => name),
-    [...traded(captured.listings.page), 'board.history', 'intake.read', 'intake.write'].sort(
-      (a, b) => a.localeCompare(b),
-    ),
+    [
+      ...traded(captured.listings.page),
+      'board.hand',
+      'board.history',
+      'board.outcome.delete',
+      'board.outcome.sent',
+      'board.share',
+      'intake.read',
+      'intake.write',
+    ].sort((a, b) => a.localeCompare(b)),
   );
 
   // A planning worker on the published experiment policy is listed exactly the base names.
@@ -474,7 +482,10 @@ test('every retired name answers as it did, over MCP, from a page and to a lease
   }
   assert.deepEqual(
     (await app.ctx.tools.describe(worker, true)).map(({ name }) => name),
-    [...captured.listings.worker, 'board.draw'].sort((a, b) => a.localeCompare(b)),
+    // A worker is listed no accounting; board.draw is new.
+    [...captured.listings.worker.filter((name) => name !== 'usage.read'), 'board.draw'].sort(
+      (a, b) => a.localeCompare(b),
+    ),
   );
   // It runs the reads it is listed as they ran, and is shown them as it was.
   const reads = ['code.files', 'code.log', 'code.status', 'code.unit.get', 'code.operation'];

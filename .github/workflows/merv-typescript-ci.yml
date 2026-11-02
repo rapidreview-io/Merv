@@ -147,12 +147,11 @@ jobs:
           echo 'PostgreSQL did not accept connections' >&2
           exit 1
 
-      - name: Prepare Chromium for the report integration test
+      # In every shard: which one a test file lands in moves with the size of the files.
+      - name: Prepare Chromium for the tests that render
         run: |
-          if node scripts/test-shard.mjs ${{ matrix.shard }} 2 | grep -Eq '^tests/(experiments|tool-compat|board-figures)\.test\.ts$'; then
-            npm run build:board-renderer
-            npx playwright-core install --with-deps chromium
-          fi
+          npm run build:board-renderer
+          npx playwright-core install --with-deps chromium
 
       # Runs this shard's files exactly as npm test runs them all (scripts/test-shard.mjs).
       - name: Run test shard ${{ matrix.shard }} of 2

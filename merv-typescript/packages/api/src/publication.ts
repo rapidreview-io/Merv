@@ -75,7 +75,6 @@ export function compactTool(
             definition.actions[name]?.summary ?? value.description.slice(prefix.length);
       }
   if (schema.properties?.projectId)
-    schema.properties.projectId.description =
-      'Human sessions/account keys: required. Actor/project keys: defaults to fixed project. Access checked.';
+    schema.properties.projectId.description = 'Required unless your key is fixed to one project.';
   return { ...description, inputSchema: compactSchema(schema) as ToolDescription['inputSchema'] };
 }
