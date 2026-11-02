@@ -28,7 +28,7 @@ import {
   type PenUnit,
 } from '@merv/board/models';
 import { accountRequest, type ApiError } from '../api';
-import type { Rect } from './board-place';
+import { leastOpening, type Rect } from './board-place';
 
 type Point = [number, number];
 /** A unit as the scene will draw it, on a canvas of its own: where it stands, and its pixels a unit. */
@@ -625,22 +625,40 @@ export const dissolve = (root: Element | null | undefined) => {
     held.remove();
 };
 
-/** Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`. */
+/**
+ * Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`.
+ * Opening a board (`opening`) sets the zoom even with nothing on it, and what is too large to read
+ * whole starts at its top left corner instead.
+ */
 export const fitView = (
   api: ExcalidrawImperativeAPI,
   shapes: readonly OrderedExcalidrawElement[],
   most = 1,
+  opening = false,
 ) => {
-  if (!shapes.length) return;
+  if (!shapes.length) {
+    if (opening && most !== 1)
+      api.updateScene({
+        appState: { zoom: { value: most as never } },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    return;
+  }
   const [x1, y1, x2, y2] = getCommonBounds(shapes);
   const { x, y, width, height } = clearView(api);
-  const fit = Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (most > 1 ? 0.8 : 0.9);
-  const zoom = Math.max(0.1, Math.min(most, fit));
+  const fit =
+    Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (most > 1 && !opening ? 0.8 : 0.9);
+  const least = opening ? leastOpening() : 0.1;
+  const zoom = Math.max(least, Math.min(most, fit));
+  const cut = least > 0.1 && fit < least;
   api.updateScene({
     appState: {
       zoom: { value: zoom as never },
-      scrollX: (x + width / 2) / zoom - (x1 + x2) / 2,
-      scrollY: (y + height / 2) / zoom - (y1 + y2) / 2,
+      scrollX: cut ? (x + 16) / zoom - x1 : (x + width / 2) / zoom - (x1 + x2) / 2,
+      scrollY:
+        cut && (y2 - y1) * zoom > height
+          ? (y + 16) / zoom - y1
+          : (y + height / 2) / zoom - (y1 + y2) / 2,
     },
     captureUpdate: CaptureUpdateAction.NEVER,
   });

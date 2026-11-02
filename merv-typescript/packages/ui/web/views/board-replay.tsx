@@ -306,7 +306,10 @@ export function BoardReplay({
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {
-            const band = rootOf()?.querySelector('.board-scrub');
+            // Where the app says its words over the canvas, a drawing stands clear of those instead.
+            const band =
+              document.querySelector('.board-landing-spoken') ??
+              rootOf()?.querySelector('.board-scrub');
             if (!band) return 0;
             const clear = clearView(live);
             const top = band.getBoundingClientRect().top - live.getAppState().offsetTop;

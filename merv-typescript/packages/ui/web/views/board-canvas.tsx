@@ -41,7 +41,7 @@ import { placeOf } from './pi-screen';
 import { pointWith } from './pi-transport';
 import { BoardLinkDetails, PAGE_LINK } from './board-link-details';
 import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
-import { inView, landing, overlaps, type Rect } from './board-place';
+import { boardScale, inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
 import { BoardFollow } from './board-follow';
 import { BoardPointing, markOn } from './board-pointing';
@@ -283,7 +283,9 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
     const frame = requestAnimationFrame(() => {
       const all = api.getSceneElements();
       const part = focus ? all.filter((el) => el.id === focus) : [];
-      fitView(api, part.length ? part : all, part.length ? 2 : 1);
+      const scale = boardScale();
+      if (part.length) fitView(api, part, 2 * scale);
+      else fitView(api, all, scale, true);
     });
     return () => cancelAnimationFrame(frame);
   }, [api, focus]);

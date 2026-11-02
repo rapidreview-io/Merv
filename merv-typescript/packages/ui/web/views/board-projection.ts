@@ -15,7 +15,8 @@ import type {
 } from '@excalidraw/excalidraw/types';
 import type { BoardChange, BoardElement } from '@merv/board/models';
 import type { BoardFilm } from './board-film';
-import { framing, zoomToFit, type Rect } from './board-place';
+import { speech } from '../speech';
+import { boardScale, framing, zoomToFit, type Rect } from './board-place';
 import { clearView, dissolve, imageBringer, Player, restored, type Stage } from './board-player';
 import {
   landedBy,
@@ -38,6 +39,9 @@ const SETTLE_MS = 350;
  * seconds and swing in on each small stroke.
  */
 const [LEAST_ZOOM, WIDE_VIEW, NEAREST_NARROW] = [0.3, 1000, 0.4];
+/** On a phone in an app that is nothing but a board: it moves on before words get too small to read. */
+const [LEAST_BOARD_APP, NEAREST_BOARD_APP] = [0.45, 0.7];
+const ORB_WIDTH = 56;
 /** Past this many shapes standing, what is drawn is only scaled while a hand moves the camera. */
 const SCALED_ABOVE = 200;
 /** How far out a demo goes for one view: it goes on to the next part of the board rather than shrink. */
@@ -337,7 +341,7 @@ export class Projection {
   /** Starts at full size, whatever the finished board was fitted to, and stays near it as it goes. */
   closeIn() {
     this.least = DEMO_LEAST_ZOOM;
-    this.setCamera({ ...cameraOf(this.live), zoom: 1 });
+    this.setCamera({ ...cameraOf(this.live), zoom: boardScale() });
     this.steer();
   }
   /** The person's hand went to the camera: nothing of this may be told over it. */
@@ -496,9 +500,11 @@ export class Projection {
     if (!first || this.touched || this.resting || this.dragged) return false;
     const clear = clearView(this.live);
     clear.height -= this.hooks.below();
+    // On a phone in the board app the orb stands over the canvas's right edge.
+    if (speech.boardOnly && clear.width < 640) clear.width -= ORB_WIDTH;
     const end = chunks.find((chunk) => from >= chunk.first && from < chunk.end)?.end ?? from + 1;
-    const wide = Math.min(1, clear.width / WIDE_VIEW);
-    const least = Math.max(0.1, this.least * wide);
+    const wide = Math.min(1, clear.width / WIDE_VIEW) * boardScale();
+    const least = Math.max(speech.boardOnly ? LEAST_BOARD_APP : 0.1, this.least * wide);
     let reach = first.reach;
     let to = from + 1;
     for (; to < end; to++) {
@@ -508,7 +514,12 @@ export class Projection {
     }
     this.framedTo = to;
     const now = cameraOf(this.live);
-    const camera = framing(rectOf(reach), clear, now, Math.max(NEAREST_NARROW, wide));
+    const camera = framing(
+      rectOf(reach),
+      clear,
+      now,
+      Math.max(speech.boardOnly ? NEAREST_BOARD_APP : NEAREST_NARROW, wide),
+    );
     if (sameCamera(camera, now)) return false;
     this.player.finish();
     this.landing = 0;

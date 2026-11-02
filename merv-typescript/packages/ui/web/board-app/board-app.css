@@ -562,3 +562,22 @@
 .board-handoff .pi-compose {
   padding: var(--space-2) var(--space-3) var(--space-3);
 }
+||||||| f96ec9c66
+/* A big monitor: what is ours grows with the canvas. Excalidraw's own toolbar keeps its size. */
+@media (min-width: 2000px) and (min-height: 1200px) {
+  .board-bar {
+    transform: translateY(-50%) scale(1.25);
+    transform-origin: right center;
+  }
+  .board-bar-hi.board-tip,
+  .board-landing-spoken p {
+    font-size: 19px;
+  }
+  .board-landing-spoken {
+    width: 800px;
+  }
+}
+/* A demo's camera goes where the pen is about to be: there is nothing to scroll back to. */
+.board-landing .scroll-back-to-content {
+  display: none;
+}

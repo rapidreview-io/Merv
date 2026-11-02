@@ -1,3 +1,14 @@
+import { speech } from '../speech';
+
+/**
+ * How much nearer an app that is nothing but a board stands on a screen larger than a laptop's, so
+ * that it fills about as much of it. Elsewhere, and on a laptop or less, full size stays 1.
+ */
+export const boardScale = () =>
+  speech.boardOnly ? Math.min(1.8, Math.max(1, Math.min(innerWidth / 1440, innerHeight / 900))) : 1;
+/** The farthest such an app opens a board on a phone: past this it is too small to read. */
+export const leastOpening = () => (speech.boardOnly && innerWidth < 640 ? 0.4 : 0.1);
+
 /** A place on the board, in its own coordinates. */
 export interface Rect {
   x: number;
