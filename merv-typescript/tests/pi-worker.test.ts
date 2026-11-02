@@ -889,11 +889,12 @@ const accepted: Record<string, object> = {
   complete: { saved: true },
   fail: { interrupted: true },
 };
+type Sent = { headers: Headers; signal: AbortSignal };
 function slotServer(
   slots: number,
   handlers: {
     next(count: number, body: Record<string, unknown>): PiNextReply | Response;
-    model(name: string, body: Record<string, unknown>, request: Request): Response;
+    model(name: string, body: Record<string, unknown>, request: Sent): Response;
     tool?(body: Record<string, unknown>): unknown;
     /** What any other route answers in place of `accepted`. */
     replies?: Record<string, object>;
@@ -913,7 +914,8 @@ function slotServer(
       return handlers.model(
         [...JSON.stringify(body.input).matchAll(/Question (\w+)/g)].at(-1)?.[1] ?? '',
         body,
-        incoming,
+        // The caller's signal: a Request's own stops following it once the Request is collected.
+        { headers: incoming.headers, signal: init!.signal! },
       );
     if (route === 'next') {
       const reply = handlers.next(bodies('next').length, body);
@@ -1090,7 +1092,7 @@ function conversation(
   model: (
     body: Record<string, unknown>,
     requests: Record<string, unknown>[],
-    request: Request,
+    request: Sent,
   ) => Response,
   change: Partial<PiWork> = {},
 ) {
@@ -1213,7 +1215,7 @@ const after = (until: Promise<unknown>, body: string) =>
     }),
   );
 /** A model reply never sent: only an abort ends it, as it ends a real fetch. */
-const unanswered = (request: Request) =>
+const unanswered = (request: Sent) =>
   new Response(
     new ReadableStream({
       start(controller) {
@@ -1232,7 +1234,7 @@ const savedBy = (done: PiCompletion) =>
   decodeCheckpoint({ content: done.checkpoint, hash: done.checkpointHash });
 
 test('past 75% a summary starts beside the turn, which never waits for it and aborts it as it ends', async () => {
-  let summaryRequest: Request | undefined;
+  let summaryRequest: Sent | undefined;
   const { server, requests, completions } = conversation(
     1,
     earlier(6, 40_000),
