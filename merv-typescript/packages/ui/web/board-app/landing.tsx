@@ -5,6 +5,7 @@
  */
 import '@excalidraw/excalidraw/index.css';
 import {
+  Component,
   useCallback,
   useEffect,
   useRef,
@@ -33,6 +34,27 @@ const editor: ComponentProps<typeof Excalidraw> = {
   UIOptions: { canvasActions: { loadScene: false, export: false, saveToActiveFile: false } },
   children: <MainMenu />,
 };
+
+/** How long a demo may take to begin once asked, before the board is simply shown. */
+const STARTS_MS = 12_000;
+/** What went wrong in someone's browser, for the server's log: a page has no other way to say. */
+const report = (what: unknown) => {
+  const text = String((what as Error)?.stack ?? what).slice(0, 600);
+  void fetch(`/board-report?m=${encodeURIComponent(text)}`, { credentials: 'omit' }).catch(
+    () => undefined,
+  );
+};
+/** A replay that falls over leaves the board and the page standing. */
+class Standing extends Component<{ failed(error: unknown): void; children: ReactNode }> {
+  state = { gone: false };
+  static getDerivedStateFromError = () => ({ gone: true });
+  componentDidCatch(error: unknown) {
+    this.props.failed(error);
+  }
+  render() {
+    return this.state.gone ? null : this.props.children;
+  }
+}
 
 /** A person's words come a letter at a time, as fast as they type; the agent answers a moment after. */
 const LETTER_MS = 70;
@@ -98,27 +120,46 @@ function Demo({ token, ask, done }: { token: string; ask: string; done(): void }
     [history],
   );
   useEffect(() => say(ask, '', () => setAsked(true)), [ask, say]);
+  // Whatever stops a demo, the finished board stands for a moment and the next one comes.
+  const fail = useCallback(
+    (why: unknown) => {
+      report(why);
+      setOver(true);
+      clearTimeout(held.current);
+      held.current = setTimeout(done, HOLD_MS);
+    },
+    [done],
+  );
+  useEffect(() => {
+    if (!asked) return;
+    const late = setTimeout(() => {
+      if (!document.querySelector('.board-landing [role="slider"]')) fail('demo did not start');
+    }, STARTS_MS);
+    return () => clearTimeout(late);
+  }, [asked, fail]);
   return (
     <div className={`board-landing-demo${over ? ' is-over' : ''}`}>
       <Excalidraw {...editor} excalidrawAPI={setApi} />
       {api && scene && asked && (
-        <BoardReplay
-          demo
-          speak={speak}
-          id={token}
-          live={api}
-          editor={editor}
-          free={free}
-          settle={settle}
-          revision={() => scene.revision}
-          mode={(playing) => {
-            if (playing) return noop();
-            setOver(true);
-            clearTimeout(held.current);
-            held.current = setTimeout(done, HOLD_MS);
-          }}
-          readHistory={closed}
-        />
+        <Standing failed={fail}>
+          <BoardReplay
+            demo
+            speak={speak}
+            id={token}
+            live={api}
+            editor={editor}
+            free={free}
+            settle={settle}
+            revision={() => scene.revision}
+            mode={(playing) => {
+              if (playing) return noop();
+              setOver(true);
+              clearTimeout(held.current);
+              held.current = setTimeout(done, HOLD_MS);
+            }}
+            readHistory={closed}
+          />
+        </Standing>
       )}
       <div className="board-landing-spoken" aria-live="polite">
         {spoken.person && <p className="is-person">{spoken.person}</p>}
@@ -137,6 +178,16 @@ export function Landing({ google }: { google: ReactNode }) {
       .then((response) => response.json())
       .then((given: { tokens: string[] }) => setTokens(given.tokens))
       .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const failed = (event: ErrorEvent | PromiseRejectionEvent) =>
+      report('reason' in event ? event.reason : (event.error ?? event.message));
+    addEventListener('error', failed);
+    addEventListener('unhandledrejection', failed);
+    return () => {
+      removeEventListener('error', failed);
+      removeEventListener('unhandledrejection', failed);
+    };
   }, []);
   useEffect(() => {
     const press = (event: KeyboardEvent) => {

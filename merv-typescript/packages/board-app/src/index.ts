@@ -172,6 +172,25 @@ export const boardAppPlugin = {
     const { tokens } = kept.demos!;
     ctx.effect(() => ctx.api.mount('/board-demos', async () => ({ tokens }), { public: true }));
 
+    // What went wrong on the landing page in a visitor's browser, bounded, for the log alone.
+    ctx.effect(() =>
+      ctx.api.mount(
+        '/board-report',
+        async (req) => {
+          const url = new URL(req.url ?? '', 'http://here');
+          console.error(
+            JSON.stringify({
+              event: 'landing_error',
+              message: url.searchParams.get('m')?.slice(0, 600),
+              agent: String(req.headers['user-agent'] ?? '').slice(0, 160),
+            }),
+          );
+          return {};
+        },
+        { public: true },
+      ),
+    );
+
     if (person)
       ctx.effect(() =>
         ctx.api.mount(
