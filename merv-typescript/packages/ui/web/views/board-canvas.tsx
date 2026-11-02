@@ -484,7 +484,6 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const press = (event: KeyboardEvent) => {
       const target = event.target as Element;
       if (
-        speech.boardOnly ||
         !asksToAdd(event) ||
         typing(target) ||
         !(target === document.body || target.closest('.board-canvas')) ||

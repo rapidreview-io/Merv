@@ -8591,8 +8591,7 @@ html:has(.board-page) body {
 .board-reveal.is-dark {
   filter: invert(93%) hue-rotate(180deg);
 }
-/* What a selection can do, above it while it stands: keep or dismiss an agent's proposal, or ask
-   Pi to finish the sketch or try it another way. */
+/* What a selected proposal of an agent's can do, above it while it stands: keep or dismiss. */
 .board-selection {
   position: absolute;
   z-index: 3;
@@ -8623,14 +8622,6 @@ html:has(.board-page) body {
 .board-selection > button:disabled {
   color: var(--muted);
   cursor: default;
-}
-.board-selection-note {
-  padding: 0 var(--space-2);
-  line-height: 28px;
-  font-family: Excalifont, var(--font-body);
-  font-size: var(--text-sm);
-  color: var(--muted);
-  white-space: nowrap;
 }
 .board-selection > button:hover {
   background: var(--bg-soft);
@@ -9072,27 +9063,83 @@ html[data-theme='dark'] .board-replay-own {
 .board-add-panel:focus {
   outline: none;
 }
-.board-add-panel > .tabs {
-  display: flex;
-  padding: 0 var(--space-1);
-}
 /* Short enough that a collection's name and its Add stay on a phone's screen below it. */
 .board-add-panel .finder-list {
   max-height: min(40vh, 440px);
 }
-.board-add-filters {
+/* An app with nothing to list: three things of about one weight, with room between them. */
+.board-add-panel--plain {
+  width: min(420px, calc(100vw - 32px));
+  padding: var(--space-4, 16px);
+}
+.board-add-sections {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 28px;
+}
+.board-add-drop {
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
-  margin-top: var(--space-2);
+  height: 112px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  cursor: pointer;
 }
-.board-add-filters > .search {
-  flex: 1 1 160px;
+.board-add-drop:hover,
+.board-add-drop:focus-within {
+  background: var(--line-soft);
+}
+.board-add-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.board-add-field {
   display: flex;
+  gap: var(--space-2);
 }
-.board-add-upload {
-  margin-left: auto;
+.board-add-field > .input {
+  flex: 1;
+  min-width: 0;
+}
+.board-add-boards {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding-bottom: var(--space-1);
+}
+.board-add-boards > button {
+  all: unset;
+  box-sizing: border-box;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 132px;
+  height: 84px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+.board-add-boards > button:hover,
+.board-add-boards > button:focus-visible {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.board-add-boards span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .board-add-panel .upload-drop {
   position: absolute;
@@ -9113,41 +9160,12 @@ html[data-theme='dark'] .board-replay-own {
   overflow-wrap: anywhere;
   white-space: pre-line;
 }
-.board-add-link {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.board-add-link > .input {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-.board-add-check {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  color: var(--bg);
-}
-.board-add-check.is-picked {
-  border-color: var(--text);
-  background: var(--text);
-}
 .board-add-foot {
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-2);
   padding-top: var(--space-2);
   border-top: 1px solid var(--line-soft);
-}
-.board-add-foot .input {
-  flex: 1;
-  min-width: 0;
 }
 .board-add-foot .btn {
   margin-left: auto;

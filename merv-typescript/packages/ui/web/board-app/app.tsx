@@ -13,6 +13,7 @@ import { useRoomy } from '../theme';
 import { BoardStage } from '../views/board';
 import { PiProvider } from '../views/pi';
 import { BoardHead } from './head';
+import { Landing as FrontPage } from './landing';
 import { drawSample } from './sample';
 import { BoardBar, Conversation } from './talk';
 import type { ComponentProps } from 'react';
@@ -79,18 +80,11 @@ function Board() {
       beside={(outcomes) =>
         talking && roomy && !outcomes.shown && <Conversation close={() => setTalking(false)} />
       }
-      head={(board, outcomes) => (
-        <BoardHead
-          board={board}
-          outcomes={outcomes}
-          talk={() => setTalking(!talking)}
-          talking={talking}
-        />
-      )}
+      head={(board, outcomes) => <BoardHead board={board} outcomes={outcomes} />}
     >
       {(board) => (
         <>
-          <BoardBar board={board} open={() => setTalking(true)} />
+          <BoardBar board={board} talking={talking} show={setTalking} />
           {talking && !roomy && <Conversation close={() => setTalking(false)} />}
         </>
       )}
@@ -100,7 +94,7 @@ function Board() {
 
 export function BoardApp() {
   return (
-    <SessionProvider Chooser={OneProject}>
+    <SessionProvider Chooser={OneProject} Anonymous={FrontPage}>
       <PiProvider>
         <ErrorBoundary>
           <Routes>

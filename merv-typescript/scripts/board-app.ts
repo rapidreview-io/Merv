@@ -101,7 +101,7 @@ async function main() {
     configFile: join(root, 'config/board.json'),
     port,
   });
-  if (scripted) app.ctx.boardApp.machines.fetchImpl = boardModel;
+  if (scripted) app.ctx.boardApp.machines!.fetchImpl = boardModel;
   console.log(`${app.ctx.api.url}/ui/${scripted ? '   (scripted Pi: no model key)' : ''}`);
   const stop = () => void app.stop().then(() => process.exit(0));
   process.once('SIGINT', stop);

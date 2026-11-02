@@ -1,18 +1,76 @@
 {
   "plugins": [
-    { "id": "board-tools", "name": "@merv/board/tools" },
-    { "id": "board-ui", "name": "@merv/board/ui", "required": false },
-    { "id": "board", "name": "@merv/board" },
+    {
+      "id": "sandboxes-host",
+      "name": "@merv/sandboxes/host",
+      "config": {
+        "databaseUrlEnv": "SANDBOXES_DATABASE_URL",
+        "schema": "public",
+        "vaultKeyEnv": "SANDBOXES_VAULT_KEY",
+        "dataDir": "/data",
+        "publicOrigin": "https://sandboxes.YOUR-DOMAIN"
+      }
+    },
+    {
+      "id": "board-tools",
+      "name": "@merv/board/tools"
+    },
+    {
+      "id": "board-ui",
+      "name": "@merv/board/ui",
+      "required": false
+    },
+    {
+      "id": "board",
+      "name": "@merv/board"
+    },
     {
       "id": "board-app",
       "name": "@merv/board-app",
-      "config": { "directory": "${directory}", "solo": false, "dailyUsdPerPerson": 5 }
+      "config": {
+        "directory": "${directory}",
+        "solo": false,
+        "dailyUsdPerPerson": 20,
+        "rent": {
+          "profiles": [
+            {
+              "key": "standard",
+              "provider": "cloudflare-fleet",
+              "offerId": "standard",
+              "releaseId": "rt1_YOUR-RELEASE",
+              "leaseSeconds": 3600
+            }
+          ]
+        }
+      }
     },
-    { "id": "api", "name": "@merv/api", "config": { "host": "${host}", "port": "${port}" } },
-    { "id": "ui", "name": "@merv/ui", "config": { "bundle": "board" } },
-    { "id": "scope-tools", "name": "@merv/scope/tools" },
-    { "id": "scope-api", "name": "@merv/scope/api" },
-    { "id": "tools", "name": "@merv/api/tools-plugin" },
+    {
+      "id": "api",
+      "name": "@merv/api",
+      "config": {
+        "host": "${host}",
+        "port": "${port}"
+      }
+    },
+    {
+      "id": "ui",
+      "name": "@merv/ui",
+      "config": {
+        "bundle": "board"
+      }
+    },
+    {
+      "id": "scope-tools",
+      "name": "@merv/scope/tools"
+    },
+    {
+      "id": "scope-api",
+      "name": "@merv/scope/api"
+    },
+    {
+      "id": "tools",
+      "name": "@merv/api/tools-plugin"
+    },
     {
       "id": "identity",
       "name": "@merv/identity",
@@ -21,8 +79,30 @@
         "publishableKeyEnv": "BOARD_SUPABASE_PUBLISHABLE_KEY"
       }
     },
-    { "id": "scope", "name": "@merv/scope" },
-    { "id": "blobs", "name": "@merv/blobs", "config": { "root": "${directory}/blobs" } },
+    {
+      "id": "artifacts-tools",
+      "name": "@merv/artifacts/tools"
+    },
+    {
+      "id": "artifacts-ui",
+      "name": "@merv/artifacts/ui",
+      "required": false
+    },
+    {
+      "id": "artifacts",
+      "name": "@merv/artifacts"
+    },
+    {
+      "id": "scope",
+      "name": "@merv/scope"
+    },
+    {
+      "id": "blobs",
+      "name": "@merv/blobs",
+      "config": {
+        "root": "${directory}/blobs"
+      }
+    },
     {
       "id": "state",
       "name": "@merv/state",

@@ -41,7 +41,7 @@ export function statusLine({
   if (waiting) return name ? `${waiting} waiting from ${name}` : `${waiting} waiting`;
   if (name && (playing || drewMs < DRAWING_MS)) return saying || `${name} is drawing`;
   if (looking) return `${looking} is looking`;
-  if (thinking) return 'Pi is thinking';
+  if (thinking) return `${speech.pi} is thinking`;
   if (name && drewMs < DREW_MS) return `${name} drew ${Math.round(drewMs / 1000)} s ago`;
   return null;
 }
@@ -81,7 +81,8 @@ export function BoardTalk({
             {!following() && <span className="board-status-follow">Follow</span>}
           </button>
           {pi?.active &&
-            (line === 'Pi is drawing' || (now.name === 'Pi' && line === now.saying)) && (
+            (line === `${speech.pi} is drawing` ||
+              (now.name === speech.pi && line === now.saying)) && (
               <button
                 type="button"
                 className="board-status-stop"

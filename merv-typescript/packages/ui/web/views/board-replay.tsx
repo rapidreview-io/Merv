@@ -35,6 +35,8 @@ import { speech } from '../speech';
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
+/** A demo goes a little under a pen's pace, for each to run past a minute and be followed. */
+const DEMO_SPEED = 0.8;
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
@@ -53,8 +55,14 @@ export function BoardReplay({
   revision,
   mode,
   readHistory,
+  demo = false,
+  speak,
 }: {
   id: string;
+  /** Starts at once and from nothing, with no way to stop it: the landing page. */
+  demo?: boolean;
+  /** Takes the lines said as it plays, in place of the replay's own caption. */
+  speak?(line: string): void;
   readHistory?(after?: number): Promise<BoardHistory>;
   /** The board's own Excalidraw, which keeps going underneath. */
   live: ExcalidrawImperativeAPI;
@@ -293,7 +301,7 @@ export function BoardReplay({
             redraw((count) => count + 1);
           },
           ended: () => latest.current.leave(true),
-          say: (line) => say(line),
+          say: (line) => (speak ?? say)(line),
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {
@@ -323,7 +331,11 @@ export function BoardReplay({
         frame = requestAnimationFrame(() => {
           flushSync(() => setPhase('on'));
           projection.run();
-          projection.rewind();
+          if (demo) {
+            projection.seek(0);
+            projection.setSpeed(DEMO_SPEED);
+            projection.play();
+          } else projection.rewind();
         });
       });
     });
@@ -354,6 +366,7 @@ export function BoardReplay({
   // A board opened with ?play starts as it opens, once: the board app's sample on a first visit.
   useEffect(() => {
     const url = new URL(location.href);
+    if (demo) return toggling.current();
     if (!speech.boardOnly || !url.searchParams.has('play')) return;
     url.searchParams.delete('play');
     window.history.replaceState(window.history.state, '', url);

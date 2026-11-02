@@ -1,43 +1,18 @@
 /**
- * Pi, on the board: one line at the canvas's foot. Words go in it; the orb at its end is the voice;
- * while Pi works the line says Stop. What Pi says stands over the line for a moment; the whole
- * conversation is a pane, asked for. Each board has its own, named for the board.
+ * Pi, on the board: a few controls at the canvas's side, the only place it is. The orb is the voice,
+ * which is on from the first gesture for someone who has talked here before; while Pi works it is
+ * Stop. What Pi says while drawing stands over the board. The chat window is where words are read and
+ * typed, opened and shut from here, and neither touches the voice. Each board has its own, named for
+ * the board.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BoardSummary } from '@merv/board/models';
-import { call, refreshTools } from '../api';
+import { call, refreshTools, safely } from '../api';
 import { Icon } from '../icons';
-import { MarkdownPieces } from '../markdown';
-import { Model } from '../views/pi-cards';
-import { Floating } from '../views/pi-dock';
 import { Composer, Standing, Transcript, useAgent } from '../views/pi';
 
-/** How long Pi's last words stand over the line. */
-const SAID_MS = 12_000;
-
-/** What Pi said last, while it says it and for a moment after, as `open` will show in whole. */
-function Said({ open }: { open(): void }) {
-  const pi = useAgent()?.pi;
-  const last = pi?.snapshot?.commands.at(-1);
-  const said = last?.messages.filter((message) => message.role === 'assistant').at(-1)?.text;
-  // Only what has just been said: a board opened later starts with nothing over its line.
-  const fresh = !!last?.completedAt && Date.now() - Date.parse(last.completedAt) < SAID_MS;
-  const words = pi?.visible?.text || (!pi?.active && fresh ? said : '');
-  const [gone, setGone] = useState(false);
-  useEffect(() => {
-    setGone(false);
-    if (!words || pi?.active) return;
-    const timer = setTimeout(() => setGone(true), SAID_MS);
-    return () => clearTimeout(timer);
-  }, [words, pi?.active]);
-  if (!words || (gone && !pi?.active)) return null;
-  return (
-    <button type="button" className="board-said" onClick={open}>
-      <MarkdownPieces source={words} />
-    </button>
-  );
-}
-
+/** Whether this browser talks to Pi: 'on' once it has, 'off' once it was told to stop. */
+const VOICE = 'board:voice';
 /** What a board still called Untitled is called once it is asked something; Pi may name it better. */
 const named = (words: string) => {
   const line = words.replace(/\s+/g, ' ').trim();
@@ -46,10 +21,12 @@ const named = (words: string) => {
 
 export function BoardBar({
   board: { id: board, title },
-  open,
+  talking,
+  show,
 }: {
   board: Pick<BoardSummary, 'id' | 'title'>;
-  open(): void;
+  talking: boolean;
+  show(shown: boolean): void;
 }) {
   const agent = useAgent();
   const pi = agent?.pi;
@@ -81,82 +58,107 @@ export function BoardBar({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked, title]);
+  const state = voice?.state ?? 'off';
+  const live = state !== 'off';
+  const ready = !!here && !!selected && !pi?.blocked && !pi?.unavailable && !!pi?.snapshot;
+  useEffect(() => {
+    if (state === 'listening') safely(() => localStorage.setItem(VOICE, 'on'));
+  }, [state]);
+  // A browser needs a gesture before a microphone or a voice: someone who has talked here, and has
+  // not been told otherwise, starts with their first one. Once a page, so idling never comes back.
+  const armed = useRef(false);
+  useEffect(() => {
+    if (!ready || armed.current || live) return;
+    if (safely(() => localStorage.getItem(VOICE), null) !== 'on') return;
+    armed.current = true;
+    const events = ['pointerdown', 'keydown'];
+    const first = () => {
+      for (const kind of events) removeEventListener(kind, first, true);
+      voice?.start();
+    };
+    void navigator.permissions
+      ?.query({ name: 'microphone' as PermissionName })
+      .then(({ state: allowed }) => {
+        if (allowed === 'granted') for (const kind of events) addEventListener(kind, first, true);
+      })
+      .catch(() => undefined);
+    return () => {
+      for (const kind of events) removeEventListener(kind, first, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, live]);
   if (!pi || !voice) return <div className="board-bar" />;
-  // Said by voice, the voice's own orb floats; Show chat there is the conversation here.
-  if (voice.state !== 'off')
-    return (
-      <Floating
-        pi={pi}
-        voice={voice}
-        expand={() => {
-          voice.setCompact(true);
-          open();
-        }}
-        hide={() => voice.stop()}
-      />
-    );
-  const { snapshot, active, draft, blocked, unavailable, busy } = pi;
-  const ready = !!here && !!selected && !blocked && !unavailable && !!snapshot;
+  const fresh = safely(() => localStorage.getItem(VOICE), null) === null;
   return (
     <div className="board-bar">
-      <Said open={open} />
       {(pi.error || voice.problem) && (
-        <p className="board-said board-said--bad" role="alert">
+        <p className="board-said--bad" role="alert">
           {pi.error || voice.problem}
         </p>
       )}
-      <div className="board-bar-line">
-        <Composer pi={pi} rows={1} placeholder={ready ? 'Ask Pi' : ''} />
-        <span className="board-bar-end">
-          {snapshot && snapshot.models.length > 1 && (
-            <Model
-              models={snapshot.models}
-              model={snapshot.conversation.model}
-              busy={busy}
-              pick={pi.pickModel}
-            />
-          )}
-          {active && !draft.trim() ? (
-            <button
-              type="button"
-              className="board-orb board-orb--stop"
-              title="Stop"
-              onClick={() => void pi.stop()}
-            >
-              <span className="sr-only">Stop</span>
-            </button>
-          ) : draft.trim() ? (
-            <button
-              type="button"
-              className="board-orb board-orb--send"
-              title="Send"
-              disabled={busy || !ready}
-              onClick={() => void pi.send()}
-            >
-              <Icon name="arrow-right" size={18} />
-              <span className="sr-only">Send</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="board-orb"
-              title="Talk"
-              disabled={!ready}
-              onClick={() => {
-                voice.setCompact(true);
-                voice.start();
-              }}
-            >
-              <span className="sr-only">Talk to Pi</span>
-            </button>
-          )}
-        </span>
-      </div>
+      {pi.active ? (
+        <button
+          type="button"
+          className="board-orb board-orb--stop"
+          title="Stop"
+          onClick={() => {
+            voice.hush();
+            void pi.stop();
+          }}
+        >
+          <span className="sr-only">Stop</span>
+        </button>
+      ) : live ? (
+        <button
+          type="button"
+          className={`board-orb board-orb--live${voice.muted ? ' is-muted' : ''}`}
+          data-state={state}
+          aria-pressed={voice.muted}
+          title={voice.muted ? 'Unmute' : 'Mute'}
+          onClick={voice.mute}
+        >
+          <span className="sr-only">{voice.muted ? 'Unmute' : 'Mute'}</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={`board-orb${fresh ? ' board-orb--invite' : ''}`}
+          title="Talk"
+          disabled={!ready}
+          onClick={voice.start}
+        >
+          <span className="sr-only">Talk to Merv</span>
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn-icon"
+        aria-pressed={talking}
+        aria-label={talking ? 'Hide chat' : 'Show chat'}
+        title={talking ? 'Hide chat' : 'Show chat'}
+        onClick={() => show(!talking)}
+      >
+        <Icon name="chat" size={16} />
+      </button>
+      {live && (
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label="End voice"
+          title="End voice"
+          onClick={() => {
+            safely(() => localStorage.setItem(VOICE, 'off'));
+            voice.stop();
+          }}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      )}
     </div>
   );
 }
 
-/** The whole conversation, in the place the outcome takes beside the board. */
+/** The chat: the whole conversation and where to type, in the place the outcome takes beside the board. */
 export function Conversation({ close }: { close(): void }) {
   const pi = useAgent()?.pi;
   if (!pi) return null;
@@ -172,6 +174,7 @@ export function Conversation({ close }: { close(): void }) {
         </button>
       </header>
       <Transcript pi={pi} />
+      <Composer pi={pi} rows={2} placeholder="Ask Merv" />
     </aside>
   );
 }

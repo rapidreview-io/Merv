@@ -1,6 +1,7 @@
 # @merv/board-app
 
-The board as a product of its own: the whiteboard, Pi, and a way between boards. No projects, tasks,
+The board as a product of its own: the whiteboard, its agent (Merv to its people, Pi in the code),
+and a way between boards. No projects, tasks,
 experiments, workers or sandboxes reach its people or its agent.
 
 ```bash
@@ -16,8 +17,8 @@ leaves the computer. `--scripted` forces the stand-in and `--build` rebuilds the
 
 `config/board.json` lists what it needs and nothing else: State, Scope, Identity, the API and its
 tools, Blobs, the UI runtime, Board and this plugin. Merv's own `config/default.json` is untouched.
-`config/board.hosted.example.json` is the same with sign-in on (Supabase, as Merv uses) and one
-person's spending capped.
+`config/board.hosted.example.json` is the same with sign-in on (Supabase, as Merv uses), real machines,
+and one person's spending capped at $20 a day.
 
 | Here                      | What it does                                                                                 |
 | ------------------------- | -------------------------------------------------------------------------------------------- |
@@ -35,5 +36,6 @@ playing (`web/board-app/sample.ts`).
 upstream shows up as a failure of `tests/board-app.test.ts`, which holds that nothing Pi is told or
 offered names Merv's work.
 
-Artifacts are out: pasted images are the board's own, and the Files tab, PDF figure crops and session
-transcript cards go with them.
+Signed out, `web/board-app/landing.tsx` plays `src/demos.ts` on a real board, read through shares from
+`/board-demos`; any touch slides in Google sign-in. `/ui/welcome` shows it to anyone. With `rent`, Fleet
+rents real machines through `@merv/sandboxes/host`; without it a worker runs in this process.

@@ -119,66 +119,13 @@
 .board-bar {
   position: absolute;
   z-index: 5;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  width: min(560px, calc(100% - 340px));
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  pointer-events: none;
-}
-.board-bar > * {
-  pointer-events: auto;
-}
-.board-bar-line {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-1);
-  padding: 4px 4px 4px var(--space-1);
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: 22px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.07);
-}
-.board-bar .pi-compose {
-  flex: 1;
-  min-width: 0;
-  display: block;
-  padding: 0;
-  border: 0;
-}
-.board-bar .pi-compose-actions {
-  display: none;
-}
-.board-bar .pi-compose .textarea {
-  display: block;
-  min-height: 34px;
-  max-height: 120px;
-  padding: 7px var(--space-2);
-  border: 0;
-  background: transparent;
-  resize: none;
-  field-sizing: content;
-  box-shadow: none;
-  outline: none;
-}
-.board-bar-end {
-  flex: none;
-  display: flex;
   align-items: center;
-  gap: var(--space-1);
-}
-.board-bar-end .pi-model-button {
-  white-space: nowrap;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.board-bar-end .pi-menu {
-  top: auto;
-  bottom: calc(100% + 8px);
-  right: 0;
-  left: auto;
+  gap: var(--space-2);
 }
 .board-orb {
   all: unset;
@@ -205,9 +152,6 @@
   background: var(--line);
   cursor: default;
 }
-.board-orb--send {
-  background: #2563eb;
-}
 .board-orb--stop {
   background: var(--text);
 }
@@ -218,34 +162,20 @@
   border-radius: 2px;
   background: var(--bg-elev);
 }
-.board-said {
-  all: unset;
-  box-sizing: border-box;
-  align-self: center;
-  max-width: 100%;
-  max-height: 96px;
-  overflow: hidden;
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  background: var(--bg-elev);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.05);
-  cursor: pointer;
-}
-.board-said p {
-  margin: 0;
-}
 .board-said--bad {
+  position: absolute;
+  right: 100%;
+  width: max-content;
+  max-width: 280px;
+  margin: 0 var(--space-2) 0 0;
   color: var(--refutes);
   cursor: default;
 }
-/* What Pi is doing stands over the line at the foot, in the app's own hand. */
+/* What Pi is doing stands at the foot of the board, in the app's own hand. */
 .board-page .board-status {
-  bottom: 72px;
+  bottom: 20px;
   font-family: var(--font-body);
 }
-.board-main:has(.board-scrub.is-in) .board-bar,
 .board-canvas.is-replaying .board-status {
   display: none;
 }
@@ -275,23 +205,6 @@
   overflow-y: auto;
   padding: var(--space-3);
 }
-/* A canvas beside a pane: clear of the zoom and undo at its left and Play at its right. */
-@container board-main (max-width: 960px) {
-  .board-bar {
-    width: min(560px, calc(100% - 440px));
-    min-width: 300px;
-  }
-}
-/* Excalidraw's phone layout, however narrow the canvas came to be: its tools run along the bottom,
-   so the line stands on them, the full width, beside Play. */
-.board-main:has(.excalidraw--mobile) .board-bar {
-  left: var(--space-2);
-  right: calc(var(--space-2) + var(--lg-button-size, 2.25rem) + var(--space-2));
-  bottom: 64px;
-  transform: none;
-  width: auto;
-  min-width: 0;
-}
 .board-main:has(.excalidraw--mobile):not(:has(.board-scrub.is-in)) .board-play {
   right: var(--space-2);
   bottom: 72px;
@@ -310,7 +223,7 @@
     bottom: auto;
   }
 }
-/* A column beside the canvas; on a phone the whole page, with the line still over its foot. */
+/* A column beside the canvas; on a phone the whole page. */
 .board-plane:has(> .board-talk-pane) {
   grid-template-columns: minmax(0, 1fr) min(400px, 50%);
 }
@@ -318,10 +231,6 @@
   position: absolute;
   z-index: 6;
   inset: 44px 0 0 0;
-  padding-bottom: 124px;
-}
-.board-main:has(> .board-talk-pane) .board-bar {
-  z-index: 7;
 }
 /* Excalidraw's own help is in its menu; Play takes the corner. */
 .board-page .excalidraw .help-icon {
@@ -342,4 +251,253 @@
 /* Excalidraw's own coaching under its toolbar: this app has none. */
 .board-page .excalidraw .HintViewer {
   display: none;
+}
+
+/* The voice, live: the orb breathes while it is up, and is still and hollow while muted. */
+.board-orb--live {
+  animation: board-orb-breathe 2.4s ease-in-out infinite;
+}
+.board-orb--live[data-state='connecting'],
+.board-orb--live[data-state='closing'] {
+  background: var(--line);
+}
+.board-orb--live.is-muted {
+  animation: none;
+  background: var(--surface, transparent);
+  box-shadow: inset 0 0 0 2px var(--muted);
+}
+@keyframes board-orb-breathe {
+  50% {
+    transform: scale(1.1);
+  }
+}
+/* Someone who has never talked here: the orb asks, a few times, and then waits. */
+.board-orb--invite {
+  animation: board-orb-invite 1.6s ease-out 4;
+}
+@keyframes board-orb-invite {
+  from {
+    box-shadow: 0 0 0 0 rgb(37 99 235 / 50%);
+  }
+  to {
+    box-shadow: 0 0 0 14px rgb(37 99 235 / 0%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-orb--live,
+  .board-orb--invite {
+    animation: none;
+  }
+}
+.board-talk-pane .pi-compose {
+  margin: var(--space-2);
+}
+
+/* The landing page: the board, played; nothing on it answers but the way to sign in. */
+/* Unseen, not gone: the scrubber still measures itself to draw. */
+.board-landing .board-scrub,
+.board-landing .board-scrub *,
+.board-landing .board-scrub-ends,
+.board-landing .board-scrub-ends *,
+.board-landing .board-play {
+  visibility: hidden !important;
+}
+.board-landing-catch {
+  position: absolute;
+  z-index: 1000;
+  inset: 0;
+  cursor: pointer;
+}
+.board-landing-slider {
+  position: fixed;
+  z-index: 1002;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 32px;
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 35%);
+  transform: translateX(calc(100% + 32px));
+  visibility: hidden;
+  transition:
+    transform 420ms cubic-bezier(0.22, 1.2, 0.36, 1),
+    visibility 420ms;
+}
+.board-landing-slider.is-in {
+  transform: none;
+  visibility: visible;
+}
+/* Pi, saying hello: the same orb as on the board, larger, and it comes in with a little bounce. */
+.board-landing-pi {
+  width: 72px;
+  height: 72px;
+  margin-bottom: var(--space-2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #7ab0ff, #2563eb 70%);
+  box-shadow: 0 8px 32px rgb(37 99 235 / 45%);
+}
+.board-landing-slider.is-in .board-landing-pi {
+  animation:
+    board-landing-hello 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 120ms backwards,
+    board-orb-breathe 3s ease-in-out 900ms infinite;
+}
+@keyframes board-landing-hello {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+.board-landing-slider h1 {
+  margin: 0;
+  margin-bottom: var(--space-3);
+  font-family: Excalifont, var(--font-body);
+  font-size: 29px;
+  font-weight: 400;
+}
+.board-landing-slider p {
+  margin: 0 0 var(--space-3);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.board-landing-later {
+  color: var(--muted);
+}
+.board-landing-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+}
+.btn-google {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 48px;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f1f1f;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+.btn-google:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 30%);
+}
+.btn-google:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn-google:disabled {
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-landing-slider,
+  .board-landing-slider.is-in .board-landing-pi {
+    animation: none;
+    transition: none;
+  }
+}
+.board-landing {
+  position: fixed;
+  inset: 0;
+  display: flex;
+}
+.board-landing .board-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.board-landing .board-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* The line over the board stands out of the way until the pointer goes to the very top. A screen
+   with no pointer to hover keeps it. */
+@media (hover: hover) {
+  .board-page .board-main {
+    position: relative;
+  }
+  .board-page .board-line {
+    position: absolute;
+    z-index: 1001;
+    top: 0;
+    left: 0;
+    right: 0;
+    opacity: 0;
+    transform: translateY(calc(-100% + 8px));
+    transition:
+      transform 160ms ease-out,
+      opacity 160ms ease-out;
+  }
+  .board-page .board-line:hover,
+  .board-page .board-line:focus-within,
+  .board-page .board-line:has([aria-expanded='true']) {
+    opacity: 1;
+    transform: none;
+  }
+  .board-main > .board-talk-pane {
+    top: 0;
+  }
+}
+/* The board holds the finished drawing from the start: it stays unseen until the drawing begins. */
+.board-landing-demo {
+  display: contents;
+}
+.board-landing-demo:not(.is-over):not(:has(.board-replay-own.is-in)) > .excalidraw {
+  visibility: hidden;
+}
+/* What is said in a demo, at the board's foot: the person on the left, in their own colour. */
+.board-landing-spoken {
+  position: absolute;
+  z-index: 999;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 340px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+.board-landing-spoken p {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.board-landing-spoken .is-person {
+  align-self: flex-start;
+  background: #2563eb;
+  border-color: transparent;
+  color: #fff;
+}
+@media (max-width: 730px) {
+  .board-landing-spoken {
+    width: calc(100% - 24px);
+    bottom: 72px;
+  }
 }

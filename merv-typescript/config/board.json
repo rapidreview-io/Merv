@@ -1,25 +1,82 @@
 {
   "plugins": [
-    { "id": "board-tools", "name": "@merv/board/tools" },
-    { "id": "board-ui", "name": "@merv/board/ui", "required": false },
-    { "id": "board", "name": "@merv/board" },
+    {
+      "id": "board-tools",
+      "name": "@merv/board/tools"
+    },
+    {
+      "id": "board-ui",
+      "name": "@merv/board/ui",
+      "required": false
+    },
+    {
+      "id": "board",
+      "name": "@merv/board"
+    },
     {
       "id": "board-app",
       "name": "@merv/board-app",
-      "config": { "directory": "${directory}", "solo": true }
+      "config": {
+        "directory": "${directory}",
+        "solo": true
+      }
     },
     {
       "id": "api",
       "name": "@merv/api",
-      "config": { "host": "${host}", "port": "${port}" }
+      "config": {
+        "host": "${host}",
+        "port": "${port}"
+      }
     },
-    { "id": "ui", "name": "@merv/ui", "config": { "bundle": "board" } },
-    { "id": "scope-tools", "name": "@merv/scope/tools" },
-    { "id": "scope-api", "name": "@merv/scope/api" },
-    { "id": "tools", "name": "@merv/api/tools-plugin" },
-    { "id": "identity", "name": "@merv/identity", "config": {} },
-    { "id": "scope", "name": "@merv/scope" },
-    { "id": "blobs", "name": "@merv/blobs", "config": { "root": "${directory}/blobs" } },
+    {
+      "id": "ui",
+      "name": "@merv/ui",
+      "config": {
+        "bundle": "board"
+      }
+    },
+    {
+      "id": "scope-tools",
+      "name": "@merv/scope/tools"
+    },
+    {
+      "id": "scope-api",
+      "name": "@merv/scope/api"
+    },
+    {
+      "id": "tools",
+      "name": "@merv/api/tools-plugin"
+    },
+    {
+      "id": "identity",
+      "name": "@merv/identity",
+      "config": {}
+    },
+    {
+      "id": "artifacts-tools",
+      "name": "@merv/artifacts/tools"
+    },
+    {
+      "id": "artifacts-ui",
+      "name": "@merv/artifacts/ui",
+      "required": false
+    },
+    {
+      "id": "artifacts",
+      "name": "@merv/artifacts"
+    },
+    {
+      "id": "scope",
+      "name": "@merv/scope"
+    },
+    {
+      "id": "blobs",
+      "name": "@merv/blobs",
+      "config": {
+        "root": "${directory}/blobs"
+      }
+    },
     {
       "id": "state",
       "name": "@merv/state",

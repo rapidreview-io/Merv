@@ -7,9 +7,9 @@ import { Ago, SearchField, useDismiss, useMoreMenu } from '../components';
 import { Icon } from '../icons';
 import { useSession } from '../session';
 import { onWorn, useRoomy, wear, worn } from '../theme';
-import { asksToAdd } from '../views/board-add';
 import { BoardTitle } from '../views/board';
 import { OutcomeWord, useOutcomes } from '../views/board-outcome';
+import { useAgent } from '../views/pi';
 import { newBoard } from './app';
 
 /** Past this many boards the list gets a search. */
@@ -85,18 +85,19 @@ function BoardMenu({
   board,
   outcomes,
   rename,
-  talk,
   roomy,
 }: {
   board: BoardSummary;
   outcomes: ReturnType<typeof useOutcomes>;
   rename(): void;
-  talk(): void;
   roomy: boolean;
 }) {
   const navigate = useNavigate();
   const { signOut, account } = useSession();
   const theme = useSyncExternalStore(onWorn, worn);
+  const pi = useAgent()?.pi;
+  const models = pi?.snapshot?.models;
+  const chosen = pi?.snapshot?.conversation.model;
   const { open, close, item, menu } = useMoreMenu();
   const [sure, setSure] = useState(false);
   const [link, setLink] = useState('');
@@ -117,7 +118,6 @@ function BoardMenu({
   return menu(
     <>
       {item('Rename', () => (close(), rename()))}
-      {!roomy && item('Conversation', () => (close(), talk()))}
       {!roomy && item('Outcome', () => (close(), void outcomes.toggle().catch(() => undefined)))}
       {link
         ? item('Revoke link', () => void share(true).catch(() => undefined))
@@ -127,6 +127,12 @@ function BoardMenu({
           Copied. Anyone with it can watch this board, erased work too.
         </p>
       )}
+      {!!models?.length &&
+        models.length > 1 &&
+        item(`Model · ${models.find(({ id }) => id === chosen)?.label ?? ''}`, () => {
+          const next = models[(models.findIndex(({ id }) => id === chosen) + 1) % models.length]!;
+          void pi!.pickModel(next.id);
+        })}
       {item(`Theme · ${theme}`, () => wear(theme === 'dark' ? 'light' : 'dark'))}
       {account.kind === 'user' && item('Sign out', signOut)}
       {item(sure ? 'Archive: press again' : 'Archive', () => void archive().catch(() => undefined))}
@@ -137,29 +143,14 @@ function BoardMenu({
 export function BoardHead({
   board,
   outcomes,
-  talk,
-  talking,
 }: {
   board: BoardSummary;
   outcomes: ReturnType<typeof useOutcomes>;
-  talk(): void;
-  talking: boolean;
 }) {
   const navigate = useNavigate();
   const roomy = useRoomy();
   const [switching, setSwitching] = useState(false);
   const [editing, setEditing] = useState(false);
-  // ⌘K goes to another board from anywhere but a field being written in; the + has its own button.
-  useEffect(() => {
-    const press = (event: globalThis.KeyboardEvent) => {
-      if (!asksToAdd(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setSwitching((now) => !now);
-    };
-    window.addEventListener('keydown', press, true);
-    return () => window.removeEventListener('keydown', press, true);
-  }, []);
   return (
     <header className="board-line">
       <div className="board-line-title">
@@ -189,22 +180,11 @@ export function BoardHead({
         {switching && <Switcher current={board.id} close={() => setSwitching(false)} />}
       </div>
       <span className="board-line-end">
-        {roomy && (
-          <button
-            type="button"
-            className="btn-text board-outcome-word"
-            aria-pressed={talking}
-            onClick={talk}
-          >
-            Conversation
-          </button>
-        )}
         {roomy && <OutcomeWord place={outcomes} />}
         <BoardMenu
           board={board}
           outcomes={outcomes}
           rename={() => setEditing(true)}
-          talk={talk}
           roomy={roomy}
         />
       </span>

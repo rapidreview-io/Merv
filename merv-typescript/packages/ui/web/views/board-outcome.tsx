@@ -574,7 +574,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       if (said) return;
       askedDraft.current = false;
       setRefused(true);
-      setProblem('Not sent: Pi is busy or unavailable. Try again then.');
+      setProblem(`Not sent: ${speech.pi} is busy or unavailable. Try again then.`);
     });
   const fleet = () =>
     act(async () => {
@@ -597,7 +597,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   useEffect(() => {
     if (askedDraft.current && !busy && !asking && !sending) askedDraft.current = false;
     const working = (askedDraft.current || asking) && (busy || asking);
-    editor.current?.working(working ? 'Pi' : null);
+    editor.current?.working(working ? speech.pi : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, asking, lead]);
 
@@ -777,7 +777,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
                 What did this board lead to? Write it here
                 {roomy && (
                   <>
-                    , or ask Pi for{' '}
+                    , or ask {speech.pi} for{' '}
                     {[
                       ['a plan', 'a plan'],
                       ['a PRD', 'a PRD'],

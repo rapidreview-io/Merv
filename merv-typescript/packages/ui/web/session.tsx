@@ -90,13 +90,41 @@ function extractToken(text: string): string {
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : 'Request failed.');
 
+/** The way in with Google, in Google's own colours. */
+export const GoogleButton = (props: { disabled?: boolean; onClick?(): void }) => (
+  <button type="button" className="btn-google" {...props}>
+    <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
+      />
+    </svg>
+    Continue with Google
+  </button>
+);
+
 function SignIn({
   client,
   configuration,
   onAttempt,
   initialError,
+  googleOnly = false,
 }: {
   client?: SupabaseClient;
+  /** Only the way in with Google, for a page that has its own place for it. */
+  googleOnly?: boolean;
   configuration?: AuthConfiguration;
   /** The person has handed something over: only from here on can a refusal be theirs. */
   onAttempt(): void;
@@ -209,6 +237,13 @@ function SignIn({
       </button>
     </form>
   );
+  if (googleOnly)
+    return (
+      <>
+        <GoogleButton disabled={busy} onClick={() => void googleSignIn()} />
+        <Failure message={error} id={refusal} />
+      </>
+    );
   const person = client && !keyed;
   const verb = person && joining ? 'Sign up' : 'Sign in';
   return (
@@ -533,12 +568,15 @@ export function SessionProvider({
   accountOnly = false,
   preservePath = false,
   Chooser = Projects,
+  Anonymous,
 }: {
   children: ReactNode;
   accountOnly?: boolean;
   preservePath?: boolean;
   /** Where a sign-in with several projects, or none, goes; Merv's chooser unless the app has its own. */
   Chooser?: (props: ComponentProps<typeof Projects>) => ReactNode;
+  /** What someone signed out sees instead of the sign-in page, given the way in with Google. */
+  Anonymous?: (props: { google: ReactNode }) => ReactNode;
 }) {
   const invitationId = new URLSearchParams(window.location.search).get('invitation');
   if (invitationId) safely(() => sessionStorage.setItem('merv:invitation', invitationId));
@@ -686,6 +724,22 @@ export function SessionProvider({
       <main className="signin empty">
         {state.error} <a href="/ui/admin">← Admin</a>
       </main>
+    );
+  if (state.phase === 'anonymous' && Anonymous)
+    return (
+      <Anonymous
+        google={
+          <SignIn
+            googleOnly
+            client={auth?.client}
+            configuration={auth?.configuration}
+            initialError={state.error}
+            onAttempt={() => {
+              attempted.current = true;
+            }}
+          />
+        }
+      />
     );
   if (state.phase === 'anonymous')
     return (

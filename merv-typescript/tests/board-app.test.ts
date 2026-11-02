@@ -11,9 +11,9 @@ import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { stateConfig } from './fixtures/state.js';
 
-/** What the board app must never say to its agent: Merv's work, and Merv itself. */
+/** What the board app must never say to its agent: the research product's work. */
 const MERV =
-  /\b(merv|tasks?|experiments?|sandbox(es)?|fleets?|projects?|artifacts?|papers?|records?|workers?|sessions?|reviews?|machines?|research)\b/i;
+  /\b(tasks?|experiments?|sandbox(es)?|fleets?|projects?|papers?|records?|workers?|reviews?|machines?|research)\b/i;
 const composition = JSON.parse(
   readFileSync(new URL('../config/board.json', import.meta.url), 'utf8'),
 ) as ApplicationConfig;
@@ -28,12 +28,14 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
   t.after(() => app.stop());
   const { ctx } = app;
   const names = app.status().map((entry) => entry.name);
-  for (const gone of ['tasks', 'experiments', 'sessions', 'workflows', 'artifacts', 'sandboxes'])
+  for (const gone of ['tasks', 'experiments', 'sessions', 'workflows'])
     assert.ok(!names.includes(`@merv/${gone}`), gone);
   assert.ok(app.status().every((entry) => entry.state === 'active'));
 
   const prompt = piInstructions(ctx.tools.instructions(), surface);
   assert.doesNotMatch(prompt, MERV, 'instructions');
+  assert.doesNotMatch(prompt, /\bPi\b/, 'its name');
+  assert.doesNotMatch(surface.voice(voiceInstructions), /\bPi\b/, 'its name in the voice');
   assert.doesNotMatch(surface.voice(voiceInstructions), MERV, 'voice');
   const notes = turnNotes({
     role: 'operator',
@@ -52,7 +54,11 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
     .filter(({ name }) => grants.has(name))
     .map((tool) => surface.tool(restricted(tool, grants.get(tool.name))));
   // screen.read is offered to conversations alone; a turn's offer is what pi.prompt shows.
-  assert.deepEqual(offered.map(({ name }) => name).sort(), ['board.read', 'board.write']);
+  assert.deepEqual(offered.map(({ name }) => name).sort(), [
+    'artifact.read',
+    'board.read',
+    'board.write',
+  ]);
   const screen = surface.tool({ name: 'screen.read', description: 'x', inputSchema: {} } as never);
   assert.doesNotMatch(JSON.stringify(screen), MERV, 'screen.read');
   for (const tool of offered) {
@@ -61,5 +67,5 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
     );
     assert.deepEqual(said, [], tool.name);
   }
-  assert.doesNotMatch(JSON.stringify(offered), /"image"/, 'the image operation needs files');
+  assert.match(JSON.stringify(offered), /"image"/, 'files reach the board as pictures');
 });
