@@ -34,8 +34,8 @@ const editor: ComponentProps<typeof Excalidraw> = {
   children: <MainMenu />,
 };
 
-/** A person's words come as fast as a person says them; the agent answers a moment after. */
-const WORD_MS = 420;
+/** A person's words come a letter at a time, as fast as they type; the agent answers a moment after. */
+const LETTER_MS = 70;
 const ANSWER_MS = 700;
 /** How far apart a demo's steps are, before the pen's own time. */
 const STEP_MS = 800;
@@ -47,12 +47,11 @@ function useSpoken() {
   useEffect(() => () => clearTimeout(timer.current), []);
   const say = useCallback((person: string, agent: string, done: () => void) => {
     clearTimeout(timer.current);
-    const words = person.split(' ');
     const type = (count: number) => {
-      setSpoken({ person: words.slice(0, count).join(' '), agent: '' });
+      setSpoken({ person: person.slice(0, count), agent: '' });
       timer.current =
-        count < words.length
-          ? setTimeout(() => type(count + 1), WORD_MS)
+        count < person.length
+          ? setTimeout(() => type(count + 1), LETTER_MS)
           : setTimeout(() => {
               setSpoken({ person, agent });
               done();
