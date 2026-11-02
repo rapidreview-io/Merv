@@ -68,6 +68,9 @@ const wordsOf = ({ content }: { content: string | { type: string; text?: string 
 // items (of 512).
 const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
+/** The custom session entry saying a summary was left unfinished at `tokens`, since summary `after`. */
+const ABANDONED = 'merv.summary_abandoned';
+type AbandonedSummary = { tokens: number; after: string | null };
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
 type Post = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
 
@@ -698,8 +701,23 @@ async function executeTurn(
   // Past three quarters of the window a summary starts beside the turn, from a copy of the branch
   // as it stands. When Pi compacts it takes that summary, waiting if it must, so all after its
   // first kept entry stays word for word; one that failed leaves Pi to make its own. Each is spent
-  // before another starts.
-  type Backup = { made: Promise<CompactionResult | undefined>; done?: CompactionResult };
+  // before another starts. The relay keeps a cut-off call's whole charge, so one the turn ended
+  // before it finished is marked in the checkpoint: none starts again until the context has grown
+  // by a tenth of the window, or a later summary has made the mark stale.
+  type Backup = {
+    made: Promise<CompactionResult | undefined>;
+    done?: CompactionResult;
+    from: number;
+  };
+  const lastSummary = () =>
+    manager.getBranch().findLast((entry) => entry.type === 'compaction')?.id ?? null;
+  const abandoned = () => {
+    const mark = manager
+      .getBranch()
+      .findLast((entry) => entry.type === 'custom' && entry.customType === ABANDONED);
+    const data = mark?.type === 'custom' ? (mark.data as AbandonedSummary) : undefined;
+    return data?.after === lastSummary() ? data.tokens : 0;
+  };
   let backup: Backup | undefined;
   const backups = new AbortController();
   const { session } = await createAgentSession({
@@ -717,7 +735,8 @@ async function executeTurn(
       narrow ||
       work.previousInterrupted ||
       tokens <= contextWindow * 0.75 ||
-      tokens > contextWindow - reserveTokens
+      tokens > contextWindow - reserveTokens ||
+      tokens <= abandoned() + reserveTokens
     )
       return;
     const copy = SessionManager.inMemory('/pi-worker', undefined, [
@@ -744,7 +763,7 @@ async function executeTurn(
         beside.dispose();
       }
     };
-    const started: Backup = { made: summarize().catch(() => undefined) };
+    const started: Backup = { made: summarize().catch(() => undefined), from: tokens };
     backup = started;
   };
   const modelEndpoint = new URL(
@@ -915,10 +934,14 @@ async function executeTurn(
         index === at ? { ...message, content: [{ type: 'text', text: given }] } : message,
       ) as typeof context;
     };
-    // A turn restored past the point starts one at once. Estimated: the last call's usage may
-    // predate a summary the checkpoint holds.
+    // A turn restored past the point starts one at once. Estimated, as a call would count it with
+    // what it always carries: the last call's usage may predate a summary the checkpoint holds.
     summarizeBeside(
-      session.messages.reduce((tokens, message) => tokens + estimateTokens(message), 0),
+      session.messages.reduce(
+        (tokens, message) =>
+          message.role === 'system' ? tokens : tokens + estimateTokens(message),
+        Math.ceil(fixed / 4),
+      ),
     );
     await session.prompt(prompt, { expandPromptTemplates: false });
     for (;;) {
@@ -949,6 +972,10 @@ async function executeTurn(
         true,
         spare.usage,
       );
+    else if (backup) {
+      const mark: AbandonedSummary = { tokens: backup.from, after: lastSummary() };
+      manager.appendCustomEntry(ABANDONED, mark);
+    }
     const branch = manager.getBranch();
     const turn = branch.slice(begun ? branch.findIndex((entry) => entry.id === begun) + 1 : 0);
     const omitted = new Set(
