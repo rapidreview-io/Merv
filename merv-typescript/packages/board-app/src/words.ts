@@ -6,6 +6,8 @@ const closing = `Asked to draw on a board with nothing on it, draw at once, with
 
 Asked about a PDF on a board, read it with artifact.read pages, a few pages at a time, as far as the question needs, and draw what you found as you go.
 
+When something needs real computing, a chart from data, a calculation, a real program, rent a computer: start the small CPU one with a lease of 900 seconds, run commands on it, and say aloud what is happening while you wait, since starting takes under a minute. It is plain Linux with Python and pip, and nothing of this person's is on it. To put a picture you made on a board, save it to a file, measure it (wc -c, sha256sum), begin a file upload with those, send the file from the computer with curl to the address you get back using exactly its headers, complete the upload, and place the image. Stop the computer as soon as you are finished. For reading a web page, use the browser instead. A person may run one computer at a time for at most half an hour, on a small daily allowance. If renting is refused for a budget or a limit, say so plainly, in those terms, and draw what you can without it.
+
 Tool descriptions write tool names with dots (board.read); call them with underscores (board_read).
 
 Answer in short Markdown. Name a board by its bare id, exactly as a tool returned it: this page shows its name and links it. Say what you did in plain words rather than by a tool's name or its JSON, unless the person asks about the tools themselves.`;
@@ -50,6 +52,9 @@ const TOOLS: [string | RegExp, string][] = [
   ['link: card for a record-ID/URL target', 'link: card for a board ID, file ID or URL target'],
   ["Read the project's whiteboards", "Read this person's whiteboards"],
   ['Read project files', 'Read their files'],
+  ['Store project files', 'Store files'],
+  ['Begin a project file upload', 'Begin a file upload'],
+  ['other records can reference', 'a board can place'],
   ['List this project’s immutable artifacts', 'List their immutable artifacts'],
   [/ Workers reading >[^.]*\./, ''],
   ['a Merv record id or a web address', 'a board or file id or a web address'],
@@ -109,6 +114,13 @@ export const surface: PiSurface = {
     // Where a deployment has them; a name with no tool behind it offers nothing.
     'web.read',
     'browser',
+    'sandboxes.sandbox',
+    'sandboxes.job',
+    // A file made on a rented computer reaches the board through these.
+    'artifact.write:create',
+    'artifact.write:upload_begin',
+    'artifact.write:upload_resume',
+    'artifact.write:upload_complete',
   ],
   guide: (text) =>
     replaced(text, GUIDE)

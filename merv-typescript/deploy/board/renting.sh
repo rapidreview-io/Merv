@@ -6,10 +6,7 @@
 #   sh renting.sh off   back to workers in the app's own process. Sandboxes stays up, renting nothing.
 set -eu
 ROOT=/etc/merv-board
-BRIDGE=https://merv-board-fleet.gural-ac2.workers.dev
-APPLICATION=a032a248-549b-496d-9ad2-fadd9868a4e1
-IMAGE=sha256:194f1afab4a541a26bc8d8a471aa30559b00f126b493197e7616c7f47e2d57f3
-EXECUTABLE=b3f871dcee261fd66d6ccdbbe4d8e589a8ef1014646c920087da4bbc866da49d
+. ./fleet-release.sh
 compose() { docker compose --env-file "$ROOT/compose.env" "$@"; }
 sed -i '/^BOARD_RENT=/d' "$ROOT/env"
 case "${1:-}" in

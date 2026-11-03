@@ -56,6 +56,7 @@ test('the board app boots on its own plugins and tells Pi nothing of Merv', asyn
   // screen.read is offered to conversations alone; a turn's offer is what pi.prompt shows.
   assert.deepEqual(offered.map(({ name }) => name).sort(), [
     'artifact.read',
+    'artifact.write',
     'board.read',
     'board.write',
     'web.read',

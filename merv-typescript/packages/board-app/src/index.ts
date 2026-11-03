@@ -10,6 +10,7 @@ import piPlugin from '@merv/pi';
 import piApiPlugin from '@merv/pi/api';
 import piToolsPlugin from '@merv/pi/tools';
 import piUiPlugin from '@merv/pi/ui';
+import { computeConfig, computePlugin } from './compute.js';
 import { HereMachines, profiles } from './machines.js';
 import { DEMOS } from './demos.js';
 import { surface } from './words.js';
@@ -33,6 +34,8 @@ const config = z.strictObject({
       slots: z.number().int().min(1).max(8).default(3),
     })
     .optional(),
+  /** Computers a person's agent rents to run code on; the agent itself stays where `rent` says. */
+  compute: computeConfig.partial().optional(),
 });
 type Config = z.input<typeof config>;
 
@@ -66,7 +69,7 @@ export const boardAppPlugin = {
   Config: config,
   inject: ['state', 'scope', 'tools', 'blobs', 'api', 'board'],
   async apply(ctx: Context, input: Config) {
-    const { directory, solo, dailyUsdPerPerson, rent, publicUrl } = config.parse(input);
+    const { directory, solo, dailyUsdPerPerson, rent, compute, publicUrl } = config.parse(input);
     // What this app issued, kept beside its files: a credential is only ever shown once.
     const file = join(directory, 'board-app.json');
     const kept = (await readFile(file, 'utf8').then(JSON.parse, () => ({}))) as {
@@ -125,6 +128,7 @@ export const boardAppPlugin = {
       machines: [{ key: 'standard', label: 'Standard', slots: rent?.slots ?? 8, agent: false }],
     });
     await pi.await();
+    if (compute) await ctx.plugin(computePlugin, compute).await();
     await Promise.all(
       [piToolsPlugin, piApiPlugin, piUiPlugin].map((plugin) => ctx.plugin(plugin).await()),
     );
