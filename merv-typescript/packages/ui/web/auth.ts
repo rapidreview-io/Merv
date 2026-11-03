@@ -1,5 +1,6 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { currentToken, identityVersion, safely, setToken, setTokenRefresher } from './api';
+import { speech } from './speech';
 
 export interface AuthConfiguration {
   enabled: boolean;
@@ -8,15 +9,17 @@ export interface AuthConfiguration {
 const MODE_KEY = 'merv:auth-mode';
 const USER_KEY = 'merv:shared-account';
 const memory = new Map<string, string>();
+/** Merv signs in per tab; someone back at their boards tomorrow is still signed in to them. */
+const kept = () => (speech.boardOnly ? localStorage : sessionStorage);
 const storage = {
-  getItem: (key: string) => safely(() => sessionStorage.getItem(key), memory.get(key) ?? null),
+  getItem: (key: string) => safely(() => kept().getItem(key), memory.get(key) ?? null),
   setItem(key: string, value: string) {
     memory.set(key, value);
-    safely(() => sessionStorage.setItem(key, value));
+    safely(() => kept().setItem(key, value));
   },
   removeItem(key: string) {
     memory.delete(key);
-    safely(() => sessionStorage.removeItem(key));
+    safely(() => kept().removeItem(key));
   },
 };
 /** The address the signed-in session already carries; never read from the server. */

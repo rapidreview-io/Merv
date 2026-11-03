@@ -7,6 +7,7 @@ import { readOnly } from '../api';
 import { useRoomy } from '../theme';
 import { useAgent } from './pi';
 import { docked } from './pi-dock';
+import { speech } from '../speech';
 
 /** How long the last ink still counts as drawing, and how long a line says when it was. */
 const [DRAWING_MS, DREW_MS] = [1_500, 30_000];
@@ -40,7 +41,7 @@ export function statusLine({
   if (waiting) return name ? `${waiting} waiting from ${name}` : `${waiting} waiting`;
   if (name && (playing || drewMs < DRAWING_MS)) return saying || `${name} is drawing`;
   if (looking) return `${looking} is looking`;
-  if (thinking) return 'Pi is thinking';
+  if (thinking) return `${speech.pi} is thinking`;
   if (name && drewMs < DREW_MS) return `${name} drew ${Math.round(drewMs / 1000)} s ago`;
   return null;
 }
@@ -67,7 +68,15 @@ export function BoardTalk({
   const open = docked(agent, roomy);
   const pi = agent?.pi;
   const now = doing();
-  const line = statusLine({ ...now, thinking: !!pi?.active && !open });
+  // The board app is heard, not read, and its orb says when Pi works: a line there only takes the
+  // view back to a drawing out of it, or counts what waits.
+  const said = statusLine({
+    ...now,
+    saying: speech.boardOnly ? undefined : now.saying,
+    thinking: !!pi?.active && !open && !speech.boardOnly,
+  });
+  const quiet = speech.boardOnly && !now.waiting && following();
+  const line = quiet ? null : said;
   return (
     <>
       {line && (
@@ -77,7 +86,8 @@ export function BoardTalk({
             {!following() && <span className="board-status-follow">Follow</span>}
           </button>
           {pi?.active &&
-            (line === 'Pi is drawing' || (now.name === 'Pi' && line === now.saying)) && (
+            (line === `${speech.pi} is drawing` ||
+              (now.name === speech.pi && line === now.saying)) && (
               <button
                 type="button"
                 className="board-status-stop"
@@ -92,7 +102,7 @@ export function BoardTalk({
             )}
         </div>
       )}
-      {agent && !open && !readOnly() && (
+      {agent && !open && !readOnly() && !speech.boardOnly && (
         <button type="button" className="board-ask" onClick={agent.ask}>
           Ask Pi
         </button>

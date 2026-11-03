@@ -5,6 +5,7 @@
  * is the page's own view state, so a cursor is never saved, changes no version and enters no undo.
  * It also keeps who last drew, for the line that says so (board-talk.tsx).
  */
+import { speech } from '../speech';
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import type { BoardLooking } from '@merv/board/models';
@@ -80,6 +81,7 @@ export class BoardPresence {
       const toY = where.region.y + where.region.height / 2;
       this.cursors.set(key, {
         ...where,
+        name: where.name === 'Pi' ? speech.pi : where.name,
         toX,
         toY,
         x: held?.x ?? toX,

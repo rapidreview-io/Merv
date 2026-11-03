@@ -18,6 +18,7 @@ import { pathOf, useRows } from '../navigation';
 import { useSession, writes } from '../session';
 import { useRoomy } from '../theme';
 import { useAgent, useSay } from './pi';
+import { speech } from '../speech';
 import { pointPassage } from './board-pointing';
 import { SendControl, WorkLine, type Way } from './board-outcome-send';
 import type { HandReport } from './board-outcome-hand';
@@ -522,7 +523,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
     await push();
     const held = saved.current!;
     if (now() !== held.text) throw new Error('what you typed is not saved yet');
-    if (!keeps) return null;
+    if (!keeps || speech.boardOnly) return null;
     // Asked of Artifacts each time, never taken from what a send noted: this is what they see.
     const file = await call<{ id: string }>('artifact.write:create', {
       title: held.title,
@@ -573,7 +574,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
       if (said) return;
       askedDraft.current = false;
       setRefused(true);
-      setProblem('Not sent: Pi is busy or unavailable. Try again then.');
+      setProblem(`Not sent: ${speech.pi} is busy or unavailable. Try again then.`);
     });
   const fleet = () =>
     act(async () => {
@@ -596,7 +597,7 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   useEffect(() => {
     if (askedDraft.current && !busy && !asking && !sending) askedDraft.current = false;
     const working = (askedDraft.current || asking) && (busy || asking);
-    editor.current?.working(working ? 'Pi' : null);
+    editor.current?.working(working ? speech.pi : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, asking, lead]);
 
@@ -615,9 +616,10 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
   const arrived = useRef(place.arriving);
   const more = useMoreMenu();
   const SENDS: Record<Way, () => Promise<void>> = { fleet, claude: open, copy };
-  const ways: Way[] = keeps
-    ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
-    : ['copy'];
+  const ways: Way[] =
+    keeps && !speech.boardOnly
+      ? [...(agent ? (['fleet'] as const) : []), ...(roomy ? (['claude'] as const) : []), 'copy']
+      : ['copy'];
   const sent = record?.sent ?? [];
   const showsTitle = !titled;
   const named = title ?? (record?.title === UNTITLED ? '' : (record?.title ?? line?.title ?? ''));
@@ -752,12 +754,30 @@ export function OutcomePane({ board, place }: { board: string; place: Place }) {
                 }}
               />
             )}
-            {offerDraft && (
+            {offerDraft && speech.boardOnly && (
+              <p className="board-outcome-start">
+                {[
+                  ['Plan', 'a plan'],
+                  ['PRD', 'a PRD'],
+                  ['Prompt', 'a prompt for another agent'],
+                ].map(([word, kind]) => (
+                  <button
+                    key={word}
+                    type="button"
+                    className="btn-text"
+                    onClick={() => draft(kind!)}
+                  >
+                    {word}
+                  </button>
+                ))}
+              </p>
+            )}
+            {offerDraft && !speech.boardOnly && (
               <p className="board-outcome-start">
                 What did this board lead to? Write it here
                 {roomy && (
                   <>
-                    , or ask Pi for{' '}
+                    , or ask {speech.pi} for{' '}
                     {[
                       ['a plan', 'a plan'],
                       ['a PRD', 'a PRD'],

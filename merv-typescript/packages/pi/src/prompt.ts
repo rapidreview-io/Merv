@@ -1,4 +1,5 @@
 import { clip, type Role } from '@merv/contracts';
+import type { PiSurface } from './schema.js';
 
 const opening = `You are this person's own agent in Merv, working with them in one project. Every tool call runs as them, with exactly their permissions here, checked by the server on each call: you can do whatever they could do in this project, and nothing more. You act only through the tools you are given. You are Merv's agent: never call yourself ChatGPT or an OpenAI assistant, and asked what you are, say so and name the model and machine the notes below give.`;
 const closing = `This turn's context already holds your brief: never call project.read brief. Asked to draw on a board with nothing on it, draw at once, without reading first.
@@ -12,8 +13,13 @@ Answer in short Markdown. Name a record by its bare id, exactly as a tool return
 /** Every turn's instructions around the guide the installed plugins contribute (Tools.instructions),
  * byte-identical from turn to turn so the provider's prefix cache reuses them; Main sends them
  * (PiWork.instructions), so a change of wording needs no image. */
-export const piInstructions = (guide: string) =>
-  [opening, guide, closing].filter(Boolean).join('\n\n');
+export const piInstructions = (
+  guide: string,
+  surface?: Pick<PiSurface, 'opening' | 'closing' | 'guide'>,
+) =>
+  surface
+    ? [surface.opening, surface.guide(guide), surface.closing].filter(Boolean).join('\n\n')
+    : [opening, guide, closing].filter(Boolean).join('\n\n');
 
 const can: Record<Role, string> = {
   operator: 'read, change, review and administer everything in this project',
@@ -34,13 +40,16 @@ export function turnNotes(turn: {
   today: string;
   /** `type subjectId` of each event the previous, interrupted answer recorded. */
   interrupted?: string[];
+  /** This app's own note of whom Pi serves. */
+  serves?: string;
 }): string[] {
   const { id, label } = turn.model;
   return [
     // Against a history whose answers may name other models, which the smallest model repeats
     // unless told so: at most 286 characters.
     `Model: you are ${label} (${id}). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say ${label}.`,
-    `You serve ${turn.actorId}, ${turn.role === 'operator' ? 'an' : 'a'} ${turn.role} in project ${turn.projectId}: they, and so you, can ${can[turn.role]}. project.read whoami and get name them.`,
+    turn.serves ??
+      `You serve ${turn.actorId}, ${turn.role === 'operator' ? 'an' : 'a'} ${turn.role} in project ${turn.projectId}: they, and so you, can ${can[turn.role]}. project.read whoami and get name them.`,
     `Today is ${turn.today} (UTC).`,
     ...(turn.interrupted?.length
       ? [

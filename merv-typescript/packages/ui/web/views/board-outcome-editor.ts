@@ -5,6 +5,7 @@
  * from elsewhere goes outside the person's history, so Undo only ever takes back their own typing,
  * and carries their caret and their scroll along with it.
  */
+import { speech } from '../speech';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { defineLanguageFacet, Language, syntaxTree } from '@codemirror/language';
 import { type ChangeSpec, EditorSelection, EditorState, Transaction } from '@codemirror/state';
@@ -211,7 +212,8 @@ const bubble = (ask: (() => void) | undefined) => {
       bubbleButton('I', 'Italic', () => toggle('*')(view), 'is-em'),
       bubbleButton('Link', 'Link', () => linkIt(view)),
     );
-    if (ask) dom.append(bubbleButton('Ask Pi', 'Ask Pi about this', ask, 'is-ask'));
+    if (ask)
+      dom.append(bubbleButton(`Ask ${speech.pi}`, `Ask ${speech.pi} about this`, ask, 'is-ask'));
     return { dom };
   };
   return showTooltip.compute(['selection', carets], (state): Tooltip | null => {

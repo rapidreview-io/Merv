@@ -7,6 +7,7 @@
  * Excalidraw's fonts are served from this app, never a CDN; embeds are off, since a board loads
  * nothing from elsewhere.
  */
+import type { ReactNode } from 'react';
 import '@excalidraw/excalidraw/index.css';
 import {
   useCallback,
@@ -40,7 +41,7 @@ import { placeOf } from './pi-screen';
 import { pointWith } from './pi-transport';
 import { BoardLinkDetails, PAGE_LINK } from './board-link-details';
 import { AddButton, asksToAdd, CardPicker, type CardPick } from './board-add';
-import { inView, landing, overlaps, type Rect } from './board-place';
+import { boardScale, inView, landing, overlaps, type Rect } from './board-place';
 import { fileOf, fitView, imageAt, imageBringer, Player, restored, stageOf } from './board-player';
 import { BoardFollow } from './board-follow';
 import { BoardPointing, markOn } from './board-pointing';
@@ -49,6 +50,7 @@ import { BoardSelection } from './board-selection';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
 import { useAgent } from './pi';
+import { speech } from '../speech';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -64,6 +66,8 @@ const BEHIND_MS = 4000;
 const PEN_BEHIND_MS = 45_000;
 /** How long after Pi's turn ends its last ink may still be on its way to this page, with its lines. */
 const LAST_INK_MS = 3_000;
+/** Told on the window once the page has drawn as Merv: the lines on that ink go to the voice. */
+export const VOICE_PEN = 'board:voice-pen';
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -134,9 +138,11 @@ const PICTURE_SHAPE = 0.75;
 type CanvasProps = {
   id: string;
   onOutcomes?(lines: BoardScene['outcomes']): void;
+  /** What the board's menu holds, where the app has its own. */
+  menu?: ReactNode;
 };
 
-function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
+function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -185,10 +191,24 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const turned = useRef(0);
   const voiced = useRef(false);
   voiced.current ||= turning.current;
+  // What the page draws in Merv's name, its greeting, is heard as Pi's own ink is.
+  useEffect(() => {
+    const voicing = () => {
+      voiced.current = true;
+      turned.current = Date.now();
+      void pull.current?.();
+    };
+    addEventListener(VOICE_PEN, voicing);
+    return () => removeEventListener(VOICE_PEN, voicing);
+  }, []);
   const steered = agent?.voice.steered;
   useEffect(() => {
     if (steered) player.current?.hurry();
   }, [steered]);
+  const halted = agent?.voice.halted;
+  useEffect(() => {
+    if (halted) player.current?.hurry();
+  }, [halted]);
   const reveal = useRef<HTMLCanvasElement>(null);
   /** Shows where agents are on the board, as Excalidraw shows collaborators. */
   const presence = useRef<BoardPresence>();
@@ -275,7 +295,9 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
     const frame = requestAnimationFrame(() => {
       const all = api.getSceneElements();
       const part = focus ? all.filter((el) => el.id === focus) : [];
-      fitView(api, part.length ? part : all, part.length ? 2 : 1);
+      const scale = boardScale();
+      if (part.length) fitView(api, part, 2 * scale);
+      else fitView(api, all, scale, true);
     });
     return () => cancelAnimationFrame(frame);
   }, [api, focus]);
@@ -737,18 +759,24 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         renderToolbarEnd={() => <AddButton key="merv-add" onClick={openPanel} />}
       >
         <MainMenu>
-          <MainMenu.DefaultItems.SaveAsImage />
-          <MainMenu.DefaultItems.ChangeCanvasBackground />
-          <MainMenu.DefaultItems.Help />
+          {menu ?? (
+            <>
+              <MainMenu.DefaultItems.SaveAsImage />
+              <MainMenu.DefaultItems.ChangeCanvasBackground />
+              <MainMenu.DefaultItems.Help />
+            </>
+          )}
         </MainMenu>
-        <WelcomeScreen>
-          <WelcomeScreen.Center>
-            <WelcomeScreen.Center.Heading>
-              Sketch an idea, or ask Pi to draw it with you.
-            </WelcomeScreen.Center.Heading>
-          </WelcomeScreen.Center>
-          <WelcomeScreen.Hints.ToolbarHint />
-        </WelcomeScreen>
+        {!speech.boardOnly && (
+          <WelcomeScreen>
+            <WelcomeScreen.Center>
+              <WelcomeScreen.Center.Heading>
+                Sketch an idea, or ask Pi to draw it with you.
+              </WelcomeScreen.Center.Heading>
+            </WelcomeScreen.Center>
+            <WelcomeScreen.Hints.ToolbarHint />
+          </WelcomeScreen>
+        )}
       </Excalidraw>
       <canvas ref={reveal} className={`board-reveal is-${theme}`} />
       {api && <BoardSelection api={api} />}

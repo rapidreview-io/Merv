@@ -29,7 +29,7 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  * and anything else reads the project
  * and answers at length.
  */
-type Step = { call: string; input: object } | { say: string };
+export type Step = { call: string; input: object } | { say: string };
 const LONG = [
   'Here is where the project stands.',
   '',
@@ -49,7 +49,7 @@ const dispatch = (enabled: boolean): Step[] => [
   },
 ];
 /** One action of a noun tool, its arguments under its own name. */
-const act = (tool: string, action: string, input: object): Step => ({
+export const act = (tool: string, action: string, input: object): Step => ({
   call: tool,
   input: { action, [action]: input },
 });
@@ -105,7 +105,8 @@ function pointed(note: string, read: (tool: string) => unknown) {
   const bottom = Math.max(...shapes.map((s) => s.at[1]! + s.size[1]!));
   return { ids, shapes, box: { x, y, width: right - x, height: bottom - y } };
 }
-function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[] {
+type Plan = (asked: string, read: (tool: string) => unknown, note?: string) => Step[];
+export function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[] {
   if (/^Draft /.test(asked)) return drafted(asked, note);
   const board = /\[board ([\w-]+)/.exec(note)?.[1];
   // The person's own lines carried on, as a proposal in their pen, joined to their last stroke.
@@ -404,7 +405,10 @@ function plan(asked: string, read: (tool: string) => unknown, note = ''): Step[]
 
 type Item = { role?: string; type?: string; name?: string; call_id?: string; output?: string };
 /** The model's next move for one request: the turn's plan, as far along as its tool results. */
-function next(body: { input: (Item & { content?: { text?: string }[] | string })[] }): Step {
+function next(
+  body: { input: (Item & { content?: { text?: string }[] | string })[] },
+  planned: Plan,
+): Step {
   const from = body.input.findLastIndex((item) => item.role === 'user');
   const content = body.input[from]?.content;
   const whole = Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '';
@@ -421,7 +425,7 @@ function next(body: { input: (Item & { content?: { text?: string }[] | string })
       return null;
     }
   };
-  const steps = plan(asked.trim(), read, whole);
+  const steps = planned(asked.trim(), read, whole);
   const done = after.filter((item) => item.type === 'function_call_output').length;
   return steps[Math.min(done, steps.length - 1)]!;
 }
@@ -473,13 +477,17 @@ function stream(step: Step): ReadableStream<Uint8Array> {
     },
   });
 }
-const scripted: typeof fetch = async (input, init) => {
-  const request = new Request(input, init);
-  if (!request.url.endsWith('/pi-model/responses')) return fetch(request);
-  return new Response(stream(next(await request.json())), {
-    headers: { 'content-type': 'text/event-stream' },
-  });
-};
+/** A worker's fetch whose model calls `planned` answers; everything else goes where it was going. */
+export const scriptedBy =
+  (planned: Plan): typeof fetch =>
+  async (input, init) => {
+    const request = new Request(input, init);
+    if (!request.url.endsWith('/pi-model/responses')) return fetch(request);
+    return new Response(stream(next(await request.json(), planned)), {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  };
+const scripted = scriptedBy(plan);
 
 /** The tests' machines, which are ready at once, with a launch that starts the worker in this
  * process on the bootstrap Fleet delivered, a moment later as a machine loads its agent. */

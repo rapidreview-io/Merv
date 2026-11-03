@@ -1,0 +1,93 @@
+# One server: the board app, its database, and Caddy for TLS. Secrets are in /etc/merv-board/env.
+services:
+  app:
+    build: { context: ../.., dockerfile: deploy/board/Dockerfile }
+    restart: unless-stopped
+    env_file:
+      - /etc/merv-board/env
+      - { path: /etc/merv-board/sandboxes.env, format: raw, required: false }
+    environment:
+      MERV_DB_URL: postgresql://board:${BOARD_DB_PASSWORD}@db:5432/board
+      SANDBOXES_DATA_DIR: /sandboxes
+    volumes: [data:/data, sandboxes-data:/sandboxes]
+    depends_on:
+      db: { condition: service_healthy }
+    deploy: { resources: { limits: { memory: 8g } } }
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: board
+      POSTGRES_PASSWORD: ${BOARD_DB_PASSWORD}
+      POSTGRES_DB: board
+    volumes: [pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U board]
+      interval: 5s
+      retries: 20
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ['80:80', '443:443', '8443:8443', '9443:9443']
+    environment:
+      BOARD_ADDRESS: ${BOARD_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+  # Files: S3 for the app, and for browsers sending large files straight here through Caddy (:9443).
+  storage:
+    image: cgr.dev/chainguard/minio@sha256:0a01100085e30fb08d2f39e39c9f5c9d83a95707f220b007d813b690cd41622d
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${BOARD_STORAGE_USER}
+      MINIO_ROOT_PASSWORD: ${BOARD_STORAGE_PASSWORD}
+    volumes: [storage:/data]
+  # Its own Sandboxes, for real machines (renting.sh): on under COMPOSE_PROFILES=renting.
+  sandboxes-db:
+    profiles: [renting]
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sandboxes
+      POSTGRES_PASSWORD: ${SANDBOXES_DB_PASSWORD:-}
+      POSTGRES_DB: sandboxes
+    volumes: [sandboxes-pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U sandboxes]
+      interval: 5s
+      retries: 20
+  sandboxes-control:
+    profiles: [renting]
+    build:
+      context: ../../vendor/merv-sandboxes
+      dockerfile: typescript/deploy/control.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file: [{ path: /etc/merv-board/sandboxes.env, format: raw }]
+    sysctls:
+      net.ipv4.tcp_keepalive_time: 60
+      net.ipv4.tcp_keepalive_intvl: 15
+      net.ipv4.tcp_keepalive_probes: 4
+    volumes: [sandboxes-data:/data]
+    depends_on:
+      sandboxes-db: { condition: service_healthy }
+    healthcheck:
+      test:
+        [CMD, node, -e, "fetch('http://127.0.0.1:8000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      retries: 30
+      start_period: 20s
+  sandboxes-gateway:
+    profiles: [renting]
+    build:
+      context: ../../vendor/merv-sandboxes
+      dockerfile: deploy/gateway.Dockerfile
+    restart: unless-stopped
+    environment:
+      SANDBOXES_CONTROL_URL: http://sandboxes-control:8000
+    volumes: [sandboxes-data:/data]
+    ports: ['2222:2222']
+    depends_on:
+      sandboxes-control: { condition: service_healthy }
+volumes: { data: {}, pg: {}, caddy: {}, storage: {}, sandboxes-data: {}, sandboxes-pg: {} }

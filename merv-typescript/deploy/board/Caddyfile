@@ -1,0 +1,17 @@
+{$BOARD_ADDRESS} {
+	encode gzip
+	redir / /ui/ 302
+	reverse_proxy app:3090 {
+		flush_interval -1
+	}
+}
+merv-board.eastus2.cloudapp.azure.com:8443 {
+	reverse_proxy sandboxes-control:8000 {
+		flush_interval -1
+	}
+}
+merv-board.eastus2.cloudapp.azure.com:9443 {
+	reverse_proxy storage:9000 {
+		flush_interval -1
+	}
+}

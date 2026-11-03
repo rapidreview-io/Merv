@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Merv — Whiteboard with an agent</title>
+    <meta name="description" content="A whiteboard with an agent. Talk it through, and Merv draws it with you." />
+    <meta property="og:title" content="Merv — Whiteboard with an agent" />
+    <meta property="og:description" content="A whiteboard with an agent. Talk it through, and Merv draws it with you." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://runmerv.com/" />
+    <meta name="twitter:card" content="summary" />
+    <style>
+      /* Before the stylesheet arrives, so a first load is never a white page. */
+      html {
+        background: #111214;
+      }
+      html[data-theme='light'] {
+        background: #f7f8fa;
+      }
+    </style>
+    <link rel="icon" href="data:," />
+    <meta name="theme-color" content="#111214" />
+    <script>
+      // A theme chosen on the page is kept; until one is, the board is dark. The key is theme.ts's KEY.
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem('merv:theme') === 'light' ? 'light' : 'dark';
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

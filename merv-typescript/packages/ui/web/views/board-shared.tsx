@@ -1,6 +1,6 @@
 /** A shared board opens outside the account and project page, with only its drawing and replay. */
 import '@excalidraw/excalidraw/index.css';
-import { useCallback, useEffect, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { Excalidraw, getDataURL, MainMenu, WelcomeScreen } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { BoardElement, BoardHistory } from '@merv/board/models';
@@ -9,8 +9,7 @@ import { restored } from './board-player';
 import { ensureBoardFonts } from './board-fonts';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
-const token = window.location.hash.slice(1);
-const request = async (path: string) => {
+const shareOf = (token: string) => async (path: string) => {
   const response = await fetch(`/board-share/${path}`, {
     headers: { Authorization: `Bearer ${token}` },
     credentials: 'omit',
@@ -46,10 +45,11 @@ const editor: ComponentProps<typeof Excalidraw> = {
     </>
   ),
 };
-export default function SharedBoard() {
+/** A board read through a share: what it holds now, and its history, its pictures brought along. */
+export function useSharedBoard(token: string, api: ExcalidrawImperativeAPI | null) {
+  const request = useMemo(() => shareOf(token), [token]);
   const [scene, setScene] = useState<Scene>();
   const [error, setError] = useState('');
-  const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   useEffect(() => {
     let alive = true;
     const read = async () => {
@@ -73,7 +73,7 @@ export default function SharedBoard() {
       alive = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [request]);
   const images = useCallback(
     async (elements: BoardElement[]) => {
       if (!api) return;
@@ -90,7 +90,7 @@ export default function SharedBoard() {
         ]);
       }
     },
-    [api],
+    [api, request],
   );
   useEffect(() => {
     if (!api || !scene) return;
@@ -107,8 +107,14 @@ export default function SharedBoard() {
       await images(page.changes.flatMap((change) => change.shapes));
       return page;
     },
-    [images],
+    [images, request],
   );
+  return { scene, error, history };
+}
+
+export default function SharedBoard() {
+  const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const { scene, error, history } = useSharedBoard(window.location.hash.slice(1), api);
   if (error)
     return (
       <p className="muted board-loading" role="status">

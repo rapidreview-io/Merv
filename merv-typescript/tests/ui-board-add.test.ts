@@ -6,6 +6,7 @@ const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const { CardPicker, asksToAdd } = await import('../packages/ui/web/views/board-add.js');
+const { speech } = await import('../packages/ui/web/speech.js');
 const { framing, inView, landing, overlaps } =
   await import('../packages/ui/web/views/board-place.js');
 const { statusLine } = await import('../packages/ui/web/views/board-talk.js');
@@ -241,21 +242,24 @@ const key = async (key: string, target: Element = document.activeElement ?? pane
     ),
   );
 
-test('the panel lists what is most recent first, and an image the board can show is a picture', async (t) => {
+const search = async (words: string) => {
+  const input = document.querySelector<HTMLInputElement>('.search input')!;
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(input, words);
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+};
+
+test('the panel opens on Upload and the three most recent, and an image is a picture', async (t) => {
   const { added, closed } = await openPanel(t);
-  assert.deepEqual(names(), ['Older board'], 'not the board itself');
-  await click('Collection');
-  assert.deepEqual(
-    names().slice(0, 3),
-    ['Figure.png', 'Older board', 'Photo.jpg'],
-    'merged by time',
-  );
-  await click('Files');
   assert.deepEqual(
     names(),
-    FILES.map((f) => f.title),
+    ['Upload', 'Figure.png', 'Older board', 'Photo.jpg'],
+    'merged by time, not the board itself',
   );
-  await act(async () => document.querySelectorAll<HTMLElement>('[role=option]')[0]!.click());
+  assert.ok(!document.querySelector('.tabs'), 'no tabs');
+  await act(async () => document.querySelectorAll<HTMLElement>('[role=option]')[1]!.click());
   assert.equal(closed.length, 1);
   assert.deepEqual(
     (added[0] as { target: string; picture?: boolean }[]).map(({ target, picture }) => [
@@ -275,7 +279,7 @@ for (const [title, target, picture] of [
 ] as const)
   test(`${title} is added as a ${picture ? 'picture' : 'card'}`, async (t) => {
     const { added } = await openPanel(t);
-    await click('Files');
+    await search(title);
     const row = [...document.querySelectorAll<HTMLElement>('[role=option]')].find((one) =>
       one.textContent!.includes(title),
     )!;
@@ -286,6 +290,45 @@ for (const [title, target, picture] of [
     assert.ok(item!.fact, 'with its one fact');
   });
 
+test('a search shows five at most and finds a kind by a word never shown', async (t) => {
+  await openPanel(t);
+  await search('document');
+  assert.ok(names().includes('Notes.md'), names().join());
+  assert.ok(names().length <= 5);
+  assert.ok(!names().includes('Upload'));
+  await search('nothing like this');
+  assert.deepEqual(names(), []);
+  assert.ok(text().includes('Nothing matches.'));
+});
+
+test('an address is one row, Add link', async (t) => {
+  const { added } = await openPanel(t);
+  await search('https://example.org/a/');
+  assert.deepEqual(names(), ['Add link']);
+  await key('Enter');
+  assert.deepEqual(added[0], [
+    {
+      target: 'https://example.org/a/',
+      text: 'example.org/a',
+      kind: 'Link',
+      meta: '',
+      at: '',
+    },
+  ]);
+});
+
+test('Space gathers rows, and only two or more offer one card', async (t) => {
+  const { added } = await openPanel(t);
+  assert.ok(!text().includes('as one card'));
+  await key('ArrowDown');
+  await key(' ');
+  assert.ok(!text().includes('as one card'), 'one is not a collection');
+  await key('ArrowDown');
+  await key(' ');
+  await click('Add 2 as one card');
+  assert.deepEqual(added[0], [{ target: ['art_png', 'board_x'], text: 'Figure.png and 1 more' }]);
+});
+
 test('keys walk the panel and none of them reach Excalidraw', async (t) => {
   const { added } = await openPanel(t);
   const heard: string[] = [];
@@ -293,32 +336,16 @@ test('keys walk the panel and none of them reach Excalidraw', async (t) => {
   document.addEventListener('keydown', listen);
   t.after(() => document.removeEventListener('keydown', listen));
   assert.equal(document.activeElement, panel(), 'the panel takes the keys as it opens');
-  await click('Boards');
-  await key('ArrowRight');
-  assert.equal(
-    document.querySelector('.tabs [aria-pressed=true]')!.childNodes[0]!.textContent,
-    'Files',
-  );
+  await key('ArrowDown');
   await key('ArrowDown');
   await key('ArrowDown');
   await key('ArrowUp');
   assert.equal(
     document.querySelector('[role=option][aria-selected=true] .finder-name')!.textContent,
-    'Photo.jpg',
+    'Older board',
   );
   await key('Delete');
   assert.deepEqual(heard, [], 'nothing on the board is moved or erased by them');
-  await key('Enter');
-  assert.equal((added[0] as { target: string }[])[0]!.target, 'art_jpg');
-});
-
-test('an arrow from a tab takes the focus to the list, so Enter adds', async (t) => {
-  const { added } = await openPanel(t);
-  await click('Boards');
-  const tab = document.querySelector<HTMLElement>('.tabs button')!;
-  tab.focus();
-  await key('ArrowDown');
-  assert.equal(document.activeElement?.getAttribute('role'), 'listbox');
   await key('Enter');
   assert.equal((added[0] as { target: string }[])[0]!.target, 'board_x');
 });
@@ -334,20 +361,10 @@ test('Escape shuts the panel and is not also heard by the board', async (t) => {
   assert.deepEqual(heard, []);
 });
 
-test('Records lists tasks, experiments and papers as what a card can open', async (t) => {
+test('tasks, experiments and papers are found as what a card can open', async (t) => {
   const { added } = await openPanel(t);
-  const asked = requests.filter((request) => request.includes('paper.read')).length;
-  assert.equal(asked, 0, 'the paper is read only on the tab that lists it');
-  await click('Records');
-  await settle();
-  assert.deepEqual(names(), [
-    'A newer run',
-    'By arXiv id',
-    'An older task',
-    'By doi',
-    'With a url',
-  ]);
   const pick = async (title: string) => {
+    await search(title);
     const row = [...document.querySelectorAll<HTMLElement>('[role=option]')].find((one) =>
       one.textContent!.includes(title),
     )!;
@@ -362,6 +379,31 @@ test('Records lists tasks, experiments and papers as what a card can open', asyn
   assert.equal((await pick('By doi')).target, 'https://doi.org/10.1/x');
   assert.equal((await pick('With a url')).target, 'https://example.org/p');
   assert.equal((await pick('An older task')).fact, 'Task');
+});
+
+test('an app with nothing to list offers a large Upload and a link, and no rows', async (t) => {
+  speech.boardOnly = true;
+  t.after(() => void (speech.boardOnly = false));
+  const { added } = await openPanel(t);
+  assert.deepEqual(names(), []);
+  assert.ok(!document.querySelector('[role=option]'));
+  assert.ok(!requests.some((request) => request.includes('artifact.read')), 'files are not read');
+  assert.ok(document.querySelector('.board-add-drop input[type=file]'));
+  assert.equal(
+    document.querySelector('.board-add-boards')!.textContent,
+    'Older board',
+    'not this one',
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type=url]')!;
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(input, 'https://example.org/a');
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await key('Enter', input);
+  assert.equal((added[0] as { target: string }[])[0]!.target, 'https://example.org/a');
+  await click('Older board');
+  assert.equal((added[1] as { target: string }[])[0]!.target, 'board_x');
 });
 
 const choose = async (...files: File[]) => {
@@ -383,7 +425,6 @@ test('uploading saves to Files and adds each file as what it is', async (t) => {
       ),
     },
   }));
-  await click('Files');
   await choose(
     new File(['png'], 'new.png', { type: 'image/png' }),
     new File(['text'], 'new.md', { type: 'text/markdown' }),
@@ -409,7 +450,6 @@ test('an upload refused says which and why, adds what was kept, and stays open',
       ? { status: 500, body: { error: { code: 'boom', message: 'Storage said no' } } }
       : { body: { result: file('art_ok', 'ok.txt', 'text/plain', '2026-10-31T00:00:00Z') } },
   );
-  await click('Files');
   await choose(
     new File(['x'], 'bad.txt', { type: 'text/plain' }),
     new File([], 'empty.txt', { type: 'text/plain' }),
@@ -429,7 +469,6 @@ test('an upload refused says which and why, adds what was kept, and stays open',
 test('a large file with no project storage is refused before anything is sent', async (t) => {
   const { added } = await openPanel(t);
   serve('/tools/artifact.read:storage', { body: { result: { available: false } } });
-  await click('Files');
   await choose(new File([new Uint8Array(2_000_001)], 'large.bin'));
   assert.ok(text().includes('large.bin: Files over 2 MB need project storage'), text());
   assert.ok(!requests.some((request) => request.includes('artifact.write')));
@@ -467,7 +506,6 @@ test('a large upload goes to storage, says how far it is, and stops with the pan
   serve('/tools/artifact.write:upload_begin', {
     body: { result: { uploadId: 'up', parts: [{ url: 'https://storage.test/x', headers: {} }] } },
   });
-  await click('Files');
   await choose(new File([new Uint8Array(2_000_001)], 'large.bin'));
   await settle(20);
   assert.ok(/Uploading large\.bin 5\d%/.test(text()), text());

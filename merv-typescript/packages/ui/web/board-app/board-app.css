@@ -1,0 +1,483 @@
+/* The board app: one line above the canvas, one at its foot, and what they open. */
+.board-page {
+  height: 100dvh;
+}
+/* The foot of the canvas: above Excalidraw's own footer, clear of its zoom and the replay's play. */
+.board-main {
+  position: relative;
+  container: board-main / inline-size;
+}
+.board-bar {
+  position: absolute;
+  z-index: 5;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+.board-orb {
+  all: unset;
+  box-sizing: border-box;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #7ab0ff, #2563eb 70%);
+  cursor: pointer;
+  transition: transform 120ms ease-out;
+}
+.board-orb:hover:not(:disabled) {
+  transform: scale(1.06);
+}
+.board-orb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.board-orb:disabled {
+  background: var(--line);
+  cursor: default;
+}
+.board-orb--stop {
+  background: var(--text);
+}
+.board-orb--stop::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--bg-elev);
+}
+/* The plus, as Merv tells of it. */
+.board-add.is-told {
+  animation: board-add-told 1.2s ease-in-out 4;
+}
+@keyframes board-add-told {
+  50% {
+    box-shadow: 0 0 0 6px rgb(122 176 255 / 45%);
+  }
+}
+/* Working, apart from hearing: a smaller Stop under the orb with a ring that turns while Pi works. */
+.board-working {
+  position: relative;
+  display: grid;
+}
+.board-working .board-orb--stop {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+.board-working .board-orb--stop::before {
+  width: 10px;
+  height: 10px;
+}
+.board-working .board-orb--stop::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--muted);
+  animation: board-orb-turn 1.2s linear infinite;
+}
+.board-working .board-bar-getting {
+  top: 4px;
+}
+.board-said--bad {
+  position: absolute;
+  right: 100%;
+  width: max-content;
+  max-width: 280px;
+  margin: 0 var(--space-2) 0 0;
+  color: var(--refutes);
+  cursor: default;
+}
+/* What Pi is doing stands at the foot of the board, in the app's own hand. */
+.board-page .board-status {
+  bottom: 20px;
+  font-family: var(--font-body);
+}
+.board-canvas.is-replaying .board-status {
+  display: none;
+}
+.board-talk-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--line);
+}
+.board-talk-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.board-talk-title {
+  flex: 1;
+  font-weight: 600;
+}
+.board-talk-pane .pi-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+.board-main:has(.excalidraw--mobile):not(:has(.board-scrub.is-in)) .board-play {
+  right: var(--space-2);
+  bottom: 72px;
+}
+@media (max-width: 730px) {
+  .board-page .board-status {
+    bottom: auto;
+  }
+}
+/* A column beside the canvas; on a phone the whole page. */
+.board-plane:has(> .board-talk-pane) {
+  grid-template-columns: minmax(0, 1fr) min(400px, 50%);
+}
+.board-main > .board-talk-pane {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+}
+/* Excalidraw's own help is in its menu; Play takes the corner. */
+.board-page .excalidraw .help-icon {
+  display: none;
+}
+@media (min-width: 731px) {
+  .board-play {
+    right: 14px;
+  }
+}
+.board-outcome-start .btn-text {
+  margin-right: var(--space-3);
+}
+/* Excalidraw's own coaching under its toolbar: this app has none. */
+.board-page .excalidraw .HintViewer {
+  display: none;
+}
+
+/* The voice, live: the orb breathes while it is up, and is still and hollow while muted. */
+.board-orb--live {
+  animation: board-orb-breathe 2.4s ease-in-out infinite;
+}
+.board-orb--live[data-state='connecting'],
+.board-orb--live[data-state='closing'] {
+  background: var(--line);
+}
+.board-orb--live.is-muted {
+  animation: none;
+  background: var(--surface, transparent);
+  box-shadow: inset 0 0 0 2px var(--muted);
+}
+@keyframes board-orb-breathe {
+  50% {
+    transform: scale(1.1);
+  }
+}
+/* Off: only ever blue while it can hear. */
+.board-orb--off {
+  background: var(--line);
+}
+/* Getting ready: a ring turns round the orb, and it says so beside it. */
+.board-orb.is-getting {
+  position: relative;
+  animation: none;
+}
+.board-orb.is-getting::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: #7ab0ff;
+  animation: board-orb-turn 900ms linear infinite;
+}
+@keyframes board-orb-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* A first sign-in: what the blue bubble is, and what to say to it. */
+.board-bar-hi {
+  position: absolute;
+  top: -4px;
+  right: calc(100% + var(--space-3));
+  margin: 0;
+  padding: 8px 14px;
+  white-space: nowrap;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  font-size: 15px;
+}
+.board-bar-hi small {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+/* Hangs from the plus, wherever Excalidraw has put it; top and right are measured. */
+.board-bar-hi.board-tip {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  white-space: normal;
+}
+.board-tip::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 18px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border-top: 1px solid var(--line-soft);
+  border-left: 1px solid var(--line-soft);
+  transform: rotate(45deg);
+}
+.board-bar-getting {
+  position: absolute;
+  top: 6px;
+  right: calc(100% + var(--space-2));
+  margin: 0;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-orb--live {
+    animation: none;
+  }
+}
+.board-talk-pane .pi-compose {
+  margin: var(--space-2);
+}
+
+/* The landing page: the board, played; nothing on it answers but the way to sign in. */
+/* Unseen, not gone: the scrubber still measures itself to draw. */
+.board-landing .board-floor,
+.board-landing .board-scrub,
+.board-landing .board-scrub *,
+.board-landing .board-scrub-ends,
+.board-landing .board-scrub-ends *,
+.board-landing .board-play {
+  visibility: hidden !important;
+}
+.board-landing-catch {
+  position: absolute;
+  z-index: 1000;
+  inset: 0;
+  cursor: pointer;
+}
+.board-landing-slider {
+  position: fixed;
+  z-index: 1002;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 32px;
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 35%);
+  transform: translateX(calc(100% + 32px));
+  visibility: hidden;
+  transition:
+    transform 420ms cubic-bezier(0.22, 1.2, 0.36, 1),
+    visibility 420ms;
+}
+.board-landing-slider.is-in {
+  transform: none;
+  visibility: visible;
+}
+/* Pi, saying hello: the same orb as on the board, larger, and it comes in with a little bounce. */
+.board-landing-pi {
+  width: 72px;
+  height: 72px;
+  margin-bottom: var(--space-2);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #7ab0ff, #2563eb 70%);
+  box-shadow: 0 8px 32px rgb(37 99 235 / 45%);
+}
+.board-landing-slider.is-in .board-landing-pi {
+  animation:
+    board-landing-hello 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 120ms backwards,
+    board-orb-breathe 3s ease-in-out 900ms infinite;
+}
+@keyframes board-landing-hello {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+.board-landing-slider h1 {
+  margin: 0;
+  margin-bottom: var(--space-3);
+  font-family: Excalifont, var(--font-body);
+  font-size: 29px;
+  font-weight: 400;
+}
+.board-landing-slider p {
+  margin: 0 0 var(--space-3);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.board-landing-later {
+  color: var(--muted);
+}
+.board-landing-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+}
+.btn-google {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 48px;
+  border-radius: 999px;
+  background: #fff;
+  color: #1f1f1f;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+.btn-google:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 30%);
+}
+.btn-google:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn-google:disabled {
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-landing-slider,
+  .board-landing-slider.is-in .board-landing-pi {
+    animation: none;
+    transition: none;
+  }
+}
+.board-landing {
+  position: fixed;
+  inset: 0;
+  display: flex;
+}
+.board-landing .board-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.board-landing .board-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* The board holds the finished drawing from the start: it stays unseen until the replay is over. */
+.board-landing-demo {
+  display: contents;
+}
+.board-landing-demo:not(.is-over) .excalidraw canvas:not(.board-replay-layer canvas) {
+  visibility: hidden;
+}
+/* What is said in a demo: the person higher up and to the left, the agent at the foot. */
+.board-landing-spoken {
+  position: absolute;
+  z-index: 999;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(620px, calc(100% - 300px));
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+.board-landing-spoken p {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-soft);
+  font-size: 15px;
+  line-height: 1.35;
+}
+.board-landing-spoken .is-person {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: #2563eb;
+  border-color: transparent;
+  color: #fff;
+}
+@media (max-width: 730px) {
+  .board-landing-spoken {
+    width: calc(100% - 24px);
+    bottom: 72px;
+  }
+}
+/* The board's name at the head of its menu, which is how it is renamed. */
+.board-menu-title {
+  all: unset;
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  cursor: text;
+}
+/* A big monitor: what is ours grows with the canvas. Excalidraw's own toolbar keeps its size. */
+@media (min-width: 2000px) and (min-height: 1200px) {
+  .board-bar {
+    transform: translateY(-50%) scale(1.25);
+    transform-origin: right center;
+  }
+  .board-bar-hi.board-tip,
+  .board-landing-spoken p {
+    font-size: 19px;
+  }
+  .board-landing-spoken {
+    width: 800px;
+  }
+}
+/* A demo's camera goes where the pen is about to be: there is nothing to scroll back to. */
+.board-landing .scroll-back-to-content {
+  display: none;
+}

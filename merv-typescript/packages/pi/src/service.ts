@@ -36,7 +36,7 @@ import {
   type PiStoredProfile,
 } from './profiles.js';
 import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
-import { openVoice, voiceHistory } from './voice.js';
+import { openVoice, voiceHistory, voiceInstructions } from './voice.js';
 import { drawRecord } from './record-look.js';
 import { renderScreen, screenAsk, type ScreenAnswer } from './screen.js';
 import type {
@@ -72,7 +72,7 @@ import { PiWorkerProtocol } from './worker-protocol.js';
 
 /** Why the person's page gave no answer to the agent's ask. */
 const UNANSWERED =
-  'no page of theirs answered (Merv is not open in a browser, or the tab is in the background).';
+  'no page of theirs answered (the app is not open in a browser, or the tab is in the background).';
 const publicConversation = ({
   source: _source,
   profile: _profile,
@@ -627,7 +627,14 @@ export class PiService implements Pi {
     });
     const key = process.env[this.config.modelApiKeyEnv];
     check(key, 'pi_voice_unavailable', 'Voice is unavailable', 503);
-    return openVoice(this.config.voice, key, sdp, voiceHistory(commands), hash(userId));
+    return openVoice(
+      this.config.voice,
+      key,
+      sdp,
+      voiceHistory(commands),
+      hash(userId),
+      this.config.surface?.voice(voiceInstructions),
+    );
   }
 
   async warm(caller: Caller, input: unknown): Promise<PiSnapshot> {

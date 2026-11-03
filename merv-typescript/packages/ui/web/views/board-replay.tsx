@@ -30,10 +30,13 @@ import { picturesOf, Projection, restoreOne, type Shape } from './board-projecti
 import { Scrubber, whenOf, type ScrubberControl } from './board-scrubber';
 import { captionAt, timelineOf, type Timeline } from './board-timeline';
 import { useActorNames } from './people';
+import { speech } from '../speech';
 
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
+/** How fast a demo's pen goes: at a person's writing pace a board of words takes ten minutes. */
+const DEMO_SPEED = 1.5;
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
@@ -52,8 +55,14 @@ export function BoardReplay({
   revision,
   mode,
   readHistory,
+  demo = false,
+  speak,
 }: {
   id: string;
+  /** Starts at once and from nothing, with no way to stop it: the landing page. */
+  demo?: boolean;
+  /** Takes the lines said as it plays, in place of the replay's own caption. */
+  speak?(line: string, playing: { pause(): void; play(): void }): void;
   readHistory?(after?: number): Promise<BoardHistory>;
   /** The board's own Excalidraw, which keeps going underneath. */
   live: ExcalidrawImperativeAPI;
@@ -137,6 +146,7 @@ export function BoardReplay({
       if (!who) return '';
       const name = names(who.actorId);
       if (who.person) return name ?? 'Someone';
+      if (speech.boardOnly) return speech.agent;
       return name ? `${name}'s agent` : 'An agent';
     },
     [names],
@@ -194,7 +204,8 @@ export function BoardReplay({
   const leave = useCallback(
     (linger: boolean) => {
       finishClip();
-      shown.current?.rest();
+      // A demo was never anyone's board to go back to: it ends where the drawing ended.
+      shown.current?.rest(demo);
       mode(false);
       putBack();
       setSaid(null);
@@ -205,7 +216,7 @@ export function BoardReplay({
       } else sink();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, sink],
+    [demo, mode, sink],
   );
   /** Picked up again before it had gone, unless the person has started drawing since. */
   const again = () => {
@@ -291,11 +302,14 @@ export function BoardReplay({
             redraw((count) => count + 1);
           },
           ended: () => latest.current.leave(true),
-          say: (line) => say(line),
+          say: (line) => (speak ? speak(line, shown.current!) : say(line)),
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {
-            const band = rootOf()?.querySelector('.board-scrub');
+            // Where the app says its words over the canvas, a drawing stands clear of those instead.
+            const band =
+              document.querySelector('.board-landing-spoken') ??
+              rootOf()?.querySelector('.board-scrub');
             if (!band) return 0;
             const clear = clearView(live);
             const top = band.getBoundingClientRect().top - live.getAppState().offsetTop;
@@ -316,12 +330,19 @@ export function BoardReplay({
       );
       shown.current = projection;
       projection.match(live.getFiles());
+      // A demo is drawn from nothing: it must not show its end, even for the frame before it rewinds.
+      if (demo) projection.seek(0);
       // Two frames: one for it to paint what it was given, one for that to reach the screen.
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
           flushSync(() => setPhase('on'));
           projection.run();
-          projection.rewind();
+          if (demo) {
+            projection.closeIn();
+            projection.seek(0);
+            projection.setSpeed(DEMO_SPEED);
+            projection.play();
+          } else projection.rewind();
         });
       });
     });
@@ -349,6 +370,11 @@ export function BoardReplay({
   };
   const toggling = useRef(toggle);
   toggling.current = toggle;
+  // A demo starts as it opens.
+  useEffect(() => {
+    if (demo) toggling.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const reachNow = () => {
     if (phaseNow.current === 'opening') return cancel();
     shown.current?.pause();
@@ -625,7 +651,9 @@ export function BoardReplay({
         aria-label={moving ? 'Pause the replay' : 'Replay this board'}
         title={
           away
-            ? 'Replay. History is on: project members can replay this board, erased work too.'
+            ? speech.boardOnly
+              ? 'Replay'
+              : 'Replay. History is on: project members can replay this board, erased work too.'
             : undefined
         }
         onClick={toggle}

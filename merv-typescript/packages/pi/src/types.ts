@@ -183,6 +183,8 @@ export interface PiWork {
   /** At most 32,000 characters the installed plugins tell this turn about the project, which the
    * worker sends beside the person's message as source material, never instructions. */
   context?: string;
+  /** What this app calls that context; Project unless it says. */
+  contextName?: string;
   /** The agent's instructions (at most 32,000 characters), the same on every turn. */
   instructions: string;
   /** The conversation's previous turn was interrupted, so this checkpoint is the one that turn

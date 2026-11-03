@@ -35,6 +35,7 @@ const proxy = Object.fromEntries(
     '/trackio',
     '/board-images',
     '/board-share',
+    '/board-solo',
   ].map((path) => [path, { target: api, ...remote, ...(path === '/sbx' ? { ws: true } : {}) }]),
 );
 
@@ -47,7 +48,7 @@ const fonts = join(
   dirname(createRequire(import.meta.url).resolve('@excalidraw/excalidraw')),
   'fonts',
 );
-const excalidrawFonts = (): Plugin => ({
+export const excalidrawFonts = (outDir = resolve(import.meta.dirname, 'dist')): Plugin => ({
   name: 'excalidraw-fonts',
   resolveId(id) {
     if (id === 'virtual:board-fonts') return '\0virtual:board-fonts';
@@ -70,7 +71,7 @@ const excalidrawFonts = (): Plugin => ({
     });
   },
   closeBundle() {
-    cpSync(fonts, resolve(import.meta.dirname, 'dist/assets/excalidraw/fonts'), {
+    cpSync(fonts, resolve(outDir, 'assets/excalidraw/fonts'), {
       recursive: true,
     });
   },

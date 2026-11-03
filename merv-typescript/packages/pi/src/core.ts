@@ -251,7 +251,7 @@ export class PiCore {
   instructions(conversation: PiConversationRecord): string {
     return conversation.profile
       ? this.profiles.get(conversation.profile).instructions
-      : piInstructions(this.tools.instructions());
+      : piInstructions(this.tools.instructions(), this.config.surface);
   }
   slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;

@@ -1,9 +1,7 @@
 /**
- * What a selection on a board can do, above it while it stands. A proposal of an agent's takes a
- * keep and a dismiss: keeping makes its shapes ordinary, and dismissing deletes them, each a change
- * of theirs like any other: saved, in history and undoable. The person's own shapes take two asks
- * of Pi, each a sentence sent as they would say it, with what is selected pointed at beside it
- * (pi-transport): finish my sketch, and try it another way.
+ * A proposal of an agent's, selected, takes a keep and a dismiss above it: keeping makes its shapes
+ * ordinary, and dismissing deletes them, each a change of theirs like any other: saved, in history
+ * and undoable.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CaptureUpdateAction, getCommonBounds, newElementWith } from '@excalidraw/excalidraw';
@@ -12,17 +10,11 @@ import type {
   ExcalidrawArrowElement,
   ExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
-import { readOnly } from '../api';
 import { Icon } from '../icons';
-import { useSay } from './pi';
 
 const isProposed = (el: ExcalidrawElement) => !!el.customData?.proposed;
-/** What the two asks say, as a person would; the note beside them says what is selected. */
-export const ASKS = { finish: 'Finish my sketch.', another: 'Try it another way.' } as const;
 
-type Stood = { left: number; top: number; proposal: boolean; theirs: boolean };
-/** How long the island says a send was refused. */
-const REFUSED_MS = 4_000;
+type Stood = { left: number; top: number };
 /**
  * Where the island stands clear of Excalidraw's style panel, which is drawn over the board's top
  * left while a shape is selected, and only once the selection has drawn it: beside the panel, or
@@ -43,8 +35,6 @@ function clearOfPanel(island: HTMLElement, at: { left: number; top: number }) {
 
 export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
   const [at, setAt] = useState<Stood | null>(null);
-  const [sending, setSending] = useState<'' | 'asking' | 'refused'>('');
-  const said = useSay(true);
   const island = useRef<HTMLDivElement>(null);
   const [clear, setClear] = useState<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
@@ -54,75 +44,35 @@ export function BoardSelection({ api }: { api: ExcalidrawImperativeAPI }) {
     () =>
       api.onChange((elements, state) => {
         const chosen = elements.filter((el) => state.selectedElementIds[el.id] && !el.isDeleted);
-        const proposal = chosen.every(isProposed);
-        // Their own lines are finished; an agent's drawing is only tried another way.
-        const theirs = chosen.some((el) => el.customData?.by !== 'agent');
         if (
           !chosen.length ||
+          !chosen.every(isProposed) ||
           state.selectedElementsAreBeingDragged ||
           state.isResizing ||
           state.isRotating ||
-          state.editingTextElement ||
-          // A card opens what it holds; it is not a sketch of theirs.
-          (!proposal && chosen.some((el) => el.customData?.card || el.link))
+          state.editingTextElement
         )
           return setAt(null);
         const [x1, y1, x2] = getCommonBounds(chosen);
         const { scrollX, scrollY, zoom, width } = state;
         // Centred on the selection, and whole on the screen at a phone's width.
-        const half = proposal ? 36 : theirs ? 116 : 60;
+        const half = 36;
         const [left, top] = [
           Math.round(
             Math.min(width - half, Math.max(half, ((x1 + x2) / 2 + scrollX) * zoom.value)),
           ),
           Math.round(Math.max(44, (y1 + scrollY) * zoom.value - 10)),
         ];
-        setAt((held) =>
-          held?.left === left &&
-          held.top === top &&
-          held.proposal === proposal &&
-          held.theirs === theirs
-            ? held
-            : { left, top, proposal, theirs },
-        );
+        setAt((held) => (held?.left === left && held.top === top ? held : { left, top }));
       }),
     [api],
   );
   if (!at) return null;
-  const { proposal, theirs } = at;
   // Drawn where the selection puts it, and seen once measured clear of the panel.
   const style = {
     ...(clear ?? { left: at.left, top: at.top }),
     visibility: clear ? undefined : ('hidden' as const),
   };
-  if (!proposal) {
-    if (!said || readOnly()) return null;
-    const ask = (words: string) => {
-      setSending('asking');
-      void said.say(words).then((sent) => {
-        setSending(sent ? '' : 'refused');
-        if (!sent) setTimeout(() => setSending(''), REFUSED_MS);
-      });
-    };
-    return (
-      <div className="board-selection" style={style} ref={island}>
-        {sending === 'refused' ? (
-          <span className="board-selection-note">Pi didn’t take it. Try again.</span>
-        ) : (
-          <>
-            {theirs && (
-              <button type="button" disabled={!!sending} onClick={() => ask(ASKS.finish)}>
-                Finish my sketch
-              </button>
-            )}
-            <button type="button" disabled={!!sending} onClick={() => ask(ASKS.another)}>
-              Another way
-            </button>
-          </>
-        )}
-      </div>
-    );
-  }
   /** Makes this of the proposals selected, every part of each, as one step the person can undo. */
   const answer = (
     made: (el: ExcalidrawElement) => Partial<ExcalidrawElement>,
