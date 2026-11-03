@@ -40,6 +40,7 @@ const config = z.strictObject({
 type Config = z.input<typeof config>;
 
 const openai = [
+  { id: 'gpt-6.1-sol-ultrafast', label: 'GPT-6.1 Sol Ultrafast', effort: 'medium' },
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'medium' },
   { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', effort: 'low' },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
