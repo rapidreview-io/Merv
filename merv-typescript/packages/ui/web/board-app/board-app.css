@@ -53,6 +53,41 @@
   border-radius: 2px;
   background: var(--bg-elev);
 }
+/* The plus, as Merv tells of it. */
+.board-add.is-told {
+  animation: board-add-told 1.2s ease-in-out 4;
+}
+@keyframes board-add-told {
+  50% {
+    box-shadow: 0 0 0 6px rgb(122 176 255 / 45%);
+  }
+}
+/* Working, apart from hearing: a smaller Stop under the orb with a ring that turns while Pi works. */
+.board-working {
+  position: relative;
+  display: grid;
+}
+.board-working .board-orb--stop {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+.board-working .board-orb--stop::before {
+  width: 10px;
+  height: 10px;
+}
+.board-working .board-orb--stop::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--muted);
+  animation: board-orb-turn 1.2s linear infinite;
+}
+.board-working .board-bar-getting {
+  top: 4px;
+}
 .board-said--bad {
   position: absolute;
   right: 100%;

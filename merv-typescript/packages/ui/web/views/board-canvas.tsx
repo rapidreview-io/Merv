@@ -66,6 +66,8 @@ const BEHIND_MS = 4000;
 const PEN_BEHIND_MS = 45_000;
 /** How long after Pi's turn ends its last ink may still be on its way to this page, with its lines. */
 const LAST_INK_MS = 3_000;
+/** Told on the window once the page has drawn as Merv: the lines on that ink go to the voice. */
+export const VOICE_PEN = 'board:voice-pen';
 /** What a person may add, told at once; Board checks the bytes again. */
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 /**
@@ -189,6 +191,16 @@ function BoardCanvasScene({ id, onOutcomes, menu }: CanvasProps) {
   const turned = useRef(0);
   const voiced = useRef(false);
   voiced.current ||= turning.current;
+  // What the page draws in Merv's name, its greeting, is heard as Pi's own ink is.
+  useEffect(() => {
+    const voicing = () => {
+      voiced.current = true;
+      turned.current = Date.now();
+      void pull.current?.();
+    };
+    addEventListener(VOICE_PEN, voicing);
+    return () => removeEventListener(VOICE_PEN, voicing);
+  }, []);
   const steered = agent?.voice.steered;
   useEffect(() => {
     if (steered) player.current?.hurry();

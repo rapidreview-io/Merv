@@ -68,9 +68,14 @@ export function BoardTalk({
   const open = docked(agent, roomy);
   const pi = agent?.pi;
   const now = doing();
-  const said = statusLine({ ...now, thinking: !!pi?.active && !open });
-  // Where the drawing is in view, that it was drawn says nothing.
-  const quiet = speech.boardOnly && !!said && said.endsWith('s ago') && following();
+  // The board app is heard, not read, and its orb says when Pi works: a line there only takes the
+  // view back to a drawing out of it, or counts what waits.
+  const said = statusLine({
+    ...now,
+    saying: speech.boardOnly ? undefined : now.saying,
+    thinking: !!pi?.active && !open && !speech.boardOnly,
+  });
+  const quiet = speech.boardOnly && !now.waiting && following();
   const line = quiet ? null : said;
   return (
     <>
