@@ -341,7 +341,17 @@ export function useVoice(pi: Conversation | null) {
         context.createMediaStreamSource(stream).connect(output);
         held!.output = output;
       };
-      for (const track of mic.getTracks()) pc.addTrack(track, mic);
+      for (const track of mic.getTracks()) {
+        pc.addTrack(track, mic);
+        // The microphone unplugged or taken away: nothing is heard any more, so voice says so.
+        track.onended = () => {
+          if (live.current !== held) return;
+          setProblem('The microphone stopped.');
+          teardown();
+        };
+      }
+      // The line gone quietly is voice over, as a closed session is.
+      dc.onclose = () => live.current === held && teardown();
       dc.onmessage = (message) => {
         try {
           onEvent(JSON.parse(String(message.data)));

@@ -149,6 +149,10 @@
     transform: scale(1.1);
   }
 }
+/* Off: only ever blue while it can hear. */
+.board-orb--off {
+  background: var(--line);
+}
 /* Getting ready: a ring turns round the orb, and it says so beside it. */
 .board-orb.is-getting {
   position: relative;

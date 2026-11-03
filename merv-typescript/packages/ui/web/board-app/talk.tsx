@@ -181,9 +181,11 @@ export function BoardBar({
           {getting && <small>Getting Merv ready</small>}
         </p>
       ) : (
-        getting && (
+        (getting || !live) &&
+        !pi.error &&
+        !voice.problem && (
           <p className="board-bar-getting" role="status">
-            Getting Merv ready
+            {getting ? 'Getting Merv ready' : 'Not listening. Click to talk.'}
           </p>
         )
       )}
@@ -210,7 +212,7 @@ export function BoardBar({
       ) : (
         <button
           type="button"
-          className={`board-orb${getting ? ' is-getting' : ''}`}
+          className={`board-orb board-orb--off${getting ? ' is-getting' : ''}`}
           title="Talk"
           disabled={getting}
           onClick={voice.start}
