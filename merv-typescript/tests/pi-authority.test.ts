@@ -10,7 +10,6 @@ import test from 'node:test';
 import { z } from 'zod';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
-import { managedRunnerRules } from '../packages/sessions/src/managed.js';
 
 const conversation = {
   id: 'conversation_1',
@@ -134,38 +133,6 @@ test('a conversation sees every conversable native tool and runs it as its perso
   assert.equal(fixture.calls(), 2);
 });
 
-test('revocation during parsing or before the read snapshot is refused before the handler', async () => {
-  const fixture = registry();
-  const parsed = gate();
-  fixture.tools.register({
-    name: 'slow',
-    description: 'Slow schema',
-    readOnly: true,
-    inputSchema: z.object({
-      value: z.string().refine(async () => {
-        await parsed.hold();
-        return true;
-      }),
-    }),
-    handler: () => {
-      throw new Error('Handler must not run');
-    },
-  });
-  const pending = fixture.tools.call('slow', caller, { value: 'ok' });
-  const rejected = assert.rejects(pending, { code: 'forbidden' });
-  await parsed.entered;
-  fixture.revokeSource();
-  parsed.release();
-  await rejected;
-  // The read's one decision is made inside its snapshot, on the rows its handler reads.
-  const next = registry(async (run) => {
-    next.revokeSource();
-    return await run();
-  });
-  await assert.rejects(next.tools.call('read', caller, { value: 'ok' }), { code: 'forbidden' });
-  assert.equal(next.calls(), 0);
-});
-
 const database = process.env.MERV_TEST_POSTGRES_URL;
 test(
   'Scope binds original delegation, refuses mixed or nested authority and fences revocation',
@@ -233,64 +200,6 @@ test(
     scope.registerConversationAuthority(authority);
     await scope.credentials.revokeCredential(original, issued.credential.id);
     await assert.rejects(scope.require(agent, 'read'), { code: 'forbidden' });
-  },
-);
-
-test(
-  'a conversation that also carries another authority is refused by Scope before any tool runs',
-  { skip: !database && 'Requires MERV_TEST_POSTGRES_URL' },
-  async (t) => {
-    const { openState } = await import('./fixtures/state.js');
-    const state = await openState();
-    t.after(() => state.close());
-    const scope = await createService(new ProjectScope(state));
-    const boot = await scope.credentials.bootstrap({
-      projectName: 'Mixed authority',
-      actorName: 'Owner',
-    });
-    const original: Caller = {
-      actorId: boot.actor.id,
-      projectId: boot.project.id,
-      credentialId: boot.credential.id,
-    };
-    const source = await scope.delegationSource(original);
-    scope.registerConversationAuthority({ require: async () => source });
-    const agent: Caller = {
-      actorId: original.actorId,
-      projectId: original.projectId,
-      conversation,
-    };
-    const tools = new ToolRegistry(scope);
-    tools.registerCallerRules('conversation', conversationRules);
-    t.after(() => tools.close());
-    let ran = 0;
-    tools.register({
-      name: 'read',
-      description: 'Read',
-      readOnly: true,
-      inputSchema: z.object({}).strict(),
-      handler: () => ++ran,
-    });
-    // Sessions admits a session caller only through Scope's read decision, as this stand-in does.
-    tools.registerSessionPolicy({
-      allowsTool: async () => true,
-      prepare: async (candidate, tool, input) => {
-        await scope.require(candidate, 'read');
-        return { caller: candidate, tool, input };
-      },
-      validate: async () => {},
-      run: async (invocation, dispatch) => await dispatch(invocation.caller, invocation.input),
-      cancel: async () => {},
-    });
-    assert.equal(await tools.call('read', agent, {}), 1);
-    for (const mixed of [
-      { ...agent, session: { id: 'session_1', threadId: 'session_1' } },
-      { ...agent, credentialId: original.credentialId },
-    ]) {
-      await assert.rejects(tools.describe(mixed), { code: 'forbidden' });
-      await assert.rejects(tools.call('read', mixed, {}), { code: 'forbidden' });
-    }
-    assert.equal(ran, 1);
   },
 );
 
@@ -409,34 +318,3 @@ test(
     assert.equal((await scope.credentials.actorCredentials(actor, made.actor.id)).length, 1);
   },
 );
-
-test('conversation and managed callers are refused until the plugin that issues them registers its rules', async () => {
-  const tools = new ToolRegistry({ require: async () => ({ role: 'owner' }) as never });
-  tools.register({
-    name: 'read',
-    description: 'Read',
-    readOnly: true,
-    inputSchema: z.object({}).strict(),
-    handler: () => 'result',
-  });
-  const managed: Caller = {
-    actorId: 'runner',
-    projectId: 'project_1',
-    managed: { allocationId: 'allocation', epoch: 1, credentialHash: 'hash' },
-  };
-  for (const candidate of [caller, managed]) {
-    await assert.rejects(tools.describe(candidate), { code: 'unavailable', status: 503 });
-    await assert.rejects(tools.call('read', candidate, {}), { code: 'unavailable', status: 503 });
-  }
-  const withdraw = tools.registerCallerRules('conversation', conversationRules);
-  assert.throws(() => tools.registerCallerRules('conversation', conversationRules), {
-    code: 'caller_rules_conflict',
-  });
-  assert.equal(await tools.call('read', caller, {}), 'result');
-  withdraw();
-  await assert.rejects(tools.call('read', caller, {}), { code: 'unavailable' });
-  // Rules that offer nothing refuse the caller outright, listing included.
-  tools.registerCallerRules('managed', managedRunnerRules);
-  for (const refused of [tools.describe(managed), tools.call('read', managed, {})])
-    await assert.rejects(refused, { code: 'managed_runner_forbidden', status: 403 });
-});

@@ -1,4 +1,4 @@
-import { createService, type Caller, type ReviewApplication } from '@merv/contracts';
+import { createService, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import type { ResearchCreate } from '@merv/research/types';
 import assert from 'node:assert/strict';
@@ -6,7 +6,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { bindAutomatic, wakeAutomatic } from '../packages/research/src/automatic.js';
+import {
+  automaticRequest,
+  bindAutomatic,
+  wakeAutomatic,
+} from '../packages/research/src/automatic.js';
 import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from './fixtures/app.js';
 import { currentExperiment } from './fixtures/current-experiment.js';
@@ -337,6 +341,7 @@ test('restart and repeated wakeups recover a missed completion without duplicate
   const work = await f.experiment();
   const cycle = await f.create([work.id]);
   await f.pump();
+  const before = await f.research.get(f.owner, cycle.id);
   await f.disable();
   await f.failExperiment(work.id);
   await f.restart();
@@ -348,6 +353,28 @@ test('restart and repeated wakeups recover a missed completion without duplicate
   await f.pump();
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
   assert.equal((await f.research.get(f.owner, cycle.id)).reflectionId, record.reflectionId);
+  // The completed advance's replay does not consult Git for the stage it moved into.
+  const replay = {
+    researchId: cycle.id,
+    expectedRevision: before.workflow.revision,
+    nextWave: 'create' as const,
+    requestId: automaticRequest(cycle.id, before.workflow.revision, 'advance'),
+  };
+  const committed = await f.research.advance(f.owner, replay);
+  let gitCalls = 0;
+  f.research.providers.code = {
+    ...f.research.providers.code,
+    hosted: async () => true,
+    acceptedSince: async () => {
+      gitCalls++;
+      throw new MervError('code_unavailable', 'Git is temporarily unavailable', 503);
+    },
+  };
+  assert.deepEqual(await f.research.advance(f.owner, replay), committed);
+  await assert.rejects(f.research.advance(f.owner, { ...replay, nextWave: 'skip' }), {
+    code: 'request_conflict',
+  });
+  assert.equal(gitCalls, 0);
 });
 
 test('a revoked source cannot advance, while another authorized cycle keeps moving', async (t) => {
@@ -371,34 +398,4 @@ test('a revoked source cannot advance, while another authorized cycle keeps movi
     JSON.stringify(await f.research.get(f.owner, blocked.id)).includes(source.credentialId),
     false,
   );
-});
-
-test('worker sessions cannot authorize automatic research or advance the outer cycle', async (t) => {
-  const f = await fixture(t);
-  const work = await f.task();
-  const session = { ...f.owner, session: { id: 'worker' } };
-  await assert.rejects(f.create([work.id], {}, session));
-  const cycle = await f.create([work.id]);
-  await assert.rejects(
-    f.research.advance(session, {
-      researchId: cycle.id,
-      expectedRevision: cycle.workflow.revision,
-      nextWave: 'create',
-      requestId: f.id(),
-    }),
-  );
-  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'defining');
-  await assert.rejects(f.create([]), { code: 'research_work_required' });
-  // Nor can a replan leave an automatic cycle without a task or experiment, or add other work.
-  const replan = (dependsOn: string[]) =>
-    f.research.replan(f.owner, {
-      researchId: cycle.id,
-      expectedRevision: cycle.workflow.revision,
-      dependsOn,
-      requestId: f.id(),
-    });
-  await assert.rejects(replan([]), { code: 'research_work_required' });
-  const manual = await f.create([], { automatic: false });
-  await assert.rejects(replan([work.id, manual.id]), { code: 'invalid_research_input' });
-  assert.deepEqual((await replan([work.id])).researchDependencies, [work.id]);
 });

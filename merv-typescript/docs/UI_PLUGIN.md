@@ -58,11 +58,11 @@ Code's `ui.read` supplies commit receipts and status together, with publication 
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
 
-These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. There is no `running` row: the shell moves an old `/running` address to the Work page with its `?key=`, so a link to a key still opens that key's sidebar. The Work page reads these two tools (`views/work-map.tsx`).
+These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. There is no `running` row: the shell moves an old `/running` address to the Work page with its `?key=`, so a link to a key still opens that key's sidebar. The Work page reads these two tools (`views/work-live.tsx`).
 
 ## Running contributions
 
-The Work page draws everything in flight — its map, who is on each unit and where, and the sidebar of what is in hand — from contributions that the owning plugins register in their existing ui adapters. `ctx.ui` carries the registry, so an adapter injects nothing new for it; Fleet's adapter and the Sandboxes console also inject `scope`, the one extra the boundary rule allows, to offer their machine controls (Finish and release, Stop now, Extend lease, Release machine) only to a caller the tools would let act.
+The Work page joins the records from `ui.home` with live contributions in a compact grouped list. Rows show the work's title, exact stage, owner and recent change; the current Research cycle is a link above the list. Descriptions, dependencies, agents, machines and actions live in the existing inspector and record pages. Live contributions remain registered by the owning plugins in their existing UI adapters. `ctx.ui` carries the registry, so an adapter injects nothing new for it; Fleet's adapter and the Sandboxes console also inject `scope`, the one extra the boundary rule allows, to offer their machine controls (Finish and release, Stop now, Extend lease, Release machine) only to a caller the tools would let act.
 
 ```ts
 ctx.effect(() =>

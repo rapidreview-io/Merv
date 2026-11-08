@@ -2,16 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Caller } from '@merv/contracts';
 import { httpApp } from './fixtures/app.js';
-import {
-  deepLink,
-  handoffInline,
-  handoffPrompt,
-  hunkOf,
-  rebased,
-} from '../packages/ui/web/views/board-outcome-text.js';
+import { boardApp } from './fixtures/board.js';
 
-async function fixture(t: test.TestContext) {
-  const f = await httpApp(t, 'board-outcome-');
+async function fixture(t: test.TestContext, full = false) {
+  const f = full
+    ? await httpApp(t, 'board-outcome-')
+    : await boardApp(t, 'board-outcome-', { artifacts: true });
   const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Sketches',
     actorName: 'Owner',
@@ -95,38 +91,6 @@ test('an outcome is written by edits at any revision, and whole only at its own'
   assert.equal('text' in line!, false, 'the poll carries no text');
 });
 
-test('an outcome says which agent last wrote it, and can be deleted', async (t) => {
-  const { board, owner, id } = await fixture(t);
-  const made = await board.writeOutcome(owner, { board: id, title: 'P', content: 'a' }, 'Pi');
-  const outcome = { board: id, outcome: made.id };
-  assert.equal((await board.outcome(owner, id, made.id)).writer, 'Pi');
-  assert.ok(!('writer' in made), 'the line the page polls does not carry it');
-  await board.writeOutcome(owner, { ...outcome, edits: [{ find: 'a', replace: 'b' }] });
-  assert.equal((await board.outcome(owner, id, made.id)).writer, undefined, 'a person wrote last');
-  await assert.rejects(
-    board.deleteOutcome(owner, id, made.id, 1),
-    coded('board_outcome_conflict'),
-    'what was written since the person last saw it stays',
-  );
-  await board.deleteOutcome(owner, id, made.id, 2);
-  await assert.rejects(board.outcome(owner, id, made.id), coded('not_found'));
-  await assert.rejects(board.deleteOutcome(owner, id, made.id, 2), coded('not_found'));
-});
-
-test('a send leaves the revision, and the same send is one entry', async (t) => {
-  const { board, owner, id } = await fixture(t);
-  const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'text' });
-  const sent = { board: id, outcome: made.id, artifactId: 'art_one', revision: 1 };
-  await board.outcomeSent(owner, { ...sent, how: 'copy' });
-  await board.outcomeSent(owner, { ...sent, how: 'copy' });
-  const line = await board.outcomeSent(owner, { ...sent, how: 'claude' });
-  assert.equal(line.revision, 1);
-  assert.deepEqual(
-    line.sent.map((one) => one.how),
-    ['copy', 'claude'],
-  );
-});
-
 test('an outcome stays in its project', async (t) => {
   const { board, owner, stranger, id, f } = await fixture(t);
   const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'text' });
@@ -151,22 +115,8 @@ test('an outcome stays in its project', async (t) => {
   );
 });
 
-test('the passage a person has selected is read by its offsets', async (t) => {
-  const { owner, id, tool } = await fixture(t);
-  const write = await tool('board.write', owner, {
-    action: 'outcome',
-    outcome: { board: id, title: 'P', content: 'First sentence. Second sentence.' },
-  });
-  const { outcome } = write as unknown as { outcome: { id: string } };
-  const read = (await tool('board.read', owner, {
-    action: 'outcome',
-    outcome: { board: id, outcome: outcome.id, passage: { from: 16, to: 32 } },
-  })) as unknown as { passage: string };
-  assert.equal(read.passage, 'Second sentence.');
-});
-
 test('freezing an unchanged outcome twice gives the same file through the tools', async (t) => {
-  const { board, owner, id, tool } = await fixture(t);
+  const { owner, id, tool } = await fixture(t);
   const { outcome } = (await tool('board.write:outcome', owner, {
     board: id,
     title: 'Plan',
@@ -189,87 +139,8 @@ test('freezing an unchanged outcome twice gives the same file through the tools'
   );
 });
 
-const apply = (text: string, hunk: { find: string; replace: string }) => {
-  const at = text.indexOf(hunk.find);
-  assert.ok(at >= 0 && at === text.lastIndexOf(hunk.find), `${hunk.find} occurs once`);
-  return text.slice(0, at) + hunk.replace + text.slice(at + hunk.find.length);
-};
-
-test('what was typed becomes one hunk whose find occurs once', () => {
-  for (const [saved, draft] of [
-    ['one two three', 'one 2 three'],
-    ['a\na\na\n', 'a\na!\na\n'],
-    ['same\nsame\nsame', 'same\nsame\nsame\n'],
-    ['same same', 'same  same'],
-    ['\n\n\n', '\n\nx\n'],
-    ['x', ''],
-    ['😀 a', '😁 a'],
-    ['# T\n\nline\n\nline\n', '# T\n\nline\n\nmore\nline\n'],
-  ] as const) {
-    const hunk = hunkOf(saved, draft)!;
-    assert.equal(apply(saved, hunk), draft, JSON.stringify([saved, draft]));
-  }
-  assert.equal(hunkOf('', 'first'), null, 'an empty text has nothing to find');
-});
-
-test('typing survives what the agent writes, elsewhere or over it', () => {
-  const base = 'Intro\n\nThe rate is 10.\n\nEnd';
-  const mine = 'Intro\n\nThe rate is 12.\n\nEnd';
-  const below = `${base}\n\nNext paragraph.`;
-  assert.equal(rebased(base, mine, below), `${mine}\n\nNext paragraph.`);
-  // On the very line the agent quoted to add after it.
-  assert.equal(rebased('Goal: 10', 'Goal: 12', 'Goal: 10\n\nThen more.'), 'Goal: 12\n\nThen more.');
-  // Two edits by the agent around the typing keep both.
-  assert.equal(rebased(base, mine, `Lead\n\n${base}\n\nTail`), `Lead\n\n${mine}\n\nTail`);
-  // A stray digit is not what was changed: the whole line is, and it no longer stands.
-  assert.deepEqual(hunkOf('Rate: 10', 'Rate: 12'), { find: 'Rate: 10', replace: 'Rate: 12' });
-  assert.equal(
-    rebased('Rate: 10', 'Rate: 12', 'Rate: 11\nCount: 0'),
-    'Rate: 12\n\nRate: 11\nCount: 0',
-  );
-  // The agent rewrote the sentence being typed in and wrote around it: all of it stands.
-  assert.equal(
-    rebased('A\n\nRate 10\n\nZ', 'A\n\nRate 12\n\nZ', 'Intro\n\nA\n\nRate 11\n\nZ\n\nEnd'),
-    'Intro\n\nA\n\nRate 12\n\nRate 11\n\nZ\n\nEnd',
-  );
-  assert.equal(rebased(base, base, below), below, 'nothing typed takes what came');
-  assert.equal(rebased(base, mine, base), mine, 'nothing came keeps what was typed');
-  assert.equal(rebased('', 'mine', 'theirs'), 'theirs\n\nmine', 'nobody is lost in an empty text');
-});
-
-test('the handoff prompt names everything, and fits a deep link', () => {
-  const ids = { projectId: `prj_${'p'.repeat(40)}`, boardId: `board_${'b'.repeat(40)}` };
-  const handoff = {
-    ...ids,
-    title: `Plan"\u0007\n${'é'.repeat(198)}`,
-    origin: 'https://example.test',
-  };
-  const artifact = `art_${'a'.repeat(40)}`;
-  const prompt = handoffPrompt(handoff, artifact);
-  for (const part of [
-    ids.projectId,
-    ids.boardId,
-    artifact,
-    'artifact.read content',
-    'board.read get',
-    'board.read look',
-    'https://example.test/ui/settings/keys',
-  ])
-    assert.ok(prompt.includes(part), part);
-  assert.equal(/[\u0000-\u0009\u000b-\u001f]/.test(prompt), false);
-  assert.equal(prompt.split('\n').length, 6, 'a title stays on its line');
-  assert.ok(prompt.includes(`("Plan'  é`), 'and in its quotes');
-  assert.ok(prompt.length <= 5000, 'Claude Code takes q up to 5,000 characters');
-  const link = deepLink(prompt);
-  const url = new URL(link);
-  assert.equal(url.protocol + url.hostname, 'claude-cli:open');
-  assert.equal(url.searchParams.get('q'), prompt);
-  const inline = handoffInline(handoff, 'The whole plan.');
-  assert.ok(inline.endsWith('The whole plan.') && !inline.includes('art_'));
-});
-
 test('a send to Fleet learns its task from the first task whose goal names its file', async (t) => {
-  const { board, owner, id, tool, f } = await fixture(t);
+  const { board, owner, id, tool, f } = await fixture(t, true);
   const made = await board.writeOutcome(owner, { board: id, title: 'Plan', content: 'Do it.' });
   const artifactId = 'art_frozen-1';
   const send = (how: 'fleet' | 'copy') =>

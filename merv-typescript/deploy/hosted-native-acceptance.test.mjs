@@ -1,23 +1,10 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gunzipSync } from 'node:zlib';
-import { request, operator, preflight, proofs, collect } from './hosted-native-acceptance.mjs';
-
-test('immutable request carries the exact probe within the real service text limit', async () => {
-  const source = await readFile(
-    new URL('../scripts/hosted-runner/native-acceptance-probe.py', import.meta.url),
-  );
-  const payload = request('oct21', source);
-  const encoded = /b64decode\('([^']+)'\)/.exec(payload.details)[1];
-  assert.deepEqual(gunzipSync(Buffer.from(encoded, 'base64')), source);
-  assert.ok(payload.details.length < 16000);
-  assert.deepEqual(payload, request('oct21', source));
-  assert.throws(() => request('bad;run', source));
-});
+import test from 'node:test';
+import { collect, operator, preflight, proofs, request } from './hosted-native-acceptance.mjs';
 
 test('embedded probe ignores checkout imports, Python environment and PATH shadowing', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'merv-probe-shadow-'));

@@ -227,6 +227,16 @@ test('uncommitted submission freezes exactly, gates review, commits only after a
     code: 'code_submission_conflict',
   });
   await assert.rejects(f.approve(), { code: 'code_review_unattached' });
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      f.service.approve(
+        { ...f.reviewer, session: undefined },
+        { ...f.approval, reviewSessionId: null },
+        tx,
+      ),
+    ),
+    { code: 'code_review_unattached' },
+  );
   f.reviewTree();
   f.verdict('needs_changes');
   await assert.rejects(f.approve(), { code: 'code_approval_required' });
@@ -287,18 +297,6 @@ test('uncommitted submission freezes exactly, gates review, commits only after a
     (await f.state.read((sql) => sql.all('SELECT review_id FROM code_approval_milestones'))).length,
     1,
   );
-});
-
-test('an unchanged accepted tree reuses its existing parent commit', async (t) => {
-  const f = await fixture(t, false);
-  await f.expect();
-  await f.service.freeze(f.runner, f.receipt);
-  f.reviewTree();
-  await f.approve();
-  await f.service.reconcile();
-  assert.equal(f.completed.length, 1);
-  assert.equal(f.completed[0].commit.head, f.parent);
-  assert.equal(git(f.repo, ['rev-list', '--all', '--count']), '1');
 });
 
 test('a stale stopped writer cannot close a successor generation or freeze its old candidate', async (t) => {

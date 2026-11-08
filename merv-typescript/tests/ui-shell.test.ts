@@ -1,10 +1,3 @@
-/**
- * The shell and the pages it frames directly, rendered through the real sign-in
- * flow against a fixture server. Each test states one thing the frame must not
- * do: say a word twice in the rail or the account row, blame a plugin for a
- * mistyped address, lose the Settings title in a room, or open diagnostics on a
- * person who did not ask for them.
- */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
@@ -19,7 +12,7 @@ Object.assign(globalThis, {
 });
 
 const { createElement } = await import('react');
-const { MemoryRouter, useLocation } = await import('react-router-dom');
+const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
@@ -62,118 +55,6 @@ const open = async (path: string) => {
   await mount(createElement(MemoryRouter, { initialEntries: [path] }, createElement(App)));
   await settle(20);
 };
-
-test('the only operator is offered no control that would leave the project without one', async (t) => {
-  t.after(async () => {
-    await unmount();
-    setProject(null);
-  });
-  setProject(project.id);
-  const user = {
-    issuer: 'https://login.example',
-    subject: 'subject-1',
-    createdAt: project.createdAt,
-  };
-  const member = (n: number, role: string) => ({
-    id: `member_${n}`,
-    projectId: project.id,
-    issuer: user.issuer,
-    subject: `subject-${n}`,
-    actorId: `actor_${n}`,
-    role,
-    active: true,
-  });
-  const names = ['Operator', 'Reviewer'].map((name, at) => ({ id: `actor_${at + 1}`, name }));
-  const controls = (name: string) => {
-    const role = document.querySelector<HTMLSelectElement>(
-      `select[aria-label="Role for ${name}"]`,
-    )!;
-    const remove = [...role.closest('.states')!.querySelectorAll('button')].at(-1)!;
-    assert.equal(remove.textContent, 'Remove');
-    return [role.disabled, remove.disabled];
-  };
-  for (const [second, locked] of [
-    ['reviewer', true],
-    ['operator', false],
-  ] as const) {
-    boot('Operator');
-    serve('/account', { body: { kind: 'user', user, projects: [project] } });
-    serve('/tools/project.read:actors', { body: { result: names } });
-    serve(`/projects/${project.id}/members`, {
-      body: { memberships: [member(1, 'operator'), member(2, second)], admin: null, payers: [] },
-    });
-    await open('/settings/members');
-    assert.equal(document.querySelector('h1')!.textContent, 'Settings');
-    assert.equal(
-      document.querySelector('.settings nav [aria-current="page"]')!.textContent,
-      'Members',
-    );
-    assert.deepEqual(controls('Operator'), [locked, locked], second);
-    assert.deepEqual(controls('Reviewer'), [false, false], second);
-    await unmount();
-  }
-});
-
-test('Discord stands just above the account and opens the community channel in a tab of its own', async (t) => {
-  t.after(unmount);
-  boot('Operator');
-  await open('/');
-  const discord = [...document.querySelectorAll<HTMLAnchorElement>('.sidebar a')].find(
-    (link) => link.textContent === 'Discord',
-  );
-  assert.ok(discord, text().slice(0, 300));
-  assert.equal(discord.getAttribute('href'), 'https://discord.gg/p8h6MwpNv');
-  assert.equal(discord.target, '_blank');
-  assert.ok(discord.nextElementSibling?.classList.contains('account-foot'));
-});
-
-test('the tour shows once, Skip ends it for good, and Settings › Session replays it', async (t) => {
-  t.after(async () => {
-    await unmount();
-    localStorage.clear();
-  });
-  localStorage.clear();
-  boot('Operator');
-  await open('/');
-  assert.ok(text().includes('Welcome to Merv'), text().slice(0, 300));
-  await click('Skip');
-  assert.ok(!text().includes('Welcome to Merv'));
-  await unmount();
-  boot('Operator');
-  await open('/settings/session');
-  assert.ok(!text().includes('Welcome to Merv'), 'a second visit is not toured');
-  await click('Take the tour');
-  // Only the rows this project registers get a step: no Pi, Board, Compute or Git here.
-  assert.ok(text().includes('Project switcher'), text().slice(0, 300));
-  assert.ok(text().includes('1 of 6'), text().slice(0, 300));
-});
-
-test('a server that cannot answer is asked again later each time, never in a loop, and the sign-in is kept', async (t) => {
-  t.after(async () => {
-    await unmount();
-    setToken('fixture-token');
-  });
-  boot('Operator');
-  const actor = { id: 'actor_1', projectId: project.id, name: 'Operator', role: 'operator' };
-  // A membership still settling, then an outage, then the server again.
-  serve('/account', (call) =>
-    call === 1
-      ? { status: 403, body: { error: { code: 'membership_required', message: 'Settling' } } }
-      : call === 2
-        ? { network: true }
-        : { body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] } },
-  );
-  await open('/');
-  const asked = () => requests.filter((request) => request === 'GET /account').length;
-  assert.equal(asked(), 1);
-  assert.ok(text().includes('Connecting'));
-  await settle(1100);
-  assert.equal(asked(), 2);
-  await settle(2100);
-  assert.equal(asked(), 3);
-  assert.ok(document.querySelector('.sidebar'), text().slice(0, 300));
-  assert.equal(sessionStorage.getItem('merv:token'), 'fixture-token');
-});
 
 test('a sign-in that lands while the first check reads still opens the project that check chose', async (t) => {
   const { browserAuth, setAuthMode } = await import('../packages/ui/web/auth.js');

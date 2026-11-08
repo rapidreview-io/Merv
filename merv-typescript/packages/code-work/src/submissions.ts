@@ -449,23 +449,27 @@ export class CodeSubmissionService {
       'An independently recorded passing review is required',
       409,
     );
-    check(
-      input.reviewSessionId,
-      'code_review_unattached',
-      'Approval requires an isolated review checkout',
-      409,
-    );
-    const own = await this.sessions.workspaceObservation(caller, input.reviewSessionId, tx);
-    check(
-      own.provenance.readOnly &&
-        own.provenance.instanceId === input.unitId &&
-        own.provenance.actorId === caller.actorId &&
-        canonical(own.workspace?.attachment.submission ?? null) ===
-          canonical(capture.workspace.submission),
-      'code_review_unattached',
-      'The reviewer must inspect exactly this immutable submitted tree',
-      409,
-    );
+    // Reviews authorizes and records an owner deciding as themself; every other approval
+    // must come from an independent worker that inspected this exact submitted tree.
+    if (!review.override) {
+      check(
+        input.reviewSessionId,
+        'code_review_unattached',
+        'Approval requires an isolated review checkout',
+        409,
+      );
+      const own = await this.sessions.workspaceObservation(caller, input.reviewSessionId, tx);
+      check(
+        own.provenance.readOnly &&
+          own.provenance.instanceId === input.unitId &&
+          own.provenance.actorId === caller.actorId &&
+          canonical(own.workspace?.attachment.submission ?? null) ===
+            canonical(capture.workspace.submission),
+        'code_review_unattached',
+        'The reviewer must inspect exactly this immutable submitted tree',
+        409,
+      );
+    }
     const body = canonical(input),
       hash = digest(input);
     const previous = await tx.get<MilestoneRow>(

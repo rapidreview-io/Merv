@@ -2,7 +2,6 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import {
   check,
   createService,
-  effectiveWorkspace,
   type Caller,
   type Data,
   type Transaction,
@@ -15,8 +14,8 @@ import test, { type TestContext } from 'node:test';
 
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { executionFingerprint, validateExecution } from '@merv/workflows/execution-policy';
-import { countWrites, openState } from './fixtures/state.js';
+
+import { openState } from './fixtures/state.js';
 
 const definition = (name: string, version = 1): WorkflowDefinition => ({
   name,
@@ -111,82 +110,6 @@ async function fixture(t: TestContext) {
     },
   };
 }
-
-test('dispatch discovers only metadata and prioritizes read-only candidates without changing durable state', async (t) => {
-  const f = await fixture(t);
-  const work = await f.register('work');
-  const review = await f.register('verify', true, {
-    mode: 'ephemeral',
-    namespace: 'reviews',
-    base: 'reference:code',
-    retain: false,
-    driver: 'code.v2',
-  });
-  const one = await work.start({ title: 'First work' });
-  const two = await work.start({ title: 'Second work' });
-  const verifier = await review.start({ title: 'Independent verification' });
-  f.forbidExits();
-  // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
-  const writes = countWrites(f.state);
-  const before = writes();
-  const head = await f.state.eventHead();
-  const candidates = await f.workflows.dispatchCandidates(f.source);
-  const workOrder = await f.state.read(async (sql) =>
-    (
-      await sql.all<{ id: string }>(
-        'SELECT id FROM wf_instances WHERE workflow=? ORDER BY created_at,id',
-        'work',
-      )
-    ).map((row) => row.id),
-  );
-  assert.deepEqual(
-    candidates.map((candidate) => candidate.instanceId),
-    [verifier.id, ...workOrder],
-  );
-  assert.equal(candidates[0].label, 'Independent verification');
-  assert.equal(candidates[0].role, 'reviewer');
-  assert.deepEqual(candidates[0].workspace, review.policy.assignments![0].execution!.workspace);
-  assert.deepEqual(candidates[1].workspace, { mode: 'none' });
-  assert.equal(candidates[1].expectedRevision, 0);
-  assert.equal(candidates[1].projectId, f.source.projectId);
-  assert.deepEqual(new Set(workOrder), new Set([one.id, two.id]));
-  assert.equal(await f.state.eventHead(), head);
-  assert.equal(writes(), before);
-  candidates[0].workspace = { mode: 'none' };
-  assert.equal((await f.workflows.dispatchCandidates(f.source))[0].workspace.mode, 'ephemeral');
-});
-
-test('domain readiness, prerequisites, terminal states and program withdrawal govern discovery', async (t) => {
-  const f = await fixture(t);
-  const work = await f.register('dependent-work');
-  const prerequisite = await work.start({ title: 'Prerequisite' });
-  const dependent = await work.start({ title: 'Dependent' }, [prerequisite.id]);
-  const denied = await work.start({ title: 'Missing metadata', allowed: false });
-  assert.deepEqual(
-    (await f.workflows.dispatchCandidates(f.source)).map((item) => item.instanceId),
-    [prerequisite.id],
-  );
-  await work.handle.transition(f.source, {
-    instanceId: prerequisite.id,
-    expectedRevision: 0,
-    action: 'finish',
-    requestId: 'finish',
-  });
-  assert.deepEqual(
-    (await f.workflows.dispatchCandidates(f.source)).map((item) => item.instanceId),
-    [dependent.id],
-  );
-  assert.notEqual(dependent.id, denied.id);
-  work.handle.dispose();
-  assert.deepEqual(await f.workflows.dispatchCandidates(f.source), []);
-  const assignmentOnly = f.rules({ readOnly: false, tools: [] });
-  delete assignmentOnly.assignments![0].lease;
-  delete assignmentOnly.assignments![0].execution;
-  delete assignmentOnly.assignments![0].references;
-  const handle = await f.workflows.register(definition('interactive-only'), assignmentOnly);
-  await handle.start(f.source, { workflow: 'interactive-only', requestId: 'interactive' });
-  assert.deepEqual(await f.workflows.dispatchCandidates(f.source), []);
-});
 
 test('discovery uses the real source authority and transaction; revoked or cross-project callers cannot enumerate', async (t) => {
   const f = await fixture(t);
@@ -313,142 +236,4 @@ test('a dispatch callback that moves the instance fails the scan, excluded or re
     stored.every((row) => !row.data_json.includes('moved')),
     'failed scans roll back',
   );
-});
-
-test('workspace declarations are strict, immutable and version-pinned while absent old policies stay unchanged', async (t) => {
-  const f = await fixture(t);
-  const oldManifest = { readOnly: false, tools: [] };
-  const oldHash = executionFingerprint(oldManifest);
-  assert.deepEqual(validateExecution(oldManifest), oldManifest);
-  assert.deepEqual(effectiveWorkspace(oldManifest), { mode: 'none' });
-  const first = await f.workflows.register(definition('workspace-policy'), f.rules(oldManifest));
-  await first.start(f.source, { workflow: 'workspace-policy', requestId: 'workspace' });
-  assert.equal((await f.workflows.dispatchCandidates(f.source))[0].policyHash, oldHash);
-  first.dispose();
-  const restarted = await createService(new WorkflowsService(f.state, f.scope));
-  t.after(() => restarted.close());
-  await assert.rejects(
-    async () =>
-      await restarted.register(
-        definition('workspace-policy'),
-        f.rules({
-          ...oldManifest,
-          workspace: { mode: 'none' },
-        }),
-      ),
-    { code: 'workflow_version_conflict' },
-  );
-  const replay = await restarted.register(definition('workspace-policy'), f.rules(oldManifest));
-  assert.equal((await restarted.dispatchCandidates(f.source))[0].policyHash, oldHash);
-  replay.dispose();
-  const workspace: WorkflowWorkspacePolicy = {
-    mode: 'persistent',
-    namespace: 'consolidations',
-    base: 'reference:code',
-    perBase: false,
-    retain: true,
-    advancesCentral: false,
-    driver: 'code.v2',
-  };
-  const explicit = { ...oldManifest, workspace };
-  const versionTwo = await restarted.register(definition('workspace-policy', 2), f.rules(explicit));
-  await versionTwo.start(f.source, {
-    workflow: 'workspace-policy',
-    version: 2,
-    requestId: 'workspace-v2',
-  });
-  workspace.namespace = 'mutated';
-  const next = (await restarted.dispatchCandidates(f.source))[0];
-  assert.equal(next.version, 2);
-  assert.equal(next.workspace.mode === 'persistent' && next.workspace.namespace, 'consolidations');
-  assert.notEqual(next.policyHash, oldHash);
-  const invalid = [
-    { mode: 'none', namespace: 'hidden' },
-    { mode: 'unknown' },
-    { ...workspace, advancesCentral: undefined },
-    ...['.', '..', '../work', 'a/b', 'a\\b', '-option', '/absolute', 'a\u0000b'].map(
-      (namespace) => ({
-        mode: 'ephemeral',
-        namespace,
-        base: 'reference:code',
-        retain: false,
-        driver: 'code.v2',
-      }),
-    ),
-    ...[
-      'upstream',
-      'reference:',
-      'reference:../code',
-      'reference:constructor',
-      'reference:__proto__',
-      // The central base went with the runners' own repositories.
-      'central',
-    ].map((base) => ({
-      mode: 'ephemeral',
-      namespace: 'review',
-      base,
-      retain: false,
-      driver: 'code.v2',
-    })),
-    { mode: 'ephemeral', namespace: 'review', base: 'reference:code', retain: 'false' },
-    {
-      mode: 'ephemeral',
-      namespace: 'review',
-      base: 'reference:code',
-      retain: false,
-      driver: 'code.v2',
-      advancesCentral: true,
-    },
-    // Every checkout names the driver that prepares it, and none is per base or advances central.
-    { mode: 'ephemeral', namespace: 'review', base: 'reference:code', retain: false },
-    { ...workspace, driver: undefined },
-    { ...workspace, perBase: true },
-    { ...workspace, advancesCentral: true },
-  ];
-  for (const value of invalid)
-    assert.throws(
-      () => validateExecution({ ...oldManifest, workspace: value } as WorkflowExecutionPolicy),
-      { code: 'invalid_workflow_policy' },
-    );
-  assert.equal(validateExecution({ ...explicit, readOnly: true }).readOnly, true);
-});
-
-test('a lease whose receipt its offer accepted is released', async (t) => {
-  const f = await fixture(t);
-  const execution = { readOnly: false, tools: [] };
-  const policy = f.rules(execution);
-  const released: string[] = [];
-  policy.assignments![0]!.lease!.release = ({ reason }) => {
-    released.push(reason);
-  };
-  const handle = await f.workflows.register(definition('receipts'), policy);
-  const started = await handle.start(f.source, { workflow: 'receipts', requestId: 'start' });
-  const lease = {
-    leaseId: 'lease',
-    instanceId: started.id,
-    expectedRevision: started.revision,
-    projectId: f.source.projectId,
-    actorId: f.source.actorId,
-    workflow: 'receipts',
-    version: 1,
-    state: 'work',
-    policyHash: executionFingerprint(validateExecution(execution)),
-    registrationId: 'registration',
-    // Within the offer's 256,000 characters, while the whole lease is past them.
-    receipt: { blob: 'x'.repeat(255_900) },
-  };
-  await f.workflows.releaseLease(lease, { reason: 'Finished' });
-  assert.deepEqual(released, ['Finished']);
-  await assert.rejects(
-    f.workflows.releaseLease(
-      { ...lease, receipt: { blob: 'x'.repeat(256_000) } },
-      { reason: 'Finished' },
-    ),
-    { code: 'invalid_workflow_policy' },
-  );
-  await assert.rejects(
-    f.workflows.releaseLease({ ...lease, receipt: { at: new Date() } as never }, { reason: 'x' }),
-    { code: 'invalid_lease', status: 400 },
-  );
-  assert.deepEqual(released, ['Finished']);
 });

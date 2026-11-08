@@ -100,10 +100,16 @@ Their independent protection and the recorded application image are part of oper
 
 The one-time existing-project migration ran at cutover and its importer is retired; see [Legacy import](LEGACY_IMPORT.md). The Azure staging deployment uses [its deployment renderer](../deploy/README.md) to configure shared authentication and the exact public origin. The generic storage example alone is not the complete Azure release configuration.
 
-The opt-in integration test uses `MERV_TEST_POSTGRES_URL` and unique disposable schemas. It exercises the assembled application with PostgreSQL plus Disk, and with PostgreSQL plus the real AWS SDK against a local S3 protocol fixture. It covers operator authentication, artifact/context reads, task creation, independent review, rollback of verdict/transition/events/replay receipts together, successful retry, two application restarts, authenticated HTTP reads and Blobs unload during an admitted download. Failed S3 uploads publish no artifact metadata or event. The fixture has fake credentials and an explicit constructor-only HTTP-loopback allowance; production plugin configuration still requires HTTPS.
+Storage tests require `MERV_TEST_POSTGRES_URL` and use disposable PostgreSQL schemas.
+`state-postgres` covers migration atomicity, writer serialization, pool disposal and
+read isolation. `artifact-large` covers signed uploads, concurrent completion and
+writer revocation. `blobs-s3` checks corrupt and oversized reads, timeouts and
+immutable Disk writes against local fixtures.
 
 ```sh
-node --import tsx --test tests/production-storage.test.ts
+node --import tsx --test tests/state-postgres.test.ts tests/artifact-large.test.ts tests/blobs-s3.test.ts
 ```
 
-Without `MERV_TEST_POSTGRES_URL`, live PostgreSQL cases are skipped. Local tests do not establish connectivity, permissions or durability for a real deployment account.
+These local checks do not establish connectivity, permissions or durability for a
+real deployment account. The former assembled `production-storage` suite has been
+removed; its full restart and transport matrix is no longer a release gate.

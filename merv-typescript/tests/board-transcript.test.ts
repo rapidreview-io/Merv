@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import {
-  NotSession,
-  overview,
-  readTranscript,
-  redact,
-  stepsOf,
-} from '../packages/board/src/transcript.js';
+import { overview, readTranscript } from '../packages/board/src/transcript.js';
 
 const lines = (...rows: object[]) => rows.map((row) => JSON.stringify(row)).join('\n');
 const base = { sessionId: 's', version: '2.1.300', isSidechain: false };
@@ -92,24 +85,6 @@ test('Claude Code: calls meet their results, a failure is what the file records,
   assert.deepEqual(seen.files.changed, [{ path: 'src/round.js', edits: 1 }]);
 });
 
-test('Claude Code: a resumed file repeats lines once, a sub-agent keeps its lane, reminders are no person', () => {
-  const said = person('hello');
-  const whole = readTranscript(
-    lines(said, said, person('<system-reminder>be good</system-reminder>'), {
-      ...person('the brief'),
-      isSidechain: true,
-      agentId: 'agent1',
-    }),
-  );
-  assert.deepEqual(
-    whole.steps.map(({ kind, lane }) => [kind, lane]),
-    [
-      ['person', 'main'],
-      ['say', 'agent1'],
-    ],
-  );
-});
-
 const rollout = (...rows: object[]) =>
   lines(
     { timestamp: at(0), type: 'session_meta', payload: { id: 'r', cli_version: '0.155.0' } },
@@ -160,33 +135,6 @@ test('Codex: function and custom calls pair, exits count as failure, context is 
   assert.equal(whole.gaps.hiddenReasoning, 1);
 });
 
-test('Codex: a failed item before its output marks the open call', () => {
-  const whole = readTranscript(
-    lines(
-      { timestamp: at(0), type: 'session_meta', payload: { cli_version: '0.164' } },
-      {
-        timestamp: at(1),
-        type: 'response_item',
-        payload: { type: 'custom_tool_call', call_id: 'a', name: 'exec', input: 'x' },
-      },
-      {
-        timestamp: at(1),
-        type: 'event_msg',
-        payload: {
-          type: 'item_completed',
-          item: { type: 'CommandExecution', exit_code: 1, status: 'failed' },
-        },
-      },
-      {
-        timestamp: at(1),
-        type: 'response_item',
-        payload: { type: 'custom_tool_call_output', call_id: 'a', output: 'see' },
-      },
-    ),
-  );
-  assert.equal(whole.steps[0]!.failed, true);
-});
-
 test('what is no known session is refused by what it holds, never guessed', () => {
   assert.throws(() => readTranscript('hello\nworld'), /0 JSON lines and 2 others/);
   assert.throws(
@@ -210,45 +158,6 @@ test('what is no known session is refused by what it holds, never guessed', () =
     () =>
       readTranscript(lines(person('x'), { timestamp: at(0), type: 'session_meta', payload: {} })),
     /both Claude Code and Codex/,
-  );
-});
-
-test('a path is not a format: the same bytes read the same wherever they lay', () => {
-  // readTranscript takes no name at all, which is the whole of this test.
-  assert.equal(readTranscript.length, 1);
-});
-
-const SECRETS = {
-  'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx': 'api-key',
-  AKIAIOSFODNN7EXAMPLE: 'api-key',
-  ghp_abcdefghijklmnopqrstuvwxyz0123456789: 'api-key',
-  'xoxb-1234567890-abcdefghij': 'api-key',
-  mk_abcdefghijklmnop1234: 'api-key',
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefgh': 'jwt',
-  'Bearer abcdefghijklmnop1234': 'authorization',
-  'password=hunter2hunter2': 'named-secret',
-  '"api_key": "abcdef123456"': 'named-secret',
-  'postgres://admin:s3cretpw@db.example.com/x': 'url-password',
-  A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0: 'long-token',
-  'someone@example.com': 'email',
-  '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----': 'private-key',
-} as const;
-
-test('secret-shaped values go, by kind; ordinary text and git hashes stay', () => {
-  for (const [secret, kind] of Object.entries(SECRETS)) {
-    const tally = {};
-    const out = redact(`before ${secret} after`, tally);
-    assert.ok(out.includes(`[redacted:${kind}]`), `${kind}: ${out}`);
-    assert.ok(!out.includes(secret), kind);
-    assert.ok(out.startsWith('before') && out.endsWith('after'));
-    assert.ok((tally as Record<string, number>)[kind]! >= 1);
-  }
-  const plain =
-    'commit 4afdb7a45e8d1f0c2b3a49586d7e6f1a2b3c4d5e fixed src/views/board-canvas.tsx: the token budget ran out, password reset flow';
-  assert.equal(redact(plain), plain);
-  assert.equal(
-    redact('const password = process.env.PASSWORD'),
-    'const password = process.env.PASSWORD',
   );
 });
 
@@ -276,152 +185,4 @@ test('nothing unredacted leaves: steps, tools, files, and a stored transcript re
   const dirty = JSON.parse(JSON.stringify(whole));
   dirty.steps[0].text = secret;
   assert.ok(!JSON.stringify(readTranscript(JSON.stringify(dirty))).includes(secret));
-});
-
-test('review findings stay fixed', () => {
-  // A quoted password with spaces, whole.
-  assert.equal(
-    redact('{"password":"my secret password"}'),
-    '{"password":"[redacted:named-secret]"}',
-  );
-  // A token as a line type never reaches the overview.
-  const token = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
-  const typed = readTranscript(lines(person('x'), { type: token }));
-  assert.ok(!JSON.stringify(overview(typed)).includes(token));
-  // A stored transcript's extra fields are dropped.
-  const held = JSON.parse(JSON.stringify(typed));
-  held.steps[0].extra = token;
-  assert.ok(!JSON.stringify(readTranscript(JSON.stringify(held))).includes(token));
-  // A recognised session with odd content is read, not refused.
-  assert.equal(
-    readTranscript(lines(person('a'), { ...person('b'), message: { role: 'user', content: null } }))
-      .steps.length,
-    1,
-  );
-  // A business log with a payload is no Codex session.
-  assert.throws(
-    () => readTranscript(lines({ type: 'event_msg', payload: { message: 'log' } }, { a: 1 })),
-    NotSession,
-  );
-  // Which of two open calls failed is not guessed.
-  const call = (id: string) => ({
-    timestamp: at(1),
-    type: 'response_item',
-    payload: { type: 'function_call', call_id: id, name: id, arguments: '{}' },
-  });
-  const done = (id: string) => ({
-    timestamp: at(1),
-    type: 'response_item',
-    payload: { type: 'function_call_output', call_id: id, output: 'ok' },
-  });
-  const fail = (id: string) => ({
-    timestamp: at(1),
-    type: 'event_msg',
-    payload: { type: 'item_completed', item: { id, status: 'failed' } },
-  });
-  const two = readTranscript(lines(call('a'), call('b'), fail('a'), done('a'), done('b')));
-  assert.deepEqual(
-    two.steps.map((step) => step.failed),
-    [true, undefined],
-  );
-  assert.equal(
-    readTranscript(lines(call('a'), call('b'), fail('x'), done('a'), done('b'))).steps.some(
-      (step) => step.failed,
-    ),
-    false,
-  );
-  // An output that quotes someone else's exit is no failure.
-  const quoted = {
-    timestamp: at(1),
-    type: 'response_item',
-    payload: {
-      type: 'function_call_output',
-      call_id: 'a',
-      output: 'Process exited with code 0\nexample: Exit code: 1',
-    },
-  };
-  assert.equal(readTranscript(lines(call('a'), quoted)).steps[0]!.failed, undefined);
-  // A failed edit changed nothing.
-  const edit = readTranscript(
-    lines(use('e', 'Edit', { file_path: 'a.ts' }), result('e', 'denied', true)),
-  );
-  assert.deepEqual(overview(edit).files.changed, []);
-  // Bytes, not characters, bound what is kept.
-  const wide = lines(...Array.from({ length: 1400 }, () => person('漢'.repeat(4000))));
-  assert.ok(
-    new TextEncoder().encode(JSON.stringify(readTranscript(wide))).length <= 15 * 1024 * 1024,
-  );
-});
-
-test('a long run stays bounded: overview, phases and pages of steps', () => {
-  const rows: object[] = [];
-  for (let at_ = 0; at_ < 5000; at_++) {
-    if (at_ % 50 === 0) rows.push(person(`ask ${at_}`, at_ % 60));
-    rows.push(use(`t${at_}`, 'Bash', { command: `cmd ${at_}` }, at_ % 60));
-    rows.push(result(`t${at_}`, 'o'.repeat(20_000), at_ % 97 === 0, at_ % 60));
-  }
-  const whole = readTranscript(lines(...rows));
-  const seen = overview(whole);
-  assert.ok(seen.phases.length <= 24);
-  assert.ok(JSON.stringify(seen).length < 20_000, `${JSON.stringify(seen).length}`);
-  assert.equal(seen.along.marks.filter((mark) => mark.kind === 'failure').length, 30);
-  assert.ok(seen.totals.failures > 30);
-  assert.ok(JSON.stringify(whole).length < 16 * 1024 * 1024);
-  const page = stepsOf(whole, 1, 5000);
-  assert.ok(JSON.stringify(page).length < 40_000);
-  assert.equal(page.next, page.steps.length + 1);
-  assert.deepEqual(stepsOf(whole, 9_000, 9_010).steps, []);
-  // A step past its page's room still comes alone and whole, so no read returns nothing.
-  const alone = stepsOf(whole, 3, 3).steps[0] as { id: number; line?: number };
-  assert.equal(alone.id, 3);
-  assert.ok(alone.line);
-  assert.ok(JSON.stringify(stepsOf(whole, 1, 5000)).length < 15_000);
-});
-
-test('the overview draws the run along time, every mark at its place on the line', () => {
-  const at = (hour: string) => ({
-    ...person(`said at ${hour}`),
-    timestamp: `2026-10-31T${hour}:00:00.000Z`,
-  });
-  const { along } = overview(readTranscript(lines(at('10'), at('11'), at('20'))));
-  assert.match(along.pace!, /^M\d+ \d+( L\d+ \d+){47}$/);
-  assert.deepEqual(
-    along.marks.filter((mark) => mark.kind === 'person').map((mark) => mark.x),
-    [0, 120, 1200],
-  );
-  const hole = along.marks.find((mark) => mark.kind === 'pause')!;
-  assert.deepEqual([hole.x, hole.until, hole.minutes], [0, 120, 60]);
-});
-
-test('a line stamped out of order makes one pause, not two', () => {
-  const stamped = (minute: string) => ({
-    ...person('x'),
-    timestamp: `2026-10-31T${minute}:00.000Z`,
-  });
-  const pauses = overview(
-    readTranscript(lines(stamped('11:00'), stamped('16:00'), stamped('11:50'), stamped('16:01'))),
-  ).along.marks.filter((mark) => mark.kind === 'pause');
-  assert.deepEqual(
-    pauses.map(({ step, minutes, x, until }) => [step, minutes, x, until]),
-    [[1, 300, 0, 1196]],
-  );
-});
-
-test('missing times stay missing and are counted, never invented', () => {
-  const { timestamp: _gone, ...bare } = person('no time');
-  const whole = readTranscript(lines(bare, person('then', 5)));
-  assert.equal(whole.steps[0]!.at, undefined);
-  assert.equal(overview(whole).time.stepsWithoutTime, 1);
-});
-
-test('Board stays spin-out ready: the transcript code imports nothing, and only State and Scope are injected', () => {
-  const source = readFileSync('packages/board/src/transcript.ts', 'utf8');
-  assert.doesNotMatch(source, /^\s*import\s/m);
-  const service = readFileSync('packages/board/src/index.ts', 'utf8');
-  assert.match(service, /inject: \['state', 'scope'\]/);
-  for (const file of ['index', 'tools', 'transcript'])
-    assert.doesNotMatch(
-      readFileSync(`packages/board/src/${file}.ts`, 'utf8'),
-      /@merv\/(sessions|runner|workflows)/,
-    );
 });

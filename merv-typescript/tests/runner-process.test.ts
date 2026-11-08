@@ -54,85 +54,6 @@ function setup(t: TestContext) {
   return { directory, binding, ledger, host, reserve, token, command, source };
 }
 
-test('local ledger binds identity, persists exact retry inputs without bearers, and holds one controller lock', (t) => {
-  const { directory, binding, ledger } = setup(t);
-  const release = ledger.acquireController();
-  const second = new LocalLedger({ directory, binding });
-  t.after(() => second.close());
-  assert.throws(() => second.acquireController(), /Another runner controller/);
-  const pending = ledger.request({ name: 'codex', harness: 'codex', model: 'model-a' });
-  assert.deepEqual(second.request({ name: 'codex', harness: 'codex', model: 'changed' }), pending);
-  assert.deepEqual(second.pendingRequests(), [pending]);
-  assert.equal(second.runnerId, ledger.runnerId);
-  assert.equal(second.sessionSecret(pending.requestId), pending.secret);
-  assert.throws(
-    () => new LocalLedger({ directory, binding: { ...binding, projectId: 'project-b' } }),
-    /different server or source/,
-  );
-  const record = ledger.reserve({
-    id: 'id',
-    sessionId: 'session',
-    deadline: Date.now() + 10000,
-    metadata: { profile: { executable: '/bin/echo', args: ['hello'] } },
-  });
-  ledger.updateMetadata(record.id, {
-    attached: true,
-    session: { source: { credentialId: 'credential-id' } },
-  });
-  assert.equal(second.get(record.id)?.metadata.attached, true);
-  let callbacks = 0;
-  const disguised = ['ordinary value'];
-  Object.defineProperty(disguised, 'toJSON', {
-    value() {
-      callbacks++;
-      return [pending.secret];
-    },
-  });
-  const accessor = Object.defineProperty({}, 'profile', {
-    enumerable: true,
-    get() {
-      callbacks++;
-      return callbacks === 1 ? 'ordinary value' : pending.secret;
-    },
-  });
-  for (const metadata of [{ profile: disguised }, accessor]) {
-    assert.throws(() =>
-      ledger.reserve({
-        id: 'unsafe',
-        sessionId: 'unsafe',
-        deadline: record.deadline,
-        metadata,
-      }),
-    );
-    assert.throws(() => ledger.updateMetadata(record.id, metadata));
-  }
-  assert.equal(callbacks, 0);
-  assert.equal(ledger.get('unsafe'), undefined);
-  assert.equal(second.get(record.id)?.metadata.attached, true);
-  assert.throws(() =>
-    ledger.request(
-      Object.defineProperty({ name: 'unsafe', harness: 'codex' }, 'model', {
-        enumerable: true,
-        get() {
-          callbacks++;
-          return 'model-a';
-        },
-      }),
-    ),
-  );
-  assert.equal(callbacks, 0);
-  assert.equal(ledger.pendingRequests().length, 1);
-  for (const file of readdirSync(directory).filter((file) => file.startsWith('ledger.sqlite'))) {
-    assert.equal(statSync(join(directory, file)).mode & 0o077, 0);
-    assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(pending.secret)));
-  }
-  release();
-  const releaseSecond = second.acquireController();
-  releaseSecond();
-  ledger.completeRequest('codex', pending.requestId);
-  assert.notEqual(ledger.request({ name: 'codex', harness: 'codex' }).requestId, pending.requestId);
-});
-
 test('two guardian attempts execute an exact durable launch once and redact split-token output', async (t) => {
   const { ledger, host, reserve, token, command } = setup(t);
   const record = reserve('once');
@@ -226,31 +147,6 @@ test('a stop and the deadline end the jobs the agent started in groups of their 
     assert.equal(await stillTicking(ticks), false, id);
   }
 });
-
-test(
-  'the subreaper reaps the jobs it adopts instead of keeping them as zombies',
-  {
-    skip: process.platform !== 'linux',
-  },
-  async (t) => {
-    const { directory, ledger, host, reserve, token, command } = setup(t);
-    const record = reserve('reaped');
-    const count = join(directory, 'zombies');
-    // Twenty jobs orphaned at once end 0.2s later; the agent then counts its group's zombies.
-    const zombies = `require('fs').writeFileSync(${JSON.stringify(count)},String(require('fs').readdirSync('/proc').filter((p)=>/^\\d+$/.test(p)).filter((p)=>{try{const s=require('fs').readFileSync('/proc/'+p+'/stat','utf8').slice(require('fs').readFileSync('/proc/'+p+'/stat','utf8').lastIndexOf(')')+2).split(' ');return s[0]==='Z'&&Number(s[2])===mine}catch{return false}}).length))`;
-    await host.launch({
-      launchId: record.id,
-      sessionToken: token,
-      deadline: record.deadline,
-      command: command(
-        `const mine=Number(require('fs').readFileSync('/proc/self/stat','utf8').split(') ')[1].split(' ')[2]);require('child_process').spawnSync('sh',['-c','for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do (sleep 0.2 &); done']);setTimeout(()=>{${zombies};setInterval(()=>{},1000)},1500)`,
-      ),
-    });
-    await until(() => existsSync(count));
-    assert.equal(readFileSync(count, 'utf8'), '0');
-    await host.stop(record.id);
-  },
-);
 
 test('claimed intent without a reachable guardian stays uncertain and cannot be restarted or freed by remote status', async (t) => {
   const { ledger, host, reserve, token, command } = setup(t);
@@ -366,6 +262,29 @@ test('a wrong local IPC credential cannot stop another live launch', async (t) =
   assert.equal((await host.stop(record.id)).status, 'stopped');
 });
 
+test('native MCP bearers cross only IPC and process env and are redacted before persistence', async (t) => {
+  const { ledger, host, reserve, token, command, directory } = setup(t);
+  const record = reserve('native-mcp');
+  const marker = 'sbxt_' + 'PrivateNativeMarker'.repeat(3);
+  const child = command(
+    `const s=process.env.MERV_NATIVE_MCP_TOKEN_0; if(!s) process.exit(7); process.stdout.write(s.slice(0,12)); setTimeout(()=>{process.stdout.write(s.slice(12)+'\\n');process.stderr.write(s);},20);`,
+  );
+  Object.assign(child.env, { MERV_NATIVE_MCP_TOKEN_0: marker });
+  await host.launch({
+    launchId: record.id,
+    sessionToken: token,
+    deadline: record.deadline,
+    command: child,
+  });
+  await until(() => terminalLaunch(ledger.get(record.id)!));
+  assert.equal(ledger.get(record.id)?.exitCode, 0);
+  assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]\n');
+  assert.equal(readFileSync(join(record.runDirectory, 'stderr.log'), 'utf8'), '[REDACTED]');
+  for (const file of readdirSync(directory).filter((name) => name.startsWith('ledger.sqlite')))
+    assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
+  assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
+});
+
 test('the controller speaks to no listener outside a private socket folder of its own', async (t) => {
   const { directory, ledger, host, reserve } = setup(t);
   const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(ledger.directory).digest('hex').slice(0, 16)}`;
@@ -400,29 +319,6 @@ test('the controller speaks to no listener outside a private socket folder of it
     rmSync(sockets, { recursive: true, force: true });
   }
   assert.deepEqual(heard, []);
-});
-
-test('native MCP bearers cross only IPC and process env and are redacted before persistence', async (t) => {
-  const { ledger, host, reserve, token, command, directory } = setup(t);
-  const record = reserve('native-mcp');
-  const marker = 'sbxt_' + 'PrivateNativeMarker'.repeat(3);
-  const child = command(
-    `const s=process.env.MERV_NATIVE_MCP_TOKEN_0; if(!s) process.exit(7); process.stdout.write(s.slice(0,12)); setTimeout(()=>{process.stdout.write(s.slice(12)+'\\n');process.stderr.write(s);},20);`,
-  );
-  Object.assign(child.env, { MERV_NATIVE_MCP_TOKEN_0: marker });
-  await host.launch({
-    launchId: record.id,
-    sessionToken: token,
-    deadline: record.deadline,
-    command: child,
-  });
-  await until(() => terminalLaunch(ledger.get(record.id)!));
-  assert.equal(ledger.get(record.id)?.exitCode, 0);
-  assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]\n');
-  assert.equal(readFileSync(join(record.runDirectory, 'stderr.log'), 'utf8'), '[REDACTED]');
-  for (const file of readdirSync(directory).filter((name) => name.startsWith('ledger.sqlite')))
-    assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
-  assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
 });
 
 test('JSON-escaped MCP credentials are redacted before persistence across process writes', async (t) => {

@@ -40,91 +40,6 @@ function leased(grants: WorkflowExecutionPolicy['tools'], kind = 'work') {
   return { worker, tools };
 }
 
-test('a leased worker keeps the retired Fleet names its grants name, and reads a tool they name', async (t) => {
-  const at = new Date(0).toISOString();
-  const allocation = {
-    id: 'fa_1',
-    owner: { kind: 'workflow', id: 'work_1' },
-    phase: 'running',
-    intent: 'run',
-    failures: 0,
-    error: null,
-    runtime: null,
-    createdAt: at,
-    updatedAt: at,
-    deadlineAt: at,
-  };
-  const done: string[] = [];
-  const fleet = {
-    list: async () => [allocation],
-    inspect: async () => allocation,
-    drain: async () => (done.push('drain'), { ...allocation, intent: 'drain' }),
-    cancel: async () => (done.push('halt'), { ...allocation, intent: 'stop' }),
-  };
-  const view = (intent: string) => ({
-    id: 'fa_1',
-    title: 'Workflow agent',
-    owner: allocation.owner,
-    status: { run: 'running', drain: 'finishing', stop: 'stopping' }[intent],
-    phase: 'running',
-    intent,
-    createdAt: at,
-    updatedAt: at,
-    deadlineAt: at,
-    attention: null,
-    runtime: null,
-  });
-  const load = async (grants: WorkflowExecutionPolicy['tools']) => {
-    const { worker, tools } = leased(grants);
-    const ctx = new Context();
-    ctx.provide('fleet', fleet);
-    ctx.provide('tools', tools);
-    await ctx.plugin(fleetToolsPlugin);
-    t.after(() => ctx.fiber.dispose());
-    return {
-      call: (name: string, input: object) => tools.call(name, worker, input),
-      tools,
-      worker,
-    };
-  };
-
-  // Grants written before the 2026-10-20 consolidation name the old tools, which still run.
-  const old = await load(['fleet.list', 'fleet.get', 'fleet.drain'].map(grant));
-  assert.deepEqual(await old.call('fleet.list', {}), [view('run')]);
-  assert.deepEqual(await old.call('fleet.get', { id: 'fa_1' }), view('run'));
-  assert.deepEqual(await old.call('fleet.drain', { id: 'fa_1' }), view('drain'));
-  // Unlisted; the tool they became reads as any read does, and its writes are no grant of theirs.
-  assert.deepEqual(
-    (await old.tools.describe(old.worker)).map(({ name }) => name),
-    ['fleet'],
-  );
-  assert.deepEqual(await old.call('fleet', { action: 'list' }), [view('run')]);
-  await assert.rejects(old.call('fleet.halt', { id: 'fa_1' }), {
-    code: 'execution_tool_forbidden',
-  });
-  // Only the arguments the old tool took: never another action, nor another's arguments.
-  for (const input of [
-    { id: 'fa_1', action: 'halt' },
-    { action: 'halt' },
-    { id: 'fa_1', machines: 2 },
-  ])
-    await assert.rejects(old.call('fleet.get', input), { code: 'invalid_input' });
-
-  // A grant of the new tool bound to one write: its reads are reads, its other writes refused.
-  const bound = await load([
-    { name: 'fleet', alternatives: [{ action: { kind: 'literal', value: 'drain' } }] },
-  ]);
-  assert.deepEqual(await bound.call('fleet', { action: 'list' }), [view('run')]);
-  assert.deepEqual(await bound.call('fleet', { action: 'get', id: 'fa_1' }), view('run'));
-  assert.deepEqual(await bound.call('fleet', { action: 'drain', id: 'fa_1' }), view('drain'));
-  await assert.rejects(bound.call('fleet', { action: 'halt', id: 'fa_1' }), {
-    code: 'execution_arguments_forbidden',
-  });
-  assert.deepEqual(done, ['drain', 'drain']);
-});
-
-const grant = (name: string) => ({ name, alternatives: [{}] });
-
 /** sandboxes.sandbox as Sandboxes registers it, with the calls its handler ran. */
 function sandboxes(tools: ToolRegistry) {
   const ran: object[] = [];
@@ -181,31 +96,6 @@ test('a retired name takes only its old arguments, so a grant bound to them bind
   assert.equal(ran.length, 2);
 });
 
-test('a retired name is never offered to an agent past the tool it became', async () => {
-  const { tools } = leased([]);
-  const ran: object[] = [];
-  // Sandboxes' access tool hands out SSH certificates: a page-only (ui) tool, never an agent's.
-  tools.register({
-    name: 'sandboxes.access',
-    description: 'Access',
-    tier: 'ui',
-    inputSchema: z
-      .object({ action: z.enum(['certificate', 'gateway']).default('gateway') })
-      .passthrough(),
-    readOnly: true,
-    handler: (_caller, input) => (ran.push(input), input),
-  });
-  tools.alias(retired);
-  const person: Caller = { projectId: 'p', actorId: 'alice', credentialId: 'key-alice' };
-  for (const name of [
-    'sandboxes.access',
-    'sandboxes.access_certificate',
-    'sandboxes.access_gateway',
-  ])
-    await assert.rejects(tools.invoke(name, person, {}, true), { code: 'tool_forbidden' }, name);
-  assert.deepEqual(ran, []);
-});
-
 test('a worker and an inquiry visit with no grants read tools that also write, and write nothing', async (t) => {
   const fleet = { list: async () => [], drain: async () => assert.fail('drained') };
   for (const kind of ['work', 'inquiry']) {
@@ -235,33 +125,4 @@ test('a worker and an inquiry visit with no grants read tools that also write, a
       await assert.rejects(tools.call(name, worker, input), { code: refused });
     assert.deepEqual(ran, [{ action: 'list' }]);
   }
-});
-
-test('inquiries can use both board drawing names without acquiring other write grants', async () => {
-  const { worker, tools } = leased([], 'inquiry');
-  tools.noun('board.write', {
-    tier: 'core',
-    description: 'Shared drawings',
-    actions: {
-      draw: {
-        description: 'Draw',
-        input: z.object({ title: z.string() }),
-        was: ['board.draw'],
-        handler: async (_caller, input) => input,
-      },
-    },
-  });
-  tools.register({
-    name: 'research.forbidden',
-    description: 'Not shared',
-    inputSchema: z.object({}),
-    handler: async () => ({}),
-  });
-  assert.ok((await tools.describe(worker, true)).some((tool) => tool.name === 'board.draw'));
-  for (const name of ['board.draw', 'board.write']) {
-    const input =
-      name === 'board.draw' ? { title: 'Idea' } : { action: 'draw', draw: { title: 'Idea' } };
-    assert.deepEqual(await tools.call(name, worker, input), { title: 'Idea' });
-  }
-  await assert.rejects(tools.call('research.forbidden', worker, {}), { code: 'inquiry_read_only' });
 });

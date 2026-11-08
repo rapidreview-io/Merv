@@ -27,569 +27,446 @@ import { s3Blobs } from './fixtures/s3-blobs.js';
  * Fleet provisioning and report rendering are outside this test (the ordinary app fixture
  * supplies its documented report adapter). This is not deployed hosted-image acceptance.
  */
-type Scenario =
-  | 'lifecycle'
-  | 'failed-preparation'
-  | 'failed-preparation-updated-runner'
-  | 'newer-attachment'
-  | 'other-allocation';
-function lifecycle(scenario: Scenario) {
-  return async (t: test.TestContext) => {
-    const root = mkdtempSync(join(tmpdir(), 'merv-http-lifecycle-'));
-    const managedEnv = `MERV_LIFECYCLE_${randomBytes(8).toString('hex').toUpperCase()}`;
-    process.env[managedEnv] = randomBytes(48).toString('hex');
-    const s3 = await s3Blobs(t);
-    const config = quietApiConfig();
-    config.plugins = config.plugins.map((entry) =>
-      entry.id === 'sessions'
-        ? { ...entry, config: { managedSecretEnv: managedEnv, sweepIntervalMs: 60_000 } }
-        : entry.id === 'blobs'
-          ? s3.entry
-          : entry,
+test('managed HTTP lifecycle and retained shutdown', { timeout: 90_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'merv-http-lifecycle-'));
+  const managedEnv = `MERV_LIFECYCLE_${randomBytes(8).toString('hex').toUpperCase()}`;
+  process.env[managedEnv] = randomBytes(48).toString('hex');
+  const s3 = await s3Blobs(t);
+  const config = quietApiConfig();
+  config.plugins = config.plugins.map((entry) =>
+    entry.id === 'sessions'
+      ? { ...entry, config: { managedSecretEnv: managedEnv, sweepIntervalMs: 60_000 } }
+      : entry.id === 'blobs'
+        ? s3.entry
+        : entry,
+  );
+  const app = await createApp({ directory: join(root, 'server'), config, port: 0 });
+  const code = app.ctx.codeWork as CodeService;
+  const drivers: CodeWorkspaceDriver[] = [];
+  const clients = new Map<string, Client>();
+  t.after(async () => {
+    await Promise.all([...clients.values()].map((client) => client.close()));
+    for (const driver of drivers) driver.dispose();
+    await app.stop();
+    delete process.env[managedEnv];
+    rmSync(root, { recursive: true, force: true });
+  });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'HTTP lifecycle',
+    actorName: 'Owner',
+  });
+  const owner: Caller = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  const base = app.ctx.api.url!;
+  let sequence = 0;
+  const request = () => `lifecycle-${++sequence}`;
+  const http = async <T>(
+    path: string,
+    token: string,
+    body?: unknown,
+    method = body === undefined ? 'GET' : 'POST',
+  ): Promise<T> => {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'x-merv-project-id': owner.projectId,
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const result = await response.json();
+    if (!response.ok)
+      throw Object.assign(new Error(`${path}: ${JSON.stringify(result)}`), {
+        status: response.status,
+      });
+    return result as T;
+  };
+  const tool = async <T>(name: string, token: string, input: unknown): Promise<T> => {
+    if (!token.startsWith('ms_'))
+      return (await http<{ result: T }>(`/tools/${name}`, token, input)).result;
+    let client = clients.get(token);
+    if (!client) {
+      client = new Client({ name: 'scripted-lifecycle-worker', version: '1' });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } },
+        }),
+      );
+      clients.set(token, client);
+    }
+    const response = await client.callTool({
+      name,
+      arguments: input as Record<string, unknown>,
+    });
+    const content = response.content as { type: string; text?: string }[];
+    const result = JSON.parse(content.find((item) => item.type === 'text')!.text!);
+    assert.equal(response.isError ?? false, false, `${name}: ${JSON.stringify(result)}`);
+    return result as T;
+  };
+  await waitForManagedCode(code, owner);
+  const repository = new CodeRepositories({
+    root: join(root, 'server', 'code'),
+    quotaBytes: 0,
+    reservedFreeBytes: 0,
+  }).paths(owner.projectId).repository;
+  const commitCount = () => Number(git(repository, ['rev-list', '--all', '--count']));
+  const initialCount = commitCount();
+  let experiment = await tool<Experiment>('experiment.create', boot.token, {
+    name: 'exact-dirty-code',
+    intent: 'Verify add(2,3) using retained code.',
+    requestId: request(),
+  });
+  const independent = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Independent review authority',
+    role: 'operator',
+  });
+  const reviewerSource: Caller = {
+    ...owner,
+    actorId: independent.actor.id,
+    credentialId: independent.credential.id,
+  };
+  const current = new Set<string>();
+  app.ctx.sessions.managed.registerValidator({
+    current: async (binding) => current.has(binding.allocationId),
+    admits: async (allocationId) => current.has(allocationId),
+    serves: () => false,
+    retired: async () => false,
+    assignmentSources: async (binding) => [binding.source],
+  });
+  const platform = {
+    name: 'local-scripted',
+    harness: 'codex' as const,
+    enabled: true,
+    parallelism: 1,
+  };
+  const capabilities = ['code.git.1', 'workflow.workhost.1'];
+  const machine = async (name: string, source: Caller) => {
+    const allocationId = `allocation_${name}`;
+    current.add(allocationId);
+    const enrollment = await app.ctx.sessions.managed.ensure({
+      allocationId,
+      epoch: 1,
+      source: await app.ctx.scope.delegationSource(source),
+      runtimeProfileId: 'local-lifecycle',
+      platform,
+      capabilities,
+      workInstanceId: experiment.id,
+      stepSeconds: 600,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    const { controlToken } = await http<{ controlToken: string }>(
+      '/sessions/runners/enroll',
+      enrollment.enrollmentToken,
+      { workerNonce: randomBytes(32).toString('hex') },
     );
-    const app = await createApp({ directory: join(root, 'server'), config, port: 0 });
-    const code = app.ctx.codeWork as CodeService;
-    const drivers: CodeWorkspaceDriver[] = [];
-    const clients = new Map<string, Client>();
-    t.after(async () => {
-      await Promise.all([...clients.values()].map((client) => client.close()));
-      for (const driver of drivers) driver.dispose();
-      await app.stop();
-      delete process.env[managedEnv];
-      rmSync(root, { recursive: true, force: true });
+    const runnerId = `runner_${name}`;
+    await http('/sessions/runners/heartbeat', controlToken, {
+      runnerId,
+      machine: { hostname: name, system: process.platform, architecture: process.arch },
+      platforms: [platform],
+      capabilities,
+      capacity: 1,
     });
-    const boot = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'HTTP lifecycle',
-      actorName: 'Owner',
-    });
-    const owner: Caller = {
-      projectId: boot.project.id,
-      actorId: boot.actor.id,
-      credentialId: boot.credential.id,
-    };
-    const base = app.ctx.api.url!;
-    let sequence = 0;
-    const request = () => `lifecycle-${++sequence}`;
-    const http = async <T>(
-      path: string,
-      token: string,
-      body?: unknown,
-      method = body === undefined ? 'GET' : 'POST',
-    ): Promise<T> => {
-      const response = await fetch(`${base}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-          'x-merv-project-id': owner.projectId,
+    const directory = join(root, name);
+    mkdirSync(directory);
+    const assignmentRoot = join(directory, 'assignments');
+    mkdirSync(assignmentRoot, { mode: 0o700 });
+    const stopped = new Set<string>();
+    const driver = new CodeWorkspaceDriver(
+      {
+        directory,
+        path: join(directory, 'ledger.sqlite'),
+        terminal: (id) => stopped.has(id),
+        assignmentWorkspaceDirectory: realpathSync(assignmentRoot),
+        workInstanceId: experiment.id,
+        assignmentUser: {
+          uid: process.getuid!() || 12001,
+          gid: process.getgid!() || 12001,
+          git: '/usr/bin/git',
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-      const result = await response.json();
-      if (!response.ok)
-        throw Object.assign(new Error(`${path}: ${JSON.stringify(result)}`), {
-          status: response.status,
-        });
-      return result as T;
+      },
+      {
+        remoteUrl: (path) => `${base}${path}`,
+        call: (route, body) => http(`/code/v2/${route}`, controlToken, body),
+      },
+    );
+    drivers.push(driver);
+    return { allocationId, controlToken, runnerId, driver, stopped };
+  };
+  const writer = await machine('writer', owner);
+  const reviewer = await machine('reviewer', reviewerSource);
+  await http('/sessions/dispatch', boot.token, { enabled: true }, 'PUT');
+  const lease = async (host: Awaited<ReturnType<typeof machine>>) => {
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    const answer = await http<{ session: WorkSession | null; reason: string }>(
+      '/sessions/lease',
+      host.controlToken,
+      {
+        runnerId: host.runnerId,
+        platform: { name: platform.name, harness: platform.harness },
+        requestId: request(),
+        secret,
+      },
+    );
+    assert.ok(answer.session, `expected ${host.runnerId} lease, got ${answer.reason}`);
+    const session = answer.session;
+    assert.equal(session.instanceId, experiment.id);
+    const launch = {
+      id: request(),
+      sessionId: session.id,
+      runDirectory: join(root, request()),
     };
-    const tool = async <T>(name: string, token: string, input: unknown): Promise<T> => {
-      if (!token.startsWith('ms_'))
-        return (await http<{ result: T }>(`/tools/${name}`, token, input)).result;
-      let client = clients.get(token);
-      if (!client) {
-        client = new Client({ name: 'scripted-lifecycle-worker', version: '1' });
-        await client.connect(
-          new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-            requestInit: { headers: { authorization: `Bearer ${token}` } },
-          }),
-        );
-        clients.set(token, client);
-      }
-      const response = await client.callTool({
-        name,
-        arguments: input as Record<string, unknown>,
+    mkdirSync(launch.runDirectory);
+    const workspace = await host.driver.prepare(launch, session);
+    const control = { runnerId: host.runnerId, hostRef: launch.id };
+    await http(`/sessions/${session.id}/attach`, host.controlToken, {
+      ...control,
+      workspace: workspace.snapshot,
+    });
+    return { host, session, launch, workspace, secret, control };
+  };
+  const settle = async (held: Awaited<ReturnType<typeof lease>>) => {
+    held.host.stopped.add(held.launch.id);
+    const workspace = await held.host.driver.capture(held.launch);
+    await http(`/sessions/${held.session.id}/release`, held.host.controlToken, {
+      runnerId: held.host.runnerId,
+    });
+    if (workspace)
+      await http(`/sessions/${held.session.id}/workspace-result`, held.host.controlToken, {
+        ...held.control,
+        workspace,
       });
-      const content = response.content as { type: string; text?: string }[];
-      const result = JSON.parse(content.find((item) => item.type === 'text')!.text!);
-      assert.equal(response.isError ?? false, false, `${name}: ${JSON.stringify(result)}`);
-      return result as T;
-    };
-    await waitForManagedCode(code, owner);
-    const repository = new CodeRepositories({
-      root: join(root, 'server', 'code'),
-      quotaBytes: 0,
-      reservedFreeBytes: 0,
-    }).paths(owner.projectId).repository;
-    const commitCount = () => Number(git(repository, ['rev-list', '--all', '--count']));
-    const initialCount = commitCount();
-    let experiment = await tool<Experiment>('experiment.create', boot.token, {
-      name: 'exact-dirty-code',
-      intent: 'Verify add(2,3) using retained code.',
+    await held.host.driver.close(held.launch);
+    await app.ctx.domainEvents.drain();
+  };
+  const attach = async (held: Awaited<ReturnType<typeof lease>>, role: string, content: string) => {
+    const artifact = await tool<{ id: string }>('artifact.create', held.secret, {
+      title: role,
+      content,
+      mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
+    });
+    await tool('experiment.attach', held.secret, {
+      artifactId: artifact.id,
+      role,
+      path: `${role}.${role === 'plan' || role === 'report' ? 'md' : 'json'}`,
+      attemptIndex: experiment.attempt.index,
       requestId: request(),
     });
-    const independent = await app.ctx.scope.credentials.issueActor(owner, {
-      name: 'Independent review authority',
-      role: 'operator',
-    });
-    const reviewerSource: Caller = {
-      ...owner,
-      actorId: independent.actor.id,
-      credentialId: independent.credential.id,
-    };
-    const current = new Set<string>();
-    app.ctx.sessions.managed.registerValidator({
-      current: async (binding) => current.has(binding.allocationId),
-      admits: async (allocationId) => current.has(allocationId),
-      serves: () => false,
-      retired: async () => false,
-      assignmentSources: async (binding) => [binding.source],
-    });
-    const platform = {
-      name: 'local-scripted',
-      harness: 'codex' as const,
-      enabled: true,
-      parallelism: 1,
-    };
-    const capabilities = ['code.git.1', 'workflow.workhost.1'];
-    const machine = async (name: string, source: Caller) => {
-      const allocationId = `allocation_${name}`;
-      current.add(allocationId);
-      const enrollment = await app.ctx.sessions.managed.ensure({
-        allocationId,
-        epoch: 1,
-        source: await app.ctx.scope.delegationSource(source),
-        runtimeProfileId: 'local-lifecycle',
-        platform,
-        capabilities,
-        workInstanceId: experiment.id,
-        stepSeconds: 600,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-      });
-      const { controlToken } = await http<{ controlToken: string }>(
-        '/sessions/runners/enroll',
-        enrollment.enrollmentToken,
-        { workerNonce: randomBytes(32).toString('hex') },
-      );
-      const runnerId = `runner_${name}`;
-      await http('/sessions/runners/heartbeat', controlToken, {
-        runnerId,
-        machine: { hostname: name, system: process.platform, architecture: process.arch },
-        platforms: [platform],
-        capabilities,
-        capacity: 1,
-      });
-      const directory = join(root, name);
-      mkdirSync(directory);
-      const assignmentRoot = join(directory, 'assignments');
-      mkdirSync(assignmentRoot, { mode: 0o700 });
-      const stopped = new Set<string>();
-      const driver = new CodeWorkspaceDriver(
-        {
-          directory,
-          path: join(directory, 'ledger.sqlite'),
-          terminal: (id) => stopped.has(id),
-          assignmentWorkspaceDirectory: realpathSync(assignmentRoot),
-          workInstanceId: experiment.id,
-          assignmentUser: {
-            uid: process.getuid!() || 12001,
-            gid: process.getgid!() || 12001,
-            git: '/usr/bin/git',
-          },
-        },
-        {
-          remoteUrl: (path) => `${base}${path}`,
-          call: (route, body) => http(`/code/v2/${route}`, controlToken, body),
-        },
-      );
-      drivers.push(driver);
-      return { allocationId, controlToken, runnerId, driver, stopped };
-    };
-    const writer = await machine('writer', owner);
-    const reviewer = await machine('reviewer', reviewerSource);
-    await http('/sessions/dispatch', boot.token, { enabled: true }, 'PUT');
-    const lease = async (host: Awaited<ReturnType<typeof machine>>) => {
-      const secret = `ms_${randomBytes(32).toString('base64url')}`;
-      const answer = await http<{ session: WorkSession | null; reason: string }>(
-        '/sessions/lease',
-        host.controlToken,
-        {
-          runnerId: host.runnerId,
-          platform: { name: platform.name, harness: platform.harness },
-          requestId: request(),
-          secret,
-        },
-      );
-      assert.ok(answer.session, `expected ${host.runnerId} lease, got ${answer.reason}`);
-      const session = answer.session;
-      assert.equal(session.instanceId, experiment.id);
-      const launch = {
-        id: request(),
-        sessionId: session.id,
-        runDirectory: join(root, request()),
-      };
-      mkdirSync(launch.runDirectory);
-      const workspace = await host.driver.prepare(launch, session);
-      const control = { runnerId: host.runnerId, hostRef: launch.id };
-      await http(`/sessions/${session.id}/attach`, host.controlToken, {
-        ...control,
-        workspace: workspace.snapshot,
-      });
-      return { host, session, launch, workspace, secret, control };
-    };
-    const settle = async (held: Awaited<ReturnType<typeof lease>>) => {
-      held.host.stopped.add(held.launch.id);
-      const workspace = await held.host.driver.capture(held.launch);
-      await http(`/sessions/${held.session.id}/release`, held.host.controlToken, {
-        runnerId: held.host.runnerId,
-      });
-      if (workspace)
-        await http(`/sessions/${held.session.id}/workspace-result`, held.host.controlToken, {
-          ...held.control,
-          workspace,
-        });
-      await held.host.driver.close(held.launch);
-      await app.ctx.domainEvents.drain();
-    };
-    const attach = async (
-      held: Awaited<ReturnType<typeof lease>>,
-      role: string,
-      content: string,
-    ) => {
-      const artifact = await tool<{ id: string }>('artifact.create', held.secret, {
-        title: role,
-        content,
-        mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
-      });
-      await tool('experiment.attach', held.secret, {
-        artifactId: artifact.id,
-        role,
-        path: `${role}.${role === 'plan' || role === 'report' ? 'md' : 'json'}`,
-        attemptIndex: experiment.attempt.index,
-        requestId: request(),
-      });
-    };
-    const keepConversation = async (held: Awaited<ReturnType<typeof lease>>) => {
-      if (!held.session.continuity) return;
-      const bytes = Buffer.from(
-        JSON.stringify({ type: 'user', text: `Retained scripted visit ${held.session.id}` }) + '\n',
-      );
-      const facts = {
-        ...held.control,
-        harness: 'codex',
-        conversationId: '0199a0b2-1111-7222-8333-944445555666',
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        size: bytes.length,
-      };
-      const path = `/sessions/${held.session.id}/conversation`;
-      await http(path, held.host.controlToken, facts);
-      const { conversation } = await http<{
-        conversation: { upload: { url: string; headers: Record<string, string> } };
-      }>(path, held.host.controlToken, { ...facts, deliver: true });
-      const put = await fetch(conversation.upload.url, {
-        method: 'PUT',
-        headers: conversation.upload.headers,
-        body: new Uint8Array(bytes),
-      });
-      assert.equal(put.status, 200);
-      const confirmed = await http<{ conversation: { uploadedAt: string | null } }>(
-        path,
-        held.host.controlToken,
-        { ...facts, deliver: true },
-      );
-      assert.ok(confirmed.conversation.uploadedAt);
-    };
-    const submit = async (held: Awaited<ReturnType<typeof lease>>, transition: string) => {
-      await keepConversation(held);
-      experiment = await tool<Experiment>('experiment.transition', held.secret, {
-        transition,
-        requestId: request(),
-      });
-      await settle(held);
-      const frozen = await code.capture(owner, experiment.submissions.at(-1)!.codeCaptureRef!);
-      assert.equal(frozen.status, 'ready');
-      assert.equal(
-        git(held.workspace.path, ['rev-parse', 'HEAD']),
-        frozen.workspace!.submission!.parentOid,
-        'submission created no commit',
-      );
-      return frozen.workspace!.submission!;
-    };
-    const inspect = async (
-      held: Awaited<ReturnType<typeof lease>>,
-      frozen: { parentOid: string; treeOid: string },
-      files: Record<string, string>,
-    ) => {
-      assert.equal(held.workspace.readOnly, true);
-      assert.equal(git(held.workspace.path, ['rev-parse', 'HEAD']), frozen.parentOid);
-      assert.equal(git(held.workspace.path, ['write-tree']), frozen.treeOid);
-      for (const [path, content] of Object.entries(files))
-        assert.equal(readFileSync(join(held.workspace.path, path), 'utf8'), content);
-      const access = held.host.driver.agentGit(held.launch.id);
-      const denied = await promisify(execFile)(
-        'git',
-        [
-          '-c',
-          `http.${access.url}.extraHeader=Authorization: Basic ${Buffer.from(`merv:${access.token}`).toString('base64')}`,
-          'push',
-          access.url,
-          `HEAD:refs/heads/merv/work/${experiment.id}`,
-        ],
-        { cwd: held.workspace.path },
-      ).then(
-        () => false,
-        () => true,
-      );
-      assert.equal(denied, true, 'review credentials cannot push');
-      if (process.env.MERV_LINUX_REVIEW_IMAGE) {
-        const facts = join(root, `${request()}.json`);
-        writeFileSync(
-          facts,
-          JSON.stringify({ parent: frozen.parentOid, tree: frozen.treeOid, files }),
-        );
-        const project = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
-        const result = await promisify(execFile)(
-          'docker',
-          [
-            'run',
-            '--rm',
-            '--network',
-            'none',
-            '--cap-add',
-            'SYS_ADMIN',
-            '--security-opt',
-            'seccomp=unconfined',
-            '--mount',
-            `type=bind,src=${held.workspace.path},dst=/input,readonly`,
-            '--mount',
-            `type=bind,src=${facts},dst=/facts.json,readonly`,
-            '--mount',
-            `type=bind,src=${join(project, 'scripts/hosted-runner')},dst=/opt/merv/runtime,readonly`,
-            '--mount',
-            `type=bind,src=${join(project, 'vendor/merv-sandboxes/typescript/packages/runtimes/assets/python')},dst=/opt/merv/python,readonly`,
-            '--entrypoint',
-            'python3',
-            process.env.MERV_LINUX_REVIEW_IMAGE,
-            '/opt/merv/runtime/linux-submission-review.py',
-          ],
-          { timeout: 30_000, maxBuffer: 1024 * 1024 },
-        );
-        assert.equal(JSON.parse(result.stdout.trim()).tree, frozen.treeOid);
-      }
-    };
-    const approve = async (held: Awaited<ReturnType<typeof lease>>) => {
-      const review = await tool<ReviewRequest>('review.get', held.secret, {
-        reviewId: experiment.reviewId!,
-      });
-      await keepConversation(held);
-      experiment = await tool<Experiment>('review.submit', held.secret, {
-        reviewId: review.id,
-        claimId: review.claimId,
-        expectedRevision: experiment.workflow.revision,
-        verdict: 'pass',
-        notes: 'Verified exact retained files and tested add(2,3).',
-        synopsis: 'The submitted code and retained evidence satisfy the planned verification.',
-        findings: review.criteria.map((_, index) => ({
-          criterionNumber: index + 1,
-          status: 'met',
-          evidenceIds: citedEvidence(experiment, review, index + 1),
-          notes: 'Inspected retained evidence against this criterion.',
-        })),
-        requestId: request(),
-      });
-      await settle(held);
-      await code.submissions.reconcile();
-    };
-    const planCode = 'def add(a, b): return a + b\nprint(add(2, 3))\n';
-    const planner = await lease(writer);
-    assert.equal(planner.workspace.readOnly, false);
-    writeFileSync(join(planner.workspace.path, 'plan.py'), planCode);
-    if (scenario !== 'lifecycle') {
-      // Ordinary close leaves uncommitted work on this machine. Later failed preparation
-      // reserves another writer generation without replacing this attached checkout.
-      await keepConversation(planner);
-      await settle(planner);
-      if (scenario === 'newer-attachment') {
-        const newer = await lease(writer);
-        await keepConversation(newer);
-        await settle(newer);
-      } else {
-        const host = scenario === 'other-allocation' ? await machine('replacement', owner) : writer;
-        const offered = await http<{ session: WorkSession | null; reason: string }>(
-          '/sessions/lease',
-          host.controlToken,
-          {
-            runnerId: host.runnerId,
-            platform: { name: platform.name, harness: platform.harness },
-            requestId: request(),
-            secret: `ms_${randomBytes(32).toString('base64url')}`,
-          },
-        );
-        assert.ok(offered.session, offered.reason);
-        await http('/code/v2/workspace', host.controlToken, {
-          sessionId: offered.session.id,
-          runnerId: host.runnerId,
-          hostRef: request(),
-        });
-        await http(`/sessions/${offered.session.id}/release`, host.controlToken, {
-          runnerId: host.runnerId,
-          outcome: 'workspace_failed',
-          reason: 'workspace_git_timeout',
-        });
-        await app.ctx.domainEvents.drain();
-      }
-      await http('/sessions/runners/shutdown', writer.controlToken, { request: true });
-      current.delete(writer.allocationId);
-      if (!scenario.startsWith('failed-preparation')) {
-        await assert.rejects(
-          http('/code/v2/shutdown-credential', writer.controlToken, {
-            sessionId: planner.session.id,
-            ...planner.control,
-          }),
-          /code_generation_stale/,
-        );
-        assert.equal(readFileSync(join(planner.workspace.path, 'plan.py'), 'utf8'), planCode);
-        return;
-      }
-      // The recovery grant may be issued even when its reply is lost. An unchanged runner
-      // must be able to request it again using the original session and local generation.
-      const generation = async () =>
-        Number(
-          (await app.ctx.state.read((sql) =>
-            sql.get<{ generation: number }>(
-              'SELECT generation FROM code_workspaces WHERE project_id=? AND unit_id=?',
-              owner.projectId,
-              experiment.id,
-            ),
-          ))!.generation,
-        );
-      if (scenario === 'failed-preparation') {
-        const beforeRecovery = await generation();
-        for (let attempt = 0; attempt < 2; attempt++) {
-          await http('/code/v2/shutdown-credential', writer.controlToken, {
-            sessionId: planner.session.id,
-            ...planner.control,
-          });
-          assert.equal(
-            await generation(),
-            beforeRecovery + 1,
-            'lost grant retries do not advance the writer again',
-          );
-        }
-      }
-      const captures = await writer.driver.shutdownCapture();
-      assert.equal(captures.length, 1);
-      assert.equal(captures[0]!.sessionId, planner.session.id);
-      assert.equal(git(repository, ['show', `${captures[0]!.headOid}:plan.py`]), planCode.trim());
-      assert.equal(
-        git(repository, ['rev-parse', `refs/heads/merv/work/${experiment.id}`]),
-        captures[0]!.headOid,
-        'failed unattached successors must preserve the prior checkout on the working branch',
-      );
-      assert.equal(readFileSync(join(planner.workspace.path, 'plan.py'), 'utf8'), planCode);
-      const receipt = { captures, empty: false };
-      assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
-        requested: true,
-        acknowledged: true,
-      });
-      assert.deepEqual(
-        await writer.driver.shutdownCapture(),
-        captures,
-        'capture retries reuse the receipt',
-      );
-      assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
-        requested: true,
-        acknowledged: true,
-      });
-      return;
-    }
-    await attach(
-      planner,
-      'plan',
-      '# Summary\nTest addition.\n# Objective & hypothesis\nThe function adds numbers.\n# Evaluation\nEvaluate 2 plus 3 against 5.',
-    );
-    await attach(planner, 'feasibility', feasibilityStatement());
-    const design = await submit(planner, 'submit_design');
-    assert.equal(commitCount(), initialCount, 'dirty planning submission retains no commit');
-    const designReview = await lease(reviewer);
-    await inspect(designReview, design, { 'plan.py': planCode });
-    await approve(designReview);
-    assert.equal(commitCount(), initialCount + 1, 'plan approval adds exactly one milestone');
-    assert.equal(experiment.workflow.state, 'running');
-    const execution = await lease(writer);
-    const planCommit = git(execution.workspace.path, ['rev-parse', 'HEAD']);
-    assert.notEqual(planCommit, design.parentOid);
-    assert.equal(git(execution.workspace.path, ['rev-parse', 'HEAD^{tree}']), design.treeOid);
-    assert.equal(
-      execution.workspace.path,
-      planner.workspace.path,
-      'same work host continues its checkout',
-    );
-    writeFileSync(join(execution.workspace.path, 'result.txt'), '2 + 3 = 5\n');
-    await attach(execution, 'result', '{"observed":5,"expected":5}');
-    await attach(
-      execution,
-      'report',
-      '# Summary\nThe check passed.\n# Results\nThe retained observation equals 5.\n# Deviations from plan\nNone.\n# Conclusion\nAddition returned the expected value.',
-    );
-    const result = await submit(execution, 'submit_results');
-    assert.equal(commitCount(), initialCount + 1, 'dirty result submission retains no commit');
-    assert.equal(result.parentOid, planCommit);
-    const resultsReview = await lease(reviewer);
-    await inspect(resultsReview, result, { 'plan.py': planCode, 'result.txt': '2 + 3 = 5\n' });
-    await approve(resultsReview);
-    const accepted = (await code.unit(owner, experiment.id)).acceptance;
-    assert.ok(accepted?.reference);
-    assert.notEqual(accepted.reference, planCommit);
-    assert.equal(git(repository, ['rev-parse', `${accepted.reference}^`]), planCommit);
-    assert.equal(git(repository, ['rev-parse', `${accepted.reference}^{tree}`]), result.treeOid);
-    assert.equal(commitCount(), initialCount + 2, 'results approval adds exactly one milestone');
-    const again = await code.unit(owner, experiment.id);
-    assert.equal(again.acceptance?.reference, accepted.reference);
-    // Teardown occurs after approval. It must reuse the exact already durable tree, not
-    // create an extra capture commit or mutate the reviewed acceptance.
-    await http('/sessions/runners/shutdown', writer.controlToken, { request: true });
-    current.delete(writer.allocationId);
-    const captures = await writer.driver.shutdownCapture();
-    assert.equal(captures.length, 1);
-    assert.equal(captures[0]!.headOid, accepted.reference);
-    assert.equal(captures[0]!.treeOid, result.treeOid);
-    const receipt = { captures, empty: false };
-    assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
-      requested: true,
-      acknowledged: true,
-    });
-    assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
-      requested: true,
-      acknowledged: true,
-    });
-    assert.equal((await code.unit(owner, experiment.id)).acceptance?.reference, accepted.reference);
-    assert.equal(commitCount(), initialCount + 2, 'shutdown adds no duplicate of accepted code');
-    assert.equal(await app.ctx.sessions.managed.requestShutdown(writer.allocationId, 1), true);
-    await http('/sessions/runners/shutdown', reviewer.controlToken, { request: true });
-    current.delete(reviewer.allocationId);
-    assert.deepEqual(await reviewer.driver.shutdownCapture(), []);
-    assert.deepEqual(
-      await http('/sessions/runners/shutdown', reviewer.controlToken, {
-        receipt: { captures: [], empty: true },
-      }),
-      { requested: true, acknowledged: true },
-    );
-    assert.equal(await app.ctx.sessions.managed.requestShutdown(reviewer.allocationId, 1), true);
-    if (!process.env.MERV_LINUX_REVIEW_IMAGE)
-      t.diagnostic(
-        'Linux mount gate not run; set MERV_LINUX_REVIEW_IMAGE to an image with Python, Git, mount and identities 1000/12001.',
-      );
   };
-}
-for (const scenario of [
-  'lifecycle',
-  'failed-preparation',
-  'failed-preparation-updated-runner',
-  'newer-attachment',
-  'other-allocation',
-] as const)
-  test(
-    `managed HTTP lifecycle and retained shutdown: ${scenario}`,
-    { timeout: 90_000 },
-    lifecycle(scenario),
+  const keepConversation = async (held: Awaited<ReturnType<typeof lease>>) => {
+    if (!held.session.continuity) return;
+    const bytes = Buffer.from(
+      JSON.stringify({ type: 'user', text: `Retained scripted visit ${held.session.id}` }) + '\n',
+    );
+    const facts = {
+      ...held.control,
+      harness: 'codex',
+      conversationId: '0199a0b2-1111-7222-8333-944445555666',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+    };
+    const path = `/sessions/${held.session.id}/conversation`;
+    await http(path, held.host.controlToken, facts);
+    const { conversation } = await http<{
+      conversation: { upload: { url: string; headers: Record<string, string> } };
+    }>(path, held.host.controlToken, { ...facts, deliver: true });
+    const put = await fetch(conversation.upload.url, {
+      method: 'PUT',
+      headers: conversation.upload.headers,
+      body: new Uint8Array(bytes),
+    });
+    assert.equal(put.status, 200);
+    const confirmed = await http<{ conversation: { uploadedAt: string | null } }>(
+      path,
+      held.host.controlToken,
+      { ...facts, deliver: true },
+    );
+    assert.ok(confirmed.conversation.uploadedAt);
+  };
+  const submit = async (held: Awaited<ReturnType<typeof lease>>, transition: string) => {
+    await keepConversation(held);
+    experiment = await tool<Experiment>('experiment.transition', held.secret, {
+      transition,
+      requestId: request(),
+    });
+    await settle(held);
+    const frozen = await code.capture(owner, experiment.submissions.at(-1)!.codeCaptureRef!);
+    assert.equal(frozen.status, 'ready');
+    assert.equal(
+      git(held.workspace.path, ['rev-parse', 'HEAD']),
+      frozen.workspace!.submission!.parentOid,
+      'submission created no commit',
+    );
+    return frozen.workspace!.submission!;
+  };
+  const inspect = async (
+    held: Awaited<ReturnType<typeof lease>>,
+    frozen: { parentOid: string; treeOid: string },
+    files: Record<string, string>,
+  ) => {
+    assert.equal(held.workspace.readOnly, true);
+    assert.equal(git(held.workspace.path, ['rev-parse', 'HEAD']), frozen.parentOid);
+    assert.equal(git(held.workspace.path, ['write-tree']), frozen.treeOid);
+    for (const [path, content] of Object.entries(files))
+      assert.equal(readFileSync(join(held.workspace.path, path), 'utf8'), content);
+    const access = held.host.driver.agentGit(held.launch.id);
+    const denied = await promisify(execFile)(
+      'git',
+      [
+        '-c',
+        `http.${access.url}.extraHeader=Authorization: Basic ${Buffer.from(`merv:${access.token}`).toString('base64')}`,
+        'push',
+        access.url,
+        `HEAD:refs/heads/merv/work/${experiment.id}`,
+      ],
+      { cwd: held.workspace.path },
+    ).then(
+      () => false,
+      () => true,
+    );
+    assert.equal(denied, true, 'review credentials cannot push');
+    if (process.env.MERV_LINUX_REVIEW_IMAGE) {
+      const facts = join(root, `${request()}.json`);
+      writeFileSync(
+        facts,
+        JSON.stringify({ parent: frozen.parentOid, tree: frozen.treeOid, files }),
+      );
+      const project = dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
+      const result = await promisify(execFile)(
+        'docker',
+        [
+          'run',
+          '--rm',
+          '--network',
+          'none',
+          '--cap-add',
+          'SYS_ADMIN',
+          '--security-opt',
+          'seccomp=unconfined',
+          '--mount',
+          `type=bind,src=${held.workspace.path},dst=/input,readonly`,
+          '--mount',
+          `type=bind,src=${facts},dst=/facts.json,readonly`,
+          '--mount',
+          `type=bind,src=${join(project, 'scripts/hosted-runner')},dst=/opt/merv/runtime,readonly`,
+          '--mount',
+          `type=bind,src=${join(project, 'vendor/merv-sandboxes/typescript/packages/runtimes/assets/python')},dst=/opt/merv/python,readonly`,
+          '--entrypoint',
+          'python3',
+          process.env.MERV_LINUX_REVIEW_IMAGE,
+          '/opt/merv/runtime/linux-submission-review.py',
+        ],
+        { timeout: 30_000, maxBuffer: 1024 * 1024 },
+      );
+      assert.equal(JSON.parse(result.stdout.trim()).tree, frozen.treeOid);
+    }
+  };
+  const approve = async (held: Awaited<ReturnType<typeof lease>>) => {
+    const review = await tool<ReviewRequest>('review.get', held.secret, {
+      reviewId: experiment.reviewId!,
+    });
+    await keepConversation(held);
+    experiment = await tool<Experiment>('review.submit', held.secret, {
+      reviewId: review.id,
+      claimId: review.claimId,
+      expectedRevision: experiment.workflow.revision,
+      verdict: 'pass',
+      notes: 'Verified exact retained files and tested add(2,3).',
+      synopsis: 'The submitted code and retained evidence satisfy the planned verification.',
+      findings: review.criteria.map((_, index) => ({
+        criterionNumber: index + 1,
+        status: 'met',
+        evidenceIds: citedEvidence(experiment, review, index + 1),
+        notes: 'Inspected retained evidence against this criterion.',
+      })),
+      requestId: request(),
+    });
+    await settle(held);
+    await code.submissions.reconcile();
+  };
+  const planCode = 'def add(a, b): return a + b\nprint(add(2, 3))\n';
+  const planner = await lease(writer);
+  assert.equal(planner.workspace.readOnly, false);
+  writeFileSync(join(planner.workspace.path, 'plan.py'), planCode);
+  await attach(
+    planner,
+    'plan',
+    '# Summary\nTest addition.\n# Objective & hypothesis\nThe function adds numbers.\n# Evaluation\nEvaluate 2 plus 3 against 5.',
   );
+  await attach(planner, 'feasibility', feasibilityStatement());
+  const design = await submit(planner, 'submit_design');
+  assert.equal(commitCount(), initialCount, 'dirty planning submission retains no commit');
+  const designReview = await lease(reviewer);
+  await inspect(designReview, design, { 'plan.py': planCode });
+  await approve(designReview);
+  assert.equal(commitCount(), initialCount + 1, 'plan approval adds exactly one milestone');
+  assert.equal(experiment.workflow.state, 'running');
+  const execution = await lease(writer);
+  const planCommit = git(execution.workspace.path, ['rev-parse', 'HEAD']);
+  assert.notEqual(planCommit, design.parentOid);
+  assert.equal(git(execution.workspace.path, ['rev-parse', 'HEAD^{tree}']), design.treeOid);
+  assert.equal(
+    execution.workspace.path,
+    planner.workspace.path,
+    'same work host continues its checkout',
+  );
+  writeFileSync(join(execution.workspace.path, 'result.txt'), '2 + 3 = 5\n');
+  await attach(execution, 'result', '{"observed":5,"expected":5}');
+  await attach(
+    execution,
+    'report',
+    '# Summary\nThe check passed.\n# Results\nThe retained observation equals 5.\n# Deviations from plan\nNone.\n# Conclusion\nAddition returned the expected value.',
+  );
+  const result = await submit(execution, 'submit_results');
+  assert.equal(commitCount(), initialCount + 1, 'dirty result submission retains no commit');
+  assert.equal(result.parentOid, planCommit);
+  const resultsReview = await lease(reviewer);
+  await inspect(resultsReview, result, { 'plan.py': planCode, 'result.txt': '2 + 3 = 5\n' });
+  await approve(resultsReview);
+  const accepted = (await code.unit(owner, experiment.id)).acceptance;
+  assert.ok(accepted?.reference);
+  assert.notEqual(accepted.reference, planCommit);
+  assert.equal(git(repository, ['rev-parse', `${accepted.reference}^`]), planCommit);
+  assert.equal(git(repository, ['rev-parse', `${accepted.reference}^{tree}`]), result.treeOid);
+  assert.equal(commitCount(), initialCount + 2, 'results approval adds exactly one milestone');
+  const again = await code.unit(owner, experiment.id);
+  assert.equal(again.acceptance?.reference, accepted.reference);
+  // Teardown occurs after approval. It must reuse the exact already durable tree, not
+  // create an extra capture commit or mutate the reviewed acceptance.
+  await http('/sessions/runners/shutdown', writer.controlToken, { request: true });
+  current.delete(writer.allocationId);
+  const captures = await writer.driver.shutdownCapture();
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0]!.headOid, accepted.reference);
+  assert.equal(captures[0]!.treeOid, result.treeOid);
+  const receipt = { captures, empty: false };
+  assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
+    requested: true,
+    acknowledged: true,
+  });
+  assert.deepEqual(await http('/sessions/runners/shutdown', writer.controlToken, { receipt }), {
+    requested: true,
+    acknowledged: true,
+  });
+  assert.equal((await code.unit(owner, experiment.id)).acceptance?.reference, accepted.reference);
+  assert.equal(commitCount(), initialCount + 2, 'shutdown adds no duplicate of accepted code');
+  assert.equal(await app.ctx.sessions.managed.requestShutdown(writer.allocationId, 1), true);
+  await http('/sessions/runners/shutdown', reviewer.controlToken, { request: true });
+  current.delete(reviewer.allocationId);
+  assert.deepEqual(await reviewer.driver.shutdownCapture(), []);
+  assert.deepEqual(
+    await http('/sessions/runners/shutdown', reviewer.controlToken, {
+      receipt: { captures: [], empty: true },
+    }),
+    { requested: true, acknowledged: true },
+  );
+  assert.equal(await app.ctx.sessions.managed.requestShutdown(reviewer.allocationId, 1), true);
+  if (!process.env.MERV_LINUX_REVIEW_IMAGE)
+    t.diagnostic(
+      'Linux mount gate not run; set MERV_LINUX_REVIEW_IMAGE to an image with Python, Git, mount and identities 1000/12001.',
+    );
+});

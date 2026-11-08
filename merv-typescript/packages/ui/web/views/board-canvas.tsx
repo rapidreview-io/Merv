@@ -30,7 +30,7 @@ import {
 import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { FileId, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import { MOST_IMAGE_BYTES, stacked, type BoardElement, type BoardScene } from '@merv/board/models';
-import { accountRequest, type ApiError, call } from '../api';
+import { accountRequest, type ApiError, call as toolCall, scopeVersion } from '../api';
 import { ensureBoardFonts } from './board-fonts';
 import { typing } from '../list-filters';
 import { useCurrent } from '../mutations';
@@ -138,6 +138,13 @@ type CanvasProps = {
 
 function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
   const navigate = useNavigate();
+  const epoch = useRef(scopeVersion()).current;
+  const call = useMemo(
+    () =>
+      <T,>(name: string, input: Record<string, unknown> = {}) =>
+        toolCall<T>(name, input, epoch),
+    [epoch],
+  );
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -237,7 +244,7 @@ function BoardCanvasScene({ id, onOutcomes }: CanvasProps) {
         const held = fileId && !onBoard.current.has(fileId) && files.current[fileId];
         if (!held) continue;
         const raw = Uint8Array.from(atob(held.dataURL.split(',')[1]!), (c) => c.charCodeAt(0));
-        await accountRequest(imageAt(fileId), { method: 'PUT', raw, scoped: true }).then(
+        await accountRequest(imageAt(fileId), { method: 'PUT', raw, scoped: true, epoch }).then(
           () => onBoard.current.add(fileId),
           (error: ApiError) => {
             unsent.add(fileId);

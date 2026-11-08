@@ -37,18 +37,18 @@ const owner = (profile: RunnerProfile) =>
   launcherOf(profile).isolated(profile) ? assignmentUser : undefined;
 
 /**
- * The conversation as kept: each JSON line that holds a bearer or an exact secret (≥ 16
- * characters) parsed, every string in it blanked of them, as a transcript is, and written back as
+ * The conversation as kept: each JSON line that holds a bearer or an explicit nonempty secret
+ * parsed, every string in it blanked of them, and written back as
  * JSON, so a redaction never breaks a record; such a line that is not JSON is dropped. Every other
  * line keeps its own bytes.
  */
 export function redactConversation(bytes: Buffer, secrets: string[]): Buffer {
-  const blank = blankPattern(secrets);
+  const blank = blankPattern(secrets, 1);
   // A secret that JSON escapes (a quote, a backslash) is written escaped in the line.
-  const held = blankPattern([
-    ...secrets,
-    ...secrets.map((secret) => JSON.stringify(secret).slice(1, -1)),
-  ]);
+  const held = blankPattern(
+    [...secrets, ...secrets.map((secret) => JSON.stringify(secret).slice(1, -1))],
+    1,
+  );
   const scrub = (value: unknown): unknown =>
     typeof value === 'string'
       ? value.replace(blank, '[REDACTED]')

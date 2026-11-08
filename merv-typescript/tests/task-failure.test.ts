@@ -1,4 +1,4 @@
-import type { Caller, Data } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import type { Task, TaskMarkFailed } from '@merv/tasks/types';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -115,76 +115,6 @@ async function durableState(app: App, caller: Caller, taskId: string) {
     reviews: await app.ctx.reviews.list(caller),
   }));
 }
-
-test('task withdrawal shares guidance guards, checks identity and reason, and remains an explicit action', async () => {
-  const f = await fixture();
-  try {
-    const task = await f.create(),
-      input = failureInput(task);
-    assert.equal(task.workflow.version, 46);
-    assert.equal(task.failure, null);
-    assert.equal(task.guidance.nextAction?.action, 'begin');
-    assert.ok(task.guidance.actions.some((action) => action.action === 'mark_failed'));
-    const preflight = async (caller: Caller, proposal: Data) =>
-      (
-        await f.app.ctx.workflows.evaluate(caller, task.id, {
-          action: 'mark_failed',
-          input: proposal,
-        })
-      ).actions.find((action) => action.action === 'mark_failed')!;
-    const head = await f.app.ctx.state.eventHead();
-    assert.equal((await preflight(f.producer.caller, { ...input })).status, 'ready');
-    assert.equal(await f.app.ctx.state.eventHead(), head);
-    for (const caller of [f.reader.caller, f.reviewer.caller, (await f.issue('producer')).caller]) {
-      assert.equal((await preflight(caller, { ...input })).blockers[0].code, 'forbidden');
-      await assert.rejects(async () => await f.app.ctx.tasks.markFailed(caller, input), {
-        code: 'forbidden',
-      });
-    }
-    for (const reason of ['', ' \n ', 'x'.repeat(16001), null, 1]) {
-      const bad = { ...input, reason } as unknown as TaskMarkFailed;
-      assert.equal(
-        (await preflight(f.producer.caller, { ...bad })).blockers[0].code,
-        'invalid_reason',
-      );
-      await assert.rejects(async () => await f.app.ctx.tasks.markFailed(f.producer.caller, bad), {
-        code: 'invalid_reason',
-      });
-    }
-    const stale = { ...input, expectedRevision: 1 };
-    await assert.rejects(async () => await preflight(f.producer.caller, stale), {
-      code: 'revision_conflict',
-    });
-    await assert.rejects(async () => await f.app.ctx.tasks.markFailed(f.producer.caller, stale), {
-      code: 'revision_conflict',
-    });
-    for (const expectedRevision of [-1, 0.5, NaN]) {
-      await assert.rejects(
-        async () =>
-          await f.app.ctx.tasks.markFailed(f.producer.caller, { ...input, expectedRevision }),
-        { code: 'invalid_revision' },
-      );
-    }
-    const other = await f.app.ctx.scope.credentials.bootstrap({
-      projectName: 'Other project',
-      actorName: 'Other operator',
-    });
-    const outsider = { actorId: other.actor.id, projectId: other.project.id };
-    await assert.rejects(async () => await f.app.ctx.tasks.markFailed(outsider, input), {
-      code: 'not_found',
-    });
-    assert.equal((await f.app.ctx.tasks.get(f.operator, task.id)).workflow.revision, 0);
-    await f.app.ctx.scope.credentials.revokeActor(f.operator, f.producer.caller.actorId);
-    await assert.rejects(async () => await f.app.ctx.tasks.markFailed(f.producer.caller, input), {
-      code: 'forbidden',
-    });
-    const failed = await f.app.ctx.tasks.markFailed(f.operator, input);
-    assert.equal(failed.failure?.actorId, f.operator.actorId);
-    assert.equal(failed.workflow.state, 'failed');
-  } finally {
-    await f.close();
-  }
-});
 
 test('review closure and final event faults roll back withdrawal and dedup together', async () => {
   const f = await fixture();

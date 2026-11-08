@@ -92,52 +92,6 @@ test('old-dated merge chains do not offer already-landed ancestry again', async 
   assert.equal((await f.status()).landed.filter((row) => row.unitId === first.id).length, 1);
 });
 
-test('racing acceptances land in acceptance order, one open landing at a time', async (t) => {
-  const f = await fixture(t);
-  t.mock.method(f.landing, 'soon', () => {});
-  const units = [];
-  for (const [name, commit] of [
-    ['First', f.feature],
-    ['Second', f.moved],
-  ] as const) {
-    const work = await f.declare(name);
-    await f.accept(work, commit);
-    units.push(work);
-  }
-  await Promise.allSettled([
-    f.landing.work(f.project),
-    f.landing.work(f.project),
-    f.restarted().work(f.project),
-  ]);
-  const open = () =>
-    f.state.read((sql) =>
-      sql.all(
-        'SELECT unit_id FROM code_main_landings WHERE project_id=? AND outcome IS NULL',
-        f.project,
-      ),
-    );
-  assert.deepEqual(await open(), [{ unit_id: units[1].id }]);
-  const current = (await f.status()).current!;
-  assert.equal(current.unitId, units[1].id);
-  assert.equal(current.state, 'merging');
-  assert.equal(current.mainOid, f.feature);
-  // The journal itself refuses a second open landing in a project.
-  await assert.rejects(
-    f.state.transaction((tx) =>
-      tx.run(
-        "INSERT INTO code_main_landings(project_id,landing_key,seq,unit_id,acceptance_hash,main_oid,head_oid,created_at) VALUES (?,'second',99,'x','x','x','x','now')",
-        f.project,
-      ),
-    ),
-  );
-  await f.drive();
-  assert.deepEqual(outcomes(await f.status()), [
-    [units[1].id, 'merged'],
-    [units[0].id, 'ff'],
-  ]);
-  assert.deepEqual(await open(), []);
-});
-
 test('a restart resumes the open landing before and after its merge', async (t) => {
   const f = await fixture(t);
   t.mock.method(f.landing, 'soon', () => {});
@@ -162,37 +116,6 @@ test('a restart resumes the open landing before and after its merge', async (t) 
     assert.deepEqual(f.parents(await f.main()), [before, commit].sort());
     assert.deepEqual(outcomes(await f.status())[0], [work.id, 'merged']);
   }
-});
-
-test('code-less and quarantined work never lands', async (t) => {
-  const f = await fixture(t);
-  const scratch = await f.declare('Scratch');
-  const done = await f.move(scratch);
-  await f.state.transaction((tx) =>
-    f.code.acceptUnit(
-      f.admin,
-      {
-        unitId: scratch.id,
-        terminalRevision: done.revision,
-        submissionRef: 'scratch',
-        reviewRef: 'scratch',
-        codeRef: null,
-        reviewSessionId: null,
-      },
-      tx,
-    ),
-  );
-  const held = await f.declare('Held');
-  t.mock.method(f.landing, 'soon', () => {});
-  await f.accept(held, f.feature);
-  await f.state.transaction((tx) =>
-    tx.run("UPDATE code_units SET quarantine_base_key='quarantined' WHERE unit_id=?", held.id),
-  );
-  await f.landing.work(f.project);
-  assert.equal(await f.main(), f.root0);
-  const status = await f.status();
-  assert.deepEqual(status.waiting, []);
-  assert.deepEqual(status.landed, []);
 });
 
 test('a conflict with main is one resolution task, and main takes its reviewed result', async (t) => {

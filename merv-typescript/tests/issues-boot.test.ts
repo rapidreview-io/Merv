@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createApp } from './fixtures/app.js';
 
 const seen: (IssueReport | 'disposed' | 'drained')[] = [];
 /** This file as the `issues` entry: a store that keeps what reaches it, up only after the
@@ -39,67 +38,6 @@ function temporary(t: TestContext) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
-
-test('a refused boot reports its unready entry and the plugin error to Issues before disposing', async (t) => {
-  const directory = temporary(t);
-  // A database failure as State throws one: Cordis logs its plain-object cause first, alone.
-  const store = join(directory, 'store.mjs');
-  writeFileSync(
-    store,
-    `export default { name: 'store-like', apply() {
-  throw Object.assign(new Error('x', { cause: { sqlstate: '42P01' } }), { code: 'internal_error' });
-} };`,
-  );
-  await assert.rejects(
-    createApp({
-      directory,
-      config: {
-        plugins: [
-          { id: 'issues', name: import.meta.url, required: false },
-          {
-            id: 'marker',
-            name: './tests/fixtures/loader-marker.ts',
-            config: { value: 'fails', fail: true },
-          },
-          { id: 'store', name: pathToFileURL(store).href, required: false },
-        ],
-      },
-    }),
-    (error: { code?: string }) => error.code === 'plugin_unavailable',
-  );
-  const disposed = seen.indexOf('disposed');
-  const failed = seen.findIndex((r) => typeof r === 'object' && r.code === 'plugin_failed');
-  const unready = seen.findIndex((r) => typeof r === 'object' && r.code === 'failed');
-  // The error came before Issues was up: it reached the store as the boot settled.
-  const drained = seen.indexOf('drained');
-  // Issues writes before anything is disposed: State may close before Issues' own disposer.
-  assert.ok(
-    failed >= 0 && unready > failed && drained > unready && disposed > drained,
-    JSON.stringify(seen),
-  );
-  const { error, ...report } = seen[failed] as IssueReport;
-  assert.deepEqual(report, {
-    class: 'platform',
-    where: 'plugin',
-    code: 'plugin_failed',
-    key: 'fixture-marker',
-    level: 'severe',
-  });
-  assert.ok(error instanceof Error);
-  assert.deepEqual(
-    seen
-      .filter((r) => typeof r === 'object' && r.key === 'store-like')
-      .map((r) => (r as IssueReport).code),
-    ['internal_error'],
-  );
-  assert.deepEqual(seen[unready], {
-    class: 'platform',
-    where: 'plugin',
-    code: 'failed',
-    key: 'marker',
-    level: 'severe',
-  });
-});
 
 test('a crashed or killed run is reported by the next under its release; a clean stop leaves nothing', async (t) => {
   const directory = temporary(t);

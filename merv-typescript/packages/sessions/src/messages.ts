@@ -419,7 +419,7 @@ export class SessionMessages {
       await this.scope.require(caller, 'write', tx);
       const fingerprint = digest({ threadId: input.threadId, body: input.body });
       const old = await tx.get<MessageRow>(
-        'SELECT * FROM session_messages WHERE project_id=? AND sender_actor_id=? AND request_id=?',
+        'SELECT * FROM session_messages WHERE project_id=? AND sender_actor_id=? AND request_id=? AND inquiry_role IS NULL',
         caller.projectId,
         caller.actorId,
         input.requestId,

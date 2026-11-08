@@ -56,10 +56,12 @@ export default function SharedBoard() {
       try {
         const data: Scene = await (await request('scene')).json();
         await ensureBoardFonts(data.elements);
-        if (alive)
+        if (alive) {
+          setError('');
           setScene((previous) =>
             previous?.revision === data.revision && previous.title === data.title ? previous : data,
           );
+        }
       } catch {
         if (alive) {
           setScene(undefined);

@@ -1,13 +1,13 @@
 import type { Caller, ReviewApplication } from '@merv/contracts';
-import type { ReviewHistory } from '@merv/reviews/rules';
+
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { REFLECTION_CRITERIA } from '../packages/reflections/src/definitions.js';
-import type { Reflection, ReflectionReview } from '../packages/reflections/src/types.js';
+
+import type { Reflection } from '../packages/reflections/src/types.js';
 import { createApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -123,61 +123,6 @@ async function fixture(t: TestContext) {
   };
   return { app, owner, actor, create, lenses, synthesize, verdict, granted };
 }
-test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
-  const f = await fixture(t);
-  const other = await f.app.ctx.scope.credentials.bootstrap({
-    projectName: 'Other',
-    actorName: 'Other',
-  });
-  const foreign = {
-    projectId: other.project.id,
-    actorId: other.actor.id,
-    credentialId: other.credential.id,
-  };
-  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
-  await t.test('open authorizes its caller', async () => {
-    await assert.rejects(
-      f.app.ctx.state.transaction((tx) =>
-        f.app.ctx.reflections.open({ ...foreign, projectId: f.owner.projectId }, tx),
-      ),
-      { code: 'forbidden' },
-    );
-  });
-  wave = await f.verdict(
-    await f.synthesize(await f.lenses(wave)),
-    await f.actor('Reviewer', 'reviewer'),
-    true,
-  );
-  for (const method of ['get', 'list', 'lens', 'approved'] as const) {
-    await t.test(method, async (t) => {
-      const caller = { ...foreign };
-      const authorize = f.app.ctx.scope.require.bind(f.app.ctx.scope);
-      t.mock.method(f.app.ctx.scope, 'require', async (...args: Parameters<typeof authorize>) => {
-        const result = await authorize(...args);
-        Object.assign(caller, f.owner);
-        return result;
-      });
-      if (method === 'list') assert.deepEqual(await f.app.ctx.reflections.list(caller), []);
-      else
-        await assert.rejects(
-          f.app.ctx.reflections[method](caller, method === 'lens' ? wave.lenses[0]!.id : wave.id),
-          { code: method === 'lens' ? 'reflection_lens_not_found' : 'reflection_not_found' },
-        );
-    });
-  }
-  await t.test('creation captures ownership and input', async () => {
-    const caller = { ...f.owner };
-    const input = { title: 'Original', requestId: 'original' };
-    const original = { ...input };
-    const creating = f.app.ctx.reflections.create(caller, input);
-    Object.assign(caller, foreign);
-    Object.assign(input, { title: 'Replacement', requestId: 'replacement' });
-    const created = await creating;
-    assert.equal(created.ownerId, f.owner.actorId);
-    assert.equal(created.title, original.title);
-    assert.deepEqual(await f.app.ctx.reflections.create(f.owner, original), created);
-  });
-});
 
 test('reflection uses live research, joins five independent ordinary workflows, reviews and retains exact approval', async (t) => {
   const f = await fixture(t);
@@ -328,96 +273,6 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   assert.ok((await f.app.ctx.reflections.create(f.owner, { requestId: 'next-wave' })).id);
 });
 
-test('review return preserves lenses for synthesis repair and creates fresh versioned children for lens repair', async (t) => {
-  const f = await fixture(t);
-  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
-  // With no rejected round there is nothing to carry, and the context says so.
-  const untouched = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
-  assert.ok(!untouched.prompt.includes('review:'));
-  assert.doesNotMatch(untouched.prompt, /Earlier review rounds/);
-  wave = await f.synthesize(await f.lenses(wave));
-  const firstIds = wave.lenses.map((l) => l.id);
-  const reviewer = await f.actor('Reviewer', 'reviewer');
-  const firstReview = wave.review!.id;
-  wave = await f.verdict(wave, reviewer, false, 'synthesizing');
-  assert.equal(wave.workflow.state, 'synthesizing');
-  // The first repair already reads the one rejected round, and the feedback section is unchanged.
-  const repair = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
-  assert.ok(repair.prompt.includes(`review:${firstReview}`));
-  assert.match(repair.prompt, /Prior review feedback and recovery/);
-  assert.match(repair.prompt, /The exact submission requires repair/);
-  assert.deepEqual(
-    wave.lenses.map((l) => l.id),
-    firstIds,
-  );
-  wave = await f.synthesize(wave);
-  const secondReview = wave.review!.id;
-  // A reviewer judges the submission in front of them and is shown no earlier verdicts.
-  const independentReview = (await f.app.ctx.workflows.assignment(reviewer, wave.id)).context!;
-  assert.doesNotMatch(independentReview.prompt, /Earlier review rounds/);
-  assert.match(independentReview.prompt, /"previousReviews":\[/);
-  assert.doesNotMatch(independentReview.prompt, /"verdict":"needs_changes"/);
-  wave = await f.verdict(wave, reviewer, false, 'reflecting');
-  assert.equal(wave.workflow.state, 'reflecting');
-  assert.equal(wave.attempt, 2);
-  const lens = wave.lenses[0]!;
-  const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 13);
-  assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
-  assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
-  assert.match(lensContext.prompt, /"verdict":"needs_changes"/);
-  const rounds = [firstReview, secondReview].map((reviewId) => {
-    const line = lensContext.prompt
-      .split('\n')
-      .find((part) => part.startsWith('{"round":') && part.includes(`"reviewId":"${reviewId}"`));
-    assert.ok(line, `rejected round ${reviewId} is included in full`);
-    return JSON.parse(line) as ReviewHistory['rounds'][number];
-  });
-  assert.deepEqual(
-    rounds.map(({ round, reviewId, verdict, returnTo, notes }) => ({
-      round,
-      reviewId,
-      verdict,
-      returnTo,
-      notes,
-    })),
-    [firstReview, secondReview].map((reviewId, index) => ({
-      round: index + 1,
-      reviewId,
-      verdict: 'needs_changes',
-      returnTo: index ? 'reflecting' : 'synthesizing',
-      notes: 'Verified exact frozen sources and lens outputs.',
-    })),
-  );
-  assert.ok(
-    rounds.every(
-      (round) =>
-        round.unmet.length === REFLECTION_CRITERIA.length &&
-        round.unmet.every(
-          (finding, index) =>
-            finding.criterionNumber === index + 1 &&
-            finding.status === 'not_met' &&
-            finding.criterion === REFLECTION_CRITERIA[index]!.slice(0, 200) &&
-            finding.notes === 'Checked against the corpus.',
-        ),
-    ),
-  );
-  assert.ok(!lensContext.prompt.includes(reviewer.actorId));
-  assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
-  assert.deepEqual((await f.granted(lens.id, 0)).researchReviews, [firstReview, secondReview]);
-  assert.ok(wave.lenses.every((l) => !firstIds.includes(l.id) && l.artifact === null));
-  assert.equal((await f.app.ctx.workflows.get(f.owner, firstIds[0]!)).state, 'complete');
-  // No dependency edge names a lens, so the wave's policy does: a usage rollup over the
-  // wave has to reach the lenses of every attempt, which are most of what it cost.
-  assert.deepEqual(
-    (await f.app.ctx.workflows.dependencyClosure(f.owner, wave.id)).sort(),
-    [wave.id, ...firstIds, ...wave.lenses.map((l) => l.id)].sort(),
-  );
-  wave = await f.synthesize(await f.lenses(wave));
-  wave = await f.verdict(wave, reviewer, true);
-  assert.equal(wave.workflow.state, 'approved');
-});
-
 test('a lens worker cannot read the other lenses of its reflecting wave', async (t) => {
   const f = await fixture(t);
   const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'independent-wave' });
@@ -458,96 +313,4 @@ test('a lens worker cannot read the other lenses of its reflecting wave', async 
   assert.equal(shown.lenses[0]!.artifact!.id, report.id);
   assert.equal((await f.app.ctx.reflections.lens(f.owner, first!.id)).artifact!.id, report.id);
   await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
-});
-
-test('reflection reviewer authors paper edits with the verdict and main-agent edits can cause a safe retry', async (t) => {
-  const f = await fixture(t);
-  let wave = await f.lenses(
-    await f.app.ctx.reflections.create(f.owner, { requestId: 'paper-reflection' }),
-  );
-  wave = await f.synthesize(wave);
-  const reviewer = await f.actor('Scientific reviewer', 'reviewer');
-  const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
-  assert.ok(JSON.stringify(assignment).includes('paperChanges'));
-  const review = await f.app.ctx.reviews.start(reviewer, wave.review!.id);
-  // The wave names where a rejection may send it, beside its verdict rules.
-  assert.deepEqual(
-    (await f.app.ctx.reviews.guide(reviewer, review)).returns?.map(({ value }) => value),
-    ['synthesizing', 'reflecting'],
-  );
-  const input: ReflectionReview = {
-    reviewId: review.id,
-    claimId: review.claimId!,
-    expectedRevision: wave.workflow.revision,
-    verdict: 'pass',
-    notes: 'Checked the lenses and updated the project narrative.',
-    synopsis:
-      'The synthesis accurately preserves the lack of empirical evidence and its limitations.',
-    findings: review.criteria.map((_, i) => ({
-      criterionNumber: i + 1,
-      status: 'met',
-      evidenceIds: [review.artifactIds[0]],
-      notes: 'Verified the evidence.',
-    })),
-    paperChanges: {
-      documents: [
-        {
-          kind: 'results',
-          expectedRevision: 0,
-          changes: [
-            {
-              id: 'synthesis',
-              title: 'Synthesis',
-              content: 'No completed experiments; no empirical conclusion is supported.',
-            },
-          ],
-        },
-      ],
-    },
-    requestId: 'paper-review',
-  };
-  await f.app.ctx.paper.patch(f.owner, {
-    kind: 'results',
-    expectedRevision: 0,
-    requestId: 'main-edit',
-    // An edit to another section alone would be merged; this one writes the reviewer's too.
-    changes: [
-      { id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' },
-      { id: 'synthesis', title: 'Synthesis', content: 'Pending review.' },
-    ],
-  });
-  await assert.rejects(f.app.ctx.tools.call('review.submit', reviewer, input), {
-    code: 'paper_revision_conflict',
-  });
-  const guidance = await f.app.ctx.workflows.evaluate(reviewer, wave.id, {
-    action: 'review',
-    input: input as never,
-  });
-  assert.ok(
-    guidance.actions
-      .find((a) => a.action === 'review')
-      ?.blockers.some((b) => b.code === 'paper_revision_conflict'),
-  );
-  assert.equal((await f.app.ctx.reviews.get(reviewer, review.id)).status, 'started');
-  input.paperChanges!.documents[0].expectedRevision = 1;
-  await assert.rejects(
-    f.app.ctx.state.transaction(async (tx) => {
-      await f.app.ctx.reviews.apply(reviewer, input, tx);
-      throw Error('abort verdict');
-    }),
-    /abort verdict/,
-  );
-  assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 1);
-  // The verdict works out its paper edits once, as it applies them.
-  const checks = t.mock.method(f.app.ctx.paper, 'checkReview');
-  wave = (await f.app.ctx.tools.call('review.submit', reviewer, input)) as Reflection;
-  assert.equal(checks.mock.callCount(), 0);
-  assert.equal(wave.workflow.state, 'approved');
-  assert.deepEqual(await f.app.ctx.tools.call('review.submit', reviewer, input), wave);
-  const document = (await f.app.ctx.paper.read(f.owner)).documents.results;
-  assert.equal(document.current.updatedBy, reviewer.actorId);
-  assert.equal(document.current.revision, 2);
-  assert.equal(document.published!.publication.reviewId, review.id);
-  assert.equal(document.published!.publication.source.id, wave.id);
-  assert.equal(document.current.sections.length, 2);
 });

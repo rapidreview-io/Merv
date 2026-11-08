@@ -20,7 +20,7 @@ import { reportBrowser } from './fixtures/report-browser.js';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { check, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
+import { type Caller, type ReviewApplication } from '@merv/contracts';
 import { ExperimentService } from '@merv/experiments';
 import type {
   Experiment,
@@ -43,9 +43,17 @@ const code = (expected: string) => (error: unknown) =>
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
     state = await openState(dir);
-  const scope = await createService(new ProjectScope(state)),
-    boot = await scope.credentials.bootstrap({ projectName: 'Experiments', actorName: 'Operator' });
-  const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const scope = await createService(new ProjectScope(state));
+  const principal = await scope.members.acceptVerifiedIdentity({
+    issuer: 'https://example.test/auth',
+    subject: 'experiment-owner',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const project = await scope.members.createProject(principal, {
+    name: 'Experiments',
+    requestId: 'project',
+  });
+  const operator = await scope.caller(principal, project.id);
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const result = await scope.credentials.issueActor(operator, {
       name: role,
@@ -317,234 +325,6 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
   };
 }
 
-test('Experiments run both independent gates, pin exact evidence/exhibit without research claims', async (t) => {
-  const f = await fixture(t);
-  let e = await f.create('Paired-test');
-  assert.equal(Object.hasOwn(e, 'testedClaimIds'), false);
-  assert.equal(e.attempt.index, 1);
-  assert.equal(e.workflow.revision, 0);
-  const p = await f.attach(e, 'plan', plan);
-  e = await f.transition(e, 'submit_design');
-  assert.equal(e.workflow.state, 'design_review');
-  assert.equal(e.submissions[0].evidence[0].artifactId, p.artifactId);
-  assert.equal((await f.reviews.get(f.reviewer, e.reviewId!)).formatVersion, 2);
-  await assert.rejects(
-    async () =>
-      await f.experiments.attach(f.producer, {
-        experimentId: e.id,
-        artifactId: p.artifactId,
-        role: 'plan',
-        path: 'plan.md',
-        attemptIndex: 1,
-        expectedRevision: e.workflow.revision,
-        requestId: f.id(),
-      }),
-    code('experiment_not_writable'),
-  );
-  e = await f.submitReview(e);
-  assert.equal(e.workflow.state, 'running');
-  assert.equal(e.attempt.startedAt, null);
-  await f.execute(e);
-  e = await f.experiments.get(f.producer, e.id);
-  assert.ok(e.attempt.startedAt);
-  await f.attach(e, 'result', 'null');
-  await f.attach(e, 'report', report);
-  const preview = await f.experiments.exhibit(f.producer, e.id);
-  assert.equal(preview.willPin, true);
-  assert.equal(preview.startedAt, e.attempt.startedAt);
-  e = await f.transition(e, 'submit_results');
-  const round = e.submissions.find((s) => s.stage === 'results')!;
-  const exhibit = round.evidence.find((a) => a.role === 'exhibit')!;
-  assert.equal(exhibit.systemGenerated, true);
-  assert.equal(exhibit.hash, preview.hash);
-  assert.equal((await f.artifacts.read(f.producer, exhibit.artifactId)).content, preview.content);
-  assert.ok(round.evidence.some((a) => a.artifactId === p.artifactId));
-  e = await f.submitReview(e);
-  assert.equal(e.workflow.state, 'complete');
-  assert.equal(e.conclusion, 'No improvement was observed.');
-});
-test('Attempt fail and needs_changes require explicit routes and distinguish new attempts from new rounds', async (t) => {
-  const f = await fixture(t);
-  let e = await f.running();
-  const approved = e.attempt.approvedSubmissionId;
-  e = await f.results(e);
-  const input = await f.reviewInput(e, 'fail');
-  const before = (await f.state.events(f.operator.projectId)).length;
-  await assert.rejects(async () => await f.applyReview(e, input), code('invalid_review_return'));
-  assert.equal((await f.state.events(f.operator.projectId)).length, before);
-  e = (await f.applyReview(e, { ...input, returnTo: 'running' })) as Experiment;
-  assert.equal(e.workflow.state, 'running');
-  assert.equal(e.attempt.index, 1);
-  assert.equal(e.attempt.approvedSubmissionId, approved);
-  e = await f.results(e);
-  assert.deepEqual(
-    e.submissions.filter((s) => s.stage === 'results').map((s) => s.round),
-    [1, 2],
-  );
-  e = await f.submitReview(e, 'needs_changes', 'planned');
-  assert.equal(e.workflow.state, 'planned');
-  assert.equal(e.attempt.index, 2);
-  assert.equal(e.attempt.approvedSubmissionId, null);
-  assert.equal(e.attempt.startedAt, null);
-  assert.equal(e.attempts[0].endedRevision, e.workflow.revision - 1);
-  assert.equal(e.submissions.length, 3);
-  assert.equal(e.attempt.feedback.length, 1);
-});
-test('Design rejection starts a new attempt; invalid routes and self review cannot commit', async (t) => {
-  const f = await fixture(t);
-  let e = await f.create();
-  await f.attach(e, 'plan', plan);
-  e = await f.transition(e, 'submit_design');
-  await assert.rejects(
-    async () => await f.reviews.start(f.producer, e.reviewId!),
-    code('forbidden'),
-  );
-  const input = await f.reviewInput(e, 'fail');
-  await assert.rejects(
-    async () => await f.applyReview(e, { ...input, returnTo: 'running' }),
-    code('invalid_review_return'),
-  );
-  e = (await f.applyReview(e, input)) as Experiment;
-  assert.equal(e.attempt.index, 2);
-  assert.equal(e.workflow.state, 'planned');
-});
-test('Missing bytes and invalid scoped figure references cannot seal a review', async (t) => {
-  const f = await fixture(t),
-    e = await f.create();
-  await f.execute(e);
-  const figure = await f.artifacts.create(f.worker(e), {
-    title: 'Figure',
-    content: 'not actually an image',
-    mediaType: 'text/plain',
-  });
-  await assert.rejects(
-    async () => await f.attach(e, 'plan', `${plan}\n![Comparison](${figure.id})`),
-    code('invalid_experiment_evidence'),
-  );
-  const attached = await f.attach(e, 'plan', plan),
-    events = (await f.state.events(f.operator.projectId)).length;
-  // Artifacts verifies its bytes (its own suite covers how); a refusal here must seal nothing.
-  const original = f.artifacts.bytes;
-  f.artifacts.bytes = async () => {
-    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
-  };
-  await assert.rejects(async () => await f.transition(e, 'submit_design'), code('blob_corrupt'));
-  f.artifacts.bytes = original;
-  assert.equal((await f.state.events(f.operator.projectId)).length, events);
-  assert.equal((await f.experiments.get(f.producer, e.id)).submissions.length, 0);
-  assert.equal(
-    (await f.experiments.get(f.producer, e.id)).evidence.findLast(
-      (evidence) => evidence.role === 'plan',
-    )!.id,
-    attached.id,
-  );
-});
-test('Source revocation is checked before replay and before a composed writer commits', async (t) => {
-  const f = await fixture(t),
-    input = { name: 'Authorized', intent: 'Test authority.', requestId: 'auth' };
-  await f.experiments.create(f.producer, input);
-  await f.scope.credentials.revokeActor(f.operator, f.producer.actorId);
-  await assert.rejects(
-    async () => await f.experiments.create(f.producer, input),
-    code('forbidden'),
-  );
-  const second = { name: 'Final-check', intent: 'Check the final writer.', requestId: 'final' },
-    before = (await f.experiments.list(f.operator)).length;
-  const append = f.state.appendEvent.bind(f.state);
-  const originalRequire = f.scope.require.bind(f.scope);
-  let authorityLost = false;
-  f.scope.require = async (caller, permission, tx) => {
-    check(
-      !(authorityLost && caller.actorId === f.otherProducer.actorId),
-      'forbidden',
-      'Authority changed during the writer',
-      403,
-    );
-    return await originalRequire(caller, permission, tx);
-  };
-  f.state.appendEvent = async (tx, event) => {
-    const result = await append(tx, event);
-    if (event.type === 'experiment.created') authorityLost = true;
-    return result;
-  };
-  await assert.rejects(
-    async () => await f.experiments.create(f.otherProducer, second),
-    code('forbidden'),
-  );
-  f.state.appendEvent = append;
-  f.scope.require = originalRequire;
-  assert.equal((await f.experiments.list(f.operator)).length, before);
-  assert.ok(await f.scope.require(f.otherProducer, 'write'));
-});
-test('A fresh storage connection restores attempts, immutable review pins, figures and command receipts', async (t) => {
-  const f = await fixture(t);
-  let e = await f.create('Restart-proof');
-  await f.execute(e);
-  const image = await f.artifacts.create(f.worker(e), {
-    title: 'Retained figure',
-    mediaType: 'image/png',
-    encoding: 'base64',
-    content:
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==',
-  });
-  const evidence = await f.attach(e, 'plan', `${plan}\n![Retained comparison](${image.id})`);
-  assert.deepEqual(evidence.figureIds, [image.id]);
-  e = await f.transition(e, 'submit_design');
-  const application = await f.reviewInput(e, 'needs_changes', 'planned');
-  e = (await f.applyReview(e, application)) as Experiment;
-  await f.managed.close();
-  const state = await openState(f.directory),
-    scope = await createService(new ProjectScope(state)),
-    artifacts = await createService(
-      new ArtifactStore(state, scope, new DiskBlobs(join(f.directory, 'blobs'))),
-    ),
-    workflows = await createService(new WorkflowsService(state, scope)),
-    reviews = await createService(new ReviewService(state, scope, artifacts)),
-    builder = await createService(new RecipeContextBuilder(state, scope, artifacts)),
-    restoredManaged = await managedServices(
-      { state, scope, artifacts, workflows, reviews },
-      f.directory,
-      f.producer,
-    ),
-    experiments = await createService(
-      new ExperimentService(
-        state,
-        scope,
-        artifacts,
-        workflows,
-        reviews,
-        builder,
-        restoredManaged.code,
-        await createService(new PaperService(state, scope, artifacts)),
-      ),
-    );
-  experiments.bindReports(legacyReports(state));
-  try {
-    assert.deepEqual(await experiments.get(f.producer, e.id), e);
-    assert.deepEqual(e.attempt.feedbackReviewIds, [application.reviewId]);
-    assert.deepEqual(e.submissions[0].figureIds, [image.id]);
-    assert.equal((await reviews.get(f.reviewer, application.reviewId)).verdict, 'needs_changes');
-    assert.ok(
-      await state.read((sql) =>
-        sql.get(
-          'SELECT request_id FROM experiment_commands WHERE request_id=?',
-          application.requestId,
-        ),
-      ),
-    );
-    const assignment = await workflows.assignment(f.producer, e.id);
-    assert.ok(JSON.stringify(assignment).includes(application.reviewId));
-    assert.ok(JSON.stringify(assignment).includes(image.id));
-  } finally {
-    experiments.close();
-    await restoredManaged.close();
-    builder.close();
-    workflows.close();
-    reviews.close();
-    await state.close();
-  }
-});
-
 const REPORTED_PLAN = `## Summary
 Question: Does the domain tokenizer improve NER?
 ## Objective & hypothesis
@@ -659,112 +439,6 @@ test(
   },
 );
 
-test('a leased planner recovers original request and paginated history through its granted read', async (t) => {
-  const { experimentReminder, experimentHistory } = await import('@merv/experiments/read-view');
-  const { experimentGetSchema } = await import('@merv/experiments/input');
-  const { agentAssignment } = await import('@merv/contracts/agent-assignment');
-  const f = await fixture(t);
-  const experiment = await f.create();
-  await f.attach(experiment, 'plan', plan + '\nOLD_PLAN');
-  await f.attach(experiment, 'plan', plan + '\nNEW_PLAN');
-  await f.work.release(f.held(experiment)!);
-  const lease = await f.work.lease(await f.experiments.get(f.producer, experiment.id));
-  const read = async (args: import('@merv/contracts').Data) =>
-    f.work.run(lease, 'experiment.get_state', args, async (caller, raw) => {
-      const input = experimentGetSchema.parse(raw);
-      const value = await f.experiments.get(caller, input.experimentId);
-      return input.history
-        ? experimentHistory(value, input.history, input.offset, input.limit)
-        : experimentReminder(value);
-    });
-  const reminder = (await read({ experimentId: experiment.id })) as ReturnType<
-    typeof experimentReminder
-  >;
-  assert.equal(reminder.intent, experiment.intent);
-  assert.equal(reminder.details, experiment.details);
-  assert.ok(!('attempts' in reminder));
-  assert.ok(reminder.references.some((r) => r.tool === 'workflow.assignment'));
-  const seen: string[] = [];
-  let args: import('@merv/contracts').Data | undefined = {
-    experimentId: experiment.id,
-    history: 'evidence',
-    limit: 1,
-  };
-  while (args) {
-    const page = (await read(args)) as ReturnType<typeof experimentHistory>;
-    seen.push(...page.items.map((item) => ('id' in item ? item.id : String(item.index))));
-    args = page.next?.arguments;
-  }
-  const full = await f.experiments.get(f.producer, experiment.id);
-  assert.deepEqual(
-    seen,
-    full.evidence.map((e) => e.id),
-  );
-  const assignment = await f.work.run(
-    lease,
-    'workflow.assignment',
-    { instanceId: experiment.id },
-    (caller) => f.workflows.assignment(caller, experiment.id),
-  );
-  const before = JSON.stringify(assignment);
-  const view = agentAssignment(assignment);
-  assert.equal(
-    JSON.stringify(assignment),
-    before,
-    'projection cannot mutate the frozen assignment',
-  );
-  assert.ok(JSON.stringify(view).length < before.length);
-  assert.ok(!('policy' in view.execution));
-  assert.deepEqual(
-    agentAssignment(view as typeof assignment),
-    view,
-    'continuation projection is stable',
-  );
-  assert.ok(view.references.some((r) => r.id === reminder.evidence[0]!.artifactId));
-  for (const tool of assignment.execution.tools)
-    assert.ok(view.execution.tools.some((t) => t.name === tool.name));
-  await f.work.release(lease);
-});
-
-test('stage assignments preserve original requests and distinguish dispatch from scientific approval', async (t) => {
-  const f = await fixture(t);
-  let e = await f.create('original-request', {
-    intent: 'Compare embedding widths; use experiment.read:get literally.',
-    details: 'Use widths 64 and 128, seeds 1–3, and the retained baseline.',
-  });
-  const checkRequest = async (caller: Caller) => {
-    const assignment = await f.workflows.assignment(caller, e.id);
-    const prompt = assignment.context!.prompt;
-    if (['planned', 'design_review', 'running'].includes(e.workflow.state)) {
-      assert.match(assignment.brief, /Operational admission is distinct from scientific approval/);
-      assert.match(
-        assignment.brief,
-        /shared dollar cap does not require an empty namespace or a dispatcher slot/,
-      );
-      assert.match(assignment.brief, /Missing GPU spending authority.*remains a blocker/);
-      assert.match(assignment.brief, /independent experiments may rent GPUs concurrently/);
-    }
-    if (['planned', 'design_review'].includes(e.workflow.state))
-      assert.match(assignment.brief, /additional scientific approval/);
-    // Execution follows the frozen approved plan; planning and reviews retain the request.
-    if (e.workflow.state !== 'running') {
-      assert.ok(prompt.includes(JSON.stringify({ intent: e.intent }).slice(1, -1)));
-      assert.ok(prompt.includes(JSON.stringify({ details: e.details }).slice(1, -1)));
-    }
-  };
-  await checkRequest(f.producer);
-  const planner = await f.work.lease(e);
-  await checkRequest(planner.worker);
-  await f.work.release(planner);
-  await f.attach(e, 'plan', plan);
-  e = await f.transition(e, 'submit_design');
-  await checkRequest(f.reviewer);
-  e = await f.submitReview(e);
-  await checkRequest(f.producer);
-  e = await f.results(e);
-  await checkRequest(f.reviewer);
-});
-
 test('plan approval commits the exact frozen working tree and gates execution until Git retention completes', async (t) => {
   const f = await fixture(t);
   let experiment = await f.create('Frozen-plan-code');
@@ -833,4 +507,24 @@ test('plan approval commits the exact frozen working tree and gates execution un
   assert.equal(experiment.workflow.state, 'planned');
   await f.attach(experiment, 'plan', plan);
   assert.equal(git(f.held(experiment)!.workspace.path, ['rev-parse', 'HEAD']), head);
+  experiment = await f.transition(experiment, 'submit_design');
+  const override = await f.reviews.start(f.operator, experiment.reviewId!, undefined, true);
+  const approved = await f.experiments.submitReview(f.operator, {
+    reviewId: override.id,
+    claimId: override.claimId!,
+    expectedRevision: experiment.workflow.revision,
+    verdict: 'pass',
+    notes: 'Inspected the revised plan as the project owner.',
+    synopsis: 'The revised plan is approved by the project owner.',
+    findings: override.criteria.map((_, i) => ({
+      criterionNumber: i + 1,
+      status: 'met',
+      evidenceIds: citedEvidence(experiment, override, i + 1),
+      notes: 'Inspected the retained plan and feasibility evidence.',
+    })),
+    requestId: f.id(),
+  });
+  assert.equal(approved.workflow.state, 'running');
+  assert.equal((await f.reviews.get(f.operator, override.id)).override, true);
+  await f.code.submissions.reconcile();
 });

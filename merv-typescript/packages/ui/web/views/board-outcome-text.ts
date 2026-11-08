@@ -71,10 +71,22 @@ export function rebased(base: string, mine: string, theirs: string): string {
   if (at >= 0 && at === theirs.lastIndexOf(find))
     return theirs.slice(0, at) + replace + theirs.slice(at + find.length);
   // After the nearest line above that still stands, or else at the top.
-  const above = base.slice(0, base.indexOf(find)).trimEnd().split('\n').at(-1)!;
-  const after = above && theirs.includes(above) ? theirs.indexOf(above) + above.length + 2 : 0;
-  const lead = theirs.slice(0, after).padEnd(after, '\n');
-  return `${lead}${replace}\n\n${theirs.slice(after).replace(/^\n+/, '')}`;
+  const ends = new Map<string, number>();
+  let end = 0;
+  for (const line of theirs.split('\n')) {
+    end += line.length;
+    ends.set(line, ends.has(line) ? -1 : end);
+    end++;
+  }
+  const above = base
+    .slice(0, base.indexOf(find))
+    .split('\n')
+    .reverse()
+    .find((line) => line.trim() && (ends.get(line) ?? -1) >= 0);
+  let after = above ? ends.get(above)! : 0;
+  while (theirs[after] === '\n') after++;
+  const lead = theirs.slice(0, after);
+  return `${lead}${lead && !lead.endsWith('\n') ? '\n\n' : ''}${replace}\n\n${theirs.slice(after)}`;
 }
 
 export interface Span {

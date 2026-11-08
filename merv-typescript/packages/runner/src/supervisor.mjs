@@ -227,7 +227,13 @@ function redactedFile(path, secrets) {
   const fd = openSync(path, 'wx', 0o600);
   const decoder = new StringDecoder('utf8');
   secrets = [
-    ...new Set(secrets.flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1)])),
+    ...new Set(
+      secrets.flatMap((secret) => {
+        const escaped = JSON.stringify(secret).slice(1, -1);
+        // A harness's JSON event can contain a tool's own JSON output string.
+        return [secret, escaped, JSON.stringify(escaped).slice(1, -1)];
+      }),
+    ),
   ].sort((a, b) => b.length - a.length);
   const max = Math.max(1, ...secrets.map((secret) => secret.length));
   let pending = '',

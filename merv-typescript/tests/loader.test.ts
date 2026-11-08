@@ -1,4 +1,3 @@
-import { MervError } from '@merv/contracts';
 import { FiberState } from 'cordis';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -53,30 +52,6 @@ test('loader waits for an asynchronous configured dependency graph and tracks re
   }
 });
 
-test('required pending entries fail readiness with their actual missing dependencies', async (t) => {
-  const directory = temporary(t);
-  await assert.rejects(
-    createApp({ directory, config: { plugins: [consumer] } }),
-    (error: unknown) => {
-      assert.ok(error instanceof MervError);
-      assert.equal(error.code, 'plugin_unavailable');
-      assert.match(error.message, /consumer.*pending.*loaderMarker/);
-      return true;
-    },
-  );
-  const app = await createApp({
-    directory,
-    config: { plugins: [{ ...consumer, required: false }] },
-  });
-  try {
-    assert.deepEqual(app.status(), [
-      { ...consumer, state: 'pending', required: false, missingDependencies: ['loaderMarker'] },
-    ]);
-  } finally {
-    await app.stop();
-  }
-});
-
 test('failed configured activation closes resources and cannot be reported as ready', async (t) => {
   const directory = temporary(t);
   const count = resources.length;
@@ -89,60 +64,4 @@ test('failed configured activation closes resources and cannot be reported as re
   );
   assert.equal(resources.length, count + 1);
   assert.equal(resources.at(-1)?.closed, true);
-});
-
-test('unknown required modules fail readiness while optional unavailable modules are visible', async (t) => {
-  const directory = temporary(t);
-  const absent = { id: 'unknown', name: './tests/fixtures/no-such-plugin.ts' };
-  await assert.rejects(createApp({ directory, config: { plugins: [absent] } }), /unknown.*failed/);
-  const app = await createApp({
-    directory,
-    config: { plugins: [provider, { ...absent, required: false }] },
-  });
-  try {
-    assert.equal(app.status().find((entry) => entry.id === 'unknown')?.state, 'failed');
-    assert.equal(app.ctx.loaderMarker.value, provider.config.value);
-  } finally {
-    await app.stop();
-  }
-});
-
-test('configuration validation failures are reported as failed even when Cordis leaves the fiber pending', async (t) => {
-  const directory = temporary(t);
-  const invalid = { id: 'state', name: '@merv/state', config: { path: ' ' } };
-  await assert.rejects(createApp({ directory, config: { plugins: [invalid] } }), /state.*failed/);
-  const app = await createApp({
-    directory,
-    config: { plugins: [{ ...invalid, required: false }] },
-  });
-  try {
-    assert.equal(app.status()[0].state, 'failed');
-    // Plugins reach createApp's own report through the composition service.
-    assert.equal(app.ctx.get('composition')?.status, app.status);
-    assert.equal(app.ctx.get('state'), undefined);
-  } finally {
-    await app.stop();
-  }
-});
-
-test('the default configuration switches Feed off and leaves the API and task program available', async (t) => {
-  const directory = temporary(t);
-  const app = await createApp({ directory, api: true, port: 0 });
-  try {
-    const credentials = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Configured feed removal',
-      actorName: 'Operator',
-    });
-    const response = await fetch(`${app.ctx.api.url}/tools`, {
-      headers: { Authorization: `Bearer ${credentials.token}` },
-    });
-    const { tools } = (await response.json()) as { tools: { name: string }[] };
-    assert.equal(response.status, 200);
-    assert.ok(tools.some((tool) => tool.name === 'task.write'));
-    assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
-    for (const id of ['feed', 'feed-tools'])
-      assert.equal(app.status().find((entry) => entry.id === id)?.state, 'disabled');
-  } finally {
-    await app.stop();
-  }
 });

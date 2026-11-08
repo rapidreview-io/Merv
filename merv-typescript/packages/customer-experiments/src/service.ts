@@ -1377,6 +1377,7 @@ export class CustomerService {
         idempotencyKey: `${record.id}-submitted-${key}`,
       });
       await this.store.mutate(record.id, (r) => {
+        if ((r.submissionKey ?? exp.paymentId) !== key || (r.email ?? exp.email) !== email) return;
         r.notifiedSubmission = key;
         r.submissionEmailPending = false;
       });

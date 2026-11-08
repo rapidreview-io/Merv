@@ -867,4 +867,10 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
     JOIN session_workspaces w ON w.session_id=s.id
     WHERE COALESCE((s.session_json::jsonb #>> '{execution,policy,readOnly}')::boolean,false)=false
     ORDER BY a.allocation_id,s.instance_id,a.ordinal DESC;`,
+  // Internal inquiry messages and public operator messages have independent replay keys.
+  // Existing rows and their request IDs remain intact, including acknowledged messages.
+  27: `ALTER TABLE session_messages
+    DROP CONSTRAINT session_messages_project_id_sender_actor_id_request_id_key;
+    CREATE UNIQUE INDEX session_messages_request_kind ON session_messages
+      (project_id,sender_actor_id,request_id,COALESCE(inquiry_role,''));`,
 };

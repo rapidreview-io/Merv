@@ -457,11 +457,15 @@ export class BoardService implements Board {
         delete (customData as { say?: string })?.say;
       }
     if (!kept.length) return { board, accepted: 0 };
-    // A shape new to the board, or brought back from deletion, counts against the cap.
-    const added = kept.filter(
-      (shape) => !shape.isDeleted && (stored.get(shape.id)?.isDeleted ?? true),
-    ).length;
-    if (added) {
+    // Enforce the live count after the entire merge, including accepted deletions.
+    const added = kept.reduce(
+      (count, shape) =>
+        count +
+        Number(!shape.isDeleted) -
+        Number(stored.has(shape.id) && !stored.get(shape.id)!.isDeleted),
+      0,
+    );
+    if (added > 0) {
       const live = await tx.get<{ n: number }>(
         'SELECT COUNT(*)::int AS n FROM board_elements WHERE board_id=? AND NOT deleted',
         board.id,

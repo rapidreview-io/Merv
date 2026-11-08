@@ -5,11 +5,13 @@ import {
   check,
   clip,
   createService,
+  digest,
   inTransaction,
   mapAsync,
   recorded,
   childRequest,
   replayed,
+  RequestJournal,
   type Artifact,
   type Artifacts,
   type Actor,
@@ -46,7 +48,6 @@ import {
   materialise,
   ready,
   selectable,
-  unpublished,
   type Choice,
 } from './integration.js';
 import { definition, policy, type Stage } from './policy.js';
@@ -527,8 +528,33 @@ export class ResearchService implements Research {
     this.open();
     caller = structuredClone(caller);
     const input = parse(advanceSchema, value);
-    // Git answers what main lacks outside every transaction, so it is asked before this opens.
-    const since = await unpublished(this, caller, input.researchId, transaction);
+    // An already committed advance needs its receipt, not a new Git answer for its new stage.
+    const prepared = await inTransaction(this.state, transaction, async (tx) => {
+      const record = await this.get(caller, input.researchId, tx);
+      await this.authorize(caller, record, tx);
+      const previous = await new RequestJournal(
+        tx,
+        { table: 'research_commands' },
+        caller.projectId,
+        caller.actorId,
+        input.requestId,
+        digest({ operation: 'advance', input }),
+      ).previous();
+      return previous
+        ? { previous: JSON.parse(previous.result) as ResearchRecord }
+        : {
+            hosted:
+              ['reflecting', 'consolidating'].includes(record.workflow.state) &&
+              (await this.providers.code.hosted(caller, tx)),
+          };
+    });
+    if (prepared.previous) return prepared.previous;
+    // Git answers outside every transaction; an advance already inside one cannot ask it.
+    const since = prepared.hosted
+      ? transaction
+        ? null
+        : await this.providers.code.acceptedSince(caller)
+      : { unitIds: [], quarantined: [] };
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);

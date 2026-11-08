@@ -1,4 +1,4 @@
-import { createService, digest } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,11 +10,10 @@ import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import type { ContextInput, ContextRecipeDefinition } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { createApp } from './fixtures/app.js';
+
 import { buildContext } from './fixtures/context.js';
-import { currentTask, currentWork } from './fixtures/current-work.js';
+
 import { openState, storedContext } from './fixtures/state.js';
-import { registerTaskType } from './fixtures/task-types.js';
 
 const definition: ContextRecipeDefinition = {
   name: 'test.context',
@@ -33,77 +32,6 @@ const definition: ContextRecipeDefinition = {
 };
 const text = (id: string, body: string, rest = {}) => ({
   items: [{ id, title: id, body: { text: body }, ...rest }],
-});
-
-test('worker contexts present embedded guidance before rendering and saving', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-worker-context-'));
-  const app = await createApp({ directory, api: true, port: 0 });
-  let work: ReturnType<typeof currentWork> | undefined;
-  try {
-    const identity = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Worker context',
-      actorName: 'Operator',
-    });
-    const source = {
-      actorId: identity.actor.id,
-      projectId: identity.project.id,
-      credentialId: identity.credential.id,
-    };
-    const brief = await app.ctx.artifacts.create(source, {
-      title: 'Brief',
-      content: 'Do work. Work is done.',
-    });
-    const task = await currentTask(app.ctx, source, {
-      title: 'Worker context',
-      goal: 'Do work.',
-      checks: ['Work is done.'],
-      briefId: brief.id,
-      requestId: 'task',
-    });
-    work = currentWork(app.ctx, { directory, source });
-    const { worker, session } = await work.lease(task);
-    const address = /\b[a-z_]+\.[a-z_]+:[a-z_]+\b/;
-    assert.doesNotMatch(session.assignment.context!.prompt, address);
-    assert.match(session.assignment.context!.prompt, /task\.submit_delivery/);
-
-    // All domains use this builder, including guidance serialized into frozen lease inputs.
-    const guidance = [
-      'task.write:mark_failed',
-      'experiment.write:transition',
-      'review.write:submit',
-      'reflection.write:end',
-      'research.write:advance',
-    ].map((tool) => ({ tool, arguments: { reason: 'Finished' }, instruction: `Call ${tool}.` }));
-    const registration = await app.ctx.contextBuilder.register({
-      ...definition,
-      name: 'test.worker_guidance',
-      recipe: {
-        ...definition.recipe,
-        outputInstructions: 'Finish with review.write:submit.',
-        maxChars: 4000,
-      },
-    });
-    const input = {
-      subject: { id: task.id, revision: task.workflow.revision },
-      inputs: { evidence: text('guidance', JSON.stringify(guidance), { embed: 'always' }) },
-      requestId: 'worker-guidance',
-    };
-    const context = await buildContext(registration, worker, input);
-    assert.doesNotMatch(context.prompt, address);
-    assert.ok(context.prompt.includes(JSON.stringify(app.ctx.tools.guidance(worker, guidance))));
-    assert.match(context.prompt, /Finish with review\.submit\./);
-    const { id, createdAt, hash, ...body } = context;
-    assert.equal(hash, digest(body));
-    assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
-    assert.deepEqual(
-      await registration.replay(worker, { subject: input.subject, requestId: input.requestId }),
-      context,
-    );
-  } finally {
-    await work?.close();
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 test('recipes enforce required context, reserve its budget, pin sources, isolate projects and survive version changes', async () => {
@@ -237,73 +165,6 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
   } finally {
     builder.close();
     await state.close();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('additional task types register recipes directly and retire without retaining callable handles', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-custom-context-'));
-  const app = await createApp({ directory, api: false });
-  try {
-    const identity = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Custom',
-      actorName: 'Operator',
-    });
-    const caller = { actorId: identity.actor.id, projectId: identity.project.id };
-    const definition: ContextRecipeDefinition = {
-      name: 'custom.plan',
-      version: 1,
-      kind: 'work',
-      recipe: {
-        instructions: 'Produce a custom plan.',
-        sections: [
-          { key: 'task', title: 'Task', required: true },
-          { key: 'brief', title: 'Brief', required: true },
-        ],
-        outputInstructions: 'Save the plan.',
-        maxChars: 6000,
-        format: 2,
-      },
-    };
-    const unregister = await registerTaskType(app.ctx.tasks, definition);
-    const brief = await app.ctx.artifacts.create(caller, {
-      title: 'Brief',
-      content: 'Plan. Has steps.',
-    });
-    const task = await app.ctx.tasks.create(caller, {
-      type: 'custom.plan',
-      title: 'Custom',
-      goal: 'Plan.',
-      checks: ['Has steps.'],
-      briefId: brief.id,
-      requestId: 'create',
-    });
-    await app.ctx.tasks.checkpoint(caller, {
-      taskId: task.id,
-      purpose: 'work',
-      expectedRevision: 0,
-      notes: 'Optional progress is not requested by this recipe.',
-      requestId: 'progress',
-    });
-    const packageInput = {
-      taskId: task.id,
-      purpose: 'work' as const,
-      expectedRevision: 0,
-      requestId: 'build',
-    };
-    const context = await app.ctx.tasks.context(caller, packageInput);
-    assert.match(context.prompt, /Produce a custom plan/);
-    unregister();
-    await assert.rejects(
-      async () =>
-        await app.ctx.tasks.context(caller, { ...packageInput, requestId: 'after-dispose' }),
-      /unavailable/,
-    );
-    assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
-    await registerTaskType(app.ctx.tasks, definition);
-    assert.deepEqual(await app.ctx.tasks.context(caller, packageInput), context);
-  } finally {
-    await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
 });

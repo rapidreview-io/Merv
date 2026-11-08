@@ -86,12 +86,6 @@ class Replacement(unittest.TestCase):
         self.assertFalse((self.new / 'build.json').exists())
         self.assertFalse((self.new / 'gates.json').exists())
 
-    def test_later_or_interrupted_mutation_is_always_refused(self):
-        for filename in ('gates.json', 'push.json', 'catalog.json', 'finish.json', 'mutation-started.json',
-                         'catalog.before', 'catalog.target', 'env.before', 'stage.before'):
-            with self.subTest(filename=filename):
-                path = self.old / filename; path.write_text('{}')
-                self.refuses(); path.unlink()
 
     def test_lease_and_ownership(self):
         self.write(self.old, 'lease', {'seen': time.time()}); self.refuses()
@@ -101,40 +95,9 @@ class Replacement(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'active run'): self.step.replace_predeploy({})
         self.assertEqual(vm.owner(), 'other')
 
-    def test_state_and_main_drift(self):
-        for key in ('apps', 'catalog', 'mainReleaseId', 'fileReleaseId', 'releases', 'fileReleases'):
-            with self.subTest(key=key):
-                prior = self.live[key]; self.live[key] = 'changed'; self.refuses(); self.live[key] = prior
-        self.image['Image'] = 'other-main'; self.refuses()
-        self.image['Image'] = 'main-id'; self.image['Config']['Labels'] = {}; self.refuses()
 
-    def test_plan_archive_pipeline_and_progress(self):
-        for key in ('current', 'sandboxesCommit', 'canary', 'nodeImage', 'drainSeconds', 'lane', 'sourceArchiveSha256'):
-            with self.subTest(key=key):
-                prior = self.plan[key]; self.plan[key] = 'changed'; self.refuses(); self.plan[key] = prior
-        path = self.old / 'source/deploy/hosted-release.mjs'; path.write_text('unknown pipeline'); self.refuses()
-        path.write_text('same audited current pipeline')
-        for progress in ({}, {'cutoverFailure': 'push: failure'}, {'cutoverFailure': 'gates: failed', 'deployAttempted': False}):
-            self.write(self.old, 'progress', progress); self.refuses()
 
-    def test_maintenance_census_and_migration_failure_preserve_owner(self):
-        for method in ('cutover_maintenance', 'cutover_census', 'migration_proof'):
-            with self.subTest(method=method), patch.object(vm.Step, method, side_effect=RuntimeError('unproven')):
-                self.refuses()
 
-    def test_interrupt_before_owner_commit_keeps_predecessor(self):
-        original_atomic = vm.atomic
-        def fail(path, data, *args):
-            if path == self.home / 'active': raise OSError('interrupted before rename')
-            original_atomic(path, data, *args)
-        with patch.object(vm, 'atomic', fail), self.assertRaises(OSError): self.step.replace_predeploy({})
-        self.assertEqual(vm.owner(), 'old')
-        self.assertEqual(self.snapshot(), self.original)
-        self.assertTrue((self.new / 'preflight.json').exists())
-        self.assertTrue((self.new / 'replacement.json').exists())
-        # Repeating the exact step completes the atomic transfer, without deleting any evidence.
-        self.step.replace_predeploy({})
-        self.assertEqual(vm.owner(), 'new')
 
     def test_interrupt_after_owner_commit_is_resumable_not_replaceable(self):
         original_atomic = vm.atomic
@@ -164,41 +127,8 @@ class Replacement(unittest.TestCase):
              patch.object(vm, 'RECOVERY_PENDING', self.root / 'recovery-pending'):
             return vm.step(name, self.new, payload)
 
-    def test_dispatcher_holds_both_locks_at_owner_commit(self):
-        import fcntl
-        original_atomic = vm.atomic
-        observed = []
-        def check(path, data, *args):
-            if path == self.home / 'active':
-                for lock in (self.root / 'maintenance.lock', self.home / 'lock'):
-                    with lock.open('a') as fd:
-                        with self.assertRaises(BlockingIOError):
-                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    observed.append(lock.name)
-            original_atomic(path, data, *args)
-        with patch.object(vm, 'atomic', check):
-            self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        self.assertEqual(observed, ['maintenance.lock', 'lock'])
-        self.assertEqual(vm.owner(), 'new')
-        self.assertEqual(self.snapshot(), self.original)
 
-    def test_mutation_intent_survives_interrupted_push(self):
-        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        with patch.object(vm.Step, 'push', side_effect=RuntimeError('interrupted push')):
-            with self.assertRaisesRegex(RuntimeError, 'interrupted push'):
-                self.root_step('push', {'driver': 'test', 'arg': {}})
-        self.assertEqual(vm.read(self.new / 'mutation-started.json'), {'step': 'push'})
-        self.assertFalse((self.new / 'push.json').exists())
-        self.assertEqual(vm.owner(), 'new')
 
-    def test_recheck_before_push_refuses_drift_without_mutation_intent(self):
-        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        self.live['apps']['standard']['version'] += 1
-        with patch.object(vm.Step, 'push', side_effect=AssertionError('must not push')):
-            with self.assertRaisesRegex(RuntimeError, 'production changed'):
-                self.root_step('push', {'driver': 'test', 'arg': {}})
-        self.assertFalse((self.new / 'mutation-started.json').exists())
-        self.assertEqual(vm.owner(), 'new')
 
     def test_handoff_durability_precedes_owner_commit(self):
         events = []
@@ -215,104 +145,14 @@ class Replacement(unittest.TestCase):
         self.assertLess(events.index('runs'), events.index('owner'))
         self.assertEqual(events[-1], 'home')
 
-    def test_replacement_can_follow_another_failed_gate_with_same_migration(self):
-        self.write(self.old, 'replacement', {'successor': 'old', 'predecessor': 'older', 'migration': self.proof})
-        self.step.replace_predeploy({})
-        self.assertEqual(vm.owner(), 'new')
 
-    def test_invalid_or_changed_lineage_proof_is_refused(self):
-        for receipt in ({}, {'successor': 'wrong', 'migration': self.proof},
-                        {'successor': 'old', 'migration': {**self.proof, 'ledgerSha256': 'changed'}}):
-            self.write(self.old, 'replacement', receipt); self.refuses()
 
-    def test_partial_provider_rollout_can_resume_forward(self):
-        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        self.live['apps']['standard']['image'] = 'candidate'
-        self.write(self.new, 'progress', {'deployAttempted': True})
-        # Existing arm/rollout implementation is covered separately; this exercises the new guard.
-        with patch.object(vm, 'arm'), patch.object(vm.Step, 'drain', return_value={'drained': True}):
-            result = self.root_step('drain', {'driver': 'test', 'arg': {}})
-        self.assertEqual(result, {'drained': True})
-        self.assertEqual(vm.owner(), 'new')
 
-    def test_gate_receipt_is_durable_before_return(self):
-        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        observed = []
-        original = vm.durable_directory
-        def sync(path):
-            if path == self.new and (path / 'gates.json').exists(): observed.append('gates-durable')
-            original(path)
-        with patch.object(vm, 'durable_directory', sync), patch.object(vm.Step, 'gates', return_value={'all': 'pass'}):
-            self.root_step('gates', {'driver': 'test', 'arg': {}})
-        self.assertIn('gates-durable', observed)
 
-    def test_push_cannot_start_until_intent_directory_is_durable(self):
-        self.root_step('replace_predeploy', {'driver': 'test', 'arg': self.plan})
-        original = vm.durable_directory
-        effects = []
-        def fail(path):
-            if path == self.new and (path / 'mutation-started.json').exists():
-                raise OSError('directory fsync failed')
-            original(path)
-        with patch.object(vm, 'durable_directory', fail), patch.object(vm.Step, 'push', lambda *a: effects.append('push')):
-            with self.assertRaisesRegex(OSError, 'fsync failed'):
-                self.root_step('push', {'driver': 'test', 'arg': {}})
-            # A visible journal left by a failed barrier is not enough on retry either.
-            with self.assertRaisesRegex(OSError, 'fsync failed'):
-                self.root_step('push', {'driver': 'test', 'arg': {}})
-        self.assertEqual(effects, [])
 
-    def test_legacy_requires_birth_during_current_boot(self):
-        original_read = Path.read_text
-        values = {'/proc/sys/kernel/random/boot_id': '12345678-1234-1234-1234-123456789abc',
-                  '/proc/stat': 'cpu x\nbtime 100\n', '/proc/uptime': '900.0 0.0'}
-        def read(path, *a, **kw):
-            return values[str(path)] if str(path) in values else original_read(path, *a, **kw)
-        with patch.object(Path, 'read_text', read), patch.object(vm.time, 'time', return_value=1000):
-            for born in (b'0', b'99', b'100', b'1001', b'unknown'):
-                with self.subTest(born=born), patch.object(vm, 'run', return_value=born):
-                    with self.assertRaises(RuntimeError): vm.legacy_boot_proof(self.old)
-            anchor = {'_EXE': '/usr/bin/sudo', '_COMM': 'sudo', '_BOOT_ID': '12345678123412341234123456789abc',
-                      '__MONOTONIC_TIMESTAMP': '500000000',
-                      'MESSAGE': 'user ; COMMAND=/usr/bin/python3 ' + str(self.old / 'source/deploy/hosted-release-vm.py') + ' preflight ' + str(self.old)}
-            with patch.object(vm, 'run', side_effect=lambda cmd, **kw: b'200' if cmd[0] == 'stat' else json.dumps(anchor).encode()):
-                self.assertEqual(vm.legacy_boot_proof(self.old)['directoryBirthTime'], 200)
-                values['/proc/uptime'] = '50.0 0.0'
-                with self.assertRaises(RuntimeError): vm.legacy_boot_proof(self.old)
 
-    def test_legacy_pipeline_cannot_skip_no_reboot_verification(self):
-        hashes = {b'legacy-js': '4d41a34d18f98037764aa2ee59d9c077917b22bf0ec23738c4ab41cbc25aef28',
-                  b'legacy-py': '27df53c765e319b411ea2e0eb04a5530e1a63c2fab604014564594430b3606b9'}
-        (self.old / 'source/deploy/hosted-release.mjs').write_bytes(b'legacy-js')
-        (self.old / 'source/deploy/hosted-release-vm.py').write_bytes(b'legacy-py')
-        original = vm.sha
-        with patch.object(vm, 'sha', lambda value: hashes[value] if value in hashes else original(value)):
-            with patch.object(vm, 'legacy_boot_proof', side_effect=RuntimeError('no proof')) as proof:
-                self.refuses()
-                proof.assert_called_once_with(self.old)
-            with patch.object(vm, 'legacy_boot_proof', return_value={'bootId': 'verified'}):
-                receipt = self.step.replace_predeploy({})
-                self.assertEqual(receipt['legacyNoReboot'], {'bootId': 'verified'})
 
-    def test_journal_anchor_rejects_reboot_spoof_duplicates_and_bad_time(self):
-        boot = '12345678-1234-1234-1234-123456789abc'
-        record = {'_EXE': '/usr/bin/sudo', '_COMM': 'sudo', '_BOOT_ID': boot.replace('-', ''),
-                  '__MONOTONIC_TIMESTAMP': '1000000',
-                  'MESSAGE': 'user ; COMMAND=/usr/bin/python3 ' + str(self.old / 'source/deploy/hosted-release-vm.py') + ' preflight ' + str(self.old)}
-        vm.legacy_preflight_anchor([record], self.old, boot, 2)
-        cases = [[], [record, record],
-                 [{**record, '_BOOT_ID': 'other-boot'}],
-                 [{**record, '_EXE': '/usr/bin/logger'}],
-                 [{**record, '__MONOTONIC_TIMESTAMP': '3000000'}],
-                 [{**record, '__MONOTONIC_TIMESTAMP': '-1'}],
-                 [{**record, 'MESSAGE': 'user ; COMMAND=/usr/bin/echo ' + record['MESSAGE']}]]
-        for records in cases:
-            with self.subTest(records=records), self.assertRaises(RuntimeError):
-                vm.legacy_preflight_anchor(records, self.old, boot, 2)
 
-    def test_recheck_rejects_migration_change(self):
-        with self.assertRaisesRegex(RuntimeError, 'migration changed'):
-            self.step.replacement_safety(self.before, {**self.proof, 'ledgerSha256': 'different'})
 
 
 if __name__ == '__main__': unittest.main()

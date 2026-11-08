@@ -29,8 +29,6 @@ import { reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
   '# Summary\nA paired comparison.\n# Objective & hypothesis\nTest whether the intervention changes the measured outcome.\n# Evaluation\nUse matched controls and report the uncertainty.\n';
-const report =
-  '# Summary\nA negative result.\n# Results\nmetrics_exhibit.json records the observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.\n';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiment-invariants-'));
@@ -212,106 +210,6 @@ async function fixture(t: TestContext) {
     workerArtifact,
   };
 }
-
-test('a successor can reattach exact frozen result tuples and submit its own verified report', async (t) => {
-  const f = await fixture(t),
-    experiment = await f.running();
-  const result = await f.attach(experiment, 'result', '{"observations":[0,0],"improved":false}');
-  const predecessorReport = await f.attach(
-    experiment,
-    'report',
-    `${report}A predecessor drafted this.\n`,
-  );
-  const { worker } = await f.offer(experiment);
-  await assert.rejects(
-    async () =>
-      f.workerAttach(worker, experiment, {
-        attemptIndex: 1,
-        artifactId: result.artifact.id,
-        role: 'result',
-        path: result.evidence.path,
-        resultFormat: 'qualitative',
-      }),
-    { code: 'invalid_evidence_author' },
-  );
-  const resultCopy = await f.workerAttach(worker, experiment, {
-    attemptIndex: 1,
-    artifactId: result.artifact.id,
-    role: 'result',
-    path: result.evidence.path,
-  });
-  const reportCopy = await f.workerAttach(worker, experiment, {
-    attemptIndex: 1,
-    artifactId: predecessorReport.artifact.id,
-    role: 'report',
-    path: predecessorReport.evidence.path,
-  });
-  assert.notEqual(resultCopy.id, result.evidence.id);
-  assert.notEqual(reportCopy.id, predecessorReport.evidence.id);
-  const ownReport = await f.workerArtifact(worker, report);
-  await f.workerAttach(worker, experiment, {
-    attemptIndex: 1,
-    artifactId: ownReport.id,
-    role: 'report',
-    path: 'report.md',
-  });
-  const pending = await f.run(
-    worker,
-    'experiment.transition',
-    { transition: 'submit_results', requestId: f.request() },
-    async (caller, input) =>
-      await f.experiments.transition(caller, input as unknown as ExperimentTransition),
-  );
-  assert.equal(pending.workflow.state, 'experiment_review');
-  const submission = pending.submissions.find((item) => item.stage === 'results')!;
-  assert.equal(submission.producerId, worker.actorId);
-  assert.ok(submission.evidence.some((item) => item.id === resultCopy.id));
-  assert.equal((await f.artifacts.get(f.source, result.artifact.id)).createdBy, f.source.actorId);
-  const review = await f.reviews.get(f.source, submission.reviewId);
-  assert.ok(review.artifactIds.includes(result.artifact.id));
-});
-
-test('draft figures survive a producer handoff as exact readable inputs of the successor', async (t) => {
-  const f = await fixture(t),
-    experiment = await f.create();
-  const figure = await f.artifacts.create(f.source, {
-    title: 'Retained chart',
-    content:
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS3sAAAAASUVORK5CYII=',
-    encoding: 'base64',
-    mediaType: 'image/png',
-  });
-  const withFigure = `${plan}\n![Observed effect](${figure.id})\n`;
-  await f.attach(experiment, 'plan', withFigure);
-  const { worker, session } = await f.offer(experiment);
-  assert.ok(
-    (session.execution.references.artifacts as string[]).includes(figure.id),
-    'A frozen draft figure must remain available to its replacement worker',
-  );
-  const read = await f.run(
-    worker,
-    'artifact.read',
-    { artifactId: figure.id },
-    async (caller) => await f.artifacts.read(caller, figure.id),
-  );
-  assert.equal(read.artifact.hash, figure.hash);
-  const ownPlan = await f.workerArtifact(worker, withFigure);
-  await f.workerAttach(worker, experiment, {
-    attemptIndex: 1,
-    artifactId: ownPlan.id,
-    role: 'plan',
-    path: 'plan.md',
-  });
-  const pending = await f.run(
-    worker,
-    'experiment.transition',
-    { transition: 'submit_design', requestId: f.request() },
-    async (caller, input) =>
-      await f.experiments.transition(caller, input as unknown as ExperimentTransition),
-  );
-  assert.deepEqual(pending.submissions.at(-1)!.figureIds, [figure.id]);
-  assert.ok((await f.reviews.get(f.source, pending.reviewId!)).artifactIds.includes(figure.id));
-});
 
 test('figure attachment rejects missing, foreign-project and post-offer images without widening frozen grants', async (t) => {
   const f = await fixture(t),

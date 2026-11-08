@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Caller } from '@merv/contracts';
-import { httpApp } from './fixtures/app.js';
+import { boardApp } from './fixtures/board.js';
 
 test('a share reads only its board, is owner-controlled, revocable, and grants no write authority', async (t) => {
-  const { app, tool } = await httpApp(t, 'board-share-');
+  const { app, tool } = await boardApp(t, 'board-share-');
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Private',
     actorName: 'Owner',

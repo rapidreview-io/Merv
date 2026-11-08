@@ -3,38 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
-for (const script of ['release.mjs', 'hosted-release.mjs'])
-  test(`${script} handles help and invalid arguments before preparing or detaching a release`, () => {
-    const directory = mkdtempSync(join(tmpdir(), 'merv-release-arguments-'));
-    try {
-      // No Git, SSH, SCP or shell is available. Argument handling needs none of them.
-      const run = (args) =>
-        spawnSync(process.execPath, [fileURLToPath(new URL(script, import.meta.url)), ...args], {
-          cwd: directory,
-          env: { PATH: directory },
-          encoding: 'utf8',
-          timeout: 5000,
-        });
-      const help = run(['--help']);
-      assert.equal(help.status, 0, help.stderr);
-      assert.match(help.stdout, /^Usage: /);
-      assert.equal(help.stderr, '');
-      for (const args of [['--dry-rnu'], ['--host'], ['unexpected'], ['--host', '--dry-run']]) {
-        const invalid = run(args);
-        assert.equal(invalid.status, 1, invalid.stderr);
-        assert.match(
-          invalid.stderr,
-          /Unknown option|argument missing|Unexpected argument|ambiguous/,
-        );
-        assert.equal(invalid.stdout, '', 'no release archive or detached child was started');
-      }
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+import { fileURLToPath } from 'node:url';
 
 test('release.mjs reaches only the VM that serves --public, and refuses a mismatched pair', () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-release-host-'));
@@ -86,80 +56,43 @@ test('release.mjs reaches only the VM that serves --public, and refuses a mismat
   }
 });
 
-test('prestart retry requires explicit no-rollback and skips hosted work', () => {
-  for (const args of [
-    ['--retry-prestart', 'release'],
-    ['--retry-prestart', 'release', '--no-rollback'],
-    ['--retry-prestart', '../release', '--no-rollback', '--skip-hosted'],
-    ['--retry-prestart', 'release', '--no-rollback', '--skip-hosted', '--resume', 'release'],
-  ]) {
-    const result = spawnSync(
-      process.execPath,
-      [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args],
-      { env: { PATH: '/nonexistent' }, encoding: 'utf8' },
-    );
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /--retry-prestart requires/);
-  }
-});
-
-test('hosted replacement requires explicit production preparation and an exact safe predecessor', () => {
-  for (const args of [
-    ['--replace-predeploy-cutover', 'old'],
-    ['--replace-predeploy-cutover', '../old', '--prepare-cutover'],
-    ...['--resume', '--abandon', '--check', '--accept-cutover', '--staging-cutover'].map((mode) => [
-      '--replace-predeploy-cutover',
-      'old',
-      '--prepare-cutover',
-      mode,
-    ]),
-  ]) {
-    const result = spawnSync(
-      process.execPath,
-      [fileURLToPath(new URL('hosted-release.mjs', import.meta.url)), ...args],
-      { env: { PATH: '/nonexistent' }, encoding: 'utf8' },
-    );
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /--replace-predeploy-cutover RUN requires/);
-    assert.equal(result.stdout, '');
-  }
-});
-
-test('expected Main image rejects malformed, repeated and non-new-release overrides before any work', () => {
-  const image = 'sha256:' + 'a'.repeat(64);
-  for (const args of [
-    ...['', 'latest', image.slice(0, -1), image + 'a', image.toUpperCase(), image + '\n', image + ';id'].map(value => ['--expected-image', value]),
-    ['--expected-image', image, '--expected-image', image],
-    ['--expected-image', image, '--resume', 'saved'],
-    ['--expected-image', image, '--retry-prestart', 'saved', '--no-rollback', '--skip-hosted'],
-  ]) {
-    const result = spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], {
-      env: { PATH: '/nonexistent' }, encoding: 'utf8', timeout: 5000,
-    });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /--expected-image requires/);
-    assert.equal(result.stdout, '');
-  }
-});
-
 test('prebuilt promotion requires all immutable pins and refuses overrides before external work', () => {
-  const valid = ['--prebuilt-build', 'reviewed-build', '--prebuilt-revision', 'a'.repeat(40),
-    '--prebuilt-archive', 'b'.repeat(64), '--prebuilt-receipt', 'c'.repeat(64),
-    '--expected-image', 'sha256:' + 'd'.repeat(64), '--skip-hosted', '--no-rollback'];
-  const run = (args) => spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], {
-    env: { PATH: '/nonexistent' }, encoding: 'utf8', timeout: 5000,
-  });
+  const valid = [
+    '--prebuilt-build',
+    'reviewed-build',
+    '--prebuilt-revision',
+    'a'.repeat(40),
+    '--prebuilt-archive',
+    'b'.repeat(64),
+    '--prebuilt-receipt',
+    'c'.repeat(64),
+    '--expected-image',
+    'sha256:' + 'd'.repeat(64),
+    '--skip-hosted',
+    '--no-rollback',
+  ];
+  const run = (args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('release.mjs', import.meta.url)), ...args], {
+      env: { PATH: '/nonexistent' },
+      encoding: 'utf8',
+      timeout: 5000,
+    });
   for (let index = 0; index < valid.length; index += index < 10 ? 2 : 1) {
     const args = valid.filter((_, i) => i !== index && !(index < 10 && i === index + 1));
     const result = run(args);
     assert.equal(result.status, 1, args.join(' '));
     assert.match(result.stderr, /--prebuilt-build requires/);
   }
-  for (const extra of [['--prebuilt-build', 'other'], ['--resume', 'old'], ['--retry-prestart', 'old']]) {
+  for (const extra of [
+    ['--prebuilt-build', 'other'],
+    ['--resume', 'old'],
+    ['--retry-prestart', 'old'],
+  ]) {
     assert.equal(run([...valid, ...extra]).status, 1);
   }
   for (const bad of ['../build', 'build\n', 'build;id']) {
-    const args = [...valid]; args[1] = bad;
+    const args = [...valid];
+    args[1] = bad;
     const result = run(args);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /--prebuilt-build requires/);

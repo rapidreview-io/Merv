@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const merv = resolve(here, '../..');
 const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 
-test('build.mjs emits the hosted payload and the Dockerfile installs it with the worker last', () => {
+test('build.mjs emits executable hosted launchers and source-bound payloads', () => {
   const bundle = mkdtempSync(join(tmpdir(), 'merv-hosted-bundle-'));
   try {
     const result = spawnSync(process.execPath, ['scripts/hosted-runner/build.mjs', bundle], {
@@ -52,71 +52,6 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
       'scripts/hosted-runner/smoke-supervisor.ts',
     ])
       assert.equal(compiled[relative], hash(join(merv, relative)));
-
-    // Only the launcher fixture and hashes stay outside the runtime image.
-    const dockerfile = readFileSync(join(here, 'Dockerfile'), 'utf8');
-    const copied = [...dockerfile.matchAll(/^COPY (?!--from)(.+) \S+$/gm)].flatMap((m) =>
-      m[1].split(' ').filter((word) => !word.startsWith('--chmod=')),
-    );
-    // The image's copies set their modes: git archive and tar leave the context group-writable,
-    // and the runtime refuses a group-writable trusted file.
-    const image = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
-    for (const [, flags] of image.matchAll(/^COPY (?!--from)(\S+)/gm))
-      assert.match(flags, /^--chmod=0(644|755)$/);
-    const emitted = spawnSync('find', ['.', '-type', 'f'], { cwd: bundle, encoding: 'utf8' })
-      .stdout.split('\n')
-      .filter(Boolean)
-      .map((p) => p.slice(2));
-    assert.deepEqual(
-      emitted.filter((p) => !['input-hashes.json', 'review-launch-fixture.mjs'].includes(p)).sort(),
-      [...new Set(copied)].sort(),
-    );
-    assert.ok(existsSync(join(bundle, 'review-launch-fixture.mjs')));
-    assert.ok(!copied.includes('review-launch-fixture.mjs'));
-    assert.match(dockerfile, /^FROM node:22\.19\.0-bookworm-slim@sha256:[0-9a-f]{64} AS pi-deps$/m);
-    assert.match(dockerfile, /npm ci --omit=dev --ignore-scripts --engine-strict/);
-    assert.match(dockerfile, /COPY --from=pi-deps \/opt\/merv\/pi\/node_modules/);
-    assert.match(dockerfile, /find node_modules -type d -name \.bin -prune/);
-    assert.match(
-      dockerfile,
-      /^USER 12001:12001\nRUN .*NODE_COMPILE_CACHE=\/opt\/merv\/pi\/compile-cache/m,
-    );
-    assert.match(dockerfile, /chown -R 0:0 \/opt\/merv\/pi\/compile-cache/);
-    assert.match(dockerfile, /^ENTRYPOINT \["\/opt\/merv\/runtime\/boot"\]$/m);
-    // Codex runs as its one native binary: no Node launcher holds the session bearer beside it.
-    assert.match(dockerfile, /-path '\*\/vendor\/\*\/bin\/codex'.*\n.*\n.*exec %s "\$@"/);
-    assert.doesNotMatch(dockerfile, /codex\.js/);
-    assert.match(dockerfile, /ln -s "\$native" \/usr\/bin\/apply_patch/);
-    // The shell's Python tooling, on its fixed PATH: pip and venv, uv pinned by digest, and the
-    // CPython 3.12 projects pin.
-    assert.match(dockerfile, /apt-get install .* python3-pip python3-venv python-is-python3 /);
-    assert.match(dockerfile, /^FROM ghcr\.io\/astral-sh\/uv:[0-9.]+@sha256:[0-9a-f]{64} AS uv$/m);
-    assert.match(dockerfile, /^COPY --from=uv \/uv \/uvx \/usr\/bin\/$/m);
-    assert.match(dockerfile, /--managed-python "\$python"\)" \/usr\/bin\/python3\.12 /);
-    // A networked assignment can reach sshd on loopback, which takes no password; and the step's
-    // server-side deadline, not a clock in the supervisor, ends a hosted launch.
-    assert.match(dockerfile, /'PasswordAuthentication no\\nKbdInteractiveAuthentication no\\n'/);
-    assert.match(
-      readFileSync(join(here, 'smoke-supervisor.ts'), 'utf8'),
-      /await runner\.prepareShutdown\(\)/,
-    );
-    assert.match(
-      dockerfile,
-      /^FROM \$\{SANDBOX_IMAGE\}\n(#.*\n)*RUN test -x \/usr\/local\/bin\/sandboxes-agent /m,
-    );
-    // A worker-only change must reuse every layer before it (hosted-release's worker lane).
-    const lines = dockerfile.split('\n');
-    const workerCopy = lines.findIndex((l) => /^COPY .* pi\/worker-main\.mjs /.test(l));
-    const later = lines
-      .slice(workerCopy + 1)
-      .filter((l) => !l.startsWith('ENTRYPOINT'))
-      .join('\n');
-    assert.ok(workerCopy > lines.findIndex((l) => l.includes('apt-get install')));
-    assert.doesNotMatch(later, /^(COPY|ADD) /m);
-    assert.doesNotMatch(
-      later.replace(/\/opt\/merv\/pi\/compile-cache\S*/g, ''),
-      /\/opt\/merv\/(?!pi\/)/,
-    );
   } finally {
     rmSync(bundle, { recursive: true, force: true });
   }

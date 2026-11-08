@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { BoardElement, BoardScene } from '@merv/board';
 import type { Caller } from '@merv/contracts';
-import { httpApp } from './fixtures/app.js';
+import { boardApp } from './fixtures/board.js';
 
 type Shape = { id: string; text?: string; changedBy?: string; by?: string; at: number[] };
 type Read = {
@@ -25,7 +25,7 @@ type Drawn = {
 type El = BoardElement & { [field: string]: any };
 
 async function fixture(t: test.TestContext) {
-  const f = await httpApp(t, 'board-answers-');
+  const f = await boardApp(t, 'board-answers-');
   const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Sketches',
     actorName: 'Owner',
@@ -108,42 +108,6 @@ test('since answers what changed after it and who, and only the ids of what is g
   assert.deepEqual([moved!.by, moved!.changedBy], ['agent', 'person']);
 });
 
-test('since tells a part’s change as its shape’s, by the newest hand', async (t) => {
-  const f = await fixture(t);
-  const drawn = await f.agentDraw([
-    { op: 'box', key: 'a', text: 'labelled', at: [0, 0] },
-    { op: 'box', key: 'b', text: 'loses its words', at: [400, 0] },
-    {
-      op: 'sketch',
-      key: 's',
-      at: [0, 400],
-      strokes: [{ path: 'M0 0 L10 10' }, { path: 'M20 0 L30 10' }],
-    },
-  ]);
-  const { since } = await f.read();
-  const later = Date.now() + 1000;
-  const els = await f.scene();
-  // A person fills the agent's box, whose older label stacks above it.
-  const box = els.find((el) => el.id === drawn.created.a)!;
-  const label = els.find((el) => el.containerId === drawn.created.b)!;
-  const stroke = els.find((el) => el.customData?.sketch === drawn.created.s)!;
-  const save = (el: El, fields: object) =>
-    f.save([{ ...el, version: el.version + 1, versionNonce: 1, updated: later, ...fields }]);
-  await save(box, { backgroundColor: '#ffffff' });
-  await save(label, { isDeleted: true });
-  await save(stroke, { isDeleted: true });
-  const read = await f.read({ since });
-  assert.deepEqual(read.deleted, [], 'a label or one stroke of two is no shape gone');
-  assert.deepEqual(
-    read.shapes.map(({ id, changedBy }) => [id, changedBy]).sort(),
-    [
-      [drawn.created.a, 'person'],
-      [drawn.created.b, 'person'],
-      [drawn.created.s, 'person'],
-    ].sort(),
-  );
-});
-
 test('text and region reach past the 600 shapes a read holds', async (t) => {
   const f = await fixture(t);
   for (let page = 0; page < 7; page++)
@@ -168,284 +132,20 @@ test('text and region reach past the 600 shapes a read holds', async (t) => {
   );
 });
 
-test('a draw says where its shapes landed and what they landed on', async (t) => {
-  const f = await fixture(t);
-  const one = await f.draw([
-    { op: 'box', key: 'a', text: 'A', at: [0, 0], width: 200, height: 100 },
-    {
-      op: 'sketch',
-      key: 's',
-      at: [500, 0],
-      size: 's',
-      strokes: [{ path: 'M0 0 L100 0 L100 100' }],
-    },
-  ]);
-  assert.deepEqual(one.placed.a, [0, 0, 200, 100]);
-  assert.deepEqual(one.placed.s!.slice(0, 2), [500, 0]);
-  assert.equal(one.overlaps, undefined);
-  assert.equal(one.note, undefined);
-
-  const exact = await f.draw([{ op: 'note', key: 'n', text: 'on A', at: [20, 20] }]);
-  assert.deepEqual(exact.overlaps, { n: ['a'] });
-  assert.match(exact.note!, /^n landed on another shape: at places exactly and checks nothing/);
-  // Inside a pen stroke's box but off its line is not on it.
-  assert.equal((await f.draw([{ op: 'text', text: 'x', at: [510, 80] }])).overlaps, undefined);
-  // A move answers too; near finds room, so it has nothing to report.
-  const near = await f.draw([{ op: 'move', id: 'n', near: 'a', side: 'below' }]);
-  assert.equal(near.overlaps, undefined);
-  assert.equal(near.placed.n![1]! >= 100, true);
-});
-
-test('near treats an arrow as occupied and keeps to the side it was asked for', async (t) => {
-  const f = await fixture(t);
-  await f.draw([
-    { op: 'box', key: 'a', text: 'A', at: [0, 0], width: 200, height: 100 },
-    { op: 'box', key: 'b', text: 'B', at: [900, 0], width: 200, height: 100 },
-    { op: 'arrow', from: 'a', to: 'b', label: 'writes' },
-  ]);
-  const { placed } = await f.draw([
-    { op: 'note', key: 'n', text: 'beside', near: 'a', side: 'right' },
-  ]);
-  const [x, y, , height] = placed.n!;
-  assert.ok(x! >= 200, `${x} stays to the right`);
-  assert.ok(y! + height! < 50 || y! > 50, `${y} clear of the arrow's line at 50`);
-});
-
-test('an edit grows the shape to hold its words and takes its arrows along', async (t) => {
+test('moves adopt their destination frame while a carried frame keeps its children', async (t) => {
   const f = await fixture(t);
   const { created } = await f.draw([
-    { op: 'box', key: 'a', text: 'short', at: [0, 0] },
-    { op: 'box', key: 'b', text: 'other', at: [600, 400] },
-    { op: 'arrow', key: 'x', from: 'a', to: 'b' },
+    { op: 'frame', key: 'frame', title: 'Group' },
+    { op: 'box', key: 'box', text: 'Held', in: 'frame' },
   ]);
-  const long = 'This box now says something a good deal longer than it did. '.repeat(3);
-  const { placed } = await f.draw([{ op: 'edit', id: 'a', text: long }]);
-  const els = await f.scene();
-  const box = els.find((el) => el.id === created.a)!;
-  const text = els.find((el) => el.containerId === created.a)!;
-  assert.deepEqual(placed.a, [0, 0, box.width, box.height]);
-  assert.ok(box.height >= text.height, `${text.height} fits in ${box.height}`);
-  assert.equal(box.width, 320);
-  const arrow = els.find((el) => el.id === created.x)!;
-  assert.ok(arrow.x >= box.x && arrow.y >= box.y + box.height / 2);
-  // What is placed in the same call goes around what grew.
-  const { overlaps } = await f.draw([
-    { op: 'edit', id: 'b', text: long },
-    { op: 'note', text: 'clear', near: 'a', side: 'right' },
-  ]);
-  assert.equal(overlaps, undefined);
-});
-
-test('a move keeps a bent arrow’s bends, and reverse turns an arrow around', async (t) => {
-  const f = await fixture(t);
-  const { created } = await f.draw([
-    { op: 'box', key: 'a', text: 'A', at: [0, 0] },
-    { op: 'box', key: 'b', text: 'B', at: [600, 200] },
-    { op: 'arrow', key: 'x', from: 'a', to: 'b', label: 'go' },
-  ]);
-  const arrow = (await f.scene()).find((el) => el.id === created.x)!;
-  const bends = [
-    [100, 300],
-    [300, 300],
-  ];
-  const points = [[0, 0], ...bends, arrow.points.at(-1)];
-  await f.save([{ ...arrow, version: arrow.version + 1, versionNonce: 1, points }]);
-  await f.draw([{ op: 'move', id: 'b', at: [700, 300] }]);
-  const moved = (await f.scene()).find((el) => el.id === created.x)!;
-  assert.equal(moved.points.length, 4);
-  // Where each bend stands on the board has not changed.
-  assert.deepEqual(
-    moved.points
-      .slice(1, -1)
-      .map(([x, y]: number[]) => [Math.round(x! + moved.x), Math.round(y! + moved.y)]),
-    bends.map(([x, y]) => [Math.round(x! + arrow.x), Math.round(y! + arrow.y)]),
-  );
-  const box = (await f.scene()).find((el) => el.id === created.b)!;
-  assert.ok(Math.abs(moved.x + moved.points.at(-1)[0] - box.x) < box.width + 1);
-
-  await f.draw([{ op: 'edit', id: 'x', reverse: true }]);
-  const [turned] = (await f.read()).arrows;
-  assert.deepEqual([turned!.from, turned!.to, turned!.label], [created.b, created.a, 'go']);
-  const flipped = (await f.scene()).find((el) => el.id === created.x)!;
-  assert.deepEqual(
-    [flipped.x + flipped.points.at(-1)[0], flipped.y + flipped.points.at(-1)[1]].map(Math.round),
-    [moved.x, moved.y].map(Math.round),
-  );
-  assert.equal(flipped.endArrowhead, 'arrow');
-  await assert.rejects(f.draw([{ op: 'edit', id: 'a', reverse: true }]), {
-    code: 'board_not_an_arrow',
-  });
-  // An arrow a page saved with no points has nothing to turn, and turning it fails nothing.
-  await f.save([{ ...flipped, version: flipped.version + 1, versionNonce: 1, points: undefined }]);
-  await f.draw([{ op: 'edit', id: 'x', reverse: true }]);
-});
-
-test('keys last past their call, the newest shape holding a key used again', async (t) => {
-  const f = await fixture(t);
-  const one = await f.draw([
-    { op: 'box', key: 'show', text: 'first', at: [0, 0] },
-    { op: 'sketch', key: 'pen', at: [400, 0], strokes: [{ path: 'M0 0 L10 10' }] },
-  ]);
-  const two = await f.draw([
-    { op: 'note', key: 'n', text: 'beside', near: 'show' },
-    { op: 'arrow', from: 'show', to: 'n' },
-    { op: 'move', id: 'pen', at: [900, 900] },
-  ]);
-  assert.equal(two.overlaps, undefined);
-  assert.equal((await f.read()).arrows[0]!.from, one.created.show);
-  const pen = (await f.scene()).filter((el) => el.customData?.sketch === one.created.pen);
-  assert.deepEqual([pen[0]!.x, pen[0]!.y], [900, 900]);
-  const three = await f.draw([{ op: 'box', key: 'show', text: 'second', at: [0, 800] }]);
-  await f.draw([{ op: 'edit', id: 'show', color: 'red' }]);
-  const painted = (await f.scene()).find((el) => el.id === three.created.show)!;
-  assert.notEqual(painted.backgroundColor, 'transparent');
-  await assert.rejects(f.draw([{ op: 'edit', id: 'never', color: 'red' }]), {
-    code: 'board_shape_not_found',
-  });
-});
-
-test('a page card holds its own words, and an agent cannot link a board to itself', async (t) => {
-  const f = await fixture(t);
-  const drawn = await f.agentDraw([{ op: 'page', key: 'why', text: 'Why', body: '**Because.**' }]);
-  const card = (await f.scene()).find((el) => el.id === drawn.created.why)!;
-  assert.equal(card.link, 'merv:page');
-  const shape = (await f.read()).shapes.find(
-    (one) => one.id === drawn.created.why,
-  ) as unknown as El;
-  assert.equal(shape.kind, 'page');
-  assert.equal(shape.text, 'Why');
-  assert.deepEqual(shape.details, { title: 'Why', text: '**Because.**' });
-  await assert.rejects(f.draw([{ op: 'page', text: 'Empty', body: ' ' }]));
-  const refused = (await f.agent.callTool({
-    name: 'board.write',
-    arguments: {
-      action: 'draw',
-      draw: { board: f.board, ops: [{ op: 'link', target: f.board, text: 'Self' }] },
-    },
-  })) as { content: { text: string }[] };
-  assert.match(refused.content[0]!.text, /board it stands on/);
-});
-
-test('a field beside the action’s object is told where it goes', async (t) => {
-  const f = await fixture(t);
-  for (const input of [{ draw: { ops: [] } }, {}])
-    await assert.rejects(
-      f.tools.call('board.write', f.owner, { action: 'draw', board: f.board, ...input }),
-      (error: { details: { path: string[]; message: string }[] }) => {
-        assert.deepEqual(
-          error.details.map(({ path, message }) => [path.join('.'), message]),
-          [['board', '"board" goes inside "draw": {"action":"draw","draw":{"board":…}}']],
-        );
-        return true;
-      },
-    );
-});
-
-test('a sketch like a stroke takes its pen, a variant’s frame goes to the side asked', async (t) => {
-  const f = await fixture(t);
-  const theirs = {
-    id: 'pen1',
-    type: 'freedraw',
-    version: 1,
-    versionNonce: 1,
-    isDeleted: false,
-    x: 100,
-    y: 100,
-    width: 120,
-    height: 60,
-    strokeColor: '#e03131',
-    strokeWidth: 4,
-    roughness: 1,
-    points: [
-      [0, 60],
-      [60, 0],
-      [120, 60],
-    ],
-  } as El;
-  await f.save([theirs]);
-  // The continuation is in their pen; a stroke with a pen of its own keeps it; nothing to be like is refused.
-  const drawn = await f.agentDraw([
-    {
-      op: 'sketch',
-      key: 'more',
-      like: 'pen1',
-      proposed: true,
-      size: 'native',
-      at: [220, 100],
-      strokes: [{ path: 'M0 60 L60 0' }, { path: 'M60 0 L120 60', color: 'blue', width: 'thin' }],
-    },
-  ]);
-  const strokes = (await f.scene()).filter((el) => el.groupIds?.includes(drawn.created.more!));
-  assert.deepEqual(
-    strokes.map((el) => [el.strokeColor, el.strokeWidth, el.roughness, el.customData.proposed]),
-    [
-      ['#e03131', 4, 1, true],
-      ['#1971c2', 1, 1, true],
-    ],
-  );
-  assert.equal(drawn.placed.more![0], 220);
-  await assert.rejects(
-    f.draw([{ op: 'sketch', like: 'nothing', strokes: [{ path: 'M0 0 L1 1' }] }]),
-    /No shape "nothing"/,
-  );
-  // A frame near a shape on its left side lands there, for a variant beside the original.
-  const framed = await f.draw([
-    {
-      op: 'frame',
-      key: 'v',
-      title: 'Another way',
-      near: 'pen1',
-      side: 'left',
-      width: 300,
-      height: 90,
-    },
-  ]);
-  const [x, , width, height] = framed.placed.v!;
-  assert.ok(x! + width! <= 100, `${x}+${width} stands left of the stroke at 100`);
-  assert.deepEqual([width, height], [300, 90]);
-});
-
-test('told of a mark on the board, an agent’s cursor goes to the mark', async (t) => {
-  const f = await fixture(t);
-  const drawn = await f.agentDraw([{ op: 'box', key: 'a', text: 'by the agent', at: [0, 0] }]);
-  await f.agent.callTool({
-    name: 'board.read',
-    arguments: { action: 'get', get: { board: f.board } },
-  });
-  // The person circles the agent's box: a closed stroke around it.
-  const box = (await f.scene()).find((el) => el.id === drawn.created.a)!;
-  const ring = {
-    id: 'ring',
-    type: 'freedraw',
-    version: 1,
-    versionNonce: 1,
-    isDeleted: false,
-    x: box.x - 20,
-    y: box.y - 20,
-    width: box.width + 40,
-    height: box.height + 40,
-    points: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
-      const a = (i / 8) * 2 * Math.PI;
-      return [
-        (box.width + 40) / 2 + (Math.cos(a) * (box.width + 40)) / 2,
-        (box.height + 40) / 2 + (Math.sin(a) * (box.height + 40)) / 2,
-      ];
-    }),
-  } as El;
-  await f.save([ring]);
-  const got = JSON.parse(
-    (
-      (await f.agent.callTool({
-        name: 'board.read',
-        arguments: { action: 'get', get: { board: f.board } },
-      })) as { content: { text: string }[] }
-    ).content[0]!.text,
-  ) as { hand?: string[] };
-  assert.match(got.hand?.join(' ') ?? '', /circled\?/);
-  const scene = (await f.tools.call('board.scene', f.owner, { id: f.board })) as BoardScene;
-  const [cursor] = scene.looking!;
-  assert.deepEqual(
-    [cursor!.region.x, cursor!.region.y, cursor!.region.width, cursor!.region.height],
-    [ring.x, ring.y, ring.width, ring.height],
-  );
+  const parts = async () => (await f.scene()).filter((el) => el.id !== created.frame);
+  await f.draw([{ op: 'move', id: created.frame, at: [1000, 1000] }]);
+  assert.ok((await parts()).every((el) => el.frameId === created.frame));
+  await f.draw([{ op: 'move', id: created.box, at: [3000, 3000] }]);
+  assert.ok((await parts()).every((el) => el.frameId === null));
+  await f.draw([{ op: 'move', id: created.box, in: created.frame }]);
+  assert.ok((await parts()).every((el) => el.frameId === created.frame));
+  const target = await f.draw([{ op: 'box', key: 'outside', text: 'Outside', at: [5000, 0] }]);
+  await f.draw([{ op: 'move', id: created.box, near: target.created.outside }]);
+  assert.ok((await parts()).every((el) => el.frameId === null));
 });

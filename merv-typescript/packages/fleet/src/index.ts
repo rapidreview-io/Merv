@@ -659,6 +659,7 @@ export class FleetService implements Fleet {
         ...(input.seconds && { seconds: input.seconds }),
         ...(person && { person }),
         profileId: profile.id,
+        leaseSeconds: profile.leaseSeconds,
         epoch: 1,
         phase: 'queued',
         intent: 'run',
@@ -1148,7 +1149,9 @@ export class FleetService implements Fleet {
           // no new work. Losing the provider is distinct from deliberately deleting dirty work.
           if (handle.leaseExpiresAt && Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000) {
             const seconds =
-              profile?.leaseSeconds ?? Math.max(...this.profiles.map((p) => p.leaseSeconds));
+              a.leaseSeconds ??
+              profile?.leaseSeconds ??
+              Math.max(...this.profiles.map((p) => p.leaseSeconds));
             await this.observed(
               a,
               runtimeHandle(
@@ -1237,22 +1240,28 @@ export class FleetService implements Fleet {
         });
       return;
     }
-    const inspected = await runtime.inspect(a.runtime.sandboxId, a.runtime.launch?.launchId);
-    const handle = runtimeHandle(
-      inspected.sandbox,
-      inspected.launch && runtimeLaunch(inspected.launch),
-      this.clock(),
-    );
+    const expired = a.replacing && a.releaseBy && a.releaseBy <= this.time();
+    const inspected = expired
+      ? null
+      : await runtime.inspect(a.runtime.sandboxId, a.runtime.launch?.launchId);
+    const handle = inspected
+      ? runtimeHandle(
+          inspected.sandbox,
+          inspected.launch && runtimeLaunch(inspected.launch),
+          this.clock(),
+        )
+      : { ...a.runtime, state: 'stopped' as const, ready: false };
     // A machine nothing was launched on that failed, or whose agent has not connected a minute
     // after Fleet adopted it, is stuck. It is stopped and another rented under a new key, before
     // its failure is recorded for owners to read as a lost machine; the last one fails the work.
     if (
       a.intent === 'run' &&
-      !handle.ready &&
       !handle.launch &&
-      handle.state !== 'stopped' &&
-      (handle.state === 'failed' ||
-        Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock())
+      (a.replacing ||
+        (!handle.ready &&
+          handle.state !== 'stopped' &&
+          (handle.state === 'failed' ||
+            Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock())))
     ) {
       this.report('fleet.not_ready', a, 'runtime_not_ready', 'severe');
       if ((a.replaced ?? 0) + 1 >= readyAttempts)
@@ -1261,12 +1270,23 @@ export class FleetService implements Fleet {
           current.error = 'runtime_not_ready';
         });
       else {
-        await runtime.stop(handle.sandboxId);
+        if (handle.state !== 'stopped') {
+          if (!a.replacing)
+            await this.update(a.id, (current) => {
+              current.replacing = true;
+              this.waitOutLease(current);
+            });
+          if (handle.state !== 'deleting') await runtime.stop(handle.sandboxId);
+          return;
+        }
         await this.update(a.id, (current) => {
           if (current.intent !== 'run' || current.runtime?.sandboxId !== handle.sandboxId) return;
           current.runtime = null;
           current.createAttempted = false;
           current.replaced = (current.replaced ?? 0) + 1;
+          delete current.replacing;
+          delete current.releaseBy;
+          current.phase = 'provisioning';
           current.failures++;
           current.error = 'runtime_unavailable';
           current.retryAt = new Date(this.clock() + backoff(current.failures)).toISOString();
@@ -1363,11 +1383,13 @@ export class FleetService implements Fleet {
     }
   }
   /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any
-   * machine this allocation could hold (a minute covers a reply still in flight; the longest
-   * configured lease covers every profile). Without a create attempt there is none to wait for. */
+   * machine this allocation could hold (including a reply still in flight). The original lease
+   * survives configuration changes. Without a create attempt there is none to wait for. */
   private waitOutLease(a: FleetAllocation): void {
-    const lease = Math.max(...this.profiles.map((profile) => profile.leaseSeconds));
-    a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
+    const expires = Date.parse(a.runtime?.leaseExpiresAt ?? '') || 0;
+    // Old rows cannot bound a renewal whose reply was lost: use the maximum supported lease.
+    const lease = a.leaseSeconds ?? 86_400;
+    a.releaseBy ??= new Date(Math.max(this.clock() + lease * 1000, expires) + 60_000).toISOString();
     a.phase =
       (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
         ? 'released'

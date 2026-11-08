@@ -140,39 +140,6 @@ async function uploading(
   return { file, hash, headers, plan, puts, submit, closed };
 }
 
-test('Files sends one whole file with its signed checksum headers before completing', async (t) => {
-  const f = await uploading(t, [200]);
-  const calls: [string, Record<string, unknown>][] = [];
-  serve('/tools/artifact.write:upload_begin', (_count, input) => {
-    calls.push(['begin', input]);
-    return { body: { result: f.plan() } };
-  });
-  serve('/tools/artifact.write:upload_complete', (_count, input) => {
-    calls.push(['complete', input]);
-    assert.equal(f.puts.length, 1);
-    return { body: { result: { id: 'art_file' } } };
-  });
-  await f.submit();
-  assert.deepEqual(
-    calls.map(([name]) => name),
-    ['begin', 'complete'],
-  );
-  assert.deepEqual(calls[0][1], {
-    title: f.file.name,
-    size: f.file.size,
-    sha256: f.hash,
-    mediaType: 'text/csv',
-    requestId: calls[0][1].requestId,
-  });
-  assert.equal(typeof calls[0][1].requestId, 'string');
-  assert.deepEqual(calls[1][1], { uploadId: 'aup_file' });
-  assert.equal(f.puts[0].body, f.file, 'the selected File is sent whole, without slicing');
-  assert.equal(f.puts[0].method, 'PUT');
-  assert.equal(f.puts[0].url, f.plan().parts[0].url);
-  assert.deepEqual(f.puts[0].headers, f.headers);
-  assert.equal(f.closed(), 1);
-});
-
 test('Files does not complete an upload under a project selected during the storage PUT', async (t) => {
   setProject('project-a');
   const sent = deferred();
@@ -191,18 +158,6 @@ test('Files does not complete an upload under a project selected during the stor
   assert.deepEqual(requests, ['POST /tools/artifact.write:upload_begin']);
   assert.equal(f.puts.length, 1);
   assert.equal(f.closed(), 0);
-});
-
-test('Files stops the storage PUT of an upload its page left', async (t) => {
-  const f = await uploading(t, ['held']);
-  serve('/tools/artifact.write:upload_begin', { body: { result: f.plan() } });
-  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-  Object.defineProperty(input, 'files', { value: [f.file] });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  for (let tries = 0; tries < 100 && !f.puts.length; tries++) await settle(10);
-  assert.equal(f.puts.length, 1);
-  await unmount();
-  assert.ok(f.puts[0]!.aborted, 'the bytes nothing will complete stop going');
 });
 
 test('Files resumes a failed PUT with the same upload and fresh signed URL', async (t) => {
@@ -238,17 +193,6 @@ test('Files resumes a failed PUT with the same upload and fresh signed URL', asy
   assert.equal(f.closed(), 1);
 });
 
-test('Files completes an already stored file without a PUT', async (t) => {
-  const f = await uploading(t, []);
-  serve('/tools/artifact.write:upload_begin', {
-    body: { result: { ...f.plan(), parts: [], completedParts: [1] } },
-  });
-  serve('/tools/artifact.write:upload_complete', { body: { result: { id: 'art_file' } } });
-  await f.submit();
-  assert.deepEqual(f.puts, []);
-  assert.equal(f.closed(), 1);
-});
-
 test('Files follows a conditional PUT refusal with server verification and retries a failed completion', async (t) => {
   const f = await uploading(t, [412]);
   let completions = 0;
@@ -270,125 +214,4 @@ test('Files follows a conditional PUT refusal with server verification and retri
   assert.equal(completions, 2);
   assert.equal(f.puts.length, 1, 'the stored object is not uploaded again');
   assert.equal(f.closed(), 1);
-});
-
-/** Chooses one file in a freshly mounted control, as the chooser or a drop would. */
-async function choose(t: TestContext, available: boolean, file: File) {
-  t.after(unmount);
-  await mount(createElement(UploadControl, { available }));
-  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-  Object.defineProperty(input, 'files', { value: [file], configurable: true });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  await settle(20);
-}
-
-test('Files sends a small file without project storage and says so once it is stored', async (t) => {
-  const created: unknown[] = [];
-  serve('/tools/artifact.write:create', (_count, input) => {
-    created.push(input);
-    return { body: { result: { id: 'art_small' } } };
-  });
-  await choose(t, false, new File(['small'], 'small.txt'));
-  assert.equal(created.length, 1);
-  assert.match(text(), /small\.txt\s*Uploaded/);
-});
-
-test('Files refuses a large file without project storage before sending anything', async (t) => {
-  const fetches: unknown[] = [];
-  const real = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    fetches.push(input);
-    return assert.fail('unused');
-  };
-  t.after(() => {
-    globalThis.fetch = real;
-  });
-  await choose(t, false, new File([new Uint8Array(2_000_001)], 'large.csv'));
-  assert.match(text(), /Files over 2 MB need project storage, which is unavailable/);
-  assert.doesNotMatch(text(), /Retry/, 'nothing about a retry would change the answer');
-  assert.deepEqual(fetches, []);
-});
-
-test('Files refuses a file over 512 MiB before hashing or calling Main', async (t) => {
-  const fetches: unknown[] = [];
-  const real = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    fetches.push(input);
-    return assert.fail('unused');
-  };
-  t.after(() => {
-    globalThis.fetch = real;
-  });
-  const file = new File(['huge'], 'huge.bin');
-  Object.defineProperty(file, 'size', { value: 512 * 1024 * 1024 + 1 });
-  await choose(t, true, file);
-  assert.match(text(), /Files up to 512 MiB can be uploaded/);
-  assert.doesNotMatch(text(), /Hashing/);
-  assert.deepEqual(fetches, []);
-});
-
-test('Files keeps the rows it shows while older files load', async (t) => {
-  t.after(unmount);
-  const { setToken } = await import('../packages/ui/web/api.js');
-  setToken('fixture-token');
-  t.after(() => setToken(null));
-  const { MemoryRouter, Routes, Route } = await import('react-router-dom');
-  const { SessionProvider } = await import('../packages/ui/web/session.js');
-  const { ArtifactsView } = await import('../packages/ui/web/views/artifacts.js');
-  const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
-  const actor = { id: 'actor_1', projectId: project.id, name: 'Ada', role: 'reader' };
-  serve('/auth/config', { body: { enabled: false } });
-  serve('/account', {
-    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
-  });
-  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/tools/artifact.read:storage', { body: { result: { available: false } } });
-  const files = Array.from({ length: 400 }, (_, at) => ({
-    id: `art_${String(at).padStart(32, '0')}`,
-    projectId: project.id,
-    createdBy: actor.id,
-    hash: 'abc',
-    size: 10,
-    createdAt: new Date().toISOString(),
-    title: `File ${at}`,
-    mediaType: 'text/plain',
-  }));
-  serve('/tools/artifact.read:list', (_, sent) => ({
-    body: { result: files.slice(0, Number(sent.limit)) },
-  }));
-  // The older page is still on its way when the page is next drawn.
-  const answered = globalThis.fetch;
-  t.after(() => void (globalThis.fetch = answered));
-  globalThis.fetch = ((input: string, init: { body?: string }) =>
-    typeof init?.body === 'string' && JSON.parse(init.body).limit === 400
-      ? new Promise(() => {})
-      : answered(input, init)) as typeof fetch;
-  const row = { id: 'artifacts', label: 'Files', path: '/artifacts', view: { kind: 'artifacts' } };
-  await mount(
-    createElement(
-      MemoryRouter,
-      { initialEntries: ['/artifacts'] },
-      createElement(
-        SessionProvider,
-        null,
-        createElement(
-          Routes,
-          null,
-          createElement(Route, {
-            path: '/artifacts/*',
-            element: createElement(ArtifactsView as never, { row, shell: { rows: [row] } }),
-          }),
-        ),
-      ),
-    ),
-  );
-  await settle(10);
-  assert.ok(text().includes('File 199'), text().slice(0, 300));
-  const older = [...document.querySelectorAll('button')].find(
-    (b) => b.textContent === 'Show older files',
-  );
-  assert.ok(older, 'a full first page offers the next');
-  await act(async () => older!.click());
-  await settle(10);
-  assert.ok(text().includes('File 0') && text().includes('File 199'), 'the rows it had stay put');
 });

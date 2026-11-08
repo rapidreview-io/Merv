@@ -27,7 +27,7 @@ import {
   type PenStep,
   type PenUnit,
 } from '@merv/board/models';
-import { accountRequest, type ApiError } from '../api';
+import { accountRequest, type ApiError, scopeVersion } from '../api';
 import type { Rect } from './board-place';
 
 type Point = [number, number];
@@ -650,13 +650,14 @@ export const imageAt = (fileId: string) => `/board-images/${encodeURIComponent(f
  * placeholder until it comes.
  */
 export const imageBringer = (api: ExcalidrawImperativeAPI, brought?: (fileId: FileId) => void) => {
+  const epoch = scopeVersion();
   const asked = new Set<string>();
   return (elements: readonly OrderedExcalidrawElement[], held: BinaryFiles) => {
     for (const el of elements) {
       const fileId = el.isDeleted ? null : fileOf(el);
       if (!fileId || held[fileId] || asked.has(fileId)) continue;
       asked.add(fileId);
-      accountRequest<Blob>(imageAt(fileId), { scoped: true, bytes: true })
+      accountRequest<Blob>(imageAt(fileId), { scoped: true, bytes: true, epoch })
         .then(async (blob) => {
           const dataURL = await getDataURL(blob);
           brought?.(fileId);

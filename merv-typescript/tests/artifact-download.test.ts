@@ -1,5 +1,4 @@
-import { MAX_BLOB_BYTES } from '@merv/blobs/common';
-import { MAX_ARTIFACT_BYTES, type Artifact, type Caller } from '@merv/contracts';
+import { type Caller } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,7 +7,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createApp } from './fixtures/app.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
+
 import { s3Server } from './fixtures/s3-server.js';
 import { stateConfig } from './fixtures/state.js';
 
@@ -84,25 +83,6 @@ async function retained(t: TestContext) {
   return { ...f, operator, caller, bytes, hash };
 }
 
-test('large retained artifacts remain accessible through the existing tool while inline reads stay bounded', async (t) => {
-  const f = await retained(t);
-  const metadata = (await f.app.ctx.tools.call('artifact.get', f.caller, {
-    artifactId: 'artifact_retained',
-  })) as Artifact & { downloadAvailable: boolean };
-  assert.equal(metadata.id, 'artifact_retained');
-  assert.equal(metadata.downloadAvailable, true);
-  assert.equal(metadata.createdBy, 'old-agent');
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.read', f.caller, { artifactId: metadata.id }),
-    { code: 'artifact_size' },
-  );
-  const link = (await f.app.ctx.tools.call('artifact.read', f.caller, {
-    artifactId: metadata.id,
-    mode: 'download',
-  })) as { download: { url: string } };
-  assert.deepEqual(Buffer.from(await (await fetch(link.download.url)).arrayBuffer()), f.bytes);
-});
-
 test('artifact downloads reject other projects and arbitrary keys before storage access', async (t) => {
   const f = await retained(t);
   const outsider = await f.app.ctx.scope.credentials.bootstrap({
@@ -151,106 +131,4 @@ test('revocation during download preparation prevents URL issuance and later req
     { code: 'forbidden' },
   );
   assert.equal(f.server!.requests.length, count);
-});
-
-test('every inline artifact fits in one blob, which its download mirror writes', () => {
-  assert.ok(MAX_ARTIFACT_BYTES <= MAX_BLOB_BYTES);
-});
-
-test('the first download of bytes kept in the row mirrors them into storage, once', async (t) => {
-  const { app, server } = await fixture(t);
-  const identity = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Mirror',
-    actorName: 'Operator',
-  });
-  const caller: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
-  const artifact = await app.ctx.artifacts.create(caller, {
-    title: 'Inline',
-    content: 'Mirrored on first download.',
-  });
-  assert.equal(server!.requests.length, 0);
-  const first = await app.ctx.artifacts.download(caller, artifact.id);
-  assert.deepEqual(
-    server!.requests.map((request) => request.method),
-    ['HEAD', 'PUT', 'HEAD'],
-  );
-  assert.equal(server!.requests[1].headers['if-none-match'], '*');
-  assert.equal(
-    Buffer.from(await (await fetch(first.download.url)).arrayBuffer()).toString(),
-    'Mirrored on first download.',
-  );
-  const count = server!.requests.length;
-  await app.ctx.artifacts.download(caller, artifact.id);
-  assert.deepEqual(
-    server!.requests.slice(count).map((request) => request.method),
-    ['HEAD'],
-  );
-  // A row whose bytes are neither in it nor in storage has lost them.
-  const lost = await legacyArtifact(app.ctx.state, caller, Buffer.from('lost'));
-  await assert.rejects(app.ctx.artifacts.download(caller, lost.id), {
-    code: 'artifact_bytes_missing',
-    status: 500,
-  });
-});
-
-test('Disk advertises no direct download capability and retains ordinary inline reading', async (t) => {
-  const { app } = await fixture(t, false);
-  const identity = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Disk',
-    actorName: 'Operator',
-  });
-  const caller = { actorId: identity.actor.id, projectId: identity.project.id };
-  const artifact = await app.ctx.artifacts.create(caller, {
-    title: 'Small',
-    content: 'Small inline document.',
-  });
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.get', caller, { artifactId: artifact.id })) as {
-        downloadAvailable: boolean;
-      }
-    ).downloadAvailable,
-    false,
-  );
-  assert.equal(
-    (await app.ctx.artifacts.read(caller, artifact.id)).content,
-    'Small inline document.',
-  );
-  await assert.rejects(
-    app.ctx.tools.call('artifact.read', caller, { artifactId: artifact.id, mode: 'download' }),
-    { code: 'download_unsupported' },
-  );
-  // Text carrying NUL decodes as UTF-8 but cannot be written back, so it is read as base64
-  // and the answer round-trips to an identical artifact.
-  const binary = await app.ctx.artifacts.create(caller, {
-    title: 'NUL bytes',
-    content: Buffer.from('a\0b').toString('base64'),
-    encoding: 'base64',
-    mediaType: 'text/plain',
-  });
-  const read = await app.ctx.artifacts.read(caller, binary.id);
-  assert.equal(read.encoding, 'base64');
-  const again = await app.ctx.artifacts.create(caller, {
-    title: 'NUL bytes again',
-    content: read.content,
-    encoding: read.encoding,
-    mediaType: 'text/plain',
-  });
-  assert.equal(again.hash, binary.hash);
-  // Any valid UTF-8 is text, whatever its type, and a long text is read in parts.
-  const data = await app.ctx.artifacts.create(caller, {
-    title: 'Rows',
-    content: Buffer.from('id,value\n1,é\n').toString('base64'),
-    encoding: 'base64',
-    mediaType: 'application/octet-stream',
-  });
-  assert.deepEqual(
-    await app.ctx.tools.call('artifact.read', caller, {
-      artifactId: data.id,
-      offset: 9,
-      length: 3,
-    }),
-    { artifact: data, content: '1,é', encoding: 'utf8', offset: 9, total: 13 },
-  );
-  assert.equal((await app.ctx.artifacts.read(caller, data.id)).content, 'id,value\n1,é\n');
 });

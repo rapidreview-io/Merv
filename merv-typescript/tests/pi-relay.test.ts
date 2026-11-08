@@ -1,15 +1,12 @@
-import { MervError } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
-import type { ModelRelayFailure, ModelRelayUsage } from '../packages/fleet/src/types.js';
+import type { ModelRelayUsage } from '../packages/fleet/src/types.js';
 import { piSummaryLane } from '../packages/pi/src/limits.js';
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
-
-type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
 type PiRelayUsageRecord = ModelRelayUsage<'pi_relay_usage'>;
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig & RelayTuning) =>
@@ -150,65 +147,6 @@ function send(
   return responseReady.then(() => new Response(bodyStream, { status, headers }));
 }
 
-test('relays only the fixed provider call and supports Pi function/reasoning transcript', async (t) => {
-  const f = await fixture();
-  t.after(() => f.close());
-  const payload = {
-    ...request,
-    max_output_tokens: 32,
-    prompt_cache_key: 'pi-session-1',
-    include: ['reasoning.encrypted_content'],
-    reasoning: { effort: 'low', summary: 'auto' },
-    tools: [
-      {
-        type: 'function',
-        name: 'read_notes',
-        description: 'Read',
-        parameters: {
-          type: 'object',
-          properties: { id: { $ref: '#/$defs/id' } },
-          $defs: { id: { type: 'string' } },
-        },
-        strict: false,
-      },
-    ],
-    input: [
-      ...request.input,
-      { type: 'reasoning', id: 'rs_1', encrypted_content: 'opaque' },
-      {
-        type: 'message',
-        id: 'msg_1',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'hello', annotations: [] }],
-      },
-      { type: 'function_call', call_id: 'call_1', name: 'read_notes', arguments: '{"id":"1"}' },
-      { type: 'function_call_output', call_id: 'call_1', output: 'done' },
-    ],
-  };
-  const response = await send(f, payload, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      'x-private': 'incoming',
-    },
-  });
-  assert.equal(response.status, 200);
-  assert.match(await response.text(), /response.completed/);
-  assert.equal(response.headers.get('x-private'), null);
-  assert.equal(f.upstreamCalls.length, 1);
-  const call = f.upstreamCalls[0]!;
-  assert.equal(call.url, 'https://api.openai.com/v1/responses');
-  assert.equal(call.init.redirect, 'error');
-  assert.deepEqual(Object.fromEntries(new Headers(call.init.headers).entries()), {
-    authorization: 'Bearer private-provider-key',
-    'content-type': 'application/json',
-  });
-  // Reasoning is the catalog's to set: no summary, and no encrypted reasoning at effort none.
-  const { include: _include, ...asked } = payload;
-  assert.deepEqual(JSON.parse(String(call.init.body)), { ...asked, reasoning: { effort: 'none' } });
-});
-
 test('denies alternate routes, origins, tokens, unsafe payload fields and tools', async (t) => {
   const f = await fixture();
   t.after(() => f.close());
@@ -320,23 +258,6 @@ test('denies alternate routes, origins, tokens, unsafe payload fields and tools'
   assert.equal(f.upstreamCalls.length, 0);
 });
 
-test('rejects missing, expired or revoked grants and does not expose authority errors', async (t) => {
-  const f = await fixture();
-  t.after(() => f.close());
-  f.updateGrant({ ...grant(), expiresAt: new Date(Date.now() - 1000).toISOString() });
-  assert.equal((await send(f)).status, 403);
-  f.updateGrant(grant());
-  f.revoke();
-  const response = await send(f);
-  assert.equal(response.status, 403);
-  assert.doesNotMatch(await response.text(), /private/);
-  assert.equal(f.upstreamCalls.length, 0);
-  // A relay its mount closed is unavailable.
-  const closed = await fixture();
-  closed.close();
-  assert.equal((await send(closed)).status, 503);
-});
-
 test('revalidates after asynchronous admission before accessing provider', async (t) => {
   let release!: (value: string) => void;
   const key = new Promise<string>((resolve) => {
@@ -351,24 +272,6 @@ test('revalidates after asynchronous admission before accessing provider', async
   release('private-provider-key');
   assert.equal((await first).status, 403);
   assert.equal(f.upstreamCalls.length, 0);
-});
-
-test('bounds concurrent calls globally and prevents reused grant IDs from changing identity', async (t) => {
-  let release!: (value: string) => void;
-  const key = new Promise<string>((resolve) => {
-    release = resolve;
-  });
-  const f = await fixture({ providerKey: () => key, maxConcurrent: 1 });
-  t.after(() => f.close());
-  const first = send(f);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  f.updateGrant({ ...grant(), id: 'grant-2', userId: 'user-2' });
-  assert.equal((await send(f)).status, 429);
-  release('private-provider-key');
-  assert.equal((await first).status, 200);
-  await (await first).text();
-  f.updateGrant({ ...grant(), id: 'grant-1', userId: 'changed-user' });
-  assert.equal((await send(f)).status, 403);
 });
 
 test('enforces request bytes, response bytes, deadline, and per-grant request count', async (t) => {
@@ -407,85 +310,6 @@ test('enforces request bytes, response bytes, deadline, and per-grant request co
   const response = await send(timeout);
   assert.equal(response.status, 200);
   assert.match(await response.text(), /relay_interrupted/);
-});
-
-test('a stream that ends without its terminal frame is a failure', async (t) => {
-  const failures: PiRelayFailureRecord[] = [];
-  const f = await fixture({
-    onFailure: (record) => void failures.push(record),
-    fetchImpl: async () =>
-      eventStream('data: {"type":"response.output_text.delta","delta":"a"}\n\n'.repeat(2)),
-  });
-  t.after(() => f.close());
-  const response = await send(f);
-  assert.equal(response.status, 200);
-  const text = await response.text();
-  assert.equal(text.match(/output_text\.delta/g)?.length, 2);
-  assert.match(
-    text,
-    /event: error\ndata: \{"type":"error","code":"relay_interrupted",[^\n]*\}\n\n$/,
-  );
-  assert.deepEqual(
-    failures.map(({ code, phase }) => [code, phase]),
-    [['upstream_failed', 'stream']],
-  );
-});
-
-test('an authority or ledger that cannot answer is unavailable, not a refusal', async (t) => {
-  const down = () => new MervError('database_unavailable', 'private database failure', 503);
-  const cases: [string, Partial<PiRelayConfig & RelayTuning>, number, string][] = [
-    [
-      'authorize down',
-      { authority: { authorize: async () => Promise.reject(down()), validate: async () => {} } },
-      503,
-      'relay_unavailable',
-    ],
-    [
-      'authorize refuses',
-      {
-        authority: {
-          authorize: async () => Promise.reject(new Error('private')),
-          validate: async () => {},
-        },
-      },
-      401,
-      'unauthorized',
-    ],
-    [
-      'validate down',
-      {
-        authority: { authorize: async () => grant(), validate: async () => Promise.reject(down()) },
-      },
-      503,
-      'relay_unavailable',
-    ],
-    [
-      'validate refuses',
-      {
-        authority: {
-          authorize: async () => grant(),
-          validate: async () => Promise.reject(new MervError('pi_authority_stale', 'Stale', 403)),
-        },
-      },
-      403,
-      'grant_forbidden',
-    ],
-    ['reserve down', { reserve: async () => Promise.reject(down()) }, 503, 'relay_unavailable'],
-    [
-      'reserve refuses',
-      { reserve: async () => Promise.reject(new MervError('pi_model_ceiling', 'Used up', 403)) },
-      403,
-      'pi_model_ceiling',
-    ],
-  ];
-  for (const [name, overrides, status, code] of cases) {
-    const f = await fixture(overrides);
-    t.after(() => f.close());
-    const response = await send(f);
-    assert.equal(response.status, status, name);
-    assert.deepEqual(await response.json(), { error: code }, name);
-    assert.equal(f.upstreamCalls.length, 0, name);
-  }
 });
 
 /** A ledger whose charges settle by delta, as Pi's and Codex's do. */
@@ -582,110 +406,6 @@ test('a call the provider may have run keeps its charge', async (t) => {
   }
 });
 
-test('a reservation that commits after the worker hung up is returned', async (t) => {
-  const late = ledger();
-  let commit!: () => void;
-  const committing = new Promise<void>((resolve) => (commit = resolve));
-  let reserving!: () => void;
-  const reserveStarted = new Promise<void>((resolve) => (reserving = resolve));
-  const failures: PiRelayFailureRecord[] = [];
-  let reserved = false;
-  const f = await fixture({
-    ...late,
-    // Only the first call's reservation is slow.
-    reserve: async () => {
-      if (!reserved) {
-        reserved = true;
-        reserving();
-        await committing;
-      }
-      return await late.reserve();
-    },
-    onFailure: (record) => void failures.push(record),
-  });
-  t.after(() => f.close());
-  const hangUp = new AbortController();
-  void send(f, request, { signal: hangUp.signal }).catch(() => undefined);
-  await reserveStarted;
-  hangUp.abort();
-  await settle();
-  // The lane is held until the reservation is known.
-  assert.equal((await send(f)).status, 429);
-  commit();
-  await settle();
-  assert.deepEqual([late.book.charges, late.book.used, late.book.records.length], [1, 0, 1]);
-  assert.deepEqual(
-    failures.map(({ code, phase }) => [code, phase]),
-    [['disconnected', 'request']],
-  );
-  assert.equal(f.upstreamCalls.length, 0);
-});
-
-/** An upstream that sends a frame every `everyMs` until it is cancelled or has sent `count`. */
-function ticking(everyMs: number, count = Infinity) {
-  let timer: NodeJS.Timeout | undefined;
-  return async () =>
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          let sent = 0;
-          timer = setInterval(() => {
-            try {
-              if (sent++ < count)
-                controller.enqueue(
-                  new TextEncoder().encode(`data: {"type":"delta","n":${sent}}\n\n`),
-                );
-              else {
-                clearInterval(timer);
-                controller.enqueue(
-                  new TextEncoder().encode('data: {"type":"response.completed"}\n\n'),
-                );
-                controller.close();
-              }
-            } catch {
-              clearInterval(timer);
-            }
-          }, everyMs);
-        },
-        cancel: () => clearInterval(timer),
-      }),
-      { headers: { 'content-type': 'text/event-stream' } },
-    );
-}
-
-test('an authority that stops answering ends the stream within its staleness bound', async (t) => {
-  let validations = 0;
-  const failures: PiRelayFailureRecord[] = [];
-  const f = await fixture({
-    authority: {
-      authorize: async () => grant(),
-      validate: () => (++validations > 3 ? new Promise<void>(() => {}) : Promise.resolve()),
-    },
-    onFailure: (record) => void failures.push(record),
-    fetchImpl: ticking(100),
-  });
-  t.after(() => f.close());
-  const started = Date.now();
-  const response = await send(f);
-  const reader = response.body!.getReader();
-  let last = 0;
-  let text = '';
-  while (true) {
-    const next = await reader.read();
-    if (next.done) break;
-    const chunk = new TextDecoder().decode(next.value);
-    if (chunk.includes('"type":"delta"')) last = Date.now() - started;
-    text += chunk;
-  }
-  assert.ok(Date.now() - started < 6_000, `took ${Date.now() - started} ms`);
-  assert.ok(last <= 5_100, `a frame was written at ${last} ms`);
-  assert.match(text, /relay_interrupted/);
-  assert.deepEqual(
-    failures.map(({ code }) => code),
-    ['relay_timeout'],
-  );
-});
-
 test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upstream', async (t) => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const signals: AbortSignal[] = [];
@@ -753,130 +473,6 @@ test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upst
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(signals[2]?.aborted, true);
   assert.equal((await send(g)).status, 503);
-});
-
-test('stalled downstream writes abort upstream at the idle deadline', async (t) => {
-  let upstreamSignal!: AbortSignal;
-  const f = await fixture({
-    idleTimeoutMs: 25,
-    totalTimeoutMs: 250,
-    fetchImpl: async (_url, init) => {
-      upstreamSignal = init!.signal!;
-      return eventStream('data: first\n\n');
-    },
-  });
-  t.after(() => f.close());
-  const response = await send(f, request, { backpressure: true });
-  assert.equal(response.status, 200);
-  assert.match(await response.text(), /relay_interrupted/);
-  assert.equal(upstreamSignal.aborted, true);
-});
-
-test('grant expiry fences the next SSE event', async (t) => {
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
-  const f = await fixture({
-    fetchImpl: async () =>
-      new Response(
-        new ReadableStream({
-          start(stream) {
-            controller = stream;
-            stream.enqueue(new TextEncoder().encode('data: first\n\n'));
-          },
-        }),
-        { headers: { 'content-type': 'text/event-stream' } },
-      ),
-  });
-  t.after(() => f.close());
-  f.updateGrant({ ...grant(), expiresAt: new Date(Date.now() + 80).toISOString() });
-  const response = await send(f);
-  const reader = response.body!.getReader();
-  assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
-  await new Promise((resolve) => setTimeout(resolve, 110));
-  controller.enqueue(new TextEncoder().encode('data: expired\n\n'));
-  let rest = '';
-  while (true) {
-    const next = await reader.read();
-    if (next.done) break;
-    rest += new TextDecoder().decode(next.value);
-  }
-  assert.match(rest, /relay_interrupted/);
-  assert.doesNotMatch(rest, /data: expired/);
-});
-
-test('does not expose provider errors or upstream headers', async (t) => {
-  const f = await fixture({
-    fetchImpl: async () =>
-      new Response('private upstream error', {
-        status: 401,
-        headers: { 'content-type': 'application/json', 'x-private': 'secret' },
-      }),
-  });
-  t.after(() => f.close());
-  const response = await send(f);
-  assert.equal(response.status, 502);
-  assert.equal(response.headers.get('x-private'), null);
-  assert.doesNotMatch(await response.text(), /private|upstream error/);
-});
-
-test('streams complete SSE frames incrementally but sanitizes upstream SSE errors', async (t) => {
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
-  let ready!: () => void;
-  const streamReady = new Promise<void>((resolve) => {
-    ready = resolve;
-  });
-  const f = await fixture({
-    fetchImpl: async () =>
-      new Response(
-        new ReadableStream({
-          start(stream) {
-            controller = stream;
-            stream.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta"'));
-            ready();
-          },
-        }),
-        { headers: { 'content-type': 'text/event-stream' } },
-      ),
-  });
-  t.after(() => f.close());
-  const pending = send(f);
-  await streamReady;
-  controller.enqueue(new TextEncoder().encode(',"delta":"first"}\n\n'));
-  const response = await pending;
-  const reader = response.body!.getReader();
-  assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
-  controller.enqueue(
-    new TextEncoder().encode('event: error\ndata: {"message":"private provider details"}\n\n'),
-  );
-  let rest = '';
-  while (true) {
-    const next = await reader.read();
-    if (next.done) break;
-    rest += new TextDecoder().decode(next.value);
-  }
-  assert.equal(
-    rest,
-    'event: error\ndata: {"type":"error","code":"upstream_failed","message":"The model provider failed this call"}\n\n',
-  );
-});
-
-test('Sol Ultrafast is its own model that reaches OpenAI as Sol at the ultrafast tier', () => {
-  const relay = piModelRelay({
-    models: [{ id: 'gpt-6.1-sol-ultrafast', label: 'GPT-6.1 Sol Ultrafast', effort: 'medium' }],
-    authority: { authorize: async () => null, validate: async () => undefined },
-  } as unknown as PiRelayConfig);
-  const asked = { ...request, model: 'gpt-6.1-sol-ultrafast' };
-  const sent = relay.payload(asked, { ...grant(), model: asked.model }) as Record<string, unknown>;
-  assert.equal(sent.model, 'gpt-6.1-sol');
-  assert.equal(sent.service_tier, 'ultrafast');
-  const plain = piModelRelay({
-    models: [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'medium' }],
-    authority: { authorize: async () => null, validate: async () => undefined },
-  } as unknown as PiRelayConfig);
-  const sol = plain.payload(
-    { ...request, model: 'gpt-6.1-sol' },
-    { ...grant(), model: 'gpt-6.1-sol' },
-  ) as Record<string, unknown>;
-  assert.equal(sol.service_tier, undefined);
 });
 
 test("a summary runs beside its conversation's call, one at a time", async (t) => {

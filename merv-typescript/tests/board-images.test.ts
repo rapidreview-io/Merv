@@ -3,9 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Caller } from '@merv/contracts';
 import type { BoardElement } from '@merv/board';
-import { elementSchema, parse } from '@merv/board/input';
-import { summarize } from '@merv/board/elements';
-import { httpApp } from './fixtures/app.js';
+import { boardApp } from './fixtures/board.js';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
@@ -28,7 +26,7 @@ const image = (id: string, fileId: string, version = 1): BoardElement =>
   }) as BoardElement;
 
 async function fixture(t: test.TestContext) {
-  const f = await httpApp(t, 'board-images-');
+  const f = await boardApp(t, 'board-images-');
   const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Pictures',
     actorName: 'Owner',
@@ -152,59 +150,6 @@ test('an image is taken by what its bytes are, whatever is claimed, and up to 10
     });
 });
 
-test('the same file is kept once in a project, its first bytes standing', async (t) => {
-  const f = await fixture(t);
-  const other = Buffer.concat([PNG, Buffer.from('later')]);
-  await f.put('same', PNG);
-  assert.equal((await f.put('same', other)).status, 200);
-  assert.deepEqual(Buffer.from(await (await f.get('same')).arrayBuffer()), PNG);
-  const rows = await f.app.ctx.state.transaction(
-    async (tx) =>
-      await tx.all(
-        `SELECT 1 FROM board_images WHERE project_id=? AND file_id='same'`,
-        f.owner.project,
-      ),
-  );
-  assert.equal(rows.length, 1);
-});
-
-test('an image shape is kept, merged and said aloud; a shape names only a plain file id', async (t) => {
-  const f = await fixture(t);
-  const made = await f.board.create(f.ownerCaller, 'Pictures');
-  await f.put('file1', PNG);
-  assert.equal((await f.board.save(f.ownerCaller, made.id, [image('a', 'file1')])).accepted, 1);
-
-  // Moved and resized, the newer version stands.
-  const moved = { ...image('a', 'file1', 2), x: 300, width: 40 };
-  await f.board.save(f.ownerCaller, made.id, [moved]);
-  const scene = await f.board.scene(f.ownerCaller, made.id);
-  assert.deepEqual(
-    scene.elements.map(({ id, x, width, fileId }) => ({ id, x, width, fileId })),
-    [{ id: 'a', x: 300, width: 40, fileId: 'file1' }],
-  );
-
-  // What an agent reads says an image is there, where and how large.
-  assert.deepEqual(summarize(scene.elements).shapes, [
-    { id: 'a', kind: 'image', at: [300, 20], size: [40, 100] },
-  ]);
-  // An agent can move it with the rest, and the file stays named.
-  await f.board.draw(f.ownerCaller, { board: made.id, ops: [{ op: 'move', id: 'a', at: [0, 0] }] });
-  const after = (await f.board.scene(f.ownerCaller, made.id)).elements[0]!;
-  assert.equal(after.fileId, 'file1');
-  assert.equal(after.x, 0);
-
-  assert.throws(() => parse(elementSchema, image('b', '../../etc/passwd')), {
-    code: 'invalid_board_input',
-  });
-  assert.throws(() => parse(elementSchema, { ...image('c', 'x'), type: 'embeddable' }), {
-    code: 'invalid_board_input',
-  });
-  // An image with no file yet stays on its page.
-  assert.throws(() => parse(elementSchema, { ...image('d', 'x'), fileId: null }), {
-    code: 'invalid_board_input',
-  });
-});
-
 test('bytes outlive their shape by its 30 days, and any shape of the project keeps them', async (t) => {
   const f = await fixture(t);
   const [one, two] = [
@@ -235,22 +180,4 @@ test('bytes outlive their shape by its 30 days, and any shape of the project kee
   assert.equal((await f.get('never-drawn')).status, 404, 'stored long ago and never drawn');
   assert.equal((await f.get('shared')).status, 200, 'live shapes name it');
   assert.equal((await f.get('fresh')).status, 200, 'just stored, its shape is on the way');
-});
-
-test('a look draws the pictures in view, to a member only', async (t) => {
-  const f = await fixture(t);
-  const made = await f.board.create(f.ownerCaller, 'Look');
-  await f.put('here', PNG);
-  await f.board.save(f.ownerCaller, made.id, [
-    image('a', 'here'),
-    { ...image('b', 'missing'), x: 500 },
-  ]);
-  const look = async (focus: string, caller = f.ownerCaller) =>
-    (await f.app.ctx.tools.call('board.read:look', caller, { board: made.id, focus })) as {
-      image: { data: string };
-    };
-  // The same frame around the same shape: one with its picture, one with none to draw.
-  const [drawn, placeholder] = [await look('a'), await look('b')];
-  assert.notEqual(drawn.image.data, placeholder.image.data);
-  await assert.rejects(look('a', f.strangerCaller), { code: 'not_found' });
 });

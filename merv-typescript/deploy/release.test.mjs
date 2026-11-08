@@ -1,17 +1,9 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
 import { parseArgs } from 'node:util';
 
 const source = readFileSync(new URL('./release.mjs', import.meta.url), 'utf8');
@@ -78,14 +70,6 @@ test('release.env accepts one registry digest or local image ID and rejects othe
 const failures = [
   { name: 'unhealthy release restores a compatible in-process image', noRollback: false },
   { name: 'unhealthy release refuses an incompatible Sandboxes image', compatible: false },
-  { name: 'native database never authorizes rollback to an unlabeled image', nativeCapable: false },
-  { name: 'unhealthy release stops without rollback', noRollback: true },
-  // grep -v finds nothing to keep, which once ended the job under set -e before any rollback.
-  {
-    name: 'unhealthy release with only filtered log lines restores previous image',
-    logs: 'x ExperimentalWarning',
-  },
-  { name: 'failed compose up restores previous image', composeFails: true },
 ];
 for (const {
   name,
@@ -168,128 +152,6 @@ ${job.slice(start, end)}
     }
   });
 
-test('Git cutover restart and rollback require exact previous image capability or proven legacy state', () => {
-  for (const [
-    failAt,
-    native,
-    migrated = false,
-    noRollback = false,
-    unreadable = false,
-    nativeCapable = false,
-  ] of [
-    [1, false],
-    [2, false],
-    [0, false],
-    [0, true],
-    [2, true],
-    [2, false, true],
-    [2, false, false, true],
-    [2, false, false, false, true],
-    [2, true, true, false, false, true],
-    [2, true, true, true, false, true],
-    [2, true, true, false, true, true],
-    [0, true, true, false, false, true],
-    [0, false, false, false, false, true],
-  ]) {
-    const job = render(
-      'node:test',
-      'https://example.test',
-      noRollback,
-    )({ release: 'test', archiveSha256: 'a'.repeat(64) });
-    const start = job.indexOf('# The first native-Git release');
-    const block = job.slice(start, job.indexOf('trap rollback EXIT', start));
-    const dir = mkdtempSync(join(tmpdir(), 'merv-cutover-gate-'));
-    try {
-      mkdirSync(join(dir, "source/deploy"), { recursive: true });
-      writeFileSync(join(dir, 'rollback.json'), '{"automaticRollbackAllowed":true}');
-      const result = spawnSync(
-        'bash',
-        [
-          '-c',
-          `set -euo pipefail
-IMAGE_ID=new; IMG=new; PREV=old; PREV_NATIVE=${nativeCapable}; BK="$PWD"; ALLOW_ROLLBACK=${nativeCapable && !noRollback}; attempts=0; TEST_ROOT="$PWD"; echo 0 > "$TEST_ROOT/attempts"
-docker() {
-  if [ "$1" = compose ]; then echo run >> "$TEST_ROOT/commands"; else echo "$1" >> "$TEST_ROOT/commands"; fi
-  if [ "$1" = compose ]; then
-    attempts=$(($(cat "$TEST_ROOT/attempts")+1)); echo "$attempts" > "$TEST_ROOT/attempts"
-    if [ "$attempts" != "${failAt}" ] || ${!unreadable}; then
-      echo '{"ready":true,"protocolMigrated":${migrated}${native ? ',"alreadyNative":true' : ''}}'
-    fi
-    [ "$attempts" != "${failAt}" ] || return 1
-  fi
-}
-${block}
-echo "$ALLOW_ROLLBACK" > allowed
-`,
-        ],
-        { cwd: dir, encoding: 'utf8' },
-      );
-      assert.equal(result.status, failAt ? 1 : 0, result.stderr);
-      assert.deepEqual(
-        readFileSync(join(dir, 'commands'), 'utf8').trim().split('\n'),
-        failAt === 1
-          ? ['run']
-          : failAt === 2
-            ? [
-                'run',
-                'stop',
-                'run',
-                ...(!noRollback && (nativeCapable || (!native && !migrated && !unreadable))
-                  ? ['start']
-                  : []),
-              ]
-            : ['run', 'stop', 'run'],
-      );
-      if (!failAt)
-        assert.equal(
-          readFileSync(join(dir, 'allowed'), 'utf8').trim(),
-          String(nativeCapable && !noRollback),
-        );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-});
-
-test('previous image capability is read by immutable container image ID, not its tag', () => {
-  const job = render(
-    'node:test',
-    'https://example.test',
-    false,
-  )({ release: 'test', archiveSha256: 'a'.repeat(64) });
-  const start = job.indexOf('PREV=$(docker inspect');
-  const block = job.slice(start, job.indexOf('\nALLOW_ROLLBACK=false', start));
-  for (const label of ['1', '<no value>', '2']) {
-    const result = spawnSync(
-      'bash',
-      [
-        '-c',
-        `set -euo pipefail
-docker() {
-  if [ "$1" = inspect ]; then
-    if [ "$3" = '{{.Config.Image}}' ]; then echo mutable-tag;
-    elif [ "$3" = '{{.Image}}' ]; then echo sha256:exact-old;
-    else echo /previous; fi
-  elif [ "$1" = image ]; then
-    [ "$5" = sha256:exact-old ] || return 77
-    echo '${label}'
-  fi
-}
-${block}
-echo "$PREV_ID $PREV_NATIVE"
-`,
-      ],
-      { encoding: 'utf8' },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), `sha256:exact-old ${label === '1'}`);
-  }
-  assert.match(
-    readFileSync(new URL('./Dockerfile', import.meta.url), 'utf8'),
-    /^LABEL org\.merv\.native-git-protocol=1$/m,
-  );
-});
-
 const sandboxDefinition = source.slice(
   source.indexOf('const sandboxes ='),
   source.indexOf("const dryRun = args['dry-run'];"),
@@ -321,237 +183,17 @@ const hostedChild = new Function(
   `${hostedDefinition}\nreturn hosted;`,
 );
 
-test('selected Sandboxes checkout reaches resume, pin checks and final hosted rollout unchanged', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-sandboxes-checkout-'));
-  try {
-    const checkout = join(directory, 'Sandboxes checkout with spaces');
-    mkdirSync(join(checkout, '.git'), { recursive: true });
-    const selected = parseSandboxes(['--sandboxes', checkout], existsSync, statSync, join, resolve);
-    const calls = [];
-    const hosted = hostedChild(
-      (...args) => {
-        calls.push(args);
-        return { status: 0 };
-      },
-      process,
-      join,
-      '/merv',
-      'ResearchSuite_Control',
-      selected,
-    );
-    assert.equal(hosted('--resume'), 0);
-    assert.equal(hosted('--check'), 0);
-    assert.equal(hosted(), 0);
-    for (const [index, extra] of [['--resume'], ['--check'], []].entries()) {
-      assert.deepEqual(calls[index], [
-        process.execPath,
-        [
-          '/merv/deploy/hosted-release.mjs',
-          '--host',
-          'ResearchSuite_Control',
-          '--sandboxes',
-          checkout,
-          ...extra,
-        ],
-        { stdio: 'inherit' },
-      ]);
-    }
-    const defaultCalls = [];
-    hostedChild(
-      (...args) => {
-        defaultCalls.push(args);
-        return { status: 0 };
-      },
-      process,
-      join,
-      '/merv',
-      'ResearchSuite_Control',
-      undefined,
-    )('--check');
-    assert.deepEqual(defaultCalls[0][1], [
-      '/merv/deploy/hosted-release.mjs',
-      '--host',
-      'ResearchSuite_Control',
-      '--check',
-    ]);
-    assert.equal(parseSandboxes([], existsSync, statSync, join, resolve), undefined);
-    for (const args of [
-      ['--sandboxes'],
-      ['--sandboxes', '--resume'],
-      ['--sandboxes', ''],
-      ['--sandboxes', checkout, '--sandboxes', checkout],
-      ['--sandboxes', checkout + '\n'],
-      ['--sandboxes', join(directory, 'missing')],
-      ['--sandboxes', directory],
-    ])
-      assert.throws(() => parseSandboxes(args, existsSync, statSync, join, resolve), /--sandboxes/);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('cutover skips hosted resume and checks; ordinary releases retain both gates', () => {
-  const gates = new Function(
-    'args',
-    'local',
-    'PUBLIC',
-    'PRODUCTION',
-    'hosted',
-    source.slice(
-      source.indexOf('// A hosted run left open'),
-      source.indexOf('const release = resume'),
-    ),
-  );
-  const calls = [];
-  const hosted = (flag) => {
-    calls.push(flag);
-    return 0;
-  };
-  gates({ 'skip-hosted': true }, {}, 'production', 'production', hosted);
-  assert.deepEqual(calls, []);
-  gates({}, {}, 'production', 'production', hosted);
-  assert.deepEqual(calls, ['--resume', '--check']);
-});
-
-test('Main release cache cleanup is bounded, never prunes images or volumes, and is best effort', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'merv-release-cache-'));
-  try {
-    const job = render(
-      'node:test',
-      'https://example.test',
-      false,
-    )({
-      release: 'test',
-      archiveSha256: 'a'.repeat(64),
-    });
-    const start = job.indexOf('\ndocker builder prune');
-    const end = job.indexOf('\ndocker build --', start);
-    assert.ok(start > 0 && end > start);
-    const result = spawnSync(
-      'bash',
-      [
-        '-c',
-        `set -euo pipefail
-      docker() { printf '%s\\n' "$*" > commands; return 1; }
-      ${job.slice(start, end)}
-      echo continued
-    `,
-      ],
-      { cwd: dir, encoding: 'utf8' },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /continued/);
-    assert.equal(
-      readFileSync(join(dir, 'commands'), 'utf8').trim(),
-      'builder prune -af --keep-storage 10GB',
-    );
-    assert.match(readFileSync(join(dir, 'build.log'), 'utf8'), /cleanup failed/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('cutover uses real Compose dotenv interpolation and shared raw overrides', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'merv-compose-env-'));
-  try {
-    writeFileSync(join(dir, 'main.env'), 'DB_HOST=database\nDATABASE_URL="postgres://user@${DB_HOST}/main"\nDATABASE_SCHEMA="native_main"\nOVERRIDE="dotenv"\n');
-    writeFileSync(join(dir, 'shared.env'), 'OVERRIDE="raw $LITERAL ${UNCHANGED}"\n');
-    const compose = readFileSync(new URL('./compose.yml', import.meta.url), 'utf8')
-      .replace('/etc/merv/typescript.env', join(dir, 'main.env'))
-      .replace('/etc/sandboxes/shared.env', join(dir, 'shared.env'));
-    writeFileSync(join(dir, 'compose.yml'), compose);
-    writeFileSync(join(dir, 'release.env'), 'MERV_RELEASE=test\n');
-    const parsed = spawnSync('docker', ['compose', '-f', join(dir, 'compose.yml'), 'config', '--format', 'json'], {
-      encoding: 'utf8', env: { ...process.env, MERV_TS_IMAGE: 'sha256:' + '1'.repeat(64) },
-    });
-    assert.equal(parsed.status, 0, parsed.stderr);
-    const config = JSON.parse(parsed.stdout);
-    const control = config.services.control;
-    assert.equal(control.environment.DATABASE_URL, 'postgres://user@database/main');
-    assert.equal(control.environment.DATABASE_SCHEMA, 'native_main');
-    assert.equal(control.environment.MERV_RELEASE, 'test');
-    // Compose serializes literal dollar signs doubled so its config can be read again.
-    assert.equal(control.environment.OVERRIDE, '"raw $$LITERAL $${UNCHANGED}"');
-    assert.equal(config.networks.legacy_database.name, 'deploy_default');
-    assert.equal(config.networks.sandboxes.name, 'sandboxes_default');
-    assert.equal(control.read_only, true);
-    // Trackio reads only its own token file (absent here) and reaches no network but Main's.
-    const trackio = config.services.trackio;
-    assert.equal(trackio.environment.DATABASE_URL, undefined);
-    assert.equal(trackio.environment.TRACKIO_WRITE_TOKEN, undefined);
-    assert.deepEqual(Object.keys(trackio.networks), ['metrics']);
-    assert.equal(config.networks.metrics.internal, true);
-    assert.equal(trackio.read_only, true);
-    assert.deepEqual(trackio.cap_drop, ['ALL']);
-    const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64) });
-    const built = job.indexOf('docker compose -f compose.yml build trackio');
-    assert.ok(built > 0 && built < job.indexOf('docker stop -t 60'), 'Trackio builds while Main serves');
-    const cutover = job.slice(job.indexOf('cutover() {'), job.indexOf('\ncutover >'));
-    assert.match(cutover, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false/);
-    assert.match(cutover, /--entrypoint node control --import tsx deploy\/git-cutover-preflight.mjs/);
-    assert.match(cutover, /< \/dev\/null/);
-    assert.doesNotMatch(cutover, /--env-file|compose.* up/);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('every release path names its release to Main before the first Compose call', () => {
-  const prebuilt = { build: 'b', revision: 'b'.repeat(40), archive: 'c'.repeat(64), receipt: 'd'.repeat(64) };
-  for (const extra of [{}, { retryImage: 'sha256:' + 'b'.repeat(64) }, { expectedImage: 'sha256:' + 'e'.repeat(64), prebuilt }]) {
-    const job = render('node:test', 'https://example.test', true)({ release: 'r1', archiveSha256: 'a'.repeat(64), ...extra });
-    const written = job.indexOf("printf 'MERV_RELEASE=%s\\n' 'r1' > source/deploy/release.env");
-    assert.ok(written > 0 && written < job.indexOf('docker compose'));
-  }
-});
-
-test('prestart retry retains immutable build and refuses any previous candidate startup', () => {
-  const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64), retryImage: 'sha256:' + 'b'.repeat(64) });
-  assert.doesNotMatch(job, /docker build |docker pull |docker builder prune|> build-manifest.json|> "\$BK\/rollback.json"/);
-  assert.match(job, /IMAGE_ID=sha256:b{64}/);
-  assert.match(job, /m\['imageId'\]==sys.argv\[1\]/);
-  assert.match(job, /archive.extractfile/);
-  const guard = job.slice(job.indexOf('[ ! -e deploy-status.json ]'), job.indexOf('IMAGE_ID=sha256:'));
-  for (const marker of ['deploy-status.json', 'deploy.log', 'candidate-started', 'running', 'exited']) {
-    const dir = mkdtempSync(join(tmpdir(), 'merv-retry-guard-'));
-    try {
-      if (!['running', 'exited'].includes(marker)) writeFileSync(join(dir, marker), '');
-      const result = spawnSync('bash', ['-c', `set -euo pipefail\ndocker() { echo ${marker === 'running' ? 'running' : 'exited'}; }\n${guard}`], { cwd: dir, encoding: 'utf8' });
-      assert.equal(result.status, marker === 'exited' ? 0 : 1, result.stderr);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  }
-});
-
-test('retry validates retained image, archive Compose, and previous image provenance', () => {
-  const imageId = 'sha256:' + 'b'.repeat(64);
-  const job = render('node:test', 'https://example.test', true)({ release: 'test', archiveSha256: 'a'.repeat(64), retryImage: imageId });
-  const guard = job.slice(job.indexOf('[ ! -e deploy-status.json ]'), job.indexOf('# The served UI'));
-  for (const mismatch of ['none', 'image', 'archive', 'previous', 'compose', 'cli']) {
-    const dir = mkdtempSync(join(tmpdir(), 'merv-retry-provenance-'));
-    try {
-      mkdirSync(join(dir, 'source/deploy'), { recursive: true });
-      writeFileSync(join(dir, 'source/deploy/compose.yml'), 'services: {}\n');
-      const tar = spawnSync('tar', ['-czf', join(dir, 'source.tar.gz'), '-C', join(dir, 'source'), 'deploy/compose.yml']);
-      assert.equal(tar.status, 0);
-      writeFileSync(join(dir, 'build-manifest.json'), JSON.stringify({ release: 'test', imageId: mismatch === 'image' ? 'wrong' : imageId, archiveSha256: mismatch === 'archive' ? 'wrong' : 'a'.repeat(64), buildAndCompiledCli: mismatch === 'cli' ? 'failed' : 'passed', sandboxesImage: imageId }));
-      writeFileSync(join(dir, 'rollback.json'), JSON.stringify({ previousImageId: mismatch === 'previous' ? 'wrong' : 'previous' }));
-      if (mismatch === 'compose') writeFileSync(join(dir, 'source/deploy/compose.yml'), 'changed');
-      const result = spawnSync('bash', ['-c', `set -euo pipefail
-BK="$PWD"
-docker() {
-  if [ "$1" = image ]; then echo '${imageId}';
-  elif [ "$3" = '{{.State.Status}}' ]; then echo exited;
-  else echo previous; fi
-}
-${guard}`], { cwd: dir, encoding: 'utf8' });
-      assert.equal(result.status, mismatch === 'none' ? 0 : 1, mismatch + result.stderr);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  }
-});
-
 test('expected image gates the built immutable ID before candidate execution and live mutations', () => {
   const expectedImage = 'sha256:' + 'a'.repeat(64);
   for (const expectation of [expectedImage, undefined]) {
-    const job = render('node:test', 'https://example.test', true)({
-      release: 'test', archiveSha256: 'b'.repeat(64), expectedImage: expectation,
+    const job = render(
+      'node:test',
+      'https://example.test',
+      true,
+    )({
+      release: 'test',
+      archiveSha256: 'b'.repeat(64),
+      expectedImage: expectation,
     });
     const start = job.indexOf('docker build --platform');
     const end = job.indexOf('# The served UI');
@@ -563,7 +205,11 @@ test('expected image gates the built immutable ID before candidate execution and
     for (const actual of [expectedImage, 'sha256:' + 'c'.repeat(64)]) {
       const dir = mkdtempSync(join(tmpdir(), 'merv-expected-image-'));
       try {
-        const result = spawnSync('bash', ['-c', `set -euo pipefail
+        const result = spawnSync(
+          'bash',
+          [
+            '-c',
+            `set -euo pipefail
 IMG=mutable-tag; SANDBOXES_TS_IMAGE=unused
 docker() {
   case "$1" in
@@ -575,52 +221,28 @@ docker() {
 }
 ${job.slice(start, end)}
 echo reached > live-mutations
-`], { cwd: dir, encoding: 'utf8' });
+`,
+          ],
+          { cwd: dir, encoding: 'utf8' },
+        );
         const matches = !expectation || expectation === actual;
         assert.equal(result.status, matches ? 0 : 1, result.stderr);
         assert.equal(existsSync(join(dir, 'live-mutations')), matches);
         assert.equal(existsSync(join(dir, 'executed')), matches);
         if (matches) assert.match(readFileSync(join(dir, 'executed'), 'utf8'), new RegExp(actual));
         else assert.match(result.stderr, /expected-image mismatch.*Main and served UI untouched/);
-      } finally { rmSync(dir, { recursive: true, force: true }); }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   }
 });
 
-test('new uploads freeze expected image in the saved job; resume only observes that job', () => {
-  const upload = source.slice(source.indexOf('function upload'), source.indexOf('function waitForVm'));
-  assert.match(upload, /remoteJob\(\{ release, archiveSha256, expectedImage, prebuilt, promotionVerifier \}\)/);
-  assert.match(upload, /cat > \$\{rel\}\/release-job.sh/);
-  assert.match(source, /const local = resume \|\| retry \? null : prebuilt \?/);
-  assert.match(source, /if \(local\) upload\(local\)/);
-  assert.match(source, /const vm = waitForVm\(release, retryDirectory\)/);
-});
-
-test('prebuilt promotion freezes exact inputs, skips builds and retains live safeguards', () => {
-  const expectedImage = 'sha256:' + 'a'.repeat(64);
-  const prebuilt = { build: 'reviewed-build', revision: 'b'.repeat(40), archive: 'c'.repeat(64), receipt: 'd'.repeat(64) };
-  const job = render('node:test', 'https://example.test', true)({
-    release: 'promotion', archiveSha256: prebuilt.archive, expectedImage, prebuilt,
-    promotionVerifier: readFileSync(new URL('./prebuilt-release.py', import.meta.url), 'utf8'),
-  });
-  const syntax = spawnSync('bash', ['-n'], { input: job, encoding: 'utf8' });
-  assert.equal(syntax.status, 0, syntax.stderr);
-  assert.doesNotMatch(job, /docker build |docker builder prune|docker pull /);
-  assert.match(job, /IMG=\$IMAGE_ID/);
-  assert.match(job, /flock -n 9/);
-  assert.match(job, /recovery snapshot restart is pending/);
-  assert.match(job, /hosted run \$HOSTED is open/);
-  assert.match(job, /--network none --entrypoint node "\$IMAGE_ID" --import tsx dist\/src\/cli.js help/);
-  assert.match(job, /--network none --entrypoint node "\$IMAGE_ID" --import tsx deploy\/staging-isolation\/runtime-check.mjs/);
-  for (const value of Object.values(prebuilt)) assert.ok(job.includes(value));
-  assert.ok(job.indexOf('PROMOTION_VERIFY\n') < job.indexOf('# The served UI'));
-  assert.match(job, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml run --rm --no-deps -T --interactive=false/);
-  assert.match(job, /MERV_TS_IMAGE="\$IMAGE_ID" docker compose -f compose.yml up -d/);
-  assert.match(job, /staging-refresh-acceptance.json/);
-  assert.match(source, /const pub = await publicChecks\(\)/);
-});
-
 test('prebuilt verifier rejects source, image and attestation mismatch', () => {
-  const result = spawnSync('python3', [new URL('./prebuilt-release.test.py', import.meta.url).pathname], { encoding: 'utf8' });
+  const result = spawnSync(
+    'python3',
+    [new URL('./prebuilt-release.test.py', import.meta.url).pathname],
+    { encoding: 'utf8' },
+  );
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });

@@ -1,70 +1,59 @@
-# Critical test suite
+# Tests
 
-Run `npm test` from `merv-typescript` with `MERV_TEST_POSTGRES_URL` pointing to a
-local PostgreSQL 17 database. Tests create and clean up isolated schemas. Run
-`npm run test:deploy` for release, rollback and hosted-runner checks. Browser
-component tests use the existing DOM harness; the experiment report integration
-also needs Chromium (`npx playwright-core install chromium`). Tool compatibility
-and PDF rendering need `npm run build:board-renderer` once in a fresh checkout. Linux process and
-root-only isolation checks run only on the matching platform.
+Run `npm test` with `MERV_TEST_POSTGRES_URL` pointing to local PostgreSQL 17.
+Tests use isolated schemas. The command runs every `tests/*.test.ts` file; the
+reduction deletes or consolidates tests rather than excluding files or adding skips.
+Run `npm run test:deploy` separately for deployment and staging-isolation checks.
 
-## Runtime target
+Use Node 22.13.1 or later. Build the Board renderer once with
+`npm run build:board-renderer`; report rendering also requires Chromium. Browser
+component tests use the DOM harness. Linux process and root-only isolation checks
+require the matching platform.
 
-The target is a 75% reduction in the combined wall-clock time of `npm test`
-followed by `npm run test:deploy`. Both commands run their entire remaining suite;
-there is no hidden legacy suite or allowlist.
+## Reduction measured on 2026-11-07
 
-| Command               |    Baseline |                   After |
-| --------------------- | ----------: | ----------------------: |
-| `npm test`            |      94.9 s |                  65.7 s |
-| `npm run test:deploy` |     236.4 s |                  16.2 s |
-| **Combined**          | **331.3 s** | **81.9 s (75.3% less)** |
+The requirement is at least 60% fewer main-suite test cases. Counts include nested
+cases reported by Node's test runner. Source lines are tracked separately; retaining
+a distinct authorization or recovery check takes priority over a line-count target.
 
-After reconciling with remote main at `1620bf93b`, the measured run passed 935 main-suite tests and 74 deployment tests, with two
-Linux-only main-suite skips on macOS.
+| Main suite                      |    Prepared baseline |                After |
+| ------------------------------- | -------------------: | -------------------: |
+| Reported cases                  |                1,318 |    393 (70.2% fewer) |
+| Passed / skipped                | 1,317 / 1 Linux-only |              393 / 0 |
+| Top-level cases                 |                1,156 |                  375 |
+| Test files                      |                  164 |                  129 |
+| Test source lines               |               65,062 | 29,783 (54.2% fewer) |
+| First-review isolated wall time |             130.61 s | 63.54 s (51.4% less) |
 
-Measurements use Node 22.13.1 and the same local PostgreSQL 17 instance on macOS,
-with the commands run sequentially and including npm's pretest schema cleanup.
-The baseline was captured after the initial file-removal pass, so it is already
-smaller than the original 378-file suite. These are local measurements, not a CI
-runtime guarantee. CI distributes the remaining main-suite files across two shards.
+The baseline ran on Node 22.13.1, PostgreSQL 17 and macOS, including npm's pretest
+schema cleanup. The complete final run passed with zero failures. No test selection changes hide remaining files. These
+local timings are not a CI performance guarantee. The second review adds five cases, bringing the full passing run to 393 cases (71.60 seconds of test-runner time while builds ran concurrently); that duration is not a like-for-like runtime comparison. The optional Linux mount gate was not exercised on this macOS host.
 
-We removed duplicate workflow/session permutations, UI polling and presentation
-checks, historical snapshots and unused fixtures. Release tests retain representative
-success, rollback, interrupted rollback recovery, prerequisite refusal and staging
-failure scenarios. Their fixture commits the real release scripts and small app and
-vendor trees, exercising real Git packaging without repeatedly hashing the entire
-application. Formatting of simulated ledgers is stubbed; formatting remains a
-separate CI check. Deployment hosts and Wrangler remain simulated.
+Deployment validation passed 43 release tests, 11 PostgreSQL staging-isolation tests and 12 Python isolation tests in 20.03 seconds. Separate recovery, predeployment, prebuilt-release and staging-ownership Python gates passed (9, 4, 6 and 4 tests), as did the website signup regression. Server/browser typechecks and builds, formatting, and plugin-map generation passed. Thirteen unused fixtures were deleted; executable acceptance fixtures were retained.
 
-## Retained coverage
+The subsequent Work page redesign adds two generalized DOM cases. Its complete UI run passes 23/23; with those cases, the suite has 395 reported cases (70.0% below baseline). The table above records the preceding full adversarial-review run.
 
-| Risk                                                                   | Representative retained suites                                                                                                           |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-project access, credential expiry/revocation, membership changes | `actor-credentials`, `credential-auth`, `identity`, `shared-membership`, `user-keys`, `user-key-api`, `admin-platform-read`              |
-| Durable transactions, concurrent writes, replay and restart            | `state-postgres`, `domain-events`, `workflows`, `app`                                                                                    |
-| Evidence integrity, uploads and scoped downloads                       | `artifact-rows`, `artifact-large`, `artifact-collections`, `artifact-download`, `blobs-s3`                                               |
-| Independent review, exact evidence, rejection and rollback             | `structured-reviews`, `review-exclusions`, `review-flow`, `review-return`, `experiments`, `reflections`                                  |
-| Dependency gates, execution authority and bounded automation           | `workflow-dependencies`, `workflow-execution`, `workflow-leases`, `workflow-limits`, `research-automatic`                                |
-| Git admission, retention, ownership and recovery                       | `code-admission`, `code-operations`, `code-writers`, `code-main-landing`, `code-github-automation`, `runner-code-v2-integration`         |
-| Worker isolation, revoked authority and session recovery               | `sessions`, `sessions-integration`, `runner-process`, `runner-integration`, `session-continuity`, `session-liveness`                     |
-| Model/tool authority, checkpoint integrity and usage limits            | `pi`, `pi-authority`, `pi-relay`, `pi-worker`, `fleet`                                                                                   |
-| Payment/acceptance gates and customer data isolation                   | `payments`, `customer-experiments-domain`, `customer-experiments-service`, `customer-experiments-files`, `customer-experiments-identity` |
-| Browser identity isolation, safe rendering and consequential actions   | `ui-identity-client`, `ui-artifact-upload`, `ui-markdown`, `ui-reviews`, `ui-shell`, `ui-tasks`                                          |
+Release integration preserves nine newer upstream regression cases. With the generated browser/PDF assets built first, the combined suite passes 404/404 with no skips (69.3% below the original baseline).
 
-Exact wording/layout, generated inventories, source-text assertions, historical
-migration snapshots, query-count microbenchmarks, and repeated permutations of
-behavior already exercised at its owning layer are no longer release gates.
-Current migration atomicity, restart behavior and failure recovery remain covered.
-This deliberately gives up exhaustive UI, legacy-version and adapter coverage.
+## Retained coverage and tradeoffs
 
-## Keep it small
+The suite retains representative checks for project and credential isolation;
+transaction rollback, replay and restart; immutable artifacts and upload recovery;
+independent reviews and recorded owner decisions; native Git admission and frozen
+submission approval; workflow dependencies, lease fencing and continuity; Fleet
+capacity, lease expiry and cost limits; and consequential customer, payment, model
+relay and browser actions. Regressions from the adversarial review exercise the
+corrected behaviors. Board fixtures load the services a test needs instead of
+starting the full product for every assertion.
 
-- Test a meaningful failure risk: lost data, unauthorized access, incorrect money
-  or resource usage, a broken workflow gate, or an unusable core user action.
-- Prefer one owning-layer test plus an integration test only where wiring adds a
-  different risk. Add a regression to an existing suite before creating a file.
-- Assert durable outcomes and permission boundaries. Avoid pinning incidental
-  wording, DOM arrangement, private implementation structure or exact query counts.
-- When replacing a behavior, replace its tests. Do not retain an obsolete suite
-  solely to document how the old implementation worked; Git keeps that history.
+Removed coverage includes repeated transport and setup permutations, generated
+catalog and presentation snapshots, source-text assertions, and many historical
+GitHub/import/migration variants. Standalone scheduling, API summary and UI variants
+are also less exhaustive. The remaining suite does not promise the same breadth of
+legacy or presentation coverage as the baseline.
+
+Keep new tests focused on a concrete failure risk. Prefer the owning service and
+add integration coverage when wiring introduces a distinct risk. Extend existing
+invariant or regression tests before adding another fixture or suite. Assert
+observable outcomes and permission boundaries rather than incidental wording,
+layout, private structure or exact query counts.

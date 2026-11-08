@@ -598,6 +598,7 @@ export function buildLaunch(
     stdin,
     secrets: [
       ...Object.values(bearers),
+      ...(request.hfToken ? [request.hfToken] : []),
       ...(request.git
         ? [request.git.token, Buffer.from(`merv:${request.git.token}`).toString('base64')]
         : []),

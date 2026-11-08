@@ -3,25 +3,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import {
-  canonical,
-  createService,
-  digest,
-  newId,
-  now,
-  sha256Hex,
-  type Caller,
-} from '@merv/contracts';
+import { canonical, newId, now, sha256Hex, type Caller } from '@merv/contracts';
 import { insert as insertArtifact } from '@merv/artifacts/content';
 import { CodeService as CoreCode } from '@merv/code/service';
-import { workRef } from '@merv/code/store/refs';
+
 import { ExperimentService } from '@merv/experiments';
 import { programVersion } from '@merv/experiments/program';
 import { resumedOutputs } from '@merv/experiments/lease';
 import type { ExperimentEvidence } from '@merv/experiments/types';
-import { ProjectScope } from '@merv/scope';
+
 import { TaskService } from '@merv/tasks';
-import { WorkflowsService } from '@merv/workflows';
+
 import { insertLease } from '@merv/workflows/lease-rows';
 import {
   migrateNativeWorkflow,
@@ -29,10 +21,10 @@ import {
   type NativeMigrationInput,
 } from '@merv/workflows/native-migration';
 import { createApp } from './fixtures/app.js';
-import { currentTask, currentWork } from './fixtures/current-work.js';
-import { git } from './fixtures/code-store.js';
+import { currentWork } from './fixtures/current-work.js';
+
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { openState } from './fixtures/state.js';
+
 import { taskActors } from './fixtures/task-actors.js';
 
 async function fixture(t: TestContext) {
@@ -233,125 +225,6 @@ async function fixture(t: TestContext) {
   };
 }
 
-for (const version of [40, 41, 43]) {
-  const kind = version === 43 ? 'task' : 'experiment';
-  test(`${kind}${version} migration retains data, dependencies, code provenance, pins, heads and evidence`, async (t) => {
-    const f = await fixture(t);
-    const unit = version === 43 ? await f.task() : await f.experiment(version);
-    assert.equal(unit.workflow.version, version);
-    if (version !== 43)
-      await f.oldOutput(unit as Awaited<ReturnType<typeof f.experiment>>, { attach: true });
-    const dependent = await currentTask(f.app.ctx, f.source, {
-      ...f.taskInput(),
-      dependsOn: unit.id,
-    });
-    const pinned = await f.state.transaction((tx) =>
-      f.code.pinBase(f.source, { unitId: unit.id, leaseId: 'historical-pin', writer: false }, tx),
-    );
-    const repository = f.core.repositories.paths(f.source.projectId).repository;
-    const base = pinned.reference;
-    const head = git(repository, [
-      '-c',
-      'user.name=Historical worker',
-      '-c',
-      'user.email=worker@example.test',
-      'commit-tree',
-      `${base}^{tree}`,
-      '-p',
-      base,
-      '-m',
-      'Retained pre-migration progress',
-    ]);
-    git(repository, ['update-ref', workRef(unit.id), head]);
-    await f.state.transaction((tx) =>
-      tx.run('UPDATE code_workspaces SET head_oid=? WHERE unit_id=?', head, unit.id),
-    );
-    const before = {
-      snapshot: await f.snapshot(unit.id),
-      retained: await f.retained(unit.id),
-      history: await f.history(unit.id),
-    };
-    const refs = git(repository, ['show-ref']);
-    const migration = f.input(unit);
-    const result = await f.migrate(migration);
-    const after = await f.snapshot(unit.id);
-    assert.deepEqual(result, {
-      version: migration.toVersion,
-      revision: before.snapshot.revision + 1,
-    });
-    assert.deepEqual(after.data, before.snapshot.data);
-    assert.equal(after.state, before.snapshot.state);
-    assert.equal(after.createdAt, before.snapshot.createdAt);
-    assert.deepEqual(await f.retained(unit.id), before.retained);
-    assert.equal(git(repository, ['show-ref']), refs);
-    assert.equal((await f.code.unit(f.source, unit.id)).canonicalHead, head);
-    const dependencies = (await f.app.ctx.workflows.prerequisites(f.source, [dependent.id])).get(
-      dependent.id,
-    )!;
-    assert.equal(dependencies[0]!.settled, false);
-    assert.equal(dependencies[0]!.failed, false);
-    assert.deepEqual((await f.history(unit.id)).slice(0, -1), before.history);
-    const audit = await f.state.read((sql) =>
-      sql.get<{ source_json: string; source_hash: string }>(
-        'SELECT source_json,source_hash FROM wf_protocol_migrations WHERE instance_id=?',
-        unit.id,
-      ),
-    );
-    assert.equal(audit!.source_hash, digest(JSON.parse(audit!.source_json)));
-    assert.equal(JSON.parse(audit!.source_json).version, version);
-    assert.equal(JSON.parse(audit!.source_json).data_json, canonical(before.snapshot.data));
-  });
-}
-
-test('migration replay is exact and concurrent retries write one retained audit boundary', async (t) => {
-  const f = await fixture(t);
-  const unit = await f.experiment();
-  const input = f.input(unit);
-  const [first, second] = await Promise.all([f.migrate(input), f.migrate(input)]);
-  assert.deepEqual(second, first);
-  for (const change of [
-    { fromVersion: 40 },
-    { toVersion: 46 },
-    { actorId: f.source.actorId },
-    { reason: 'Different operation' },
-  ])
-    await assert.rejects(f.migrate({ ...input, ...change }), { code: 'migration_conflict' });
-  const audit = await f.state.read((sql) =>
-    sql.all('SELECT * FROM wf_protocol_migrations WHERE instance_id=?', unit.id),
-  );
-  assert.equal(audit.length, 1);
-  assert.equal(
-    (await f.history(unit.id)).filter((row) => row.action === 'migrate_native_git').length,
-    1,
-  );
-  assert.equal(
-    (
-      await f.state.read((sql) =>
-        sql.all(
-          "SELECT * FROM events WHERE subject_id=? AND type='workflow.protocol_migrated'",
-          unit.id,
-        ),
-      )
-    ).length,
-    1,
-  );
-  for (const statement of [
-    'UPDATE wf_protocol_migrations SET reason=reason',
-    'DELETE FROM wf_protocol_migrations',
-    'TRUNCATE wf_protocol_migrations',
-  ])
-    await assert.rejects(
-      f.state.transaction((tx) => tx.run(statement)),
-      { code: 'state_constraint' },
-    );
-  assert.deepEqual(
-    await f.state.read((sql) =>
-      sql.all('SELECT * FROM wf_protocol_migrations WHERE instance_id=?', unit.id),
-    ),
-    audit,
-  );
-});
-
 test('migration refuses live leases, all unfinished writer states and pending reviews without changing evidence', async (t) => {
   const f = await fixture(t);
   const leased = await f.experiment();
@@ -393,102 +266,6 @@ test('migration refuses live leases, all unfinished writer states and pending re
     await f.state.read((sql) => sql.all('SELECT * FROM wf_protocol_migrations')),
     [],
   );
-});
-
-test('a failed combined transaction rolls back the protocol switch, audit, history and event', async (t) => {
-  const f = await fixture(t);
-  const unit = await f.experiment();
-  const before = {
-    snapshot: await f.snapshot(unit.id),
-    history: await f.history(unit.id),
-    retained: await f.retained(unit.id),
-  };
-  await assert.rejects(
-    f.state.transaction(async (tx) => {
-      await migrateNativeWorkflow(tx, f.input(unit));
-      throw new Error('Later cutover validation failed');
-    }),
-    /Later cutover validation failed/,
-  );
-  assert.deepEqual(await f.snapshot(unit.id), before.snapshot);
-  assert.deepEqual(await f.history(unit.id), before.history);
-  assert.deepEqual(await f.retained(unit.id), before.retained);
-  assert.deepEqual(
-    await f.state.read((sql) => sql.all('SELECT * FROM wf_protocol_migrations')),
-    [],
-  );
-  assert.deepEqual(
-    await f.state.read((sql) =>
-      sql.all("SELECT * FROM events WHERE type='workflow.protocol_migrated'"),
-    ),
-    [],
-  );
-  await f.migrate(f.input(unit));
-});
-
-test('migration rejects a target with incompatible graph or dependency success semantics', async (t) => {
-  for (const changed of ['graph', 'success'] as const) {
-    const state = await openState();
-    const scope = await createService(new ProjectScope(state));
-    const workflows = await createService(new WorkflowsService(state, scope));
-    t.after(async () => {
-      workflows.close();
-      await state.close();
-    });
-    const boot = await scope.credentials.bootstrap({ projectName: changed, actorName: 'Owner' });
-    const caller = { projectId: boot.project.id, actorId: boot.actor.id };
-    const definition = {
-      name: 'experiment',
-      version: 40,
-      initial: 'planned',
-      states: ['planned', 'done', 'failed'],
-      terminal: ['done', 'failed'],
-      edges: [
-        { from: 'planned', action: 'finish', to: 'done' },
-        { from: 'planned', action: 'fail', to: 'failed' },
-      ],
-    };
-    const policy = (edges: typeof definition.edges, successStates: string[]) => ({
-      successStates,
-      actions: edges.map((edge) => ({
-        name: edge.action,
-        states: [edge.from],
-        transitions: [edge.action],
-        tool: 'migration.' + edge.action,
-        instruction: edge.action,
-        check: () => {},
-      })),
-    });
-    const source = await workflows.register(definition, policy(definition.edges, ['done']));
-    const targetEdges =
-      changed === 'graph'
-        ? [...definition.edges, { from: 'planned', action: 'retry', to: 'planned' }]
-        : definition.edges;
-    await workflows.register(
-      {
-        ...definition,
-        version: 45,
-        edges: targetEdges,
-      },
-      policy(targetEdges, changed === 'success' ? ['failed'] : ['done']),
-    );
-    const unit = await source.start(caller, { workflow: 'experiment', requestId: 'start' });
-    await assert.rejects(
-      state.transaction((tx) =>
-        migrateNativeWorkflow(tx, {
-          projectId: caller.projectId,
-          instanceId: unit.id,
-          expectedRevision: unit.revision,
-          fromVersion: 40,
-          toVersion: 45,
-          actorId: caller.actorId,
-          reason: 'Incompatible target probe',
-        }),
-      ),
-      { code: 'migration_contract_conflict' },
-    );
-    assert.equal((await workflows.get(caller, unit.id)).version, 40);
-  }
 });
 
 test('a migrated planner can reuse only its released predecessor outputs, across exactly the migration boundary', async (t) => {

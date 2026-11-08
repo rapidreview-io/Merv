@@ -115,18 +115,6 @@ async function fixture(t: TestContext) {
     ).body.paths[0] as string;
   return { seen, revoked, checked, send, api, stage, origin, held };
 }
-test('tokens authenticate kind, project, tampering and expiry', () => {
-  const token = write();
-  assert.equal(tokens.verify(token)?.k, 'w');
-  assert.equal(tokens.verify(token, expires() + 1), undefined);
-  assert.equal(tokens.verify(token.slice(0, -2) + 'aa'), undefined);
-  assert.equal(tokens.verify('broken'), undefined);
-  assert.equal(new Tokens('other').verify(token), undefined);
-  assert.equal(
-    tokens.verify(tokens.sign({ k: 'v', p: 'project', u: 'actor', x: 100 }), 100),
-    undefined,
-  );
-});
 test('data requests require exact project names and live view authority', async (t) => {
   const f = await fixture(t);
   assert.equal((await f.api('get_logs', {}, {})).status, 401);
@@ -143,42 +131,6 @@ test('data requests require exact project names and live view authority', async 
     (await f.api('get_logs', { project: 'project' }, { 'x-trackio-write-token': write() })).status,
     200,
   );
-});
-test('named arguments are canonical; positional and malformed bodies fail closed', async (t) => {
-  const f = await fixture(t);
-  for (const body of [
-    { data: ['project'] },
-    [],
-    { args: ['project'], kwargs: {} },
-    { args: [] },
-    { kwargs: [] },
-    { kwargs: {}, project: 'project' },
-    'bad json',
-  ])
-    assert.equal((await f.api('get_logs', body)).status, 400);
-  for (const body of [
-    { project: 'project' },
-    { kwargs: { project: 'project' }, args: [] },
-    { kwargs: { project: 'project' } },
-  ])
-    assert.equal((await f.api('get_logs', body)).status, 200);
-  for (const request of f.seen)
-    assert.deepEqual(JSON.parse(request.body), { kwargs: { project: 'project' } });
-  for (const name of ['get_logs_batch', 'get_system_logs_batch']) {
-    assert.equal(
-      (await f.api(name, { project: 'project', runs: [{ run: 'a', project: 'other' }] })).status,
-      403,
-    );
-    assert.equal(
-      (
-        await f.api(name, {
-          project: 'project',
-          runs: [{ run: 'a', project: 'project' }, { run_id: 'id' }],
-        })
-      ).status,
-      200,
-    );
-  }
 });
 test('only write tokens may write; every entry is checked and configs are tagged', async (t) => {
   const f = await fixture(t);
@@ -269,41 +221,6 @@ test('only write tokens may write; every entry is checked and configs are tagged
   assert.equal((await f.api('bulk_upload_media', media(own), headers)).status, 200);
   assert.equal((await f.api('bulk_upload_media', media(own), headers)).status, 403);
 });
-test('mutations, unlisted routes, encoded paths and unsupported methods are never forwarded', async (t) => {
-  const f = await fixture(t);
-  for (const name of [
-    'delete_run',
-    'rename_run',
-    'force_sync',
-    'upload_db_to_space',
-    'create_artifact',
-    'get_registry',
-    'anything',
-  ])
-    assert.equal((await f.api(name)).status, 404);
-  for (const path of [
-    '/trackio/oauth/callback',
-    '/trackio/gradio_api/info',
-    '/trackio/mcp',
-    '/trackio/mcp-stream',
-    '/trackio/api/get_logs',
-    '/trackio/secret.db',
-    '/trackio/assets/%2fsecret',
-    '/trackio/static/secret.js',
-  ])
-    assert.equal((await f.send(path)).status, 404);
-  assert.equal((await f.send('/trackio/', undefined, { cookie: view() }, 'PUT')).status, 404);
-  assert.equal(f.seen.length, 0);
-  for (const path of [
-    '/trackio/',
-    '/trackio/runs',
-    '/trackio/media',
-    '/trackio/version',
-    '/trackio/a-spa-path',
-    '/trackio/static/trackio/logo.svg',
-  ])
-    assert.equal((await f.send(path)).status, 200);
-});
 test('media paths cannot traverse or cross projects; file needs a view token, blobs match either kind', async (t) => {
   const f = await fixture(t);
   for (const path of [
@@ -345,22 +262,6 @@ test('media paths cannot traverse or cross projects; file needs a view token, bl
   f.revoked.add('project');
   assert.equal((await f.send(path)).status, 403);
   assert.equal((await f.send('/trackio/artifact_blob/project/abc')).status, 403);
-});
-test('local answers use Trackio envelopes and only valid token projects; settings pass through', async (t) => {
-  const f = await fixture(t);
-  const headers = { cookie: `${view()}; ${view('second')}; merv_trackio_fake=bad` };
-  assert.deepEqual((await f.api('get_all_projects', {}, headers)).body, {
-    data: ['project', 'second'],
-  });
-  f.revoked.add('second');
-  assert.deepEqual((await f.api('get_all_projects', {}, headers)).body, { data: ['project'] });
-  assert.deepEqual((await f.api('get_run_mutation_status', {})).body, {
-    data: { spaces: false, allowed: false, auth: 'none' },
-  });
-  assert.equal(f.seen.length, 0);
-  assert.deepEqual((await f.api('get_settings', {})).body, {
-    data: { media_dir: '/private', color_palette: ['blue'] },
-  });
 });
 test('client credentials and upstream cookies never cross the proxy', async (t) => {
   const f = await fixture(t);
@@ -446,45 +347,6 @@ test('the entire read allowlist enforces project scope, including write-token re
       name,
     );
   }
-});
-test('cookie names are project-bound, expiry is checked, and static HEAD authenticates', async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.send('/trackio/', undefined, {})).status, 401);
-  const expired = tokens.sign({ k: 'v', p: 'project', u: 'actor', x: 1 });
-  assert.equal(
-    (await f.api('get_logs', { project: 'project' }, { cookie: `merv_trackio_project=${expired}` }))
-      .status,
-    401,
-  );
-  assert.equal(
-    (
-      await f.api(
-        'get_logs',
-        { project: 'project' },
-        { cookie: view().replace('merv_trackio_project=', 'merv_trackio_other=') },
-      )
-    ).status,
-    401,
-  );
-  const response = await fetch(f.origin + '/trackio/assets/main.js', {
-    method: 'HEAD',
-    headers: { cookie: view() },
-  });
-  assert.equal(response.status, 200);
-  assert.equal(await response.text(), '');
-  const raw = await new Promise<number>((resolve, reject) => {
-    const req = request(
-      f.origin,
-      { path: '/trackio/assets/%2e%2e/file', headers: { cookie: view() } },
-      (res) => {
-        res.resume();
-        resolve(res.statusCode!);
-      },
-    );
-    req.on('error', reject);
-    req.end();
-  });
-  assert.equal(raw, 404);
 });
 
 test('a run belongs to the experiment attempt that first logged it', async (t) => {

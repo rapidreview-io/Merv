@@ -53,4 +53,4 @@ The cycle cap covers this automatic chain. Existing session budgets and review l
 
 ## Verification
 
-`tests/research-automatic.test.ts` exercises real Tasks, Experiments, Reflections, Reviews, Research, Workflows and Domain Events: all-failed waves, dependency cleanup, independent rejection/revision/approval, two-wave continuation, limits, restart recovery, partial-handoff rollback, revoked authority and the assembled plugin lifecycle. `tests/ui-tasks.test.ts` checks the creation control and selection of failed work.
+`tests/research-automatic.test.ts` exercises real Tasks, Experiments, Reflections, Reviews, Research, Workflows and Domain Events. Retained checks cover two-wave continuation with dependencies and lineage, cycle limits, restart recovery without duplicate reflections, and revoked-source isolation. Dedicated UI creation and selection tests were removed during suite consolidation.

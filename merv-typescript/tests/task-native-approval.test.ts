@@ -168,3 +168,61 @@ test('task approval retains the dirty reviewed tree once, then makes it availabl
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('a recorded owner override approves the frozen task while machine actors cannot claim that override', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-owner-approval-'));
+  const app = await createApp({ directory });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const principal = await app.ctx.scope.members.acceptVerifiedIdentity({
+    issuer: 'https://example.test/auth',
+    subject: 'owner',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const project = await app.ctx.scope.members.createProject(principal, {
+    name: 'Owner approval',
+    requestId: 'project',
+  });
+  const owner = await app.ctx.scope.caller(principal, project.id);
+  const task = await currentTask(app.ctx, owner, {
+    title: 'Owner verdict',
+    goal: 'Retain reviewed work.',
+    checks: ['Evidence is retained.'],
+    requestId: 'task',
+  });
+  const { deliverCurrentTask } = await import('./fixtures/current-task-delivery.js');
+  const delivered = await deliverCurrentTask(app.ctx, directory, owner, task.id);
+  const machine = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Machine',
+    role: 'operator',
+  });
+  await assert.rejects(
+    app.ctx.reviews.start(
+      { projectId: project.id, actorId: machine.actor.id, credentialId: machine.credential.id },
+      delivered.task.reviewId!,
+      undefined,
+      true,
+    ),
+    { code: 'review_independence' },
+  );
+  const review = await app.ctx.reviews.start(owner, delivered.task.reviewId!, undefined, true);
+  assert.equal(review.override, true);
+  const verdict = {
+    ...reviewedFindings(review),
+    reviewId: review.id,
+    claimId: review.claimId!,
+    expectedRevision: delivered.task.workflow.revision,
+    verdict: 'pass' as const,
+    notes: 'Inspected the retained work as owner.',
+    requestId: 'owner-pass',
+  };
+  const approved = await app.ctx.tasks.submitReview(owner, verdict);
+  assert.equal(approved.workflow.state, 'done');
+  await (app.ctx.codeWork as CodeService).submissions.reconcile();
+  const acceptance = (await app.ctx.codeWork.unit(owner, task.id)).acceptance;
+  assert.ok(acceptance?.reference);
+  assert.deepEqual(await app.ctx.tasks.submitReview(owner, verdict), approved);
+  assert.equal((await app.ctx.reviews.get(owner, review.id)).override, true);
+});

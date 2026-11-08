@@ -1,3 +1,5 @@
+@import './views/work.css';
+
 /* ======================================================================
    Merv design system — records on a light ground, and no chrome around
    them. One clean sans, a 1px hairline wherever two things meet and
@@ -1619,32 +1621,6 @@ select.input,
   min-width: 0;
   flex-wrap: wrap;
   overflow-wrap: anywhere;
-}
-/* Work as the chains it is made of: a row steps in once for each thing it waits behind,
-   and an elbow in the hairline colour ties it to the row it follows. */
-.chain {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  padding-left: calc(var(--depth, 0) * var(--space-4));
-}
-.chain--under {
-  display: block;
-}
-.chain-waits {
-  margin-top: 2px;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.chain-elbow {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  margin: 0 6px 0 calc(var(--space-4) * -1 + 4px);
-  border-left: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
-  border-bottom-left-radius: var(--radius-sm);
-  transform: translateY(-3px);
 }
 .row-link {
   display: block;
@@ -6224,14 +6200,9 @@ html:has(.pi-page) body {
   resize: none;
 }
 
-/* Work: the map, and what is live ------------------------------------------ */
-/* The map of work, what is live under it, and the sidebar of what is in hand beside them
-   (views/work-map.tsx). Kind words wear their colour, green is only the dot of what is
-   live, and red is only ever what a person has to do. The page and the sidebar share one
-   grid, so opening the sidebar narrows the page and never covers it. The rule is the room
-   the page has and not the size of the screen, because the rail can be hidden: beside the
-   page while it holds both, under it where it does not, and in its place on a phone (the
-   page hides itself). */
+/* Work: live status and the selected item sidebar -------------------------- */
+/* Shared live status and item details (views/work-live.tsx). The sidebar sits beside the
+   work list when there is room, follows it on narrower pages, and replaces it on phones. */
 .running {
   container: running / inline-size;
 }
@@ -6322,7 +6293,7 @@ html:has(.pi-page) body {
   font-weight: 500;
   color: var(--refutes);
 }
-/* A kind the wave does not hold a record for is said in the faint small caps. */
+/* A kind without an available record is shown in small caps. */
 .running-kind {
   font-size: var(--text-xs);
   font-weight: 600;
@@ -6332,275 +6303,6 @@ html:has(.pi-page) body {
   color: var(--faint);
 }
 
-/* The map of work (views/work-map.tsx): a mark and a name for every unit, prerequisites to
-   the left of what waits on them, one quiet curve between them with no head. The mark is the
-   stage's own glyph — a circle for an experiment, a square for a task — red only as the ring
-   of what needs a person, green only as the dot of what is live. Ended work keeps its place
-   and steps back. */
-.wmap-stage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-/* The canvas: it scrolls inside the page, which it never widens, and fills the view under the
-   page's line. A faint grid of dots scrolls with the drawing. */
-.wmap {
-  position: relative;
-  height: max(320px, calc(100dvh - 190px));
-  overflow: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: grab;
-}
-.wmap:active {
-  cursor: grabbing;
-}
-.wmap:focus-visible {
-  outline: 2px solid var(--line-strong);
-  outline-offset: 2px;
-}
-.wmap-surface {
-  position: relative;
-  background-image: radial-gradient(circle, var(--line) 1px, transparent 1.25px);
-  background-size: 24px 24px;
-}
-.wmap-wires {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-.wmap-wire {
-  fill: none;
-  stroke: var(--line-strong);
-  stroke-width: 1.25;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  transition: opacity 120ms ease;
-}
-.wmap-wire--waiting {
-  stroke-dasharray: 2 4;
-}
-.wmap-wire.on {
-  stroke: var(--muted);
-  stroke-width: 1.5;
-}
-.wmap-wire.dim {
-  opacity: 0.25;
-}
-.wmap-mark {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition: opacity 120ms ease;
-}
-.wmap-mark:hover,
-.wmap-mark.on {
-  background: var(--bg-soft);
-}
-.wmap-mark.on .wmap-name {
-  font-weight: 500;
-}
-.wmap-mark:focus-visible {
-  outline: 2px solid var(--line-strong);
-  outline-offset: 0;
-}
-.wmap-glyph {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  width: 14px;
-  height: 14px;
-}
-.wmap-glyph .live-dot {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 7px;
-  height: 7px;
-}
-.wmap-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-}
-/* Ended work keeps its place and steps back; a mark in hand keeps its colour. */
-.wmap-mark--done .wmap-name,
-.wmap-mark--done .stage-glyph {
-  opacity: 0.5;
-}
-.wmap-mark--waiting .wmap-name {
-  color: var(--faint);
-}
-/* Red is one ring: the mark of what needs a person; its name is then in ink. */
-.wmap-mark--attn .stage-ring,
-.wmap-mark--attn .status-dot {
-  stroke: var(--refutes);
-  color: var(--refutes);
-}
-.wmap-mark--attn .wmap-name {
-  color: var(--text);
-}
-.wmap-mark.dim {
-  opacity: 0.3;
-}
-/* Between two cycles' work: one hairline across the map, and space. */
-.wmap-rule {
-  position: absolute;
-  left: 0;
-  right: 0;
-  margin: 0;
-  border: 0;
-  border-top: 1px solid var(--line);
-}
-/* The page's one line (WorkBar): the counts, each a filter; dispatch; the shapes; Key. */
-.wbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  min-height: 36px;
-}
-.wbar-g {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.wbar-word {
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-.wbar-kind {
-  margin: 0 4px 0 2px;
-  color: var(--faint);
-}
-/* Beside the sidebar the line has no room for the kind words: the shapes say the kind. */
-@container running (max-width: 1100px) {
-  .wbar-kind {
-    display: none;
-  }
-}
-.wbar-sep {
-  width: 1px;
-  height: 16px;
-  margin: 0 10px;
-  background: var(--line);
-}
-.wbar-gap {
-  width: 14px;
-}
-.wbar-b {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--muted);
-  cursor: pointer;
-}
-.wbar-b:hover {
-  color: var(--text);
-}
-.wbar-b.on {
-  color: var(--text);
-  border-color: var(--line);
-  background: var(--bg-soft);
-}
-.wbar-b:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.wbar-n {
-  color: var(--text);
-  font-weight: 500;
-}
-.wbar-glyph {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  overflow: visible;
-}
-.wbar-glyph .stage-ring {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-}
-.wbar-glyph .stage-fill,
-.wbar-fill {
-  fill: currentColor;
-}
-.wbar-glyph .stage-sign {
-  fill: none;
-  stroke: var(--bg);
-  stroke-width: 1.6;
-}
-.wbar-glyph--attention .stage-ring {
-  stroke: var(--refutes);
-}
-.wbar-live {
-  fill: var(--supports);
-}
-.wbar-key {
-  margin-left: 4px;
-}
-.wbar-link {
-  padding: 0 10px;
-  text-decoration: none;
-}
-.wbar-link:hover {
-  color: var(--text);
-}
-.wbar > .btn {
-  margin-left: auto;
-}
-.wkey {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 22px;
-  margin: 0 0 var(--space-2);
-  padding: 6px 0 10px;
-  border-bottom: 1px solid var(--line);
-  list-style: none;
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-.wkey li {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-.wbar-line {
-  width: 22px;
-  height: 14px;
-  overflow: visible;
-}
-.wbar-line path {
-  fill: none;
-  stroke: var(--line-strong);
-  stroke-width: 1.5;
-}
-.wbar-line--waiting path {
-  stroke-dasharray: 2 4;
-}
 .live-dot {
   flex: none;
   width: 7px;
@@ -6620,8 +6322,7 @@ html:has(.pi-page) body {
 .live-dot--attn {
   background: var(--refutes);
 }
-/* Under the map: how many are working and how many things need a person, then each
-   lane's own line with its one control. */
+/* Lane-level status and attention, followed by live agents and machines. */
 .live-notes {
   display: flex;
   flex-direction: column;

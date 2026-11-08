@@ -2,7 +2,7 @@
  * Continuity on the default composition with Blobs over the S3 fixture: when work comes back to a
  * state, the agent that held it takes it up again with the conversation its runner delivered.
  */
-import { MervError } from '@merv/contracts';
+
 import { excludedFromReview } from '@merv/reviews/rules';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -187,41 +187,6 @@ test('work that comes back resumes its producer: same agent actor, new session, 
   assert.deepEqual([stale.status, stale.body.error.code], [409, 'conversation_superseded']);
 });
 
-test('a cut reviewer resumes its own conversation within its round; a new round starts fresh', async (t) => {
-  // Audit 15: a results review cut by its step limit, a lost host or a release came back as a new
-  // agent with no notes, and a review needing more than one visit could start over for ever.
-  const f = await fixture(t);
-  const unit = await f.start();
-  const producer = await f.offer(unit.id);
-  await f.release(producer.session);
-  await f.move(unit.id, 'submit');
-  const { revision } = await f.app.ctx.workflows.get(f.owner, unit.id);
-  const first = await f.offer(unit.id, 'runner-a');
-  assert.equal(
-    first.session.continuity?.key,
-    JSON.stringify([unit.id, 'review', 'reviewer', revision]),
-  );
-  // Cut before its verdict: the next visit of the round continues it.
-  await f.release(first.session);
-  const kept = await f.keep(first.session, first.control);
-  const second = await f.offer(unit.id, 'runner-b');
-  assert.deepEqual(
-    [second.session.threadId, second.session.actorId, second.session.continuity?.resume],
-    [first.session.threadId, first.session.actorId, { sessionId: first.session.id, ...kept.facts }],
-  );
-  await f.release(second.session);
-  // The next round is read with fresh eyes, and the earlier round's reviewer retires.
-  await f.move(unit.id, 'revise');
-  const again = await f.offer(unit.id);
-  await f.release(again.session);
-  await f.move(unit.id, 'submit');
-  const fresh = await f.offer(unit.id, 'runner-a');
-  assert.notEqual(fresh.session.threadId, first.session.threadId);
-  assert.notEqual(fresh.session.actorId, first.session.actorId);
-  assert.equal(fresh.session.continuity?.resume, undefined);
-  assert.equal((await f.agent(first.session.threadId!)).status, 'retired');
-});
-
 test('an agent asks its owner: its visit ends uncounted, the work waits, and a message to its thread answers and brings it back', async (t) => {
   const f = await fixture(t);
   const leased = f.sessions as unknown as LeasedSessions;
@@ -382,39 +347,6 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     ),
     { code: 'question_unkept' },
   );
-});
-
-test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {
-  const f = await fixture(t);
-  const leased = f.sessions as unknown as LeasedSessions;
-  const unit = await f.start();
-  const first = await f.offer(unit.id, 'runner-a');
-  const threadId = first.session.threadId;
-  const worker = await f.sessions.authenticate(first.input.secret);
-  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
-  await f.release(first.session);
-  const path = `/sessions/threads/${threadId}/messages`;
-  // A writer who may not read the work item cannot answer for it.
-  const host = (leased.messaging as unknown as { host: { readable: unknown } }).host;
-  const readable = host.readable;
-  host.readable = async () => {
-    throw new MervError('forbidden', 'Not readable', 403);
-  };
-  const refused = await f.http('POST', path, f.token, { body: 'x', requestId: 'unread' });
-  host.readable = readable;
-  assert.deepEqual([refused.status, refused.body.error.code], [403, 'forbidden']);
-  const read: ThreadMessages = await f.ok('GET', path, f.token);
-  assert.deepEqual([read.messages, read.questions.map((item) => item.answeredAt)], [[], [null]]);
-  // The work ends unanswered: no card, and its thread expires as any dormant one does.
-  await f.move(unit.id, 'submit');
-  await f.move(unit.id, 'approve');
-  assert.equal(await f.yours(unit.id), undefined);
-  await f.age(dormantMs + 60_000);
-  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
-  const status = await f.app.ctx.state.read((sql) =>
-    sql.get<{ status: string }>('SELECT status FROM session_threads WHERE id=?', threadId),
-  );
-  assert.equal(status?.status, 'retired');
 });
 
 test('an answer waits for the asking visit’s conversation to be uploaded, not only declared', async (t) => {

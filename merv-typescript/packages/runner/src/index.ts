@@ -36,7 +36,7 @@ import {
   type PendingLaunchRequest,
 } from './ledger.js';
 import { ProcessHost, usageFile } from './process-host.js';
-import { readTranscript, type TranscriptFacts } from './transcript.js';
+import { bearer, readTranscript, type TranscriptFacts } from './transcript.js';
 import { AgentStream } from './agent-stream.js';
 import {
   conversationFile,
@@ -267,6 +267,7 @@ export class MachineRunner implements Runner {
   /** Each launched agent's live stream, kept until its log is sent to the end. */
   private readonly streams = new Map<string, AgentStream>();
   private readonly tallies = new Map<string, ClaudeTally>();
+  private readonly conversationSecrets = new Map<string, string[]>();
 
   constructor(
     config: RunnerConfig,
@@ -749,6 +750,21 @@ export class MachineRunner implements Runner {
           },
           home ? { ...process.env, ...home } : process.env,
         );
+        // Keep exact credentials only in memory. Fingerprints let a restarted controller
+        // refuse a raw conversation when its launch's private values cannot be recovered.
+        const secrets = command.secrets.filter((value) => value.match(bearer)?.[0] !== value);
+        this.conversationSecrets.set(record.id, [
+          ...(this.conversationSecrets.get(record.id) ?? []),
+          ...secrets,
+        ]);
+        this.save(record.id, {
+          conversationSecrets: [
+            ...new Set([
+              ...((record.metadata.conversationSecrets as string[] | undefined) ?? []),
+              ...secrets.map(sha256Hex),
+            ]),
+          ],
+        });
         if (command.shellEnv)
           writeFileSync(command.env.CLAUDE_ENV_FILE!, command.shellEnv, { mode: 0o600 });
         await this.host.launch({
@@ -990,8 +1006,17 @@ export class MachineRunner implements Runner {
     const kept = sessionOf(record);
     // Where the launch ran, whose copy of a conversation is its own.
     let cwd: string | undefined;
+    const secrets = [this.sourceBearer, ...(this.conversationSecrets.get(record.id) ?? [])];
+    if (profile?.harness === 'claude')
+      for (const server of profile.servers ?? []) {
+        const value = process.env[server.bearerEnv];
+        if (value) secrets.push(value);
+      }
     try {
-      cwd = this.driverOf(record)?.get(record.id)?.path;
+      const driver = this.driverOf(record);
+      cwd = driver?.get(record.id)?.path;
+      const git = driver?.agentGit?.(record.id);
+      if (git) secrets.push(git.token, Buffer.from(`merv:${git.token}`).toString('base64'));
     } catch {
       cwd = undefined;
     }
@@ -999,17 +1024,19 @@ export class MachineRunner implements Runner {
       // An inquiry visit's conversation is a fork never saved back: its thread resumes the one
       // it had. Its copy here is forgotten all the same.
       if (!profile || !kept?.continuity || kept.inquiry) return { state: 'none' };
-      const facts = keepConversation(
-        record.runDirectory,
-        profile,
-        [this.sourceBearer],
-        process.env,
-        cwd,
-      );
+      const expected = record.metadata.conversationSecrets as string[] | undefined;
+      const known = new Set(secrets.map(sha256Hex));
+      if (
+        (expected === undefined && record.commandHash !== null) ||
+        expected?.some((hash) => !known.has(hash))
+      )
+        return { state: 'refused', code: 'conversation_secrets_unavailable' };
+      const facts = keepConversation(record.runDirectory, profile, secrets, process.env, cwd);
       return facts ? { state: 'owed', ...facts } : { state: 'none' };
     } catch {
       return { state: 'refused', code: 'conversation_unreadable' };
     } finally {
+      this.conversationSecrets.delete(record.id);
       try {
         const { resumed } = record.metadata;
         if (profile)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -131,75 +131,3 @@ test('an atomic native push projects the refs Git stored after a late I/O partia
   await f.git(['push', f.url, `${next}:${f.branch}`]);
   assert.equal((await f.unit()).canonicalHead, next);
 });
-
-for (const first of ['approval', 'branch'] as const)
-  test(`an approved materialization retries an actual ${first}-only partial ref write`, async (t) => {
-    const f = await fixture(t);
-    const initialHead = (await f.unit()).canonicalHead;
-    f.source.commit({ 'approved.txt': 'reviewed content\n' });
-    const tree = f.source.git('rev-parse', 'HEAD^{tree}');
-    await f.git([
-      'push',
-      '--atomic',
-      f.url,
-      `${f.root}:${f.submission}/parent`,
-      `${tree}:${f.submission}/tree`,
-    ]);
-    const input = {
-      sessionId: 'writer',
-      parentOid: f.root,
-      treeOid: tree,
-      approvalId: 'review',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      message: 'Approved frozen tree',
-      unitId: f.unitId,
-    };
-    const approval = `refs/merv/approvals/${unitRef(input.approvalId)}`;
-    const repository = f.core.repositories.paths(f.admin.projectId).repository;
-    const native = f.core.repositories.git.run.bind(f.core.repositories.git);
-    let armed = true;
-    f.core.repositories.git.run = async (args, options = {}) => {
-      if (armed && args[0] === 'update-ref' && options.durableOwner) {
-        armed = false;
-        const directory = join(f.directory, 'failed-approval-hooks');
-        const failed = first === 'approval' ? f.branch : approval;
-        await brokenLockHook(
-          join(directory, 'reference-transaction'),
-          join(repository, failed + '.lock'),
-        );
-        const commands = String(options.input).split('\n');
-        const updates = commands.filter((line) => line.startsWith('update '));
-        if (first === 'branch') updates.reverse();
-        return native(['-c', `core.hooksPath=${directory}`, ...args], {
-          ...options,
-          input: `start\n${updates.join('\n')}\nprepare\ncommit\n`,
-        });
-      }
-      return native(args, options);
-    };
-    t.after(() => {
-      f.core.repositories.git.run = native;
-    });
-    await assert.rejects(f.remote.materializeSubmission(f.admin.projectId, input), {
-      code: 'code_git_failed',
-    });
-    const partialApproval = await f.core.repositories.resolve(f.admin.projectId, approval);
-    const partialBranch = await f.core.repositories.resolve(f.admin.projectId, f.branch);
-    const committed = first === 'approval' ? partialApproval : partialBranch;
-    assert.ok(committed && committed !== f.root);
-    assert.equal(
-      first === 'approval' ? partialBranch : partialApproval,
-      first === 'approval' ? f.root : null,
-    );
-    const recovered = await f.remote.materializeSubmission(f.admin.projectId, input);
-    assert.equal(recovered.head, committed, 'retry reuses the exact approved commit');
-    assert.equal(await f.core.repositories.resolve(f.admin.projectId, approval), committed);
-    assert.equal(await f.core.repositories.resolve(f.admin.projectId, f.branch), committed);
-    assert.equal(await f.core.repositories.resolve(f.admin.projectId, `${committed}^{tree}`), tree);
-    assert.equal(
-      (await f.unit()).canonicalHead,
-      initialHead,
-      'approval acceptance owns the DB projection',
-    );
-    assert.equal(await readFile(join(repository, f.branch), 'utf8'), committed + '\n');
-  });

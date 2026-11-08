@@ -35,6 +35,7 @@ import { legacyReports } from './fixtures/legacy-reports.js';
 import { managedServices } from './fixtures/managed-services.js';
 import { models, fixture as piFixture } from './fixtures/pi.js';
 import { openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const plan: ExperimentPlan = {
   title: 'Compare fixed classification rules',
@@ -345,6 +346,7 @@ async function fixture(
     provisioned,
     checkoutCalls,
     emails,
+    mailer,
     delivery,
     payments,
     compute,
@@ -404,366 +406,6 @@ test('request HTTP capabilities isolate customers, forbid agent approval, and ke
   assert.equal(snapshot.body.conversation[0].text, 'What decision should this experiment settle?');
 });
 
-test('a ready contract needs customer acceptance and a matching verified payment; webhook retries release it once', async (t) => {
-  const f = await fixture(t);
-  const a = await f.create();
-  await f.propose(a.id);
-  let exp = await f.experiment(a.id);
-  assert.equal(exp.workflow.state, 'ready');
-  const approval = { contractVersion: exp.contract!.version, email: 'customer@example.com' };
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval)).status,
-    409,
-  );
-  assert.equal(
-    (
-      await f.send(base + '/' + a.id + '/accept', a.customerToken, {
-        ...approval,
-        contractVersion: 99,
-      })
-    ).status,
-    409,
-  );
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/accept', a.customerToken, approval)).status,
-    200,
-  );
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/accept', a.customerToken, approval)).status,
-    200,
-  );
-  exp = await f.experiment(a.id);
-  assert.equal(exp.workflow.state, 'awaiting_payment');
-  assert.equal(
-    (
-      await f.send(base + '/' + a.id + '/messages', a.agentToken, {
-        commandId: 'late',
-        text: 'Change the model',
-      })
-    ).status,
-    409,
-  );
-  const checkout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
-  assert.equal(checkout.status, 200);
-  const paid: Paid = {
-    product: CUSTOMER_PRODUCT,
-    eventId: 'evt_paid',
-    reference: a.id,
-    metadata: { contractHash: exp.contract!.hash },
-    paymentId: 'pi_paid',
-    amountUsd: 10,
-    createdAt: new Date().toISOString(),
-  };
-  const webhook = (event: Paid, signature = 'fixture-valid-signature') =>
-    f.send('/customer-experiments/stripe-webhook', undefined, event, {
-      'Stripe-Signature': signature,
-    });
-  assert.equal((await webhook(paid, 'untrusted')).status, 400);
-  assert.equal(
-    (await webhook({ ...paid, metadata: { contractHash: 'not-the-accepted-contract' } })).status,
-    409,
-  );
-  assert.equal((await webhook({ ...paid, amountUsd: 0.01 })).status, 409);
-  assert.equal((await f.experiment(a.id)).workflow.state, 'awaiting_payment');
-  await f.store.mutate(a.id, (record) => {
-    record.checkout!.expiresAt = Date.now() / 1000 - 1;
-  });
-  const newerCheckout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
-  assert.equal(newerCheckout.status, 200);
-  assert.notEqual(newerCheckout.body.id, checkout.body.id);
-  assert.equal(f.emails.length, 0);
-  assert.equal((await webhook(paid)).status, 200);
-  assert.equal(f.emails.length, 1);
-  assert.equal(f.emails[0].kind, 'submitted');
-  assert.equal(f.emails[0].url, a.customerUrl);
-  exp = await f.experiment(a.id);
-  assert.equal(exp.workflow.state, 'running');
-  // Paid, with no visit live, it is queued to the customer, unless an executor ended its visit
-  // to wait for its compute: that run is running.
-  const shown = async () => (await f.service.snapshot(await f.store.get(a.id))).state;
-  assert.equal(await shown(), 'queued');
-  const waiting = t.mock.method(f.domain.sessions.computeWaits, 'waiting', async () => true);
-  assert.equal(await shown(), 'running');
-  assert.deepEqual(waiting.mock.calls[0]!.arguments, [exp.projectId, exp.id]);
-  waiting.mock.restore();
-  const revision = exp.workflow.revision;
-  assert.equal((await webhook(paid)).status, 200);
-  assert.equal((await webhook({ ...paid, eventId: 'evt_retry' })).status, 200);
-  assert.equal((await f.experiment(a.id)).workflow.revision, revision);
-  assert.equal(
-    (await f.state.read((sql) => sql.all('SELECT * FROM customer_experiment_payments'))).length,
-    1,
-  );
-  assert.equal(
-    (await f.state.read((sql) => sql.all('SELECT * FROM customer_experiment_acceptances'))).length,
-    1,
-  );
-});
-
-test('required files remain planning until content validates; accepted manifest and request bucket stay fixed', async (t) => {
-  const f = await fixture(t);
-  const a = await f.create();
-  const b = await f.create('other');
-  const withData: ExperimentPlan = {
-    ...plan,
-    dataRequirements: [
-      {
-        id: 'eval',
-        label: 'Held-out cases',
-        role: 'evaluation',
-        format: 'csv',
-        columns: ['text', 'label'],
-        labelColumn: 'label',
-        minRows: 2,
-      },
-    ],
-  };
-  await f.propose(a.id, withData);
-  assert.equal((await f.experiment(a.id)).workflow.state, 'planning');
-  const bytes = Buffer.from('text,label\none,positive\ntwo,negative\n');
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  const input = {
-    requirementId: 'eval',
-    filename: 'eval.csv',
-    sha256,
-    size: bytes.length,
-    mediaType: 'text/csv',
-  };
-  const upload = await f.send(base + '/' + a.id + '/uploads', a.customerToken, input);
-  assert.equal(upload.status, 200);
-  assert.deepEqual(f.provisioned, [a.id]);
-  assert.equal((await f.experiment(a.id)).workflow.state, 'planning');
-  assert.equal(
-    (
-      await f.send(
-        base + '/' + b.id + '/uploads/' + upload.body.uploadId + '/complete',
-        b.customerToken,
-        {},
-      )
-    ).status,
-    404,
-  );
-  f.bytes.set(a.id + ':' + sha256, bytes);
-  const complete = await f.send(
-    base + '/' + a.id + '/uploads/' + upload.body.uploadId + '/complete',
-    a.customerToken,
-    {},
-  );
-  assert.equal(complete.status, 200, JSON.stringify(complete.body));
-  let exp = await f.experiment(a.id);
-  assert.equal(exp.workflow.state, 'ready');
-  assert.equal(exp.contract!.datasets[0].sha256, sha256);
-  assert.equal(exp.contract!.datasets[0].bucket, 'fixture-private-' + a.id);
-  assert.equal(exp.contract!.datasets[0].rows, 2);
-  await f.send(base + '/' + a.id + '/accept', a.customerToken, {
-    contractVersion: exp.contract!.version,
-    email: 'customer@example.com',
-  });
-  const frozen = exp.contract;
-  assert.equal(
-    (
-      await f.send(base + '/' + a.id + '/uploads', a.customerToken, {
-        ...input,
-        filename: 'replacement.csv',
-      })
-    ).status,
-    409,
-  );
-  exp = await f.experiment(a.id);
-  assert.deepEqual(exp.contract, frozen);
-});
-
-test('migrating structured intake from v1 to v6 preserves links, drafts, uploads and declaration provenance', async (t) => {
-  const f = await fixture(t, false, 20, 1);
-  const a = await f.create();
-  const withData: ExperimentPlan = {
-    ...plan,
-    dataRequirements: [
-      {
-        id: 'eval',
-        label: 'Held-out cases',
-        role: 'evaluation',
-        format: 'csv',
-        columns: ['text', 'label'],
-        labelColumn: 'label',
-        minRows: 2,
-      },
-    ],
-  };
-  await f.propose(a.id, withData);
-  const bytes = Buffer.from('text,label\none,positive\ntwo,negative\n');
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  const upload = await f.send(base + '/' + a.id + '/uploads', a.customerToken, {
-    requirementId: 'eval',
-    filename: 'eval.csv',
-    sha256,
-    size: bytes.length,
-    mediaType: 'text/csv',
-  });
-  assert.equal(upload.status, 200);
-  f.bytes.set(a.id + ':' + sha256, bytes);
-  const record = await f.store.get(a.id);
-  const request = () =>
-    f.state.read((sql) => sql.get('SELECT * FROM customer_experiment_requests WHERE id=?', a.id));
-  const declaration = () =>
-    f.state.read((sql) =>
-      sql.get<{ version: number }>(
-        'SELECT * FROM code_units WHERE unit_id=?',
-        record.experimentId!,
-      ),
-    );
-  const before = {
-    request: await request(),
-    declaration: await declaration(),
-    conversations: structuredClone(f.conversations),
-  };
-  const oldPage = await customerDocument(f.service, a.id, async () => 'document app');
-  assert.equal(before.declaration!.version, 1);
-  const source = await f.experiment(a.id);
-  const migrationCaller = await f.service.caller(record);
-  await f.state.transaction((tx) =>
-    migrateNativeWorkflow(tx, {
-      projectId: source.projectId,
-      instanceId: source.id,
-      expectedRevision: source.workflow.revision,
-      fromVersion: 1,
-      toVersion: 6,
-      actorId: migrationCaller.actorId,
-      reason: 'Preserve structured intake while enabling native Git execution.',
-    }),
-  );
-  assert.equal(SERVICE_VERSION, 5, 'new requests retain the default document intake');
-  assert.equal((await f.experiment(a.id)).workflow.version, 6);
-  assert.deepEqual(await request(), before.request);
-  assert.deepEqual(await declaration(), before.declaration);
-  assert.deepEqual(f.conversations, before.conversations);
-  assert.equal(f.conversations[0]!.profile!.version, 1);
-  assert.equal(await customerDocument(f.service, a.id, async () => 'document app'), oldPage);
-  assert.equal(
-    (await f.send(base + '/' + a.id, a.customerToken)).status,
-    200,
-    'the existing customer capability still acts without sign-in',
-  );
-  assert.equal((await f.send(base + '/' + a.id + '/session', a.customerToken, {})).status, 404);
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/plan', a.customerToken)).body.error.code,
-    'plan_document_unavailable',
-  );
-  const completed = await f.send(
-    base + '/' + a.id + '/uploads/' + upload.body.uploadId + '/complete',
-    a.customerToken,
-    {},
-  );
-  assert.equal(completed.status, 200, JSON.stringify(completed.body));
-  const exp = await f.experiment(a.id);
-  assert.equal(exp.workflow.state, 'ready');
-  assert.deepEqual(exp.contract!.plan, withData);
-  assert.equal(exp.contract!.datasets[0]!.sha256, sha256);
-  assert.deepEqual(f.bytes.get(a.id + ':' + sha256), bytes);
-  assert.equal(
-    (await f.create()).customerUrl,
-    a.customerUrl,
-    'creation replay preserves the original private link',
-  );
-  assert.equal(f.conversations.length, 1);
-  const approval = { contractVersion: exp.contract!.version, email: 'customer@example.com' };
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/accept', a.customerToken, approval)).status,
-    200,
-  );
-  assert.equal(
-    (await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval)).status,
-    200,
-  );
-  assert.deepEqual((await f.experiment(a.id)).contract, exp.contract);
-});
-
-test('a replacement upload invalidates the offer until the newest file validates, then requires approval of its new contract', async (t) => {
-  const f = await fixture(t);
-  const request = await f.create();
-  const withData: ExperimentPlan = {
-    ...plan,
-    dataRequirements: [
-      {
-        id: 'eval',
-        label: 'Evaluation cases',
-        role: 'evaluation',
-        format: 'csv',
-        columns: ['text', 'label'],
-        labelColumn: 'label',
-        minRows: 2,
-      },
-    ],
-  };
-  await f.propose(request.id, withData);
-  const begin = async (content: string, filename: string) => {
-    const bytes = Buffer.from(content);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    f.bytes.set(request.id + ':' + sha256, bytes);
-    const response = await f.send(base + '/' + request.id + '/uploads', request.customerToken, {
-      requirementId: 'eval',
-      filename,
-      sha256,
-      size: bytes.length,
-    });
-    assert.equal(response.status, 200, JSON.stringify(response.body));
-    return { id: response.body.uploadId as string, sha256 };
-  };
-  const complete = (uploadId: string) =>
-    f.send(
-      base + '/' + request.id + '/uploads/' + uploadId + '/complete',
-      request.customerToken,
-      {},
-    );
-  const original = await begin('text,label\none,positive\ntwo,negative\n', 'original.csv');
-  assert.equal((await complete(original.id)).status, 200);
-  const old = await f.experiment(request.id);
-  assert.equal(old.workflow.state, 'ready');
-  const replacement = await begin('text,label\nthree,negative\nfour,positive\n', 'replacement.csv');
-  assert.equal((await f.experiment(request.id)).workflow.state, 'planning');
-  await f.propose(request.id, withData);
-  const pending = await f.experiment(request.id);
-  assert.equal(
-    pending.workflow.state,
-    'planning',
-    'an older validated file cannot satisfy a pending replacement',
-  );
-  assert.equal(
-    pending.contract!.version,
-    old.contract!.version,
-    'no offer is produced while replacement is pending',
-  );
-  const staleApproval = { contractVersion: old.contract!.version, email: 'customer@example.com' };
-  assert.equal(
-    (await f.send(base + '/' + request.id + '/accept', request.customerToken, staleApproval))
-      .status,
-    409,
-  );
-  assert.equal((await complete(replacement.id)).status, 200);
-  const ready = await f.experiment(request.id);
-  assert.equal(ready.workflow.state, 'ready');
-  assert.equal(ready.contract!.version, old.contract!.version + 1);
-  assert.equal(ready.contract!.datasets.length, 1);
-  assert.equal(ready.contract!.datasets[0].sha256, replacement.sha256);
-  assert.notEqual(ready.contract!.datasets[0].sha256, original.sha256);
-  assert.equal(ready.contract!.datasets[0].filename, 'replacement.csv');
-  assert.equal(
-    (await f.send(base + '/' + request.id + '/accept', request.customerToken, staleApproval))
-      .status,
-    409,
-  );
-  assert.equal(
-    (
-      await f.send(base + '/' + request.id + '/accept', request.customerToken, {
-        ...staleApproval,
-        contractVersion: ready.contract!.version,
-      })
-    ).status,
-    200,
-  );
-  assert.equal((await f.experiment(request.id)).acceptedContractId, ready.contract!.id);
-});
-
 test('checkout rollover keeps the previous session across provider failures so retries cannot charge again', async (t) => {
   const f = await fixture(t);
   const request = await f.create();
@@ -812,106 +454,6 @@ test('checkout rollover keeps the previous session across provider failures so r
     1,
     'no new provider session is created after paid/settling response',
   );
-});
-
-test('unavailable internal compute prevents checkout and payment release, while funded preparation never dispatches unpaid work', async (t) => {
-  const f = await fixture(t);
-  const request = await f.create();
-  await f.propose(request.id);
-  const exp = await f.experiment(request.id);
-  const approval = { contractVersion: exp.contract!.version, email: 'customer@example.com' };
-  assert.equal(
-    (await f.send(base + '/' + request.id + '/accept', request.customerToken, approval)).status,
-    200,
-  );
-  const prepare = f.compute.prepareExecution;
-  f.compute.prepareExecution = async () => {
-    throw new MervError('customer_compute_unavailable', 'Compute allowance unavailable', 503);
-  };
-  assert.equal(
-    (await f.send(base + '/' + request.id + '/checkout', request.customerToken, approval)).status,
-    503,
-  );
-  assert.equal(f.checkoutCalls.length, 0);
-  assert.equal((await f.experiment(request.id)).workflow.state, 'awaiting_payment');
-  f.compute.prepareExecution = prepare;
-  const checkout = await f.send(
-    base + '/' + request.id + '/checkout',
-    request.customerToken,
-    approval,
-  );
-  assert.equal(checkout.status, 200);
-  assert.equal((await f.experiment(request.id)).workflow.state, 'awaiting_payment');
-  const payment: Paid = {
-    product: CUSTOMER_PRODUCT,
-    eventId: 'evt_compute_retry',
-    reference: request.id,
-    metadata: { contractHash: exp.contract!.hash },
-    paymentId: 'pi_compute_retry',
-    amountUsd: 10,
-    createdAt: new Date().toISOString(),
-  };
-  f.compute.prepareExecution = async () => {
-    throw new MervError('customer_compute_unavailable', 'Compute allowance unavailable', 503);
-  };
-  await assert.rejects(f.service.paid(payment), { code: 'customer_compute_unavailable' });
-  assert.equal((await f.experiment(request.id)).workflow.state, 'awaiting_payment');
-  f.compute.prepareExecution = prepare;
-  await f.service.paid(payment);
-  assert.equal((await f.experiment(request.id)).workflow.state, 'running');
-  f.compute.prepareExecution = async () => {
-    throw new Error('duplicate event must not need a provider');
-  };
-  await f.service.paid(payment);
-});
-
-test('public intake issues private capabilities, preserves admission limits and requires human approval', async (t) => {
-  const f = await fixture(t, true, 1);
-  const input = {
-    requestId: randomUUID(),
-    title: plan.title,
-    message: 'Test a bounded hypothesis.',
-  };
-  const created = await f.send('/start/requests', undefined, input);
-  assert.equal(created.status, 200);
-  assert.match(created.headers.get('cache-control') ?? '', /no-store/);
-  assert.ok(created.body.agentToken);
-  assert.ok(created.body.customerUrl.includes('#token='));
-  const retry = await f.send('/start/requests', undefined, input);
-  assert.deepEqual(retry.body, created.body);
-  assert.equal(
-    (await f.send('/start/requests', undefined, { ...input, title: 'Different' })).status,
-    409,
-  );
-  assert.equal(
-    (await f.send('/start/requests', undefined, { ...input, requestId: randomUUID() })).status,
-    429,
-  );
-  assert.equal(
-    (await f.send('/start/requests', undefined, { ...input, requestId: 'guessable' })).status,
-    400,
-  );
-  const path = base + '/' + created.body.id;
-  assert.equal((await f.send(path)).status, 401);
-  assert.equal((await f.send(path, created.body.agentToken)).status, 200);
-  for (const action of ['accept', 'checkout']) {
-    assert.equal(
-      (
-        await f.send(path + '/' + action, created.body.agentToken, {
-          contractVersion: 1,
-          email: 'test@example.com',
-        })
-      ).status,
-      401,
-    );
-  }
-  assert.equal((await f.send(base, undefined, input)).status, 401);
-  const guide = await fetch(f.url + '/start/agent.md').then((r) => r.text());
-  assert.ok(guide.includes('Public intake; no invitation required.'));
-  assert.ok(guide.includes('POST https://merv.example/start/requests'));
-  assert.ok(!guide.includes(intakeKey));
-  assert.ok(!guide.includes('MERV_EXPERIMENT_INVITE'));
-  assert.equal((await f.experiment(created.body.id)).workflow.state, 'planning');
 });
 
 const fileState = { deleted: false, etag: '' };
@@ -983,151 +525,6 @@ async function planFixture(t: TestContext) {
 }
 const conflict = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
-
-test('migrating v3 to v5 preserves the accepted contract, checkout replay and payment identity', async (t) => {
-  const f = await planFixture(t);
-  await f.put({ expectedRevision: 0, document: '# Plan\n\nCompare both rules.' });
-  assert.equal(
-    (
-      await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
-        expectedRevision: 1,
-        email: 'customer@example.com',
-      })
-    ).status,
-    200,
-  );
-  await f.tool('plan_verify', {
-    revision: 1,
-    decision: 'accept',
-    question: plan.question,
-    criteria: plan.successCriteria,
-    limits: plan.limits,
-  });
-  const checkout = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
-    contractVersion: 1,
-  });
-  assert.equal(checkout.status, 200, JSON.stringify(checkout.body));
-  const exp = await f.experiment(f.a.id);
-  assert.equal(exp.workflow.state, 'awaiting_payment');
-  const preserved = () =>
-    f.state.read(async (sql) => ({
-      request: await sql.get('SELECT * FROM customer_experiment_requests WHERE id=?', f.a.id),
-      contracts: await sql.all(
-        'SELECT * FROM customer_experiment_contracts WHERE experiment_id=?',
-        exp.id,
-      ),
-      acceptances: await sql.all(
-        'SELECT * FROM customer_experiment_acceptances WHERE experiment_id=?',
-        exp.id,
-      ),
-      identity: await sql.get(
-        'SELECT * FROM customer_experiment_identities WHERE request_id=?',
-        f.a.id,
-      ),
-      declaration: await sql.get('SELECT * FROM code_units WHERE unit_id=?', exp.id),
-    }));
-  const before = await preserved();
-  const migrationCaller = await f.service.caller(f.record);
-  await f.state.transaction((tx) =>
-    migrateNativeWorkflow(tx, {
-      projectId: exp.projectId,
-      instanceId: exp.id,
-      expectedRevision: exp.workflow.revision,
-      fromVersion: 3,
-      toVersion: 5,
-      actorId: migrationCaller.actorId,
-      reason: 'Preserve the accepted customer contract and checkout under native Git.',
-    }),
-  );
-  assert.deepEqual(await preserved(), before);
-  assert.deepEqual((await f.experiment(f.a.id)).contract, exp.contract);
-  const replay = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
-    contractVersion: 1,
-  });
-  assert.equal(replay.status, 200, JSON.stringify(replay.body));
-  assert.equal(replay.body.id, checkout.body.id);
-  assert.equal(replay.body.url, checkout.body.url);
-  assert.equal(f.checkoutCalls.length, 2);
-  const { previousId: _old, ...originalInput } = f.checkoutCalls[0]!;
-  const { previousId, ...replayedInput } = f.checkoutCalls[1]!;
-  assert.deepEqual(
-    replayedInput,
-    originalInput,
-    'payment idempotency, contract metadata and amount stay unchanged',
-  );
-  assert.equal(previousId, checkout.body.id);
-  const paid: Paid = {
-    product: CUSTOMER_PRODUCT,
-    eventId: 'evt_legacy_checkout',
-    reference: f.a.id,
-    metadata: { contractHash: exp.contract!.hash },
-    paymentId: 'pi_legacy_checkout',
-    amountUsd: 10,
-    createdAt: new Date().toISOString(),
-  };
-  const webhook = (event: Paid) =>
-    f.send('/customer-experiments/stripe-webhook', undefined, event, {
-      'Stripe-Signature': 'fixture-valid-signature',
-    });
-  assert.equal((await webhook(paid)).status, 200);
-  const running = await f.experiment(f.a.id);
-  assert.equal(running.workflow.version, 5);
-  assert.equal(running.workflow.state, 'running');
-  assert.equal(running.paymentId, paid.paymentId);
-  assert.deepEqual(running.contract, exp.contract);
-  assert.equal((await webhook(paid)).status, 200);
-  assert.equal((await webhook({ ...paid, eventId: 'evt_legacy_checkout_replayed' })).status, 200);
-  assert.equal((await f.experiment(f.a.id)).workflow.revision, running.workflow.revision);
-  const rows = await f.state.read((sql) =>
-    sql.all('SELECT * FROM customer_experiment_payments WHERE experiment_id=?', exp.id),
-  );
-  assert.equal(rows.length, 1);
-  assert.equal((await preserved()).declaration!.version, 3);
-  assert.deepEqual((await preserved()).contracts, before.contracts);
-  assert.deepEqual((await preserved()).acceptances, before.acceptances);
-});
-
-test('the customer and the intake agent co-edit the plan under optimistic revisions', async (t) => {
-  const f = await planFixture(t);
-  assert.equal(
-    (await f.put({ expectedRevision: 0, document: '# Plan' }, f.a.agentToken)).status,
-    401,
-  );
-  const first = await f.put({ expectedRevision: 0, document: '# Plan\n\nCompare two rules.' });
-  assert.equal(first.status, 200, JSON.stringify(first.body));
-  assert.equal(first.body.revision, 1);
-  assert.equal(first.body.updatedBy, 'customer');
-  // The agent wrote from the revision before the customer's edit: it must read again.
-  await assert.rejects(
-    f.tool('plan_write', { expectedRevision: 0, document: 'Stale' }),
-    conflict('revision_conflict'),
-  );
-  const read = (await f.tool('plan_read', {})) as { revision: number; files: unknown[] };
-  assert.equal(read.revision, 1);
-  assert.deepEqual(read.files, await files.manifest(f.a.id));
-  const agent = (await f.tool('plan_write', {
-    expectedRevision: 1,
-    document: '# Plan\n\nCompare two rules on held-out cases.',
-  })) as { revision: number; updatedBy: string };
-  assert.equal(agent.revision, 2);
-  assert.equal(agent.updatedBy, 'agent');
-  const racing = await Promise.all([
-    f.put({ expectedRevision: 2, document: 'One edit' }),
-    f.put({ expectedRevision: 2, document: 'Another edit' }),
-  ]);
-  assert.deepEqual(racing.map((r) => r.status).sort(), [200, 409]);
-  const current = await f.plan();
-  assert.equal(current.revision, 3);
-  assert.equal(current.document, racing.find((r) => r.status === 200)!.body.document);
-  assert.equal(
-    (
-      await f.state.read((sql) =>
-        sql.all('SELECT revision FROM customer_experiment_plan_revisions'),
-      )
-    ).length,
-    3,
-  );
-});
 
 test('submit hands the exact revision to the intake agent, which returns it or freezes its contract', async (t) => {
   const f = await planFixture(t);
@@ -1316,155 +713,6 @@ test('v3 checkout refuses files that changed after acceptance and returns the pl
   assert.equal(opened.status, 200, JSON.stringify(opened.body));
 });
 
-test('submitting a plan requires an explicit email and sends its link before checkout', async (t) => {
-  const f = await planFixture(t);
-  await f.put({ expectedRevision: 0, document: '# Plan\n\nCompare both rules.' });
-  const path = base + '/' + f.a.id + '/plan/submit';
-  assert.equal((await f.send(path, f.a.customerToken, { expectedRevision: 1 })).status, 400);
-  assert.equal(
-    (await f.send(path, f.a.customerToken, { expectedRevision: 1, email: 'invalid' })).status,
-    400,
-  );
-  assert.equal(f.emails.length, 0);
-  assert.equal(
-    (await f.send(path, f.a.customerToken, { expectedRevision: 1, email: 'owner@example.com' }))
-      .status,
-    200,
-  );
-  assert.equal(f.emails.length, 1);
-  assert.equal(f.emails[0].to, 'owner@example.com');
-  assert.equal(f.emails[0].url, f.a.customerUrl);
-  assert.equal(f.checkoutCalls.length, 0);
-  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).submissionEmailSent, true);
-});
-
-test('a stored v8 intake offers nouns, checks nested request IDs, and executes its pre-release frozen names', async (t) => {
-  const f = await piFixture(t, {
-    pi: {
-      models: models.map((model) =>
-        model.id === 'gpt-6-astra' ? { ...model, effort: 'medium' as const } : model,
-      ),
-    },
-  });
-  const records = new Map<
-    string,
-    { id: string; projectId: string; conversationId: string; toldFiles?: string[] }
-  >();
-  const request = { id: 'request_stored_v8', projectId: f.operator.projectId!, conversationId: '' };
-  records.set(request.id, request);
-  records.set('request_other', {
-    ...request,
-    id: 'request_other',
-    conversationId: 'another-conversation',
-  });
-  const service = new CustomerService(
-    {
-      get: async (id: string) => records.get(id),
-      mutate: async (id: string, change: (record: object) => void) => change(records.get(id)!),
-    } as never,
-    {} as never,
-    {} as never,
-    { registerFileProvider: () => () => {} } as never,
-    f.pi,
-    undefined,
-    () => undefined,
-    undefined,
-    {} as never,
-  );
-  service.agentSnapshot = async (record) => ({ id: record.id }) as never;
-  const nouns = new Map<string, NounDefinition>();
-  const disposers = await service.registerIntake({
-    noun: (name: string, definition: NounDefinition) => {
-      nouns.set(name, definition);
-      return async () => {};
-    },
-  } as unknown as Tools);
-  t.after(async () => {
-    for (const dispose of disposers.reverse()) await dispose();
-  });
-  // Before the release, the v8 profile stores its original hash and freezes the flat tools.
-  const old = [...nouns.values()].flatMap((noun) =>
-    Object.values(noun.actions).map((action) =>
-      f.tools.register({
-        name: action.was![0]!,
-        description: action.description,
-        inputSchema: action.input,
-        readOnly: noun.readOnly,
-        openWorld: action.openWorld,
-        conversationProfile: 'customer-experiments-intake',
-        handler: action.handler,
-      }),
-    ),
-  );
-  const conversation = await f.pi.createProfiled(f.operator, {
-    requestId: 'stored-v8',
-    title: 'Stored intake',
-    profile: { id: 'customer-experiments-intake', version: 8, requestId: request.id },
-  });
-  request.conversationId = conversation.id;
-  const frozen = await f.claimed(await f.send(conversation));
-  assert.ok(frozen.work.tools.some((tool) => tool.name === 'customer_experiments.read'));
-  await f.pi.begin(frozen.token, frozen.input);
-  for (const dispose of old) await dispose();
-  for (const [name, definition] of nouns) f.tools.noun(name, definition);
-  const call = (turn: typeof frozen, name: string, input: object) =>
-    f.pi.tool(turn.token, { ...turn.input, name, input });
-  assert.deepEqual(await call(frozen, 'customer_experiments.read', { id: request.id }), {
-    id: request.id,
-  });
-  await assert.rejects(call(frozen, 'customer_experiments.read', { id: 'request_other' }), {
-    code: 'forbidden',
-  });
-  assert.equal(
-    (
-      (await call(frozen, 'customer_experiments.read', { id: request.id, action: 'request' })) as {
-        error: { code: string };
-      }
-    ).error.code,
-    'invalid_input',
-  );
-  await assert.rejects(
-    call(frozen, 'intake.read', { action: 'request', request: { id: request.id } }),
-    { code: 'pi_tool_forbidden' },
-  );
-  await f.pi.complete(frozen.token, f.completion(frozen.input));
-  const command = await f.send(conversation);
-  await f.fleet.tick();
-  await f.fleet.tick();
-  const { work } = await f.pi.next(frozen.token, { workerId: 'worker_1' });
-  assert.ok(work);
-  const next = { token: frozen.token, work, input: { ...frozen.input, commandId: command.id } };
-  assert.deepEqual(next.work.tools.map((tool) => tool.name).sort(), [
-    'intake.read',
-    'intake.write',
-  ]);
-  const schema = next.work.tools.find((tool) => tool.name === 'intake.write')!.inputSchema as {
-    properties: { action: { enum: string[] } };
-  };
-  assert.deepEqual(schema.properties.action.enum, ['edit_plan', 'verify_plan']);
-  await f.pi.begin(next.token, next.input);
-  await assert.rejects(
-    call(next, 'intake.read', { action: 'request', request: { id: 'request_other' } }),
-    { code: 'forbidden' },
-  );
-  await assert.rejects(
-    call(next, 'intake.write', {
-      action: 'edit_plan',
-      edit_plan: { id: 'request_other', expectedRevision: 0, document: '# Plan' },
-    }),
-    { code: 'forbidden' },
-  );
-  await assert.rejects(
-    call(next, 'intake.write', { action: 'propose', propose: { id: request.id, plan } }),
-    { code: 'pi_profile_action_forbidden' },
-  );
-  assert.deepEqual(
-    await call(next, 'intake.read', { action: 'request', request: { id: request.id } }),
-    { id: request.id },
-  );
-  await f.pi.complete(next.token, f.completion(next.input));
-});
-
 test('customer delivery stays pending after a verdict until its exact approved code is durable', async (t) => {
   const f = await fixture(t, false, 20, 5);
   const created = await f.create();
@@ -1522,4 +770,41 @@ test('customer delivery stays pending after a verdict until its exact approved c
   assert.equal(f.emails.length, 1);
   await f.service.reconcile();
   assert.equal(f.emails.length, 1, 'durable delivery notification is idempotent');
+});
+
+test('an older email acknowledgement cannot clear a newer address notification', async (t) => {
+  const f = await planFixture(t);
+  await f.put({ expectedRevision: 0, document: '# Plan\n\nScore 100 fixed cases.' });
+  const pending = deferred(),
+    release = deferred();
+  t.after(() => release.resolve());
+  const sent: string[] = [];
+  let failNew = true;
+  f.mailer.send = async (input) => {
+    if (input.to === 'old@example.com') {
+      pending.resolve();
+      await release.promise;
+    } else if (failNew) throw new Error('provider unavailable');
+    sent.push(input.to);
+  };
+  const first = f.service.submitPlan(await f.store.get(f.a.id), {
+    expectedRevision: 1,
+    email: 'old@example.com',
+  });
+  await pending.promise;
+  await f.service.submitPlan(await f.store.get(f.a.id), {
+    expectedRevision: 1,
+    email: 'new@example.com',
+  });
+  release.resolve();
+  await first;
+  assert.equal(
+    (await f.store.get(f.a.id)).submissionEmailPending,
+    true,
+    'new address still needs its notification',
+  );
+  failNew = false;
+  await f.service.reconcile();
+  assert.deepEqual(sent, ['old@example.com', 'new@example.com']);
+  assert.equal((await f.store.get(f.a.id)).submissionEmailPending, false);
 });

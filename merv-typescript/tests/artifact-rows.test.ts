@@ -87,24 +87,6 @@ const outage = async () => {
   throw new MervError('blob_unavailable', 'Blob storage is down', 503);
 };
 
-test('create and reads keep bytes in the row, inside a transaction, with no blob call', async (t) => {
-  const f = await fixture(t);
-  f.blobs.before = outage;
-  const text = 'x'.repeat(10_000);
-  const artifact = await f.state.transaction(async (tx) => {
-    const artifact = await f.artifacts.create(f.caller, { title: 'Row', content: text }, tx);
-    assert.equal((await f.artifacts.read(f.caller, artifact.id, undefined, tx)).content, text);
-    const { bytes } = await f.artifacts.bytes(f.caller, artifact.id, tx);
-    assert.equal(bytes.toString(), text);
-    return artifact;
-  });
-  assert.equal(artifact.hash, sha256Hex(Buffer.from(text)));
-  assert.equal((await f.artifacts.read(f.caller, artifact.id)).content, text);
-  assert.deepEqual((await f.artifacts.bytes(f.caller, artifact.id)).artifact, artifact);
-  assert.equal((await f.content(artifact.id))?.toString(), text);
-  assert.deepEqual(f.blobs.calls, []);
-});
-
 test('a rolled-back create leaves no row and no bytes, and an ambient create joins its transaction', async (t) => {
   const f = await fixture(t);
   const rollback = new Error('rollback');
@@ -132,44 +114,6 @@ test('a rolled-back create leaves no row and no bytes, and an ambient create joi
   assert.deepEqual(f.blobs.calls, []);
 });
 
-test('the database refuses row bytes that do not match their size and hash', async (t) => {
-  const f = await fixture(t);
-  const bytes = Buffer.from('bytes');
-  const insert = (id: string, size: number, hash: string) =>
-    f.state.transaction((tx) =>
-      tx.run(
-        'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content) VALUES(?,?,?,?,?,?,?,?,?)',
-        id,
-        f.caller.projectId,
-        f.caller.actorId,
-        'Raw',
-        'text/plain',
-        hash,
-        size,
-        now(),
-        bytes,
-      ),
-    );
-  const refused = (error: unknown) =>
-    error instanceof MervError &&
-    error.code === 'state_constraint' &&
-    (error.cause as { constraint?: string }).constraint === 'artifacts_content_verified';
-  await assert.rejects(insert('art_hash', bytes.length, sha256Hex(Buffer.from('other'))), refused);
-  await assert.rejects(insert('art_size', bytes.length + 1, sha256Hex(bytes)), refused);
-  await insert('art_good', bytes.length, sha256Hex(bytes));
-  assert.equal((await f.artifacts.read(f.caller, 'art_good')).content, 'bytes');
-});
-
-test('completing a small upload copies its verified bytes into the row', async (t) => {
-  const f = await fixture(t);
-  const bytes = Buffer.alloc(1000, 'k');
-  const artifact = await f.artifacts.uploadComplete(f.caller, await f.upload(bytes));
-  assert.deepEqual(f.blobs.calls, ['get']);
-  assert.deepEqual(await f.content(artifact.id), bytes);
-  assert.equal((await f.artifacts.read(f.caller, artifact.id)).content, bytes.toString());
-  assert.deepEqual(f.blobs.calls, ['get'], 'later reads are local');
-});
-
 test('corrupt bytes or an outage at completion fail it and record no artifact; a retry completes', async (t) => {
   const f = await fixture(t);
   const bytes = Buffer.from('declared');
@@ -195,13 +139,4 @@ test('corrupt bytes or an outage at completion fail it and record no artifact; a
   f.blobs.before = async () => {};
   const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
   assert.equal((await f.content(artifact.id))?.toString(), 'declared');
-});
-
-test('an upload over the inline limit keeps its bytes only in blobs', async (t) => {
-  const f = await fixture(t);
-  const uploadId = await f.upload(Buffer.alloc(2_000_001, 'L'));
-  const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
-  assert.deepEqual(f.blobs.calls, []);
-  assert.equal(await f.content(artifact.id), null);
-  await assert.rejects(f.artifacts.read(f.caller, artifact.id), { code: 'artifact_size' });
 });

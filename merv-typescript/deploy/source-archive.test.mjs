@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -14,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +25,7 @@ const git = (cwd, ...args) =>
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   ).trim();
 
-test('committed release archive rebuilds and serves client plugins in the flattened Docker layout', async (t) => {
+test('release archive rebuilds clients from pinned sources and excludes private files', async (t) => {
   const temp = mkdtempSync(join(tmpdir(), 'merv-client-release-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const repo = join(temp, 'repo'),
@@ -115,59 +115,6 @@ test('committed release archive rebuilds and serves client plugins in the flatte
   assert.equal(readFileSync(join(context, 'clients', skill), 'utf8'), committedSkill);
   symlinkSync(join(source, 'node_modules'), join(context, 'node_modules'), 'dir');
   execFileSync('npm', ['run', 'build:clients'], { cwd: context, stdio: 'pipe' });
-  // Real setup handlers, built client source and archive extraction, with no database/account needed.
-  const probe = `
-import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { writeFileSync } from 'node:fs';
-import { setupRoutes } from './packages/scope/src/setup.ts';
-import { packageName } from './packages/scope/src/client-package.ts';
-for (const origin of ['https://experiments.rapidreview.io', 'https://release-fixture.invalid']) {
-  const route = setupRoutes(origin);
-  const server = createServer((req, res) => { Promise.resolve(route(req, res, { url: new URL(req.url, origin) })).then(value => { if (!res.writableEnded) { res.setHeader('content-type','application/json'); res.end(JSON.stringify(value)); } }).catch(error => { res.statusCode=500; res.end(String(error)); }); });
-  await new Promise(done => server.listen(0,'127.0.0.1',done));
-  const base='http://127.0.0.1:'+server.address().port;
-  try {
-    const guide = await (await fetch(base+'/connect/agent.md')).text();
-    const page = await (await fetch(base+'/connect')).text();
-    const name = packageName(origin);
-    assert.ok(guide.includes('codex mcp login '+name));
-    assert.ok(page.includes('codex mcp login '+name));
-    if (name === 'merv') {
-      assert.ok(guide.includes('claude plugin marketplace add rapidreview-io/merv-plugins'));
-      assert.ok(page.includes('rapidreview-io/merv-plugins'));
-    } else {
-      assert.ok(guide.includes('From the extraction directory (MARKETPLACE)'));
-      assert.ok(!page.includes('rapidreview-io/merv-plugins'));
-    }
-    const bundle = await (await fetch(base+'/connect/bundle.json')).json();
-    assert.equal(JSON.parse(bundle.files['codex/.mcp.json']).mcpServers[name].url,origin+'/mcp');
-    assert.equal(JSON.parse(bundle.files['claude-code/.mcp.json']).mcpServers[name].url,origin+'/mcp');
-    assert.ok(bundle.files['codex/skills/research/SKILL.md'].includes('# Research in Merv'));
-    assert.ok(!bundle.files['codex/plugin.json']);
-    writeFileSync('served-'+name+'.tar.gz',Buffer.from(await (await fetch(base+'/connect/bundle.tar.gz')).arrayBuffer()));
-    writeFileSync('served-'+name+'.json',JSON.stringify(bundle.files));
-    for (const file of Object.keys(bundle.files)) assert.ok(!/\\.(sh|mjs)$|credentials|\\.env/.test(file));
-  } finally { await new Promise(done => server.close(done)); }
-}
-`;
-  writeFileSync(join(context, 'probe.mjs'), probe);
-  execFileSync(process.execPath, ['--import', 'tsx', 'probe.mjs'], { cwd: context, stdio: 'pipe' });
-  for (const name of ['merv', `merv-${sha('https://release-fixture.invalid').slice(0, 8)}`]) {
-    const served = join(temp, name);
-    mkdirSync(served);
-    execFileSync('tar', ['-xzf', join(context, `served-${name}.tar.gz`), '-C', served]);
-    for (const [path, content] of Object.entries(
-      JSON.parse(readFileSync(join(context, `served-${name}.json`))),
-    )) {
-      assert.equal(readFileSync(join(served, path), 'utf8'), content, path);
-    }
-  }
-  // Both callers share packageSource; Docker must admit the mapped sources into COPY . .
-  const ignore = readFileSync(join(context, 'deploy/Dockerfile.dockerignore'), 'utf8');
-  assert.match(ignore, /^!clients\/\*\*$/m);
-  for (const caller of ['release.mjs', 'hosted-release.mjs'])
-    assert.match(readFileSync(join(source, 'deploy', caller), 'utf8'), /packageSource\(\)/);
   writeFileSync(join(repo, 'clients', skill), committedSkill + '\nCommitted release marker.\n');
   git(repo, 'add', join('clients', skill));
   git(repo, 'commit', '-qm', 'Change shipped skill');

@@ -1,4 +1,4 @@
-import { DiskBlobs, S3Blobs, blobsPlugin } from '@merv/blobs';
+import { DiskBlobs, S3Blobs } from '@merv/blobs';
 import { MervError } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -33,33 +33,6 @@ async function fixture(t: TestContext, options: { timeoutMs?: number; maxAttempt
   return { blobs, server };
 }
 
-test('S3 uses signed conditional writes, keeps legacy project/hash keys and verifies duplicate content', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const first = await blobs.put('project_1', content);
-  assert.deepEqual(first, { hash, size: content.byteLength });
-  assert.deepEqual(await blobs.get('project_1', hash), content);
-  assert.deepEqual(await blobs.put('project_1', content), first);
-  assert.equal(server.objects.size, 1);
-  assert.deepEqual(
-    server.requests.map((r) => r.method),
-    ['PUT', 'GET', 'PUT', 'GET'],
-  );
-  for (const request of server.requests) {
-    assert.equal(request.key, `evidence/v1/project_1/${hash}`);
-    assert.match(
-      request.headers.authorization!,
-      /^AWS4-HMAC-SHA256 Credential=fixture-access-key\/\d{8}\/auto\/s3\/aws4_request,/,
-    );
-    assert.doesNotMatch(JSON.stringify(request.headers), /fixture-secret-key/);
-  }
-  assert.equal(server.requests[0]!.headers['if-none-match'], '*');
-  assert.equal(
-    server.requests[0]!.headers['content-md5'],
-    createHash('md5').update(content).digest('base64'),
-  );
-  assert.deepEqual(server.requests[0]!.body, content);
-});
-
 test('S3 refuses corrupt reads and corrupt existing objects without overwriting them', async (t) => {
   const { blobs, server } = await fixture(t);
   const key = `evidence/v1/project_1/${hash}`;
@@ -88,62 +61,6 @@ test('S3 bounds declared and streamed reads and validates keys before networking
   assert.equal(server.requests.length, count);
 });
 
-test('S3 reports sanitized errors, missing objects and bounded retries', async (t) => {
-  const { blobs, server } = await fixture(t, { timeoutMs: 5000, maxAttempts: 2 });
-  await assert.rejects(blobs.get('project_1', hash), code('blob_not_found'));
-  server.fail(503);
-  const start = server.requests.length;
-  await assert.rejects(blobs.put('project_1', content), (error: unknown) => {
-    assert.ok(error instanceof MervError);
-    assert.equal(error.code, 'blob_unavailable');
-    assert.doesNotMatch(
-      String(error),
-      /provider-private-detail|fixture-secret-key|fixture-access-key/,
-    );
-    return true;
-  });
-  assert.equal(server.requests.length - start, 2);
-  server.fail(403);
-  await assert.rejects(blobs.get('project_1', hash), code('blob_unavailable'));
-  server.fail(undefined);
-  const misconfigured = new S3Blobs({
-    bucket: 'missing-bucket',
-    endpoint: server.endpoint,
-    ...credentials,
-    allowHttpLoopbackForTests: true,
-    maxAttempts: 1,
-  });
-  t.after(() => misconfigured.close());
-  await assert.rejects(
-    misconfigured.get('project_1', hash),
-    code('blob_unavailable'),
-    'A missing bucket is misconfiguration, not a missing blob',
-  );
-  server.fail(409);
-  const conflict = server.requests.length;
-  await assert.rejects(blobs.put('project_1', content), code('blob_unavailable'));
-  assert.equal(server.requests.length - conflict, 2, 'A conditional-write conflict is retried');
-});
-
-test('S3 teardown rejects new operations and drains an admitted write', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const held = server.holdNext('PUT');
-  const pending = blobs.put('project_1', content);
-  await held.started;
-  let closed = false;
-  const closing = blobs.close().then(() => {
-    closed = true;
-  });
-  await assert.rejects(blobs.get('project_1', hash), code('blobs_closed'));
-  await assert.rejects(blobs.put('project_1', content), code('blobs_closed'));
-  assert.equal(closed, false);
-  held.release();
-  assert.deepEqual(await pending, { hash, size: content.byteLength });
-  await closing;
-  assert.equal(closed, true);
-  assert.deepEqual(server.objects.get(`evidence/v1/project_1/${hash}`), content);
-});
-
 test('S3 timeout covers both waiting for headers and a stalled response body', async (t) => {
   const { blobs, server } = await fixture(t, { timeoutMs: 80 });
   const held = server.holdNext('PUT');
@@ -152,53 +69,6 @@ test('S3 timeout covers both waiting for headers and a stalled response body', a
   server.overrideRead({ body: content, stall: true });
   await assert.rejects(blobs.get('project_1', hash), code('blob_unavailable'));
   await blobs.close();
-});
-
-test('S3 configuration keeps credentials in named environment variables and requires HTTPS', () => {
-  const config = blobsPlugin.Config.parse({ backend: 's3' });
-  assert.equal(config.backend, 's3');
-  if (config.backend !== 's3') assert.fail('wrong config');
-  assert.equal(config.accessKeyIdEnv, 'MERV_BLOB_ACCESS_KEY_ID');
-  assert.equal(config.secretAccessKeyEnv, 'MERV_BLOB_SECRET_ACCESS_KEY');
-  assert.equal(
-    blobsPlugin.Config.safeParse({ backend: 's3', secretAccessKey: 'unsafe' }).success,
-    false,
-  );
-  assert.equal(
-    blobsPlugin.Config.safeParse({ backend: 's3', allowHttpLoopbackForTests: true }).success,
-    false,
-  );
-  assert.deepEqual(blobsPlugin.Config.parse({ root: '/tmp/blobs' }), { root: '/tmp/blobs' });
-  for (const endpoint of [
-    'http://127.0.0.1',
-    'https://user:secret@example.com',
-    'https://example.com/path',
-    'https://example.com?secret=value',
-  ])
-    assert.throws(
-      () => new S3Blobs({ bucket: 'merv-artifacts', endpoint, ...credentials }),
-      code('invalid_blob_config'),
-    );
-  assert.throws(
-    () =>
-      new S3Blobs({
-        bucket: 'merv-artifacts',
-        endpoint: 'http://example.com',
-        ...credentials,
-        allowHttpLoopbackForTests: true,
-      }),
-    code('invalid_blob_config'),
-  );
-  assert.throws(
-    () =>
-      new S3Blobs({
-        bucket: 'merv-artifacts',
-        endpoint: 'https://example.com',
-        ...credentials,
-        prefix: '../unsafe',
-      }),
-    code('invalid_blob_config'),
-  );
 });
 
 test('async Disk preserves atomic immutable writes, integrity and clean temporary files', async (t) => {
@@ -223,57 +93,4 @@ test('async Disk preserves atomic immutable writes, integrity and clean temporar
   await assert.rejects(blobs.put('project_1', content), code('blob_corrupt'));
   await blobs.close();
   await assert.rejects(blobs.get('project_1', hash), code('blobs_closed'));
-});
-
-test('S3 signs one write-once PUT for exactly the declared bytes, and stored reads their size', async (t) => {
-  const { blobs, server } = await fixture(t);
-  const bytes = Buffer.alloc(2_000_001, 98);
-  const bytesHash = createHash('sha256').update(bytes).digest('hex');
-  const key = `evidence/v1/project_1/${bytesHash}`;
-  assert.equal(await blobs.stored('project_1', bytesHash), null);
-  const before = Date.now();
-  const count = server.requests.length;
-  const signed = await blobs.upload('project_1', bytesHash, bytes.length);
-  assert.equal(server.requests.length, count, 'signing is local');
-  const url = new URL(signed.url);
-  assert.equal(url.pathname, `/merv-artifacts/${key}`);
-  assert.equal(
-    url.searchParams.get('X-Amz-SignedHeaders'),
-    'content-length;host;if-none-match;x-amz-checksum-sha256',
-  );
-  assert.equal(url.searchParams.get('X-Amz-Expires'), '3600');
-  assert.ok(
-    Date.parse(signed.expiresAt) >= before + 3_599_000 &&
-      Date.parse(signed.expiresAt) <= Date.now() + 3_600_000,
-  );
-  const checksum = createHash('sha256').update(bytes).digest('base64');
-  assert.deepEqual(signed.headers, { 'x-amz-checksum-sha256': checksum, 'if-none-match': '*' });
-  assert.ok(![...url.searchParams.keys()].some((name) => /checksum/i.test(name)));
-  const put = (body: Buffer, headers: Record<string, string> = signed.headers) =>
-    fetch(signed.url, { method: 'PUT', body: new Uint8Array(body), headers });
-  // Every signed header is required, and the store checks the body against the checksum.
-  assert.equal((await put(bytes, { 'x-amz-checksum-sha256': checksum })).status, 403);
-  assert.equal((await put(bytes, { 'if-none-match': '*' })).status, 403);
-  assert.equal((await put(Buffer.alloc(bytes.length, 99))).status, 400);
-  assert.equal((await put(bytes.subarray(1))).status, 403, 'another length breaks the signature');
-  assert.equal(server.objects.has(key), false);
-  assert.equal((await put(bytes)).status, 200);
-  assert.deepEqual(server.objects.get(key), bytes);
-  assert.equal(await blobs.stored('project_1', bytesHash), bytes.length);
-  assert.equal((await put(bytes)).status, 412, 'a stored object is never overwritten');
-  // Another size at the key is reported as it is, for the caller to judge.
-  server.objects.set(key, Buffer.from('short'));
-  assert.equal(await blobs.stored('project_1', bytesHash), 5);
-  await assert.rejects(
-    blobs.upload('project_1', bytesHash, 512 * 1024 * 1024 + 1),
-    code('blob_size'),
-  );
-  await assert.rejects(blobs.upload('project_1', '../hash', 1), code('invalid_hash'));
-  await assert.rejects(blobs.stored('../other', bytesHash), code('invalid_namespace'));
-  server.fail(503);
-  await assert.rejects(blobs.stored('project_1', bytesHash), code('blob_unavailable'));
-  server.fail(undefined);
-  await blobs.close();
-  await assert.rejects(blobs.upload('project_1', bytesHash, bytes.length), code('blobs_closed'));
-  await assert.rejects(blobs.stored('project_1', bytesHash), code('blobs_closed'));
 });

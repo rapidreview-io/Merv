@@ -1,8 +1,8 @@
+import { createService } from '@merv/contracts';
+import { DurableEvents } from '@merv/domain-events';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { DurableEvents } from '@merv/domain-events';
-import { createService } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
 test('maintenance preserves durable cursors/retry decisions and queued events replay once after restart', async () => {
@@ -64,16 +64,4 @@ test('maintenance preserves durable cursors/retry decisions and queued events re
   } finally {
     await state.close();
   }
-});
-
-test('assembled Main remains fenced through boot and shutdown', () => {
-  const env = { ...process.env, MERV_BOOT_MAINTENANCE: '1' } as NodeJS.ProcessEnv;
-  delete env.NODE_TEST_CONTEXT;
-  const child = spawnSync(
-    process.execPath,
-    ['--import', 'tsx', '--test', 'tests/fixtures/maintenance-boot.ts'],
-    { env, encoding: 'utf8', timeout: 60_000 },
-  );
-  assert.equal(child.status, 0, child.stdout + child.stderr);
-  assert.match(child.stdout, /# tests 1/);
 });

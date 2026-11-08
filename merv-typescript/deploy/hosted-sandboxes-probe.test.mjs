@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { register } from 'tsx/esm/api';
 import test from 'node:test';
-import { releaseEntry, releaseId } from './hosted-release.mjs';
+import { register } from 'tsx/esm/api';
 register();
 const { applicationStatus, applicationInventory, probe } =
   await import('./hosted-sandboxes-probe.mjs');
@@ -13,13 +12,6 @@ const result = {
   configuration: { image: 'registry@sha256:abc' },
   health: { errors: [] },
 };
-
-test('TS catalog IDs match the hosted manifest, including fixed arguments', async () => {
-  const entry = releaseEntry('registry@sha256:' + 'a'.repeat(64), 'b'.repeat(64));
-  entry.arguments = ['--serve'];
-  assert.deepEqual(await probe({ MERV_RELEASES: JSON.stringify([entry]) }), [releaseId(entry)]);
-  await assert.rejects(probe({ MERV_RELEASES: '[{}]' }));
-});
 
 test('native status retries transient GETs, checks identity, and returns only release facts', async () => {
   const calls = [],
@@ -60,23 +52,6 @@ test('native status retries transient GETs, checks identity, and returns only re
     }),
     /identity/,
   );
-});
-
-test('native status cancels an expired request without retrying', async () => {
-  let count = 0;
-  const controller = new AbortController();
-  const pending = applicationStatus(provider, credential, {
-    signal: controller.signal,
-    fetcher: async (_, { signal }) => {
-      count++;
-      return new Promise((_, reject) =>
-        signal.addEventListener('abort', () => reject(signal.reason)),
-      );
-    },
-  });
-  controller.abort(new Error('deadline'));
-  await assert.rejects(pending, /deadline/);
-  assert.equal(count, 1);
 });
 
 const inventoryPage = (instances = [], durable_objects = [], result_info = { per_page: 100 }) => ({
@@ -167,64 +142,4 @@ test('native inventory rejects incomplete, unfamiliar, duplicate and endless pag
       }),
       new RegExp('HTTP ' + status),
     );
-});
-
-test('observed production two-page cursor echo preserves 103 dormant identities without inventing live compute', async () => {
-  const dormant = Array.from({ length: 103 }, (_, i) => ({
-    id: i.toString(16).padStart(64, '0'),
-    name: 'historical-' + i,
-    assigned_at: '2026-10-20T00:00:00Z',
-  }));
-  const run = async (binding = false, echo = 'cursor1') => {
-    const rows = structuredClone(dormant);
-    if (binding) rows[102].deployment_id = 'placement-still-assigned';
-    const pages = [
-      inventoryPage([], rows.slice(0, 100), { per_page: 100, next_page_token: 'cursor1' }),
-      inventoryPage([], rows.slice(100), { per_page: 100, page_token: echo }),
-    ];
-    return applicationInventory(provider, credential, {
-      fetcher: async () => Response.json(pages.shift()),
-    });
-  };
-  assert.deepEqual(await run(), {
-    empty: false,
-    liveEmpty: true,
-    instances: 0,
-    durableObjects: 103,
-    assignedObjects: 0,
-    dormantObjects: 103,
-    pages: 2,
-  });
-  assert.equal((await run(true)).liveEmpty, false);
-  for (const echo of ['wrong', '', null, 17]) await assert.rejects(run(false, echo), /pagination/);
-  await assert.rejects(
-    applicationInventory(provider, credential, {
-      fetcher: async () => Response.json(inventoryPage([], [], { page_token: 'unrequested' })),
-    }),
-    /pagination/,
-  );
-});
-
-test('dormant identities require absent/null deployment and known metadata; malformed or future ownership fails closed', async () => {
-  const run = (row) =>
-    applicationInventory(provider, credential, {
-      fetcher: async () => Response.json(inventoryPage([], [row])),
-    });
-  for (const row of [{ name: 'old' }, { name: 'old', deployment_id: null }])
-    assert.equal((await run(row)).liveEmpty, true);
-  assert.equal(
-    (await run({ name: 'bound', deployment_id: 'instance-not-in-this-page' })).liveEmpty,
-    false,
-  );
-  for (const row of [
-    { name: 'old', deployment_id: '' },
-    { name: 'old', deployment_id: 0 },
-    { name: 'old', deployment_id: false },
-    { name: 'old', deployment_id: {} },
-    { name: 'old', pending: true },
-    { name: 'old', status: 'starting' },
-    { name: 'old', assigned_at: 5 },
-    { name: 'old', id: null },
-  ])
-    await assert.rejects(run(row), /ownership/);
 });

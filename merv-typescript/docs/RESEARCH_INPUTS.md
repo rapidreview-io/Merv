@@ -150,17 +150,14 @@ reflection scheduler's reserved-slot policy.
 
 ## Historical verification scope
 
-Focused checks cover Scope Introduction authority/replay, frozen worker context,
-complete metadata selection, immutable corpus receipts, missing/foreign refs,
-borrowed-transaction rollback, exact command/final capture provenance and the
-production Git Experiment handoff. Service capture fixtures use synthetic but
-valid full OIDs; they do not prove object existence. Separate local Runner tests
-create real disposable Git repositories and compare captured head/tree objects.
-See [project context tests](../tests/project-context.test.ts),
-[Knowledge tests](../tests/knowledge.test.ts),
-[capture tests](../tests/code-captures.test.ts),
-[Experiment assignments](../tests/experiment-assignments.test.ts), and
-[Code driver tests](../tests/runner-code-driver.test.ts).
+Current generalized checks cover required context, pinned sources and project
+isolation in [context builder tests](../tests/context-builder.test.ts).
+[Code submission tests](../tests/code-submissions.test.ts) use real disposable Git
+repositories to verify exact frozen trees, review gates, rollback and acknowledgement
+recovery. [Experiment lifecycle tests](../tests/experiment-native-lifecycle.test.ts)
+exercise the managed HTTP Git handoff and retained shutdown, while
+[Code driver tests](../tests/runner-code-driver.test.ts) verify retained file content,
+restart-safe capture and read-only reviewer credentials.
 
 The earlier four-agent scratch acceptance remains historical evidence for
 `experiment@1`. Its local successor `live-experiments.ts` was removed after its

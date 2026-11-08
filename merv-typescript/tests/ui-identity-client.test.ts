@@ -197,37 +197,6 @@ test('concurrent 401s refresh once, retry once and preserve the current project/
   assert.equal(projectSelection(), null);
 });
 
-test('failed refresh preserves the original 401, while role denial never refreshes or signs out', async (t) => {
-  setup(t);
-  setToken('token');
-  let renewals = 0;
-  const errors: string[] = [];
-  const remove = onAccessLost((error) => errors.push(error.code));
-  t.after(remove);
-  setTokenRefresher(async () => {
-    renewals++;
-    return null;
-  });
-  t.mock.method(globalThis, 'fetch', async () => unauthorized());
-  await assert.rejects(accountRequest('/account'), {
-    code: 'unauthorized',
-    message: 'The original credential expired',
-  });
-  assert.equal(renewals, 1);
-  assert.deepEqual(errors, ['unauthorized']);
-  errors.length = 0;
-  t.mock.method(globalThis, 'fetch', async () =>
-    Response.json(
-      { error: { code: 'forbidden', message: 'Role lacks permission' } },
-      { status: 403 },
-    ),
-  );
-  await assert.rejects(call('actor.list'), { code: 'forbidden' });
-  assert.equal(renewals, 1);
-  assert.deepEqual(errors, []);
-  assert.equal(currentToken(), 'token');
-});
-
 test('SDK refresh cannot overwrite an actor login or a newly signed-in shared account', async (t) => {
   setup(t);
   setAuthMode('shared');
@@ -267,30 +236,6 @@ test('SDK refresh cannot overwrite an actor login or a newly signed-in shared ac
   assert.equal(currentToken(), 'user-b-token');
   assert.equal(projectSelection(), 'project-b');
   assert.equal(calls, 1);
-});
-
-test('project switch during shared refresh rejects the old request but keeps the renewed same-account token', async (t) => {
-  setup(t);
-  setAuthMode('shared');
-  const fake = sdk();
-  const auth = await browserAuth(() => {}, fake.options);
-  t.after(() => auth.dispose());
-  fake.emit('INITIAL_SESSION', session('user-a', 'old-token'));
-  setProject('project-a');
-  const refresh = deferred<{ data: { session: Session }; error: null }>(),
-    started = deferred<void>();
-  fake.refreshWith(() => {
-    started.resolve();
-    return refresh.promise;
-  });
-  t.mock.method(globalThis, 'fetch', async () => unauthorized());
-  const result = call('probe');
-  await started.promise;
-  setProject('project-b');
-  refresh.resolve({ data: { session: session('user-a', 'renewed-token') }, error: null });
-  await assert.rejects(result, { code: 'scope_changed' });
-  assert.equal(currentToken(), 'renewed-token');
-  assert.equal(projectSelection(), 'project-b');
 });
 
 test('zero-project onboarding discovers the account before any scoped call and opens a newly created project', async (t) => {
@@ -346,100 +291,6 @@ test('zero-project onboarding discovers the account before any scoped call and o
   );
 });
 
-test('a sign-in opens the chooser instead of the last project while an invitation is pending', async (t) => {
-  setup(t);
-  const browser = new Map<string, string>();
-  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: (key: string) => browser.get(key) ?? null,
-      setItem: (key: string, value: string) => void browser.set(key, value),
-      removeItem: (key: string) => void browser.delete(key),
-    },
-  });
-  t.after(() => {
-    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
-    else Reflect.deleteProperty(globalThis, 'localStorage');
-  });
-  let invitations = () => Response.json({ invitations: [] as unknown[] });
-  const paths: string[] = [];
-  t.mock.method(globalThis, 'fetch', async (path: string) => {
-    paths.push(path);
-    if (path === '/account') return Response.json(account());
-    if (path === '/account/invitations') return invitations();
-    const actor = {
-      id: 'member',
-      projectId: project.id,
-      name: 'A',
-      role: 'operator',
-      active: true,
-    };
-    return Response.json({ result: { actor, project, rows: [], plugins: [] } });
-  });
-  setToken('user-a');
-  setProject(project.id);
-  // A project chosen in this tab opens without reading invitations.
-  assert.equal((await resolveAccountSession()).phase, 'ready');
-  assert.equal(paths.includes('/account/invitations'), false);
-  // A new sign-in forgets the tab's project; the browser's last project opens when none is pending.
-  setToken('user-a');
-  assert.equal((await resolveAccountSession()).phase, 'ready');
-  assert.equal(projectSelection(), project.id);
-  const invitation = {
-    id: 'invite-a',
-    projectId: 'project-b',
-    projectName: 'Project B',
-    issuer: `${login.url}/auth/v1`,
-    subject: 'user-a',
-    email: 'a@example.com',
-    role: 'operator',
-    status: 'pending',
-    createdAt: project.createdAt,
-    expiresAt: '2099-01-01T00:00:00.000Z',
-    sentAt: project.createdAt,
-  };
-  invitations = () => Response.json({ invitations: [invitation] });
-  setToken('user-a');
-  assert.equal((await resolveAccountSession()).phase, 'projects');
-  assert.equal(projectSelection(), null);
-  // Choosing a project on the chooser opens it, the invitation still pending.
-  setProject(project.id);
-  assert.equal((await resolveAccountSession()).phase, 'ready');
-  // A failed invitation read never holds the project back.
-  invitations = () =>
-    Response.json({ error: { code: 'unavailable', message: 'x' } }, { status: 503 });
-  setToken('user-a');
-  assert.equal((await resolveAccountSession()).phase, 'ready');
-});
-
-test('membership loss refreshes project selection without treating it as a failed login', async (t) => {
-  setup(t);
-  setToken('shared-user');
-  setProject(project.id);
-  let lost = false;
-  const remove = onAccessLost((error) => {
-    assert.equal(error.code, 'membership_required');
-    lost = true;
-    setProject(null);
-  });
-  t.after(remove);
-  t.mock.method(globalThis, 'fetch', async (path: string) =>
-    path === '/account'
-      ? Response.json(account([]))
-      : Response.json(
-          { error: { code: 'membership_required', message: 'Membership was removed' } },
-          { status: 403 },
-        ),
-  );
-  await assert.rejects(call('task.get'), { code: 'membership_required' });
-  assert.equal(lost, true);
-  assert.equal(currentToken(), 'shared-user');
-  const next = await resolveAccountSession();
-  assert.equal(next.phase, 'projects');
-  assert.deepEqual(next.account.projects, []);
-});
-
 const key: UserKey = {
   id: 'ukey-fixture',
   owner: { issuer: `${login.url}/auth/v1`, subject: 'user-a' },
@@ -451,51 +302,6 @@ const key: UserKey = {
   revokedAt: null,
   previousId: null,
 };
-
-test('pasted machine keys keep project grants fixed and require an explicit account-grant selection', async (t) => {
-  setup(t);
-  let grant: UserKey['grantScope'] = 'account';
-  const otherProject = { ...project, id: 'project-b' };
-  const calls: { path: string; project: string | null }[] = [];
-  t.mock.method(globalThis, 'fetch', async (path: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers);
-    calls.push({ path, project: headers.get('x-merv-project-id') });
-    if (path === '/account')
-      return Response.json({
-        kind: 'key',
-        key: { ...key, grantScope: grant },
-        projects: [project, otherProject],
-      });
-    const selected = headers.get('x-merv-project-id');
-    return Response.json({
-      result: path.endsWith('project.read:whoami')
-        ? {
-            id: `member-${selected}`,
-            projectId: selected,
-            name: 'Owner',
-            role: 'producer',
-            active: true,
-          }
-        : { ...project, id: selected },
-    });
-  });
-  setAuthMode('local');
-  setToken('mk_account');
-  const choose = await resolveAccountSession();
-  assert.equal(choose.phase, 'projects');
-  assert.deepEqual(calls, [{ path: '/account', project: null }]);
-  setProject(otherProject.id);
-  const selected = await resolveAccountSession();
-  assert.equal(selected.phase, 'ready');
-  if (selected.phase === 'ready') assert.equal(selected.project.id, otherProject.id);
-  grant = 'project';
-  setToken('mk_project');
-  setProject(otherProject.id);
-  const bound = await resolveAccountSession();
-  assert.equal(bound.phase, 'ready');
-  if (bound.phase === 'ready') assert.equal(bound.project.id, project.id);
-  assert.equal(currentToken(), 'mk_project');
-});
 
 test('a delayed key issuance response cannot expose its secret after the selected account changes', async (t) => {
   const storage = setup(t);

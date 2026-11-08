@@ -22,7 +22,7 @@
     "test:live": "node --import tsx scripts/live-codex.ts",
     "test:live:sessions": "node --import tsx scripts/live-sessions.ts",
     "test:live:dispatch": "node --import tsx scripts/live-sessions.ts --automatic",
-    "test:sessions": "node --import tsx --test tests/sessions.test.ts tests/sessions-api.test.ts tests/sessions-integration.test.ts tests/workflow-leases.test.ts tests/workflow-dispatch.test.ts",
+    "test:sessions": "node --import tsx --test tests/sessions.test.ts tests/sessions-api.test.ts tests/session-inquiries.test.ts tests/workflow-leases.test.ts tests/workflow-dispatch.test.ts",
     "test:runner": "node --import tsx --test tests/runner-*.test.ts",
     "test:deploy": "node --test deploy/*.test.mjs scripts/hosted-runner/*.test.mjs && npm run test:staging-isolation",
     "test:feed-unload": "node --import tsx scripts/feed-unload.ts",

@@ -48,7 +48,9 @@ export async function POST(req: Request) {
     }),
   });
   if (!entry.ok) return upstream("entry", entry);
-  await confirm(email);
+  await confirm(email).catch((error) =>
+    console.error("resend: confirmation not sent", error),
+  );
   return new Response(null, { status: 204 });
 }
 async function confirm(email: string) {

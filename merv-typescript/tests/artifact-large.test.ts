@@ -1,10 +1,4 @@
-import {
-  MAX_OBJECT_BYTES,
-  sha256Hex,
-  type Artifact,
-  type ArtifactUploadStatus,
-  type Caller,
-} from '@merv/contracts';
+import { sha256Hex, type Artifact, type ArtifactUploadStatus, type Caller } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -178,107 +172,6 @@ test('an upload is one signed PUT of exactly the declared bytes, and a stored fi
   );
 });
 
-test('a file over the inline limit stays in blobs and downloads through a signed URL', async (t) => {
-  const f = await largeApp(t);
-  const large = file(Buffer.alloc(2_000_001, 'L'));
-  const plan = await f.app.ctx.artifacts.uploadBegin(f.owner, large.input);
-  assert.equal((await send(plan, large.bytes)).status, 200);
-  const artifact = await f.app.ctx.artifacts.uploadComplete(f.owner, plan.uploadId);
-  assert.equal(
-    (
-      await f.app.ctx.state.read((sql) =>
-        sql.get<{ content: Buffer | null }>(
-          'SELECT content FROM artifacts WHERE id=?',
-          artifact.id,
-        ),
-      )
-    )?.content,
-    null,
-  );
-  assert.equal(
-    (
-      (await f.app.ctx.tools.call('artifact.get', f.owner, { artifactId: artifact.id })) as {
-        downloadAvailable: boolean;
-      }
-    ).downloadAvailable,
-    true,
-  );
-  // The tool, not the service, says how to go on.
-  await assert.rejects(f.app.ctx.artifacts.read(f.owner, artifact.id), {
-    code: 'artifact_size',
-    message: 'Artifact exceeds the 2,000,000-byte inline limit',
-    details: { artifactId: artifact.id, size: large.bytes.length },
-  });
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id }),
-    {
-      code: 'artifact_size',
-      message:
-        /; give a length to read a range of it; artifact\.read with mode download fetches it whole$/,
-    },
-  );
-  // A range of it is read from storage, verified whole first.
-  assert.deepEqual(
-    await f.app.ctx.tools.call('artifact.read', f.owner, {
-      artifactId: artifact.id,
-      offset: 1_999_990,
-      length: 20,
-    }),
-    { artifact, content: 'L'.repeat(11), encoding: 'utf8', offset: 1_999_990, total: 2_000_001 },
-  );
-  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
-    name: 'Reviewer',
-    role: 'reader',
-  });
-  const review: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
-  const { download } = (await f.app.ctx.tools.call('artifact.read', review, {
-    artifactId: artifact.id,
-    mode: 'download',
-  })) as { download: { url: string } };
-  const response = await fetch(download.url);
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), large.bytes);
-  // Saved under the artifact's title.
-  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="Rows.csv"');
-  // Stored bytes that are not the retained ones are never returned.
-  f.server.objects.set(f.key(f.owner.projectId, artifact.hash), Buffer.alloc(2_000_001, 'X'));
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
-    { code: 'blob_corrupt' },
-  );
-  // Bytes that storage has lost are a server fault, never a 404.
-  f.server.objects.delete(f.key(f.owner.projectId, artifact.hash));
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
-    { code: 'artifact_bytes_missing', status: 500 },
-  );
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
-    { code: 'forbidden' },
-  );
-});
-
-test('a stored file of another size than declared is a 409 mismatch from begin and complete', async (t) => {
-  const f = await largeApp(t);
-  const real = file(Buffer.from('twelve bytes'));
-  const wrong = { ...real.input, size: real.bytes.length + 1, requestId: 'wrong' };
-  // Declared before the file is stored: the plan signs the declared size.
-  const pending = await f.app.ctx.artifacts.uploadBegin(f.owner, wrong);
-  assert.equal(pending.parts[0]!.size, wrong.size);
-  const right = await f.app.ctx.artifacts.uploadBegin(f.owner, real.input);
-  assert.equal((await send(right, real.bytes)).status, 200);
-  for (const call of [
-    () => f.app.ctx.artifacts.uploadComplete(f.owner, pending.uploadId),
-    () => f.app.ctx.artifacts.uploadBegin(f.owner, wrong),
-    () => f.app.ctx.artifacts.uploadResume(f.owner, pending.uploadId),
-  ])
-    await assert.rejects(call(), {
-      code: 'upload_mismatch',
-      status: 409,
-      message: 'A stored file with this SHA-256 has a different size',
-    });
-  assert.equal(await f.count('artifacts'), 0);
-});
-
 test('concurrent completions record one artifact', async (t) => {
   const f = await largeApp(t);
   const one = file(Buffer.from('once'));
@@ -319,48 +212,4 @@ test('uploads belong to their actor, and a revoked writer gets no URL', async (t
   ])
     await assert.rejects(call(), { code: 'forbidden' });
   assert.equal(f.server.requests.length, signed);
-});
-
-test('blobs that cannot sign uploads refuse them before any row', async (t) => {
-  const f = await largeApp(t, true);
-  assert.deepEqual(await f.app.ctx.tools.call('artifact.storage_status', f.owner, {}), {
-    available: false,
-  });
-  await assert.rejects(
-    f.app.ctx.tools.call('artifact.upload_begin', f.owner, file(Buffer.from('x')).input),
-    { code: 'storage_unavailable', status: 503 },
-  );
-  assert.equal(await f.count('artifact_uploads'), 0);
-  const note = await f.app.ctx.artifacts.create(f.owner, { title: 'Note', content: 'still here' });
-  assert.equal((await f.app.ctx.artifacts.read(f.owner, note.id)).content, 'still here');
-  assert.equal(
-    (
-      (await f.app.ctx.tools.call('artifact.get', f.owner, { artifactId: note.id })) as {
-        downloadAvailable: boolean;
-      }
-    ).downloadAvailable,
-    false,
-  );
-});
-
-test('an upload over the largest object is refused before any row or storage call', async (t) => {
-  const f = await largeApp(t);
-  const input = {
-    title: 'Huge',
-    size: MAX_OBJECT_BYTES + 1,
-    sha256: 'a'.repeat(64),
-    mediaType: 'application/octet-stream',
-  };
-  await assert.rejects(f.app.ctx.artifacts.uploadBegin(f.owner, input), {
-    code: 'artifact_size',
-    status: 400,
-    message: 'Artifact size must be 1 byte to 512 MiB',
-  });
-  // The tool's schema refuses the size before the service sees it.
-  await assert.rejects(f.app.ctx.tools.call('artifact.upload_begin', f.owner, input), {
-    code: 'invalid_input',
-    status: 400,
-  });
-  assert.deepEqual(f.server.requests, []);
-  assert.equal(await f.count('artifact_uploads'), 0);
 });

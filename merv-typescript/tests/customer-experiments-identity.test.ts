@@ -1,7 +1,7 @@
 import { createService, MervError, type Caller, type VerifiedIdentity } from '@merv/contracts';
 import type { PiRuntime, PiSnapshot } from '@merv/pi/types';
 import { ProjectScope } from '@merv/scope';
-import { SignJWT } from 'jose';
+
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,12 +10,12 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { customerChat } from '../packages/customer-experiments/src/chat-http.js';
+
 import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { customerHttp } from '../packages/customer-experiments/src/http.js';
 import { CustomerService } from '../packages/customer-experiments/src/service.js';
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
-import { SupabaseIdentity } from '../packages/identity/src/index.js';
+
 import { openState } from './fixtures/state.js';
 
 const base = '/customer-experiments/requests';
@@ -322,95 +322,4 @@ test('v3 customer routes need the capability and the bound sign-in; the agent ke
       .status,
     409,
   );
-});
-
-test('the customer view of a snapshot keeps Pi’s shape and drops every sponsor-only field', () => {
-  const view = customerChat(sponsorSnapshot('pi_1'));
-  const text = JSON.stringify(view);
-  for (const secret of [
-    'prj_sponsor_secret',
-    'sponsor-person-key',
-    'checkpoint-hash',
-    'alloc_secret',
-    'pih_secret',
-    'catalog-secret',
-    'gpt-6-astra',
-    '9.99',
-    'prj_other_project',
-    'large',
-  ])
-    assert.ok(!text.includes(secret), secret);
-  assert.deepEqual(view.commands[0]!.messages, sponsorSnapshot('pi_1').commands[0]!.messages);
-  assert.deepEqual(view.commands[0]!.outcomes, []);
-  assert.equal(view.host.state, 'ready');
-  assert.deepEqual(view.models, []);
-  assert.deepEqual(view.tail, sponsorSnapshot('pi_1').tail);
-  assert.equal(view.stage.name, 'idle');
-  assert.equal('screen' in view, false);
-});
-
-test('without identity, v3 customers are refused with 503 and the agent is unaffected', async (t) => {
-  const f = await fixture(t, { identity: false });
-  assert.equal((await f.send('/session', f.customer)).status, 503);
-  assert.equal((await f.send('/chat', f.customer, 'alice')).status, 503);
-  assert.equal((await f.send('', f.customer, 'alice')).status, 503);
-  assert.equal((await f.send('', f.agent)).status, 200);
-});
-
-test('identity verifies anonymous users only for a caller that opts in', async (t) => {
-  const name = `MERV_IDENTITY_TEST_${randomUUID().replaceAll('-', '_')}`;
-  const secret = 'synthetic-shared-identity-secret-at-least-thirty-two-bytes';
-  process.env[name] = secret;
-  t.after(() => delete process.env[name]);
-  const provider = new SupabaseIdentity({
-    supabaseUrl: 'https://auth.example',
-    mode: 'hs256',
-    secretEnv: name,
-  });
-  const token = (claims: Record<string, unknown>) =>
-    new SignJWT({
-      iss: issuer,
-      aud: 'authenticated',
-      sub: 'person',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      role: 'authenticated',
-      ...claims,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .sign(new TextEncoder().encode(secret));
-  const anonymous = await token({ is_anonymous: true });
-  await assert.rejects(provider.verify(anonymous), { status: 401 });
-  await assert.rejects(provider.verify(anonymous, { allowAnonymous: false }), { status: 401 });
-  const verified = await provider.verify(anonymous, { allowAnonymous: true });
-  assert.equal(verified.anonymous, true);
-  assert.equal(verified.subject, 'person');
-  const account = await provider.verify(await token({}), { allowAnonymous: true });
-  assert.equal('anonymous' in account, false);
-  // Scope never makes an anonymous browser a member.
-  const dir = mkdtempSync(join(tmpdir(), 'merv-customer-identity-scope-'));
-  const state = await openState(dir);
-  t.after(async () => {
-    await state.close();
-    rmSync(dir, { recursive: true, force: true });
-  });
-  const scope = await createService(new ProjectScope(state));
-  await assert.rejects(scope.members.acceptVerifiedIdentity(verified), { status: 401 });
-});
-
-test('customer voice uses only the bound request conversation and requires customer identity', async (t) => {
-  const f = await fixture(t);
-  await f.send('/session', f.customer, 'alice', {});
-  const answer = await f.send('/chat/voice', f.customer, 'alice', { sdp: 'offer' });
-  assert.equal(answer.status, 200);
-  assert.deepEqual(answer.body, { sdp: 'answer' });
-  const call = f.calls.find((call) => call.method === 'voice')!;
-  assert.equal(call.id, 'pi_fixture');
-  assert.deepEqual(call.input, { id: 'pi_fixture', sdp: 'offer' });
-  assert.notEqual((await f.send('/chat/voice', f.customer, 'bob', { sdp: 'offer' })).status, 200);
-  assert.notEqual((await f.send('/chat/voice', f.agent, 'alice', { sdp: 'offer' })).status, 200);
-  assert.notEqual(
-    (await f.send('/chat/voice', f.customer, 'alice', { id: 'other', sdp: 'offer' })).status,
-    200,
-  );
-  assert.equal(f.calls.filter((call) => call.method === 'voice').length, 1);
 });

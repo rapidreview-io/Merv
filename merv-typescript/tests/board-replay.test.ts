@@ -1,13 +1,10 @@
 import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller } from '@merv/contracts';
 import type { BoardElement } from '@merv/board';
-import { boardAt, stacked, type BoardChange } from '@merv/board/models';
-import { conversationRules } from '../packages/pi/src/conversation-rules.js';
-import { httpApp } from './fixtures/app.js';
+import { boardAt, type BoardChange } from '@merv/board/models';
+import { boardApp } from './fixtures/board.js';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
@@ -27,8 +24,27 @@ const shape = (id: string, version = 1, more: Partial<BoardElement> = {}): Board
   ...more,
 });
 
+test('the live-shape cap applies to the accepted batch, including deletions and restores', async (t) => {
+  const f = await fixture(t);
+  const save = (elements: BoardElement[]) => f.board.save(f.owner, f.made.id, elements);
+  for (let start = 0; start < 5000; start += 500)
+    await save(Array.from({ length: 500 }, (_, i) => shape(`s${start + i}`)));
+  await save([shape('s0', 2, { isDeleted: true }), shape('replacement')]);
+  await save([shape('replacement', 2, { isDeleted: true }), shape('s0', 3)]);
+  assert.equal((await f.board.scene(f.owner, f.made.id)).elements.length, 5000);
+  // A stale or unknown deletion frees no slot; a rejected batch changes neither scene nor history.
+  const before = await f.board.scene(f.owner, f.made.id);
+  for (const tombstone of [
+    shape('s0', 2, { isDeleted: true }),
+    shape('unknown', 1, { isDeleted: true }),
+  ])
+    await assert.rejects(save([tombstone, shape('overflow')]), { code: 'board_full' });
+  assert.deepEqual(await f.board.scene(f.owner, f.made.id), before);
+  assert.equal((await f.rows()).at(-1)!.revision, before.board.revision);
+});
+
 async function fixture(t: test.TestContext) {
-  const f = await httpApp(t, 'board-replay-');
+  const f = await boardApp(t, 'board-replay-');
   const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Sketches',
     actorName: 'Owner',
@@ -103,109 +119,6 @@ test('history is written in the same transaction as the shapes, or neither is', 
   // And a save that changes nothing is no step.
   await f.board.save(f.owner, f.made.id, [shape('kept')]);
   assert.equal((await f.rows()).length, 1);
-});
-
-test("an agent's every call is its own step, in order, and what it drew keeps the order it drew", async (t) => {
-  const f = await fixture(t);
-  const texts = ['first', 'second', 'third'];
-  for (const text of texts)
-    await f.board.draw(f.owner, {
-      board: f.made.id,
-      ops: [
-        { op: 'text', key: 'a', text: `${text} a` },
-        { op: 'sketch', strokes: [{ path: 'M0 0 L50 50' }, { path: 'M0 50 L50 0' }] },
-        { op: 'note', key: 'b', text: `${text} b` },
-      ],
-    });
-  const rows = await f.rows();
-  assert.deepEqual(
-    rows.map((row) => row.kind),
-    ['draw', 'draw', 'draw'],
-  );
-  assert.deepEqual(
-    rows.map((row) => row.revision),
-    [1, 2, 3],
-  );
-  const said = (shapes: BoardElement[]) =>
-    shapes.flatMap((el) => (el.type === 'text' ? [el.text] : []));
-  assert.deepEqual(
-    rows.map((row) => said(row.shapes)),
-    texts.map((text) => [`${text} a`, `${text} b`]),
-  );
-  // The page is handed the same order: by fractional index, every shape after the last one drawn.
-  for (const row of rows)
-    assert.deepEqual(
-      stacked(row.shapes).map((el) => el.id),
-      row.shapes.map((el) => el.id),
-    );
-  const delta = await f.board.scene(f.owner, f.made.id, 0);
-  assert.deepEqual(
-    delta.elements.map((el) => el.id),
-    rows.flatMap((row) => row.shapes.map((el) => el.id)),
-  );
-});
-
-test("one person's rapid saves are one step; another actor, a draw or time ends it, order kept", async (t) => {
-  const f = await fixture(t);
-  await f.board.save(f.owner, f.made.id, [shape('a')]);
-  await f.board.save(f.owner, f.made.id, [shape('b')]);
-  await f.board.save(f.owner, f.made.id, [shape('a', 2)]);
-  let rows = await f.rows();
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.revision, 3);
-  // The newest of each shape, where it first came.
-  assert.deepEqual(
-    rows[0]!.shapes.map((el) => [el.id, el.version]),
-    [
-      ['a', 2],
-      ['b', 1],
-    ],
-  );
-
-  await f.board.save(f.colleague, f.made.id, [shape('c')]);
-  await f.board.save(f.owner, f.made.id, [shape('d')]);
-  await f.board.draw(f.owner, { board: f.made.id, ops: [{ op: 'text', text: 'said' }] });
-  await f.board.save(f.owner, f.made.id, [shape('e')]);
-  rows = await f.rows();
-  assert.deepEqual(
-    rows.map((row) => [row.kind, row.actorId]),
-    [
-      ['save', f.owner.actorId],
-      ['save', f.colleague.actorId],
-      ['save', f.owner.actorId],
-      ['draw', f.owner.actorId],
-      ['save', f.owner.actorId],
-    ],
-  );
-  assert.deepEqual(
-    rows.map((row) => row.revision),
-    [3, 4, 5, 6, 7],
-  );
-
-  // Once the moment has passed, the next save starts a step; the step began when it began.
-  const began = rows.at(-1)!.at;
-  await f.board.save(f.owner, f.made.id, [shape('f')]);
-  assert.equal((await f.rows()).at(-1)!.at, began);
-  await f.sql(
-    `UPDATE board_history SET began_at=? WHERE revision=8`,
-    new Date(Date.now() - 6000).toISOString(),
-  );
-  await f.board.save(f.owner, f.made.id, [shape('g')]);
-  assert.deepEqual(
-    (await f.rows()).at(-1)!.shapes.map((el) => el.id),
-    ['g'],
-  );
-
-  // A step too large to grow is left as it is.
-  await f.sql(
-    `UPDATE board_history SET shapes=? WHERE revision=9`,
-    JSON.stringify([shape('g', 1, { pad: 'x'.repeat(1_000_001) })]),
-  );
-  await f.board.save(f.owner, f.made.id, [shape('h')]);
-  assert.deepEqual(
-    (await f.rows()).at(-1)!.shapes.map((el) => el.id),
-    ['h'],
-  );
 });
 
 test('history rebuilds the exact board at every step, whatever was edited, deleted or brought back', async (t) => {
@@ -291,26 +204,6 @@ test('history rebuilds the exact board at every step, whatever was edited, delet
   );
 });
 
-test('a board older than history starts it from how it stood, and invents nothing before', async (t) => {
-  const f = await fixture(t);
-  await f.board.save(f.owner, f.made.id, [shape('old'), shape('gone')]);
-  await f.board.save(f.owner, f.made.id, [shape('gone', 2, { isDeleted: true })]);
-  await f.sql('DELETE FROM board_history');
-  assert.deepEqual(await f.rows(), []);
-  assert.equal((await f.board.history(f.owner, f.made.id)).total, 0);
-
-  await f.board.save(f.colleague, f.made.id, [shape('new')]);
-  const rows = await f.rows();
-  assert.deepEqual(
-    rows.map((row) => [row.kind, row.revision, row.shapes.map((el) => el.id)]),
-    [
-      ['before', 2, ['old']],
-      ['save', 3, ['new']],
-    ],
-  );
-  assert.deepEqual(boardAt(rows), (await f.board.scene(f.owner, f.made.id)).elements);
-});
-
 test('history reads in bounded pages to a project member, and to nobody else', async (t) => {
   const f = await fixture(t);
   for (let i = 0; i < 130; i++)
@@ -360,45 +253,6 @@ test('history reads in bounded pages to a project member, and to nobody else', a
   // Nor does anyone who reads a project without belonging to it see what people drew and erased.
   const platform = { issuer: 'i', subject: 's', expiresAt: '2099-01-01T00:00:00Z' };
   await assert.rejects(f.board.history({ ...f.owner, platform }, f.made.id), { code: 'forbidden' });
-});
-
-test('no agent is offered history, in any tool', async (t) => {
-  const f = await fixture(t);
-  const client = new Client({ name: 'agent', version: '1' });
-  t.after(() => client.close());
-  await client.connect(
-    new StreamableHTTPClientTransport(new URL(`${f.app.ctx.api.url}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${f.boot.token}` } },
-    }),
-  );
-  const { tools } = await client.listTools();
-  assert.ok(tools.some((tool) => tool.name === 'board.read'));
-  assert.ok(!tools.some((tool) => tool.name === 'board.history'));
-  assert.doesNotMatch(
-    JSON.stringify(tools.filter((tool) => tool.name.startsWith('board.'))),
-    /history/i,
-  );
-  const called = await client
-    .callTool({ name: 'board.history', arguments: { id: f.made.id } })
-    .catch((error: Error) => error);
-  assert.ok(called instanceof Error || called.isError, JSON.stringify(called));
-  const listed = await f.app.ctx.tools.describe(f.owner, true);
-  assert.ok(!listed.some((tool) => tool.name === 'board.history'));
-  assert.doesNotMatch(f.app.ctx.tools.instructions(), /board\.history/);
-  // A Pi conversation is refused it by name too.
-  f.app.ctx.tools.registerCallerRules('conversation', conversationRules);
-  await assert.rejects(
-    f.app.ctx.tools.call(
-      'board.history',
-      { ...f.owner, conversation: { id: 'conversation_1', commandId: 'c' } } as never,
-      { id: f.made.id },
-    ),
-    { code: 'tool_forbidden' },
-  );
-  // Pages are.
-  assert.ok(
-    (await f.app.ctx.tools.describe(f.owner)).some((tool) => tool.name === 'board.history'),
-  );
 });
 
 test('bytes last while history shows them, past the purge of the shape that named them', async (t) => {

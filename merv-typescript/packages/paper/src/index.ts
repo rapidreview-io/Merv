@@ -324,9 +324,9 @@ export class PaperService implements Paper {
           `Edit ${content.edit + 1} of section ${change.id} finds ${quoted(find, 80)} ${content.repeated ? 'more than once' : 'nowhere'} in ${input.kind} revision ${before.revision}${content.edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once in the section as paper.read with kind ${input.kind} and section ${change.id} returns it${content.repeated ? ', so quote more of the text around it' : ''}`,
         );
       }
-      // Edits keep a section within the length its whole content may have, so it can be resent.
+      // Edits and stale whole-section merges must stay small enough to be resent whole.
       check(
-        !change.edits || content.length <= 100_000,
+        content.length <= 100_000,
         'paper_too_large',
         `Section ${change.id} would hold ${content.length} characters after its edits, and a section holds at most 100,000: put the rest in a section of its own`,
       );

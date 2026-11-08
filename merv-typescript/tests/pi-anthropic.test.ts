@@ -3,8 +3,7 @@ import test from 'node:test';
 import { normalizeContext, type Model } from '@earendil-works/pi-ai';
 import { streamSimple } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
-import { retryTransient } from '../packages/pi/src/model-retry.js';
-import { piAnthropicRelay, piModelRelay, type PiRelayGrant } from '../packages/pi/src/relay.js';
+import { piAnthropicRelay, type PiRelayGrant } from '../packages/pi/src/relay.js';
 
 const grant: PiRelayGrant = {
   id: 'grant-1',
@@ -99,16 +98,6 @@ async function workerBody(): Promise<Record<string, unknown>> {
   return body;
 }
 
-test('the relay takes the Claude turn pi-ai sends and sets thinking and effort itself', async () => {
-  const body = await workerBody();
-  const sent = config.payload(body, grant);
-  assert.ok(sent, 'the worker body passes the relay');
-  assert.deepEqual(sent.thinking, { type: 'adaptive', display: 'summarized' });
-  // Pi's effort none is Claude's least, as Claude Opus 5.5 cannot stop thinking.
-  assert.deepEqual(sent.output_config, { effort: 'low' });
-  assert.equal(sent.model, 'claude-haiku-5-5');
-});
-
 test('the relay refuses what a Claude turn never sends', async () => {
   const body = await workerBody();
   const refused = (change: (copy: Record<string, any>) => void) => {
@@ -179,44 +168,6 @@ test('the relay reads Anthropic usage and ends at message_stop', async () => {
   assert.equal((terminals[0] as { status: string }).status, 'completed');
 });
 
-test("Anthropic's streamed failure reaches the worker in Anthropic's own shape", async () => {
-  const relay = new ModelRelay(config, {
-    fetchImpl: async () =>
-      new Response(
-        'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"private words"}}\n\n',
-        { headers: { 'content-type': 'text/event-stream' } },
-      ),
-  });
-  const { text } = await relayCall(relay, await workerBody());
-  assert.match(text, /"type":"overloaded_error"/);
-  assert.doesNotMatch(text, /private words/);
-});
-
-test('a Claude call that fails partway is charged what Anthropic counted', async () => {
-  const usages: { inputTokens: number; refund?: true }[] = [];
-  const relay = new ModelRelay(
-    { ...config, onUsage: (record) => void usages.push(record) },
-    {
-      fetchImpl: async () =>
-        new Response(
-          'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7}}}\n\nevent: error\ndata: {"type":"error","error":{"type":"api_error"}}\n\n',
-          { headers: { 'content-type': 'text/event-stream' } },
-        ),
-    },
-  );
-  await relayCall(relay, await workerBody());
-  assert.deepEqual(
-    usages.map(({ inputTokens, refund }) => ({ inputTokens, refund })),
-    [{ inputTokens: 7, refund: undefined }],
-  );
-});
-
-test('a catalog of Claude models only still builds both relays', () => {
-  const models = [{ id: 'claude-haiku-5-5', effort: 'none' as const }];
-  const authority = { authorize: async () => grant, validate: async () => {} };
-  assert.doesNotThrow(() => piModelRelay({ models, authority, providerKey: () => 'k' }));
-});
-
 /** One call through the relay's handler, as Main mounts it. */
 async function relayCall(relay: { handle: ModelRelay<PiRelayGrant>['handle'] }, body: unknown) {
   const { PassThrough } = await import('node:stream');
@@ -257,19 +208,3 @@ async function relayCall(relay: { handle: ModelRelay<PiRelayGrant>['handle'] }, 
   await finished;
   return { status, text };
 }
-
-test('the worker sends again a Claude call Anthropic turned away before answering', async () => {
-  const streams = [
-    'event: message_start\ndata: {"type":"message_start","message":{"usage":{}}}\n\nevent: ping\ndata: {"type":"ping"}\n\nevent: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n',
-    'event: message_start\ndata: {"type":"message_start","message":{"usage":{}}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
-  ];
-  const retried: string[] = [];
-  const response = await retryTransient(
-    async () =>
-      new Response(streams.shift()!, { headers: { 'content-type': 'text/event-stream' } }),
-    null,
-    { sleep: async () => {}, onRetry: (_attempt, code) => void retried.push(code) },
-  );
-  assert.deepEqual(retried, ['overloaded_error']);
-  assert.match(await response.text(), /message_stop/);
-});

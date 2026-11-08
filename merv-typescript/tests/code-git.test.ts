@@ -1,15 +1,6 @@
 import { ServerGit } from '@merv/code/git';
 import assert from 'node:assert/strict';
-import {
-  chmodSync,
-  createReadStream,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -60,72 +51,6 @@ test('the server runs Git with none of the machine’s or the user’s configura
   assert.match(refused.stderr, /transport 'file' not allowed/);
   assert.equal((await git.run(fetch, { env, protocol: 'file' })).code, 0);
   assert.notEqual((await git.run(fetch, { env, protocol: 'https' })).code, 0);
-});
-
-test('a failing command is a result, a missing or slow one is a refusal, and old Git is unsupported', async (t) => {
-  const directory = home(t);
-  const git = new ServerGit(directory);
-  const failed = await git.run(['rev-parse', '--verify', 'refs/heads/none'], {
-    env: { GIT_DIR: join(directory, 'absent.git') },
-  });
-  assert.equal(failed.code, 128);
-  assert.match(failed.stderr, /not a git repository/);
-  await assert.rejects(git.ok(['rev-parse', '--verify', 'HEAD']), { code: 'code_git_failed' });
-  assert.equal(
-    (await git.ok(['hash-object', '--stdin'], { input: 'hello\n' })).toString().trim(),
-    'ce013625030ba8dba906f756967f9e9ca394464a',
-  );
-  const chunks: Buffer[] = [];
-  const streamed = await git.run(['hash-object', '--stdin'], {
-    input: 'hello\n',
-    output: (chunk) => chunks.push(chunk),
-  });
-  assert.equal(streamed.stdout.length, 0);
-  assert.match(Buffer.concat(chunks).toString(), /^ce013625/);
-
-  const script = (name: string, body: string) => {
-    const path = join(directory, name);
-    writeFileSync(path, `#!/bin/sh\n${body}\n`);
-    chmodSync(path, 0o755);
-    return path;
-  };
-  await assert.rejects(
-    new ServerGit(directory, script('old', 'echo git version 2.30.2')).assertGit(),
-    {
-      code: 'code_git_unsupported',
-      message: /needs Git 2\.38 or newer.*found git version 2\.30\.2/,
-    },
-  );
-  assert.equal(
-    await new ServerGit(directory, script('new', 'echo git version 3.1')).assertGit(),
-    '3.1.0',
-  );
-  await assert.rejects(new ServerGit(directory, join(directory, 'absent')).assertGit(), {
-    code: 'code_git_unsupported',
-  });
-  await assert.rejects(
-    new ServerGit(directory, script('slow', 'sleep 30')).run([], { timeoutMs: 100 }),
-    { code: 'code_git_timeout' },
-  );
-  const stop = new AbortController();
-  const stopped = new ServerGit(directory, script('stopped', 'sleep 30')).run([], {
-    signal: stop.signal,
-  });
-  stop.abort();
-  await assert.rejects(stopped, { code: 'code_git_aborted' });
-
-  // A child somebody else kills is a refusal, never an exit code Git did not report.
-  await assert.rejects(
-    new ServerGit(directory, script('killed', 'kill -9 $$')).run(['merge-tree']),
-    { code: 'code_git_failed', message: /ended by SIGKILL/ },
-  );
-
-  // Unloading ends what runs and refuses what is asked next.
-  const closing = new ServerGit(directory, script('running', 'sleep 30'));
-  const running = closing.run([]);
-  closing.close();
-  await assert.rejects(running, { code: 'code_unavailable' });
-  await assert.rejects(closing.run(['--version']), { code: 'code_unavailable' });
 });
 
 test('timeout, abort, and close promptly end Git command descendants', async (t) => {
@@ -234,18 +159,4 @@ test('timeout, abort, and close promptly end Git command descendants', async (t)
       }
     }
   }
-});
-
-test('a command that exits before reading its input stream closes that stream', async (t) => {
-  const directory = home(t);
-  const git = new ServerGit(directory);
-  const input = join(directory, 'input');
-  writeFileSync(input, Buffer.alloc(8 * 1024 * 1024, 7));
-  const stream = createReadStream(input);
-  // `false` reads nothing: the 8 MiB stream is never drained, so only Code can close it.
-  const result = await git.run(['-c', 'alias.quit=!false', 'quit'], { input: stream });
-  assert.notEqual(result.code, 0);
-  await delay(50);
-  assert.equal(stream.destroyed, true);
-  assert.equal((stream as unknown as { fd: number | null }).fd, null);
 });

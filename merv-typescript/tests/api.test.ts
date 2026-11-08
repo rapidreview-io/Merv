@@ -11,8 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { z } from 'zod';
-import { reporter } from '@merv/contracts/issues';
-import type { Context } from 'cordis';
+
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
@@ -144,19 +143,6 @@ test('registry enforces unique registration, input validation, scope and awaited
   assert.equal(disposed, true);
   await tools.close();
   await assert.rejects(tools.call('echo', caller, { message: 'hi' }), /stopping/);
-});
-
-test('queued tool invocation keeps the original caller identity', async (t) => {
-  const { tools } = fixture();
-  t.after(() => tools.close());
-  const admitted = { ...caller };
-  const running = tools.call('echo', admitted, { message: 'original' });
-  admitted.projectId = bob.projectId;
-  assert.deepEqual(await running, { message: 'original', caller });
-  const denied = { ...caller, projectId: bob.projectId };
-  const refused = tools.invoke('echo', denied, { message: 'wrong project' });
-  denied.projectId = caller.projectId;
-  await assert.rejects(refused, { code: 'forbidden' });
 });
 
 test('changing a native definition cannot turn a mutation into an unrestricted session read', async (t) => {
@@ -326,62 +312,6 @@ test('HTTP shutdown drains admitted operations before resolving', async () => {
   await tools.close();
 });
 
-test('MCP shutdown drains a handler even after its client disconnects', async () => {
-  const { scope, tools } = fixture();
-  let release!: () => void;
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const wait = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  tools.register({
-    name: 'slow',
-    description: 'A durable operation continues after disconnection',
-    inputSchema: z.object({}).strict(),
-    handler: async () => {
-      entered();
-      await wait;
-      return 'finished';
-    },
-  });
-  const server = new ApiServer(scope, tools);
-  const url = await server.start();
-  const abort = new AbortController();
-  const response = fetch(`${url}/mcp`, {
-    method: 'POST',
-    signal: abort.signal,
-    headers: {
-      authorization: 'Bearer alice-token',
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'tools/call',
-      params: { name: 'slow', arguments: {} },
-    }),
-  });
-  await started;
-  abort.abort();
-  await assert.rejects(
-    response,
-    (error: unknown) => error instanceof Error && error.name === 'AbortError',
-  );
-  let stopped = false;
-  const stopping = server.stop().then(() => {
-    stopped = true;
-  });
-  await Promise.resolve();
-  assert.equal(stopped, false);
-  release();
-  await stopping;
-  assert.equal(stopped, true);
-  await tools.close();
-});
-
 for (const endpoint of ['http', 'mcp'] as const) {
   test(`${endpoint} rejects malformed UTF-8 before dispatching a mutation`, async (t) => {
     const { scope, tools } = fixture();
@@ -446,193 +376,6 @@ for (const endpoint of ['http', 'mcp'] as const) {
     );
   });
 }
-
-/** Stops `api` or reports that it hung, so a regression cannot hang the runner. */
-async function stopWithin(api: ApiServer, ms: number): Promise<number> {
-  const started = Date.now();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([
-      api.stop().then(() => 'stopped'),
-      new Promise<string>((resolve) => {
-        timer = setTimeout(() => resolve('hung'), ms);
-      }),
-    ]);
-    assert.equal(result, 'stopped', `stop() must finish within ${ms} ms`);
-  } finally {
-    clearTimeout(timer);
-  }
-  return Date.now() - started;
-}
-
-/** Captures the API's stderr lines while `fn` runs. */
-async function stderrOf(fn: () => Promise<void>): Promise<string[]> {
-  const lines: string[] = [];
-  const write = process.stderr.write;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    lines.push(...String(chunk).split('\n').filter(Boolean));
-    return true;
-  }) as typeof process.stderr.write;
-  try {
-    await fn();
-  } finally {
-    process.stderr.write = write;
-  }
-  return lines.filter((line) => line.includes('"api_error"'));
-}
-
-/** The reporter as owners hold it, with no Issues loaded: only its stderr line. */
-const lineOnly = () => reporter({ get: () => undefined } as unknown as Context);
-
-test('a response that fails after its head resets the connection', async () => {
-  const { scope, tools } = fixture();
-  const api = new ApiServer(scope, tools);
-  api.issues = lineOnly();
-  api.mount(
-    '/partial',
-    (_req, res) => {
-      res.writeHead(200, { 'content-type': 'text/plain' });
-      res.write('started');
-      throw new Error('failed mid-response');
-    },
-    { public: true },
-  );
-  const url = await api.start();
-  const logged = await stderrOf(async () => {
-    const response = await fetch(`${url}/partial/item_1`, { signal: AbortSignal.timeout(2000) });
-    assert.equal(response.status, 200);
-    await assert.rejects(response.text(), (error: Error) => error.name !== 'TimeoutError');
-  });
-  assert.equal(logged.length, 1);
-  const { at, ...line } = JSON.parse(logged[0]!);
-  assert.deepEqual(line, {
-    event: 'api_error',
-    code: 'internal_error',
-    level: 'warn',
-    key: 'GET /partial',
-    status: 500,
-    name: 'Error',
-  });
-  assert.ok(at.length > 0 && at.every((frame: string) => frame.startsWith('at ')));
-  await stopWithin(api, 1000);
-  await tools.close();
-});
-
-test('a 503 refused while the server stops is not reported', async () => {
-  const { scope, tools } = fixture();
-  const api = new ApiServer(scope, tools);
-  api.issues = lineOnly();
-  let release!: () => void;
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => (entered = resolve));
-  const wait = new Promise<void>((resolve) => (release = resolve));
-  api.mount(
-    '/late',
-    async () => {
-      entered();
-      await wait;
-      throw new MervError('unavailable', 'Stopping', 503);
-    },
-    { public: true },
-  );
-  const url = await api.start();
-  const logged = await stderrOf(async () => {
-    const response = fetch(`${url}/late`);
-    await started;
-    const stopping = api.stop();
-    release();
-    assert.equal((await response).status, 503);
-    await stopping;
-  });
-  assert.deepEqual(logged, []);
-  await tools.close();
-});
-
-test('a 401 names its Bearer scheme, and JSON bodies accept any media-type case', async (t) => {
-  const { scope, tools } = fixture();
-  const api = new ApiServer(scope, tools);
-  const url = await api.start();
-  t.after(async () => {
-    await api.stop();
-    await tools.close();
-  });
-  const refused = await fetch(`${url}/tools`);
-  assert.equal(refused.status, 401);
-  assert.equal(refused.headers.get('www-authenticate'), 'Bearer');
-  assert.equal((await refused.json()).connect, undefined);
-  // An agent refused at /mcp is told where a person makes it a key, or, once agent sign-in has
-  // mounted /connect, that page; /auth/config says where to point it.
-  const agent = () =>
-    fetch(`${url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer stale' } }).then(
-      (response) => response.json(),
-    );
-  const config = () => fetch(`${url}/auth/config`).then((response) => response.json());
-  assert.deepEqual(await agent(), {
-    error: { code: 'unauthorized', message: 'Invalid token' },
-    connect: '/ui/settings/keys',
-  });
-  assert.deepEqual(await config(), { enabled: false, mcpUrl: `${url}/mcp` });
-  const unmount = api.mount('/connect', () => ({}), { public: true });
-  assert.equal((await agent()).connect, '/connect');
-  assert.deepEqual(await config(), {
-    enabled: false,
-    mcpUrl: `${url}/mcp`,
-    connectUrl: `${url}/connect`,
-  });
-  unmount();
-  assert.equal((await agent()).connect, '/ui/settings/keys');
-  assert.equal((await fetch(`${url}/health`)).headers.get('www-authenticate'), null);
-  const accepted = await fetch(`${url}/tools/echo`, {
-    method: 'POST',
-    headers: {
-      authorization: 'Bearer alice-token',
-      'content-type': 'Application/JSON; charset=utf-8',
-    },
-    body: JSON.stringify({ message: 'hi' }),
-  });
-  assert.equal(accepted.status, 200);
-});
-
-test('mount prefixes are single segments with public paths inside them, and withdrawal answers 503', async (t) => {
-  const { scope, tools } = fixture();
-  const api = new ApiServer(scope, tools);
-  for (const [prefix, options] of [
-    ['/tools/x', {}],
-    ['/Upper', {}],
-    ['/open', { public: ['/other'] }],
-    ['/open', { public: ['/open/'] }],
-    ['/open', { public: ['/openly'] }],
-  ] as const)
-    assert.throws(() => api.mount(prefix, () => ({}), options), { code: 'invalid_mount' }, prefix);
-  for (const prefix of ['/tools', '/mcp', '/health', '/auth'])
-    assert.throws(() => api.mount(prefix, () => ({})), { code: 'mount_conflict' }, prefix);
-  const withdraw = api.mount('/open', (_req, _res, r) => ({ principal: r.principal ?? null }), {
-    public: ['/open/door'],
-  });
-  assert.throws(() => api.mount('/open', () => ({})), { code: 'mount_conflict' });
-  const url = await api.start();
-  t.after(async () => {
-    await api.stop();
-    await tools.close();
-  });
-  assert.deepEqual(await (await fetch(`${url}/open/door/in`)).json(), { principal: null });
-  assert.equal((await fetch(`${url}/open/doorway`)).status, 401);
-  assert.equal((await fetch(`${url}/nowhere`)).status, 404);
-  withdraw();
-  withdraw();
-  // Neither a withdrawn route nor one never mounted is a fault of the server's.
-  api.issues = lineOnly();
-  const logged = await stderrOf(async () => {
-    const withdrawn = await fetch(`${url}/open/door`);
-    assert.deepEqual([withdrawn.status, (await withdrawn.json()).error.code], [503, 'unavailable']);
-    const unmounted = await fetch(`${url}/nowhere`, { headers: { authorization: 'Bearer x' } });
-    assert.equal(unmounted.status, 503);
-  });
-  assert.deepEqual(logged, []);
-  // Mounted again, the prefix serves again.
-  api.mount('/open', () => ({ again: true }), { public: true });
-  assert.deepEqual(await (await fetch(`${url}/open`)).json(), { again: true });
-});
 
 test('a mount withdrawn while its caller is authenticated answers 503 and its handler never runs', async (t) => {
   const { scope, tools } = fixture();

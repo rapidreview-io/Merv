@@ -2,7 +2,6 @@ import {
   check,
   childRequest,
   clip,
-  inTransaction,
   MervError,
   now,
   ordered,
@@ -520,26 +519,4 @@ export async function inject(
   );
   await ctx.providers.code.publishOnAcceptance(caller, { unitId: task.id }, tx);
   return task.id;
-}
-
-/**
- * What main lacks, for a cycle that may consolidate in a hosted project. Git is read outside
- * the transaction that advances the cycle; inside one this answers null.
- */
-export async function unpublished(
-  ctx: ResearchContext,
-  caller: Caller,
-  researchId: string,
-  tx?: Transaction,
-): Promise<Unpublished | null> {
-  const { code } = ctx.providers;
-  const asks = await inTransaction(ctx.state, tx, async (tx) => {
-    const record = await ctx.get(caller, researchId, tx);
-    if (!['reflecting', 'consolidating'].includes(record.workflow.state)) return false;
-    await ctx.authorize(caller, record, tx);
-    return await code.hosted(caller, tx);
-  });
-  if (!asks) return { unitIds: [], quarantined: [] };
-  if (tx) return null;
-  return await code.acceptedSince(caller);
 }

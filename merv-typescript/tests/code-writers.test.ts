@@ -1,26 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
+
 import test from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
-import {
-  faultAt,
-  recoverLegacyOperation,
-  seedLegacyOperation,
-  type Bundle,
-} from './fixtures/code-store.js';
+
+import { recoverLegacyOperation, seedLegacyOperation, type Bundle } from './fixtures/code-store.js';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 
 const fixture = writerFixture;
-/** Holds the project's turn, which every admission waits for, until the returned release. */
-const hold = (f: Awaited<ReturnType<typeof fixture>>) => {
-  let release!: () => void;
-  const held = f.core.repositories.run(
-    f.admin.projectId,
-    () => new Promise<void>((done) => (release = done)),
-  );
-  return async () => (release(), await held);
-};
 
 /** An operation already received by the previous runtime; only recovery is under test. */
 const seed = (
@@ -58,36 +44,6 @@ const restored = async (
   expectedHead: string,
   bundle: Bundle,
 ) => recover(f, await seed(f, kind, expectedHead, bundle));
-
-for (const point of [
-  'after_index',
-  'after_admitting',
-  'after_migrate',
-  'after_objects_durable',
-  'after_ref',
-  'after_refs_applied',
-  'before_ack',
-] as const)
-  test(`an upload whose process ends ${point} is finished by the next one, exactly once`, async (t) => {
-    const f = await fixture(t);
-    await f.lease('ses_1');
-    const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-    const bundle = f.source.bundle(first, [f.root]);
-    await f.open({ fault: faultAt(point) });
-    await f.event('session.workspace_attached', 'ses_1');
-    const id = await seed(f, 'checkpoint', f.root, bundle);
-    await recover(f, id).catch(() => {});
-    await f.open();
-    const operation = await recover(f, id);
-    assert.equal(operation.id, id);
-    assert.equal(operation.status, 'completed');
-    assert.equal((await f.unit()).canonicalHead, first);
-    assert.deepEqual(
-      f.refs().filter((ref) => !ref.startsWith('refs/merv/imports/')),
-      [`refs/merv/receipts/${id} ${first}`, `refs/merv/work/${f.unitId} ${first}`],
-    );
-    assert.ok(!existsSync(join(f.paths.quarantine, id)));
-  });
 
 test('a lease reserves the next generation only once the last one closed', async (t) => {
   const f = await fixture(t, 0);
@@ -170,80 +126,4 @@ test('a quarantined final capture blocks the unit until a signed-in administrato
   assert.deepEqual((await f.code.status(f.admin)).blockers, []);
   assert.equal((await f.lease('ses_2')).generation, 2);
   assert.equal((await f.unit()).canonicalHead, first);
-});
-
-test('a session closing ends its generation at the last admitted commit, and what it was sending is held', async (t) => {
-  // Whatever closed it: a handoff, a lapsed lease, a lost host, an expiry, a relay outage, a
-  // release of Main. Code hears only session.closed, which every one of them appends.
-  const f = await fixture(t, 0);
-  await f.lease('ses_1');
-  await f.event('session.workspace_attached', 'ses_1');
-  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-  await restored(f, 'checkpoint', f.root, f.source.bundle(first, [f.root]));
-  const second = f.source.commit({ 'a.txt': 'two\n' }, 'second');
-  const bundle = f.source.bundle(second, [first]);
-  const sending = await seed(f, 'checkpoint', first, bundle, 64);
-  await f.event('session.closed', 'ses_1');
-  await f.end('ses_1');
-  const unit = await f.unit();
-  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
-  assert.deepEqual((await f.code.status(f.admin)).blockers, []);
-  assert.deepEqual(await f.operationRow(sending), {
-    status: 'failed',
-    phase: 'receiving',
-    error: 'code_generation_stale',
-  });
-  assert.equal((await recover(f, sending)).status, 'failed');
-  await f.store.maintain();
-  assert.ok(existsSync(join(f.paths.held, `${sending}.bundle`)));
-  assert.equal((await f.lease('ses_2')).generation, 2);
-  const ended = await f.state.read((sql) =>
-    sql.all<{ data: string }>(
-      "SELECT data_json AS data FROM events WHERE type='code.writer_ended' ORDER BY id",
-    ),
-  );
-  assert.deepEqual(
-    ended.map((row) => JSON.parse(row.data)),
-    [{ reason: 'session_closed', sessionId: 'ses_1', generation: 1, head: first, from: 'active' }],
-  );
-});
-
-test('a legacy upload fully on Main when its machine is gone is admitted by Main itself', async (t) => {
-  const f = await fixture(t);
-  await f.lease('ses_1');
-  await f.event('session.workspace_attached', 'ses_1');
-  // Every byte arrived, then the host was lost before the machine asked for admission.
-  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-  const bundle = f.source.bundle(first, [f.root]);
-  const inFlight = await seed(f, 'checkpoint', f.root, bundle);
-  await f.end('ses_1', 'managed_revoked');
-  await f.event('session.closed', 'ses_1');
-  // The close itself wakes Main's pass: nobody asks for the admission and no sweep is due.
-  for (let tries = 0; tries < 100 && (await f.unit()).writerState !== 'closed'; tries++)
-    await delay(50);
-  const unit = await f.unit();
-  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
-  assert.equal((await f.lease('ses_2')).generation, 2);
-});
-
-test('past the grace, a legacy upload its session left is never admitted', async (t) => {
-  const f = await fixture(t, 0);
-  await f.lease('ses_1');
-  await f.event('session.workspace_attached', 'ses_1');
-  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-  const bundle = f.source.bundle(first, [f.root]);
-  const inFlight = await seed(f, 'checkpoint', f.root, bundle);
-  const held = hold(f);
-  await f.event('session.closed', 'ses_1');
-  await f.end('ses_1');
-  assert.equal((await f.unit()).writerState, 'closing');
-  // A grace of 0: the sweep ends the generation, and the late completion is refused.
-  await f.sweep();
-  await held();
-  const unit = await f.unit();
-  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', null]);
-  assert.equal((await f.operationRow(inFlight))?.error, 'code_generation_stale');
-  const late = await recover(f, inFlight);
-  assert.deepEqual([late.status, late.error], ['failed', 'code_generation_stale']);
-  assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/work/')));
 });

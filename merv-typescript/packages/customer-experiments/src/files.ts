@@ -153,6 +153,7 @@ interface UploadRow {
   size: number | string;
   part_size: number | string;
   created_at: string;
+  completed: string | null;
 }
 export const filesMigrations = {
   1: `
@@ -166,6 +167,7 @@ CREATE TABLE customer_experiment_file_uploads (
 );
 CREATE INDEX customer_experiment_file_uploads_request ON customer_experiment_file_uploads(request_id);
 `,
+  2: `ALTER TABLE customer_experiment_file_uploads ADD COLUMN completed TEXT;`,
 };
 
 /** How much of a file the intake agent reads in one call. */
@@ -203,6 +205,21 @@ export function deletionSchedule(
 }
 
 export class FilesService implements RequestFiles {
+  // Main owns one Files provider. Mutations of a request share its object namespace;
+  // keep their provider I/O ordered without holding the global State writer.
+  private readonly changing = new Map<string, Promise<unknown>>();
+
+  private async change<T>(requestId: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.changing.get(requestId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(run);
+    this.changing.set(requestId, next);
+    try {
+      return await next;
+    } finally {
+      if (this.changing.get(requestId) === next) this.changing.delete(requestId);
+    }
+  }
+
   constructor(
     private state: State,
     private store: RequestStore,
@@ -230,21 +247,26 @@ export class FilesService implements RequestFiles {
   }
   /** Makes a v3 request's bucket before its first upload: a new bucket's CORS takes a moment. */
   async warm(record: RequestRecord) {
-    if (!this.storage) return;
-    const lifecycle = await this.lifecycle(record);
-    if (!plansDocument(lifecycle.version) || lifecycle.state !== 'planning') return;
-    const row = await this.row(record.id);
-    if (row?.provisioned_at || row?.deleted_at) return;
-    await this.storage.provisionFiles(record.id);
-    const now = new Date().toISOString();
-    await this.upsert(record.id, {
-      provisioned_at: now,
-      last_activity_at: row?.last_activity_at ?? now,
+    return this.change(record.id, async () => {
+      if (!this.storage) return;
+      const lifecycle = await this.lifecycle(record);
+      if (!plansDocument(lifecycle.version) || lifecycle.state !== 'planning') return;
+      const row = await this.row(record.id);
+      if (row?.provisioned_at || row?.deleted_at) return;
+      await this.storage.provisionFiles(record.id);
+      const now = new Date().toISOString();
+      await this.upsert(record.id, {
+        provisioned_at: now,
+        last_activity_at: row?.last_activity_at ?? now,
+      });
     });
   }
   /** Customer activity keeps an unaccepted request from being treated as abandoned. */
   async touch(id: string) {
-    await this.upsert(id, { last_activity_at: new Date().toISOString() });
+    return this.change(id, () => this.activity(id));
+  }
+  private activity(id: string) {
+    return this.upsert(id, { last_activity_at: new Date().toISOString() });
   }
   /** v3 only, storage configured; `write` also needs files that are neither frozen nor deleted. */
   private async open(record: RequestRecord, write: boolean) {
@@ -275,7 +297,7 @@ export class FilesService implements RequestFiles {
   private async pending(id: string, tx?: Transaction) {
     const read = (sql: Pick<Transaction, 'all'>) =>
       sql.all<UploadRow>(
-        'SELECT size FROM customer_experiment_file_uploads WHERE request_id=? AND created_at>?',
+        'SELECT size FROM customer_experiment_file_uploads WHERE request_id=? AND completed IS NULL AND created_at>?',
         id,
         new Date(Date.now() - ABANDONED_AFTER_MS).toISOString(),
       );
@@ -302,62 +324,66 @@ export class FilesService implements RequestFiles {
     record: RequestRecord,
     input: { key: string; size: number; contentType?: string },
   ) {
-    const { storage, row } = await this.open(record, true);
-    const key = normalizeKey(input.key);
-    check(
-      Number.isSafeInteger(input.size) && input.size >= 0 && input.size <= FILES_LIMIT_BYTES,
-      'invalid_size',
-      'File size must be between 0 bytes and 1 TB',
-    );
-    if (!row?.provisioned_at) {
-      await storage.provisionFiles(record.id);
-      await this.upsert(record.id, { provisioned_at: new Date().toISOString() });
-    }
-    const listed = await storage.listFiles(record.id);
-    const size = partSize(input.size);
-    const uploadId = await storage.createMultipart(
-      record.id,
-      key,
-      input.contentType || 'application/octet-stream',
-    );
-    try {
-      await this.state.transaction(async (tx) => {
-        // Unfinished uploads count at their declared size, so parallel creates share the cap.
-        const total =
-          listed.reduce((n, f) => n + f.size, 0) + (await this.pending(record.id, tx)) + input.size;
-        check(
-          total <= FILES_LIMIT_BYTES,
-          'files_limit',
-          'Files for one experiment are limited to 1 TB',
-          413,
-        );
-        await tx.run(
-          'INSERT INTO customer_experiment_file_uploads(upload_id,request_id,key,size,part_size,created_at) VALUES(?,?,?,?,?,?)',
-          uploadId,
-          record.id,
-          key,
-          input.size,
-          size,
-          new Date().toISOString(),
-        );
-      });
-    } catch (error) {
-      await storage.abortMultipart(record.id, key, uploadId).catch(() => {});
-      throw error;
-    }
-    await this.touch(record.id);
-    const count = partCount(input.size, size);
-    return {
-      uploadId,
-      key,
-      partSize: size,
-      partCount: count,
-      parts: await this.presign(
+    return this.change(record.id, async () => {
+      const { storage, row } = await this.open(record, true);
+      const key = normalizeKey(input.key);
+      check(
+        Number.isSafeInteger(input.size) && input.size >= 0 && input.size <= FILES_LIMIT_BYTES,
+        'invalid_size',
+        'File size must be between 0 bytes and 1 TB',
+      );
+      if (!row?.provisioned_at) {
+        await storage.provisionFiles(record.id);
+        await this.upsert(record.id, { provisioned_at: new Date().toISOString() });
+      }
+      const size = partSize(input.size);
+      const uploadId = await storage.createMultipart(
         record.id,
-        { key, size: input.size, part: size, uploadId },
-        Array.from({ length: Math.min(count, FIRST_PARTS) }, (_, i) => i + 1),
-      ),
-    };
+        key,
+        input.contentType || 'application/octet-stream',
+      );
+      try {
+        const listed = await storage.listFiles(record.id);
+        await this.state.transaction(async (tx) => {
+          // Unfinished uploads count at their declared size, so parallel creates share the cap.
+          const total =
+            listed.reduce((n, f) => n + f.size, 0) +
+            (await this.pending(record.id, tx)) +
+            input.size;
+          check(
+            total <= FILES_LIMIT_BYTES,
+            'files_limit',
+            'Files for one experiment are limited to 1 TB',
+            413,
+          );
+          await tx.run(
+            'INSERT INTO customer_experiment_file_uploads(upload_id,request_id,key,size,part_size,created_at) VALUES(?,?,?,?,?,?)',
+            uploadId,
+            record.id,
+            key,
+            input.size,
+            size,
+            new Date().toISOString(),
+          );
+        });
+      } catch (error) {
+        await storage.abortMultipart(record.id, key, uploadId).catch(() => {});
+        throw error;
+      }
+      await this.activity(record.id);
+      const count = partCount(input.size, size);
+      return {
+        uploadId,
+        key,
+        partSize: size,
+        partCount: count,
+        parts: await this.presign(
+          record.id,
+          { key, size: input.size, part: size, uploadId },
+          Array.from({ length: Math.min(count, FIRST_PARTS) }, (_, i) => i + 1),
+        ),
+      };
+    });
   }
   private async upload(record: RequestRecord, uploadId: string, key: string) {
     const row = await this.state.read((sql) =>
@@ -368,7 +394,19 @@ export class FilesService implements RequestFiles {
       ),
     );
     check(row && row.key === normalizeKey(key), 'not_found', 'Upload not found', 404);
-    return { key: row.key, size: Number(row.size), part: Number(row.part_size), uploadId };
+    return {
+      key: row.key,
+      size: Number(row.size),
+      part: Number(row.part_size),
+      uploadId,
+      createdAt: row.created_at,
+      completed:
+        row.completed &&
+        (JSON.parse(row.completed) as {
+          parts: { partNumber: number; etag: string }[];
+          result: { key: string; size: number; uploaded: string };
+        }),
+    };
   }
   private presign(
     id: string,
@@ -412,104 +450,142 @@ export class FilesService implements RequestFiles {
     uploadId: string,
     input: { key: string; parts: { partNumber: number; etag: string }[] },
   ) {
-    const { storage } = await this.open(record, true);
-    const u = await this.upload(record, uploadId, input.key);
-    const parts = [...input.parts].sort((a, b) => a.partNumber - b.partNumber);
-    check(
-      parts.length === partCount(u.size, u.part) && parts.every((p, i) => p.partNumber === i + 1),
-      'invalid_part',
-      'Complete the upload with every part, numbered from 1',
-    );
-    await storage.completeMultipart(record.id, u.key, uploadId, parts);
-    await this.state.transaction((tx) =>
-      tx.run('DELETE FROM customer_experiment_file_uploads WHERE upload_id=?', uploadId),
-    );
-    const stored = await storage.head(record.id, u.key);
-    if (stored?.size !== u.size) {
-      await storage.deleteFiles(record.id, [u.key]);
-      throw new MervError('invalid_upload', 'The uploaded file does not match its declared size');
-    }
-    await this.touch(record.id);
-    return { key: stored.key, size: stored.size, uploaded: stored.uploaded };
+    return this.change(record.id, async () => {
+      const { storage } = await this.open(record, false);
+      const u = await this.upload(record, uploadId, input.key);
+      const parts = [...input.parts].sort((a, b) => a.partNumber - b.partNumber);
+      if (u.completed) {
+        check(
+          JSON.stringify(parts) === JSON.stringify(u.completed.parts),
+          'request_conflict',
+          'This upload completed with different parts',
+          409,
+        );
+        return u.completed.result;
+      }
+      await this.open(record, true);
+      check(
+        parts.length === partCount(u.size, u.part) && parts.every((p, i) => p.partNumber === i + 1),
+        'invalid_part',
+        'Complete the upload with every part, numbered from 1',
+      );
+      await this.state.transaction(async (tx) => {
+        check(
+          Date.parse(u.createdAt) > Date.now() - ABANDONED_AFTER_MS,
+          'upload_expired',
+          'This upload expired; start it again',
+          410,
+        );
+        // Keep the reservation live if its original deadline passes during provider I/O.
+        await tx.run(
+          'UPDATE customer_experiment_file_uploads SET created_at=? WHERE upload_id=?',
+          new Date().toISOString(),
+          uploadId,
+        );
+      });
+      await storage.completeMultipart(record.id, u.key, uploadId, parts);
+      const stored = await storage.head(record.id, u.key);
+      if (stored?.size !== u.size) {
+        await storage.deleteFiles(record.id, [u.key]);
+        throw new MervError('invalid_upload', 'The uploaded file does not match its declared size');
+      }
+      const result = { key: stored.key, size: stored.size, uploaded: stored.uploaded };
+      await this.state.transaction((tx) =>
+        tx.run(
+          'UPDATE customer_experiment_file_uploads SET completed=? WHERE upload_id=?',
+          JSON.stringify({ parts, result }),
+          uploadId,
+        ),
+      );
+      await this.activity(record.id);
+      return result;
+    });
   }
   async abort(record: RequestRecord, uploadId: string, key: string) {
-    check(this.storage, 'files_unavailable', 'File storage is not configured', 503);
-    const u = await this.upload(record, uploadId, key);
-    await this.storage.abortMultipart(record.id, u.key, uploadId);
-    await this.state.transaction((tx) =>
-      tx.run('DELETE FROM customer_experiment_file_uploads WHERE upload_id=?', uploadId),
-    );
-    return { aborted: true };
+    return this.change(record.id, async () => {
+      check(this.storage, 'files_unavailable', 'File storage is not configured', 503);
+      const u = await this.upload(record, uploadId, key);
+      if (u.completed) return { aborted: true };
+      await this.storage.abortMultipart(record.id, u.key, uploadId);
+      await this.state.transaction((tx) =>
+        tx.run('DELETE FROM customer_experiment_file_uploads WHERE upload_id=?', uploadId),
+      );
+      return { aborted: true };
+    });
   }
   /** Copy then delete. A trailing `/`, or a name with no file but files under it, is a folder. */
   async rename(record: RequestRecord, input: { from: string; to: string }) {
-    const { storage } = await this.open(record, true);
-    const all = await storage.listFiles(record.id);
-    const file = /[\\/]\s*$/.test(input.from)
-      ? undefined
-      : all.find((f) => f.key === normalizeKey(input.from));
-    const moves: [StoredFile, string][] = [];
-    if (file) {
-      const to = normalizeKey(input.to);
-      check(!all.some((f) => f.key === to), 'file_exists', 'A file with that name exists', 409);
-      if (to !== file.key) moves.push([file, to]);
-    } else {
-      const from = normalizePrefix(input.from),
-        to = normalizePrefix(input.to);
-      check(from && to, 'invalid_key', 'Name the folder to rename and its new name');
-      const inside = all.filter((f) => f.key.startsWith(from));
-      check(inside.length, 'not_found', 'File or folder not found', 404);
-      check(!to.startsWith(from), 'invalid_key', 'A folder cannot move into itself');
-      check(
-        !all.some((f) => f.key.startsWith(to)),
-        'file_exists',
-        'A folder with that name exists',
-        409,
-      );
-      // Every new name is checked before the first copy, so a refusal copies nothing.
-      for (const f of inside) moves.push([f, normalizeKey(to + f.key.slice(from.length))]);
-    }
-    check(
-      all.reduce((n, f) => n + f.size, 0) + (await this.pending(record.id)) <= FILES_LIMIT_BYTES,
-      'files_limit',
-      'Files for one experiment are limited to 1 TB',
-      413,
-    );
-    const copied: string[] = [];
-    try {
-      for (const [f, to] of moves) {
-        await storage.copyFile(record.id, f, to);
-        copied.push(to);
+    return this.change(record.id, async () => {
+      const { storage } = await this.open(record, true);
+      const all = await storage.listFiles(record.id);
+      const file = /[\\/]\s*$/.test(input.from)
+        ? undefined
+        : all.find((f) => f.key === normalizeKey(input.from));
+      const moves: [StoredFile, string][] = [];
+      if (file) {
+        const to = normalizeKey(input.to);
+        check(!all.some((f) => f.key === to), 'file_exists', 'A file with that name exists', 409);
+        if (to !== file.key) moves.push([file, to]);
+      } else {
+        const from = normalizePrefix(input.from),
+          to = normalizePrefix(input.to);
+        check(from && to, 'invalid_key', 'Name the folder to rename and its new name');
+        const inside = all.filter((f) => f.key.startsWith(from));
+        check(inside.length, 'not_found', 'File or folder not found', 404);
+        check(!to.startsWith(from), 'invalid_key', 'A folder cannot move into itself');
+        check(
+          !all.some((f) => f.key.startsWith(to)),
+          'file_exists',
+          'A folder with that name exists',
+          409,
+        );
+        // Every new name is checked before the first copy, so a refusal copies nothing.
+        for (const f of inside) moves.push([f, normalizeKey(to + f.key.slice(from.length))]);
       }
-    } catch (error) {
-      // A rename that fails partway leaves the originals as they were and no copies.
-      if (copied.length) await storage.deleteFiles(record.id, copied).catch(() => {});
-      throw error;
-    }
-    await storage.deleteFiles(
-      record.id,
-      moves.map(([f]) => f.key),
-    );
-    await this.touch(record.id);
-    return { renamed: moves.length };
+      check(
+        all.reduce((n, f) => n + f.size, 0) + (await this.pending(record.id)) <= FILES_LIMIT_BYTES,
+        'files_limit',
+        'Files for one experiment are limited to 1 TB',
+        413,
+      );
+      const copied: string[] = [];
+      try {
+        for (const [f, to] of moves) {
+          await storage.copyFile(record.id, f, to);
+          copied.push(to);
+        }
+      } catch (error) {
+        // A rename that fails partway leaves the originals as they were and no copies.
+        if (copied.length) await storage.deleteFiles(record.id, copied).catch(() => {});
+        throw error;
+      }
+      await storage.deleteFiles(
+        record.id,
+        moves.map(([f]) => f.key),
+      );
+      await this.activity(record.id);
+      return { renamed: moves.length };
+    });
   }
   async remove(record: RequestRecord, target: { key?: string; prefix?: string }) {
-    const { storage } = await this.open(record, true);
-    let keys: string[];
-    if (target.key !== undefined) {
-      const key = normalizeKey(target.key);
-      check(await storage.head(record.id, key), 'not_found', 'File not found', 404);
-      keys = [key];
-    } else {
-      const prefix = normalizePrefix(target.prefix ?? '');
-      check(prefix, 'invalid_key', 'Name the folder to delete');
-      keys = (await storage.listFiles(record.id))
-        .filter((f) => f.key.startsWith(prefix))
-        .map((f) => f.key);
-    }
-    await storage.deleteFiles(record.id, keys);
-    await this.touch(record.id);
-    return { deleted: keys.length };
+    return this.change(record.id, async () => {
+      const { storage } = await this.open(record, true);
+      let keys: string[];
+      if (target.key !== undefined) {
+        const key = normalizeKey(target.key);
+        check(await storage.head(record.id, key), 'not_found', 'File not found', 404);
+        keys = [key];
+      } else {
+        const prefix = normalizePrefix(target.prefix ?? '');
+        check(prefix, 'invalid_key', 'Name the folder to delete');
+        keys = (await storage.listFiles(record.id))
+          .filter((f) => f.key.startsWith(prefix))
+          .map((f) => f.key);
+      }
+      await storage.deleteFiles(record.id, keys);
+      await this.activity(record.id);
+      return { deleted: keys.length };
+    });
   }
   async download(record: RequestRecord, key: string) {
     const { storage, row } = await this.open(record, false);
@@ -577,11 +653,13 @@ export class FilesService implements RequestFiles {
     };
   }
   async manifest(id: string) {
-    const row = await this.row(id);
-    if (!this.storage || !row?.provisioned_at || row.deleted_at) return [];
-    return (await this.storage.listFiles(id))
-      .map(({ key, size, etag }) => ({ key, size, etag }))
-      .sort((a, b) => (a.key < b.key ? -1 : 1));
+    return this.change(id, async () => {
+      const row = await this.row(id);
+      if (!this.storage || !row?.provisioned_at || row.deleted_at) return [];
+      return (await this.storage.listFiles(id))
+        .map(({ key, size, etag }) => ({ key, size, etag }))
+        .sort((a, b) => (a.key < b.key ? -1 : 1));
+    });
   }
   /** The request of a customer experiment, for its executing worker. */
   async forExperiment(experimentId: string) {
@@ -593,47 +671,52 @@ export class FilesService implements RequestFiles {
   async sweep() {
     if (bootMaintenance.active) return;
     const rows = await this.state.read((sql) =>
-      sql.all<FilesRow>(
-        'SELECT * FROM customer_experiment_files WHERE provisioned_at IS NOT NULL AND deleted_at IS NULL',
+      sql.all<Pick<FilesRow, 'request_id'>>(
+        'SELECT request_id FROM customer_experiment_files WHERE provisioned_at IS NOT NULL AND deleted_at IS NULL',
       ),
     );
     for (const row of rows) {
       try {
-        const record = await this.store.get(row.request_id);
-        const lifecycle = await this.lifecycle(record);
-        if (!plansDocument(lifecycle.version) || !this.storage) continue;
-        // A bucket made ahead of a first upload that never came goes after half an hour of quiet;
-        // the next upload makes it again.
-        const quietSince = Date.parse(row.last_activity_at ?? row.provisioned_at!);
-        if (
-          lifecycle.state === 'planning' &&
-          Date.now() - quietSince > WARM_BUCKET_IDLE_MS &&
-          !(await this.pending(record.id)) &&
-          !(await this.storage.listFiles(record.id)).length
-        ) {
-          await this.storage.destroy(record.id);
-          await this.upsert(record.id, { provisioned_at: null });
-          continue;
-        }
-        const schedule = deletionSchedule(record, lifecycle, row.last_activity_at);
-        await this.upsert(record.id, {
-          ended_at: schedule?.endedAt ?? null,
-          end_reason: schedule?.reason ?? null,
-          delete_at: schedule?.deleteAt ?? null,
-        });
-        if (!schedule || Date.parse(schedule.deleteAt) > Date.now()) continue;
-        const objects = await this.storage.destroy(record.id);
-        await this.state.transaction(async (tx) => {
-          await tx.run(
-            'UPDATE customer_experiment_files SET deleted_at=?, deleted_objects=? WHERE request_id=?',
-            new Date().toISOString(),
-            objects,
-            record.id,
-          );
-          await tx.run(
-            'DELETE FROM customer_experiment_file_uploads WHERE request_id=?',
-            record.id,
-          );
+        await this.change(row.request_id, async () => {
+          // The initial scan may predate an upload, activity update, or another sweep.
+          const current = await this.row(row.request_id);
+          if (!current?.provisioned_at || current.deleted_at) return;
+          const record = await this.store.get(row.request_id);
+          const lifecycle = await this.lifecycle(record);
+          if (!plansDocument(lifecycle.version) || !this.storage) return;
+          // A bucket made ahead of a first upload that never came goes after half an hour of quiet;
+          // the next upload makes it again.
+          const quietSince = Date.parse(current.last_activity_at ?? current.provisioned_at);
+          if (
+            lifecycle.state === 'planning' &&
+            Date.now() - quietSince > WARM_BUCKET_IDLE_MS &&
+            !(await this.pending(record.id)) &&
+            !(await this.storage.listFiles(record.id)).length
+          ) {
+            await this.storage.destroy(record.id);
+            await this.upsert(record.id, { provisioned_at: null });
+            return;
+          }
+          const schedule = deletionSchedule(record, lifecycle, current.last_activity_at);
+          await this.upsert(record.id, {
+            ended_at: schedule?.endedAt ?? null,
+            end_reason: schedule?.reason ?? null,
+            delete_at: schedule?.deleteAt ?? null,
+          });
+          if (!schedule || Date.parse(schedule.deleteAt) > Date.now()) return;
+          const objects = await this.storage.destroy(record.id);
+          await this.state.transaction(async (tx) => {
+            await tx.run(
+              'UPDATE customer_experiment_files SET deleted_at=?, deleted_objects=? WHERE request_id=?',
+              new Date().toISOString(),
+              objects,
+              record.id,
+            );
+            await tx.run(
+              'DELETE FROM customer_experiment_file_uploads WHERE request_id=?',
+              record.id,
+            );
+          });
         });
       } catch (error) {
         process.stderr.write(

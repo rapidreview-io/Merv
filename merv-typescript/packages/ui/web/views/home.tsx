@@ -17,7 +17,7 @@ import type { ShellData } from '../shell-types';
 import { newest, type HomeData } from './map-data';
 import { NeedsYou, useNow } from './needs-you';
 import { chained, currentCycle } from './work';
-import { needs, useLive } from './work-map';
+import { needs, useLive } from './work-live';
 
 /**
  * Home: the home of everything. What needs the reader first, then one card per place, each

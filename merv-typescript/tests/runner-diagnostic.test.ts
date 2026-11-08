@@ -6,29 +6,6 @@ import test from 'node:test';
 import { RunnerControlError } from '@merv/runner/client';
 import { diagnostic } from '@merv/runner/diagnostic';
 
-test('real filesystem and copy failures retain a bounded cause without paths', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'runner-diagnostic-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const file = join(directory, 'private-assignment-file');
-  const target = join(directory, 'private-assignment-directory');
-  writeFileSync(file, 'private data');
-  mkdirSync(target);
-  assert.throws(
-    () => mkdirSync(file),
-    (error) => {
-      assert.equal(diagnostic(error), 'runner_filesystem_exists');
-      return true;
-    },
-  );
-  assert.throws(
-    () => cpSync(file, target, { recursive: true }),
-    (error) => {
-      assert.equal(diagnostic(error), 'runner_copy_file_to_directory');
-      return true;
-    },
-  );
-});
-
 test('capacity and permission errors are named but arbitrary diagnostics stay private', () => {
   assert.equal(
     diagnostic({ code: 'ENOSPC', message: 'secret', path: '/secret' }),

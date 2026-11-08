@@ -1,97 +1,52 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { ResearchAnswer, ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/workflows/models';
+import type { Task } from '@merv/tasks/models';
+import { runningKey, keyId, type RunningNode } from '@merv/contracts/running';
 import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
-import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
+import { Ago, Failure, Field, SearchField, Submit, ResearchCommand } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, type Pickable } from '../record-picker';
 import { useSession, writes } from '../session';
-import { firstSentence } from '@merv/contracts/text';
-import { currentReview } from '@merv/reviews/rules';
-import { OPEN, ThreeStates, reviewClause } from '../states';
+import { OPEN } from '../states';
 import type { ShellData, WorkflowShape } from '../shell-types';
 import { Dependency, StageMark, ended } from '../process';
 import { Icon } from '../icons';
-import { newest, useHome, type Flow, type MapCycle } from './map-data';
-import { ResearchCommand } from '../components';
 import { calling } from '../navigation';
+import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { useActorNames } from './people';
-import { CreateReflection } from './research-programs';
-import type { Task } from '@merv/tasks/models';
-import { isResolution } from '@merv/tasks/resolution';
-import {
-  LiveLines,
-  LiveNotes,
-  WorkBar,
-  WorkMap,
-  WorkPlane,
-  countsOf,
-  mapOf,
-  shown,
-  useBoard,
-  type Wave,
-  type WorkFilter,
-} from './work-map';
-import { runningKey } from '@merv/contracts/running';
+import { LiveNotes, WorkDispatch, WorkPlane, needs, useBoard } from './work-live';
+import { Reading, steadyText } from './running-phrase';
 
-/**
- * The wave of work the project is on, in one page: the cycle that frames it in
- * the header with its one move, and under it every task and experiment as one
- * list. Reviews are not rows here — a row's review clause is the way to its
- * verdict — and a row opens its record at that record's own route, beside this
- * list on a wide screen. Nothing on this page is composed by the browser: the
- * cycle names the work it depends on and the rest is each record's own standing.
- */
-
-/** One row of the wave, whichever kind of record it is. */
+/** A compact catalog; the inspector holds each record’s detail and permitted moves. */
+const GROUPS = {
+  attention: 'Needs attention',
+  running: 'In progress',
+  review: 'In review',
+  waiting: 'Waiting',
+  planned: 'Planned',
+  other_open: 'Other open work',
+  ended: 'Ended',
+} as const;
+type WorkGroup = keyof typeof GROUPS;
+type WorkKind = 'tasks' | 'experiments' | 'reflections' | 'other';
 interface Item {
   id: string;
-  kind: 'tasks' | 'experiments' | 'reflections';
+  key: string;
+  kind: WorkKind;
   name: string;
-  to: string;
-  state: string;
-  flow: Flow;
-  /** Workflows' word for the record's end, where its owner sends one. */
+  purpose?: string;
+  to?: string;
+  flow?: Flow;
   end?: { settled: boolean; failed: boolean };
-  at: string;
-  mine: boolean;
-  outcome: string | null;
-  named: boolean;
-  labels: (string | undefined)[];
-  owner: string;
-  /** How far down its chain the item stands: 0 waits on nothing this list holds. */
-  depth: number;
-  /** The prerequisites it still waits on, by name. */
+  at?: string;
+  owner?: string;
   waits: string[];
-  /** Support work, a merge of deliveries: hidden unless the reader asks for it. */
-  support?: boolean;
-}
-
-/**
- * The edges with the hidden records taken out and the lines through them kept: what waited
- * on a hidden record waits on whatever that record waited on, unsettled if any step was.
- */
-export function bridged<E extends { from: string; to: string; waiting?: boolean }>(
-  edges: E[],
-  hidden: ReadonlySet<string>,
-): E[] {
-  if (!hidden.size) return edges;
-  const out = new Map<string, E>();
-  const onward = (from: string, edge: E, waiting: boolean, seen: Set<string>) => {
-    if (!hidden.has(edge.to)) {
-      out.set(`${from}>${edge.to}`, { ...edge, from, waiting });
-      return;
-    }
-    if (seen.has(edge.to)) return;
-    seen.add(edge.to);
-    for (const next of edges.filter((other) => other.from === edge.to))
-      onward(from, next, waiting || !!next.waiting, seen);
-  };
-  for (const edge of edges)
-    if (!hidden.has(edge.from)) onward(edge.from, edge, !!edge.waiting, new Set());
-  return [...out.values()];
+  cycles: MapCycle[];
+  node?: RunningNode;
+  group: WorkGroup;
 }
 
 /**
@@ -287,299 +242,421 @@ export function CreateResearch({
   );
 }
 
-/**
- * The list the wave is made of. It is the same list wherever it is mounted: the
- * Work page, and the left pane of every record it opens, so a record's siblings
- * stay on screen beside it. On the Work page the same records are drawn as the map, under
- * the same row that narrows them, and are listed only where there is no room to draw.
- */
+/** The project catalog and its live work share one row per record, at every screen size. */
 function WaveList({ shell }: { shell: ShellData }) {
   const { actor } = useSession();
   const nameOf = useActorNames();
-  // The page's one line: which kinds are drawn, and what is live or needs a person of each.
-  const [bar, setBar] = useState<WorkFilter>(EVERYTHING);
   const live = useBoard();
-  const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
-  const tasksRow = rowOf('tasks');
-  const experimentsRow = rowOf('experiments');
-  const cyclesRow = rowOf('research');
-  const wavesRow = rowOf('reflections');
-  const reviewsPath = rowOf('reviews')?.path;
-  // Every list the wave is made of is the one home read the rail polls, each part under its
-  // row's id; review clauses move with the record beside the list, so it is read as often.
+  const reading = useContext(Reading);
+  const [kind, setKind] = useState('');
+  const [cycleFilter, setCycleFilter] = useState('');
   const home = useHome(8000);
-  const { tasks, experiments, reviews, research: cycles, reflections: waves } = home.data ?? {};
-  const all = newest(cycles ?? [], (item) => item.workflow.updatedAt);
-  const navigate = useNavigate();
+  const { tasks, experiments, research: cycles, reflections } = home.data ?? {};
+  const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
   const cycle = currentCycle(cycles ?? undefined, shell.workflows);
-  // The work the cycle itself names: its own prerequisites, and nothing inferred.
-  const inCycle = new Set(cycle?.researchDependencies);
-  // Every cycle's work stands on the page, the one in hand first and the earlier ones under
-  // it, newest first; a unit no cycle names stands with the one in hand.
-  const order = [cycle, ...all.filter((item) => item !== cycle)].flatMap((item) =>
-    item ? [item] : [],
-  );
-  const groupOf = (id: string) =>
-    order.find((item) => item.researchDependencies?.includes(id))?.id ?? cycle?.id;
-  /** What every unit of the wave says alike, from its record and the row whose page it opens. */
-  const unit = (
-    kind: Item['kind'],
-    path: string,
-    { id, workflow }: { id: string; workflow: Flow },
-    owner: string,
-  ) => ({
+  const allCycles = newest(cycles ?? [], (item) => item.workflow.updatedAt);
+  const nodes = live?.board?.lanes.work.nodes ?? [];
+  const nodeOf = (key: string) =>
+    nodes.find((node) => node.key === key || node.aliases?.includes(key));
+  const unit = (kind: WorkKind, id: string, flow: Flow, owner: string) => ({
     id,
+    key: runningKey('work', id),
     kind,
-    to: `${path}/${id}`,
-    state: workflow.state,
-    flow: workflow,
-    at: workflow.updatedAt,
-    mine: owner === actor.id,
-    named: inCycle.has(id),
+    flow,
     owner,
-    depth: 0,
-    waits: [],
+    at: flow.updatedAt,
+    to: `${rowOf(kind)?.path ?? `/${kind}`}/${id}`,
+    cycles: allCycles.filter(
+      (item) => item.researchDependencies.includes(id) || item.reflectionId === id,
+    ),
+    node: nodeOf(runningKey('work', id)),
+    group: 'other_open' as WorkGroup,
   });
-  const items: Item[] = chained(
+  const records: Item[] = chained(
     [
-      ...(tasks ?? []).map((task): Item => ({
-        ...unit('tasks', tasksRow!.path, task, task.producerId),
+      ...(tasks ?? []).map((task) => ({
+        ...unit('tasks', task.id, task.workflow, task.producerId),
         name: task.title,
+        purpose: task.goal,
         end: task,
-        outcome: task.failure?.reason ?? null,
-        labels: [task.title, task.goal, nameOf(task.producerId)],
-        support: isResolution(task.title),
       })),
-      ...(experiments ?? []).map((item): Item => ({
-        ...unit('experiments', experimentsRow!.path, item, item.ownerId),
+      ...(experiments ?? []).map((item) => ({
+        ...unit('experiments', item.id, item.workflow, item.ownerId),
         name: item.name,
+        purpose: item.intent,
         end: item,
-        outcome: item.conclusion,
-        labels: [item.name, item.intent, nameOf(item.ownerId)],
       })),
-      // A reflection is a unit of the wave like the work it reflects on.
-      ...(waves ?? []).map((wave): Item => ({
-        ...unit('reflections', wavesRow!.path, wave, wave.ownerId),
-        name: wave.title,
-        outcome: `${wave.lenses.filter((lens) => lens.written).length} of ${wave.lenses.length} lenses written`,
-        named: cycle?.reflectionId === wave.id,
-        labels: [wave.title, nameOf(wave.ownerId)],
+      ...(reflections ?? []).map((item) => ({
+        ...unit('reflections', item.id, item.workflow, item.ownerId),
+        name: item.title,
+        purpose: `${item.lenses.filter((lens) => lens.written).length} of ${item.lenses.length} reflection lenses written`,
       })),
     ],
     tasks ?? [],
   );
-  // Whether the page's one line keeps a unit, by what the board says of it.
-  const nodes = new Map((live?.board?.lanes.work.nodes ?? []).map((node) => [node.key, node]));
-  const passes = (item: Item) =>
-    shown(
-      {
-        kind: item.kind === 'tasks' ? 'Task' : 'Experiment',
-        node: nodes.get(runningKey('work', item.id)),
-        done: ended(shell.workflows, item.flow, item.end),
-      },
-      bar,
-      live?.now.stale ?? false,
-    );
+  // A contribution can name work absent from home (including a failed home part). Keep it
+  // visible, but do not duplicate a record already represented by an absorbed node.
+  const known = new Set(records.map((item) => item.key));
+  for (const node of nodes) {
+    if (known.has(node.key) || node.aliases?.some((key) => known.has(key))) continue;
+    known.add(node.key);
+    const kind: WorkKind =
+      node.kind === 'Task'
+        ? 'tasks'
+        : node.kind === 'Experiment'
+          ? 'experiments'
+          : node.kind === 'Reflection'
+            ? 'reflections'
+            : 'other';
+    records.push({
+      id: keyId(node.key),
+      key: node.key,
+      name: node.title,
+      kind,
+      node,
+      waits: [],
+      cycles: allCycles.filter(
+        (item) =>
+          item.researchDependencies.includes(keyId(node.key)) ||
+          item.reflectionId === keyId(node.key),
+      ),
+      group: 'other_open',
+    });
+  }
+  const attentionOf = (item: Item) =>
+    item.node && needs(item.node) ? item.node : live?.liveOn(item.key).find(needs);
+  const standing = (item: Item): WorkGroup => {
+    const { flow, node } = item;
+    if (attentionOf(item)) return 'attention';
+    if (flow ? ended(shell.workflows, flow, item.end) : node?.look === 'quiet') return 'ended';
+    const shape =
+      flow &&
+      shell.workflows?.find(
+        (shape) =>
+          shape.name === flow.workflow && (!flow.version || shape.version === flow.version),
+      );
+    if (
+      shape?.edges.some(
+        (edge) =>
+          edge.from === flow!.state && ['review.write', 'review.submit'].includes(edge.tool ?? ''),
+      )
+    )
+      return 'review';
+    if (item.waits.length || node?.look === 'dashed') return 'waiting';
+    if (node?.dot && !live?.now.stale) return 'running';
+    if (flow && rowOf(item.kind)?.states?.[flow.state]?.idle) return 'planned';
+    // A deployed nonterminal, non-idle stage says work is under way; it does not claim an agent is live.
+    if (shape?.states.includes(flow!.state)) return 'running';
+    return 'other_open';
+  };
+  const items = records.map((item) => ({ ...item, group: standing(item) }));
   const filter = useListFilter(items, {
-    stateOf: (item) => item.state,
-    // Open work: in no program's end state, as the deployed shapes declare them.
-    isOpen: (state) => !shell.workflows?.some((shape) => shape.terminal.includes(state)),
-    mine: (item) => item.mine,
-    labels: (item) => item.labels,
+    stateOf: (item) => item.group,
+    isOpen: (group) => group !== 'ended',
+    history: true,
+    mine: (item) => item.owner === actor.id,
+    labels: (item) => [item.name, item.purpose, item.owner && nameOf(item.owner)],
     ids: (item) => [item.id, item.owner],
-    also: (item) => passes(item) && !item.support,
+    also: (item) =>
+      (!kind || item.kind === kind) &&
+      (!cycleFilter ||
+        (cycleFilter === 'none'
+          ? !item.cycles.length
+          : item.cycles.some((cycle) => cycle.id === cycleFilter))),
   });
-  // Support work, a merge of deliveries, is never drawn; its lines pass through it.
-  const hidden = new Set(items.filter((item) => item.support).map((item) => item.id));
-  // One read makes the list, and a failure that leaves rows on screen degrades to a line
-  // rather than blanking them. A list whose row is here but whose part did not answer is a
-  // failure too: its records would otherwise vanish without a word.
-  const unread = (['tasks', 'experiments', 'research', 'reflections'] as const).filter(
-    (kind) => rowOf(kind) && home.data?.[kind] === null,
+  // All counters describe the same catalog after search/type/owner/cycle, before status.
+  const count = (group: string) => filter.states.find((state) => state.value === group)?.count ?? 0;
+  const total = Object.keys(GROUPS).reduce((sum, group) => sum + count(group), 0);
+  const clear = () => {
+    setKind('');
+    setCycleFilter('');
+    filter.reset();
+  };
+  const unread = ['tasks', 'experiments', 'research', 'reflections'].filter(
+    (kind) => rowOf(kind) && home.data?.[kind as keyof typeof home.data] === null,
   );
   const load = {
-    loading: !items.length && home.loading,
+    loading: !home.data && home.loading && !items.length,
     error:
       home.error ??
       (unread.length
-        ? new ApiError('unavailable', `Could not read ${unread.join(', ')}`, 503)
+        ? new ApiError(
+            'unavailable',
+            `Could not read ${unread.join(', ')}. Available work is shown.`,
+            503,
+          )
         : undefined),
-    data: items.length ? items : undefined,
+    data: items.length || home.data ? items : undefined,
     loadedAt: home.loadedAt,
   };
-  // Where the map is drawn it is the page's one view of the work, and no row is listed under it.
-  const [drawn, setDrawn] = useState(true);
-  // One step in for each thing the row waits behind, on the name and on the line under it.
-  const step = (item: Item) => ({ '--depth': item.depth }) as CSSProperties;
-  // What the map draws, and every line between two of them, each said once by the task at one
-  // end of it. As the page opens that is every record still open or named by the cycle, with
-  // what the board holds in flight; once the page is narrowed it is the kept rows and no other.
-  const narrowed = bar.only.size > 0 || !bar.kinds.experiments || !bar.kinds.tasks;
-  const only = filter.state !== OPEN || !!filter.query || filter.scope !== 'everyone' || narrowed;
-  const kept = new Set(filter.rows);
-  const read: Wave = {
-    only,
-    groups: order.map((item) => item.id),
-    items: items
-      .filter((item) => !hidden.has(item.id))
-      .map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        name: item.name,
-        flow: item.flow,
-        at: item.at,
-        group: groupOf(item.id),
-        held: passes(item) && (!only || kept.has(item)),
-      })),
-    edges: bridged(
-      (tasks ?? []).flatMap((task) => [
-        ...(task.dependencies ?? []).map((on) => ({
-          from: on.id,
-          to: task.id,
-          waiting: !on.settled,
-        })),
-        ...(task.dependents ?? []).map((next) => ({
-          from: task.id,
-          to: next.id,
-          waiting: !task.settled,
-        })),
-      ]),
-      hidden,
-    ),
-  };
-  // The same wave read again is the same wave, so the map is not worked out again on each poll.
-  const same = JSON.stringify(read);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const wave = useMemo(() => read, [same]);
-  // What is live and what needs a person, counted over the whole wave, whatever is narrowed.
-  const counts = countsOf(
-    mapOf(live?.board, {
-      ...read,
-      only: false,
-      items: read.items.map((item) => ({ ...item, held: true })),
-    }).units,
-    live?.now.stale ?? false,
-  );
+  const kindName = (item: Item) =>
+    ({
+      tasks: 'Task',
+      experiments: 'Experiment',
+      reflections: 'Reflection',
+      other: item.node?.kind ?? 'Work',
+    })[item.kind];
+  const groups = (Object.keys(GROUPS) as WorkGroup[]).map((group) => ({
+    group,
+    rows: filter.rows
+      .filter((item) => item.group === group)
+      .sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '')),
+  }));
+  const narrowed =
+    !!kind ||
+    !!cycleFilter ||
+    !!filter.query ||
+    filter.scope !== 'everyone' ||
+    filter.state !== OPEN;
+  const detailFiltered =
+    !!kind ||
+    !!cycleFilter ||
+    filter.scope !== 'everyone' ||
+    ![OPEN, '', 'ended'].includes(filter.state);
   return (
-    <ListPage
-      load={load}
-      bare
-      // The cycle stands where every other page's title line stands, its one move beside it;
-      // under it the page's one line: what is so right now, the filters, and what it can start.
-      lede={(ends) => (
-        <>
-          <CycleHead
-            shell={shell}
-            cycle={cycle}
-            pulse={JSON.stringify(
-              items.filter((item) => item.named).map((item) => [item.id, item.state]),
-            )}
-            onSaved={home.reload}
-          />
-          <WorkBar
-            counts={counts}
-            filter={bar}
-            onFilter={setBar}
-            ends={ends}
-            agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path}
-          />
-        </>
-      )}
-      // Reset is offered only once the reader has narrowed the page away from how it opened.
-      reset={
-        filter.state !== filter.initial || filter.query || filter.scope !== 'everyone' || narrowed
-          ? () => {
-              filter.reset();
-              setBar(EVERYTHING);
-            }
-          : undefined
-      }
-      drawn={
-        <div className="wmap-stage">
-          <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
-          <LiveNotes />
-        </div>
-      }
-      listed={!drawn}
-      noun="work"
-      kind="work"
-      placeholder="Name, question or person"
-      filter={{
-        ...filter,
-        filtering: filter.filtering || narrowed,
-        clear() {
-          filter.clear();
-          setBar(EVERYTHING);
-        },
-      }}
-      emptyTitle="No work yet"
-      create={
-        cyclesRow && {
-          label: 'New cycle',
-          shown: writes(actor),
-          form: (close) => (
-            <CreateResearch
-              follows={
-                cycle && !cycle.successorId && ended(shell.workflows, cycle.workflow)
-                  ? { id: cycle.id, name: cycle.name }
-                  : undefined
+    <div className="work-page">
+      <ListPage
+        load={load}
+        bare
+        listed={false}
+        noun="work"
+        kind="work"
+        emptyTitle="No work yet"
+        emptyHint="Start a research cycle to organize the project's work."
+        filter={{ ...filter, filtering: narrowed, clear }}
+        create={
+          rowOf('research')
+            ? {
+                label: 'New cycle',
+                shown: writes(actor),
+                form: (close) => (
+                  <CreateResearch
+                    follows={
+                      cycle && !cycle.successorId && ended(shell.workflows, cycle.workflow)
+                        ? { id: cycle.id, name: cycle.name }
+                        : undefined
+                    }
+                    onSaved={() => {
+                      close();
+                      home.reload();
+                    }}
+                  />
+                ),
               }
-              onSaved={() => {
-                close();
-                home.reload();
-              }}
-            />
-          ),
+            : undefined
         }
-      }
-      line={(item) => {
-        const review = currentReview(reviews ?? undefined, item.id);
-        const said = reviewClause(review, nameOf(review?.reviewerId));
-        const who = nameOf(item.owner);
-        return {
-          kind: item.kind,
-          name: (
-            <span className="chain" style={step(item)}>
-              {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
-              <Link
-                className={cx('row-link', item.id === filter.openId && 'row-open')}
-                to={item.to}
-              >
-                <strong>{item.name}</strong>
-              </Link>
-            </span>
-          ),
-          standing: (
-            <div className="chain chain--under" style={step(item)}>
-              <ThreeStates
-                stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
-                // A review is a record of its own, so the clause is the way to its verdict.
-                review={
-                  said && review && reviewsPath
-                    ? { ...said, to: `${reviewsPath}/${review.id}` }
-                    : (said ?? undefined)
-                }
-                outcome={
-                  firstSentence(item.outcome) ? { detail: firstSentence(item.outcome) } : undefined
-                }
-                meta={
-                  <>
-                    {who && `${who} · `}
-                    <Ago at={item.at} />
-                  </>
-                }
+        lede={(ends) => (
+          <>
+            <header className="work-heading">
+              <div className="work-heading-main">
+                <h1>Work</h1>
+                {cycle && rowOf('research') && (
+                  <Link
+                    className="work-cycle-link"
+                    to={`${rowOf('research')!.path}/${cycle.id}`}
+                    title={`${ended(shell.workflows, cycle.workflow) ? 'Latest' : 'Current'} cycle · ${cycle.progress.settled} of ${cycle.progress.total} selected work accepted`}
+                  >
+                    <span>{cycle.name}</span>
+                    <span className="work-cycle-count">
+                      {cycle.progress.settled}/{cycle.progress.total}
+                    </span>
+                  </Link>
+                )}
+              </div>
+              <div className="work-heading-actions">
+                <WorkDispatch />
+                {ends}
+              </div>
+            </header>
+            <div className="work-toolbar">
+              <nav className="work-views" aria-label="Work view">
+                {[
+                  [OPEN, 'Active', count(OPEN)],
+                  ['', 'All work', total],
+                  ['ended', 'History', count('ended')],
+                ].map(([value, label, number]) => (
+                  <button
+                    key={String(value)}
+                    aria-pressed={filter.state === value}
+                    onClick={() => filter.setState(String(value))}
+                  >
+                    {label} <span>{number}</span>
+                  </button>
+                ))}
+              </nav>
+              <SearchField
+                label="Search work"
+                title="Search name, purpose or person"
+                value={filter.query}
+                onChange={filter.setQuery}
               />
-              {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
-              {item.waits.length > 0 && (
-                <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
-              )}
-              {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}
-              <LiveLines id={item.id} />
+              <details
+                className="work-filter-menu"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || !event.currentTarget.open) return;
+                  event.preventDefault();
+                  event.currentTarget.open = false;
+                  event.currentTarget.querySelector('summary')?.focus();
+                }}
+              >
+                <summary className={detailFiltered ? 'work-filter-active' : undefined}>
+                  <Icon name="settings" size={14} /> Filter
+                  {detailFiltered && <span className="work-filter-dot" />}
+                </summary>
+                <div className="work-filters">
+                  <label>
+                    <span>Type</span>
+                    <select
+                      aria-label="Work type"
+                      value={kind}
+                      onChange={(event) => setKind(event.target.value)}
+                    >
+                      <option value="">All types</option>
+                      <option value="tasks">Tasks</option>
+                      <option value="experiments">Experiments</option>
+                      <option value="reflections">Reflections</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Owner</span>
+                    <select
+                      aria-label="Owner"
+                      value={filter.scope}
+                      onChange={(event) =>
+                        filter.setScope(event.target.value as 'mine' | 'everyone')
+                      }
+                    >
+                      <option value="everyone">Everyone</option>
+                      <option value="mine">Mine</option>
+                    </select>
+                  </label>
+                  {allCycles.length > 0 && (
+                    <label>
+                      <span>Cycle</span>
+                      <select
+                        aria-label="Cycle"
+                        value={cycleFilter}
+                        onChange={(event) => setCycleFilter(event.target.value)}
+                      >
+                        <option value="">All cycles</option>
+                        {allCycles.map((cycle) => (
+                          <option key={cycle.id} value={cycle.id}>
+                            {cycle.name}
+                          </option>
+                        ))}
+                        <option value="none">No cycle</option>
+                      </select>
+                    </label>
+                  )}
+                  <label>
+                    <span>Status</span>
+                    <select
+                      aria-label="Work status"
+                      value={filter.state}
+                      onChange={(event) => filter.setState(event.target.value)}
+                    >
+                      <option value={OPEN}>Active</option>
+                      <option value="">All work</option>
+                      {(Object.keys(GROUPS) as WorkGroup[]).map((group) => (
+                        <option key={group} value={group}>
+                          {GROUPS[group]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {narrowed && (
+                    <button className="work-reset" onClick={clear}>
+                      Reset filters
+                    </button>
+                  )}
+                </div>
+              </details>
             </div>
-          ),
-        };
-      }}
-    />
+          </>
+        )}
+        drawn={
+          <div className="work-groups">
+            {groups
+              .filter(({ rows }) => rows.length)
+              .map(({ group, rows }) => (
+                <section className="work-group" key={group} aria-label={GROUPS[group]}>
+                  <h2>
+                    <span
+                      className={`work-group-dot work-group-dot--${group}`}
+                      aria-hidden="true"
+                    />
+                    {GROUPS[group]} <span>{rows.length}</span>
+                  </h2>
+                  <ul>
+                    {rows.map((item) => {
+                      const attention = attentionOf(item);
+                      const reason =
+                        attention?.attention?.says && steadyText(attention.attention.says, reading);
+                      return (
+                        <li className="work-row" key={item.key}>
+                          <span
+                            className="work-kind"
+                            role="img"
+                            aria-label={kindName(item)}
+                            title={kindName(item)}
+                          >
+                            <Icon
+                              name={
+                                item.kind === 'tasks'
+                                  ? 'work'
+                                  : item.kind === 'experiments'
+                                    ? 'file-data'
+                                    : item.kind === 'reflections'
+                                      ? 'reflections'
+                                      : 'fallback'
+                              }
+                              size={16}
+                            />
+                          </span>
+                          <button
+                            className="work-row-title"
+                            data-key={item.key}
+                            aria-controls="running-panel"
+                            title={item.name}
+                            onClick={() => reading.open(item.key, item.to)}
+                          >
+                            {item.name}
+                          </button>
+                          {attention && (
+                            <button
+                              className="work-row-attention"
+                              data-key={attention.key}
+                              aria-controls="running-panel"
+                              aria-label={reason || 'Needs attention'}
+                              title={reason || 'Needs attention'}
+                              onClick={() => reading.open(attention.key, item.to)}
+                            >
+                              <Icon name="alert" size={15} />
+                            </button>
+                          )}
+                          <div className="work-row-stage">
+                            {item.flow && (
+                              <StageMark shapes={shell.workflows} workflow={item.flow} />
+                            )}
+                          </div>
+                          <span className="work-row-owner" title={item.owner && nameOf(item.owner)}>
+                            {item.owner ? (nameOf(item.owner) ?? 'Owner') : ''}
+                          </span>
+                          <span className="work-row-updated">
+                            {item.at && <Ago at={item.at} />}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+          </div>
+        }
+        after={<LiveNotes />}
+      />
+    </div>
   );
 }
 
@@ -733,43 +810,7 @@ export function CycleMove({
   );
 }
 
-/** The one line as the page opens: every kind drawn, ended work too, nothing singled out. */
-const EVERYTHING: WorkFilter = {
-  only: new Set(),
-  kinds: { experiments: true, tasks: true, ended: true },
-};
-
-/** The cycle that frames the wave: what it is called, where it stands, its one move. */
-function CycleHead({
-  shell,
-  cycle,
-  pulse,
-  onSaved,
-}: {
-  shell: ShellData;
-  cycle?: MapCycle;
-  pulse: string;
-  onSaved(): void;
-}) {
-  const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
-  // With no cycle the page is its title.
-  if (!cycle || !cyclesRow) return <PageHeader title="Work" />;
-  return (
-    <PageHeader
-      title={<Link to={`${cyclesRow.path}/${cycle.id}`}>{cycle.name}</Link>}
-      actions={
-        <>
-          <StatusPill value={cycle.workflow.state} />
-          {cycle.writable && (
-            <CycleMove cycle={cycle} shell={shell} pulse={pulse} onSaved={onSaved} />
-          )}
-        </>
-      }
-    />
-  );
-}
-
-/** The Work page: the row that narrows the wave, its map, and what is live under it. */
+/** The same live inspector serves a conventional work list and its connected agents. */
 export const WorkView = ({ shell }: { shell: ShellData }) => (
   <WorkPlane nameOf={useActorNames()}>
     <WaveList shell={shell} />

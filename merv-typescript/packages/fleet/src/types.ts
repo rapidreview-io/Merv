@@ -16,11 +16,13 @@ export interface FleetAllocation {
   /** The request's own machine time, when it set one. */
   seconds?: number;
   profileId: string;
+  /** Retained even if a deployment changes or removes the runtime profile. */
+  leaseSeconds?: number;
   /** Who the machine is for, as Pi and Fleet key a person: what its day's compute counts toward. */
   person?: string;
   /** The offer's hourly price when Fleet reserved it under a USD cap: what its time costs `person`. */
   usdPerHour?: number;
-  /** One allocation never changes epoch or rents a successor machine. */
+  /** The allocation epoch stays fixed across unlaunched machine replacements. */
   epoch: number;
   phase: FleetPhase;
   intent: FleetIntent;
@@ -34,6 +36,7 @@ export interface FleetAllocation {
   adoptedAt?: string;
   /** Machines that never became ready, stopped and rented again each under a new create key. */
   replaced?: number;
+  replacing?: true;
   createdAt: string;
   /** While queued, when the request gives up; once reserved, when the machine must stop. */
   deadlineAt: string;

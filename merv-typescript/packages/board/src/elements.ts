@@ -1004,10 +1004,14 @@ export class Drawing {
         this.survey(new Set(parts));
         const box = bounds(moved.map(rectOf))!;
         const at = this.place(box, op);
+        const carriedFrames = new Set(
+          parts.filter((part) => part.type === 'frame').map((part) => part.id),
+        );
         for (const part of parts) {
           part.x += at.x - box.x;
           part.y += at.y - box.y;
-          if (op.in) part.frameId = at.frameId;
+          // Reparent the moved roots, while the contents of a moved frame stay inside it.
+          if (!carriedFrames.has(part.frameId)) part.frameId = at.frameId;
           this.touch(part);
         }
         moved.forEach((part) => this.landed(part));

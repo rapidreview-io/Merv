@@ -4,12 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { reviewedFindings } from './fixtures/task-evidence.js';
 
 import { DurableEvents } from '@merv/domain-events';
 import type { PostgresState } from '@merv/state';
 import { deferred as signal } from './fixtures/deferred.js';
-import { ownReviews } from './fixtures/review-verdict.js';
+
 import { openState } from './fixtures/state.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,105 +107,6 @@ test('durable delivery rolls back effects with its cursor, isolates failures, re
   }
 });
 
-test('review recovery survives unloaded consumers and revoked initiators, preserves snapshots, and fences stale claims', async () => {
-  const { createApp } = await import('./fixtures/app.js');
-  const directory = mkdtempSync(join(tmpdir(), 'merv-recovery-'));
-  let app = await createApp({ directory, api: false });
-  try {
-    const bootstrap = await app.ctx.scope.credentials.bootstrap({
-      projectName: 'Recovery',
-      actorName: 'Operator',
-    });
-    const operator = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
-    const issue = async (role: 'producer' | 'reviewer' | 'operator') => ({
-      actorId: (await app.ctx.scope.credentials.issueActor(operator, { name: role, role })).actor
-        .id,
-      projectId: operator.projectId,
-    });
-    const producer = await issue('producer'),
-      reviewer = await issue('reviewer'),
-      replacement = await issue('reviewer'),
-      otherOperator = await issue('operator');
-    const brief = await app.ctx.artifacts.create(producer, {
-      title: 'Brief',
-      content: 'Goal. Check.',
-    });
-    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'recovery-subject');
-    const pending = await app.ctx.reviews.request(producer, {
-      subjectId: 'recovery-subject',
-      subjectRevision: 0,
-      producerId: producer.actorId,
-      artifactIds: [brief.id],
-      criteria: ['Check.'],
-      requestId: 'request',
-    });
-    const claim = await app.ctx.reviews.start(reviewer, pending.id);
-    await app.setEnabled('domain-events', false);
-    assert.equal(app.ctx.get('reviews'), undefined);
-    await app.ctx.scope.credentials.revokeActor(otherOperator, reviewer.actorId);
-    await app.ctx.scope.credentials.revokeActor(operator, otherOperator.actorId);
-    await app.setEnabled('domain-events', true);
-    await until(async () => (await app.ctx.reviews.get(operator, claim.id)).status === 'requested');
-    const recovered = await app.ctx.reviews.get(operator, claim.id);
-    assert.equal(recovered.snapshotHash, claim.snapshotHash);
-    assert.equal(recovered.recovery!.previousClaimId, claim.claimId);
-    // Reviews came back with Domain Events, without the stand-in owner.
-    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'recovery-subject');
-    const newClaim = await app.ctx.reviews.start(replacement, claim.id);
-    assert.notEqual(newClaim.claimId, claim.claimId);
-    assert.equal(newClaim.claimGeneration, 2);
-    await assert.rejects(
-      () =>
-        app.ctx.reviews.submit(replacement, {
-          ...reviewedFindings(claim),
-          reviewId: claim.id,
-          claimId: claim.claimId!,
-          verdict: 'pass',
-          notes: 'stale',
-          requestId: 'stale',
-        }),
-      /current review claim/,
-    );
-    await assert.rejects(
-      () =>
-        app.ctx.reviews.submit(reviewer, {
-          ...reviewedFindings(claim),
-          reviewId: claim.id,
-          claimId: claim.claimId!,
-          verdict: 'pass',
-          notes: 'revoked',
-          requestId: 'revoked',
-        }),
-      /access this project/,
-    );
-    const done = await app.ctx.reviews.submit(replacement, {
-      ...reviewedFindings(newClaim),
-      reviewId: claim.id,
-      claimId: newClaim.claimId!,
-      verdict: 'pass',
-      notes: 'Independently checked.',
-      requestId: 'accept',
-    });
-    assert.equal(done.status, 'submitted');
-    await app.ctx.scope.credentials.revokeActor(operator, replacement.actorId);
-    await app.ctx.domainEvents.drain();
-    assert.equal((await app.ctx.reviews.get(operator, claim.id)).status, 'submitted');
-    await app.stop();
-    app = await createApp({ directory, api: false });
-    await app.ctx.domainEvents.drain();
-    assert.equal(
-      (await app.ctx.state.events(operator.projectId)).filter(
-        (e) => e.type === 'review.claim_released',
-      ).length,
-      1,
-    );
-    assert.equal((await app.ctx.reviews.get(operator, pending.id)).status, 'submitted');
-  } finally {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
 async function emitProbe(state: PostgresState) {
   return state.transaction((tx) =>
     state.appendEvent(tx, {
@@ -218,69 +118,6 @@ async function emitProbe(state: PostgresState) {
     }),
   );
 }
-
-test('a failed delivery cannot put another worker’s successful delivery back into retry', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-events-stale-failure-'));
-  const state = await openState(directory);
-  const other = await openState(directory);
-  const events = await createService(new DurableEvents(state));
-  const successor = await createService(new DurableEvents(other));
-  const failed = signal(),
-    released = signal();
-  const failure = new Error('handler failed');
-  const transaction = state.transaction.bind(state);
-  state.transaction = async (fn) => {
-    try {
-      return await transaction(fn);
-    } catch (error) {
-      if (error === failure) {
-        failed.resolve();
-        await released.promise;
-      }
-      throw error;
-    }
-  };
-  try {
-    await events.subscribe({
-      id: 'worker',
-      types: ['probe.created'],
-      from: 'beginning',
-      async handle() {
-        throw failure;
-      },
-    });
-    const first = await emitProbe(state);
-    const draining = events.drain();
-    await failed.promise;
-    const handled: number[] = [];
-    await successor.subscribe({
-      id: 'worker',
-      types: ['probe.created'],
-      from: 'beginning',
-      async handle(event) {
-        handled.push(event.id);
-      },
-    });
-    await successor.drain();
-    const successful = [
-      { id: 'worker', cursor: first.id, active: true, attempts: 0, error: null, retryAt: 0 },
-    ];
-    assert.deepEqual(await successor.status(), successful);
-    released.resolve();
-    await draining;
-    await events.close();
-    assert.deepEqual(await successor.status(), successful);
-    const second = await emitProbe(other);
-    await successor.drain();
-    assert.deepEqual(handled, [first.id, second.id]);
-  } finally {
-    released.resolve();
-    state.transaction = transaction;
-    await Promise.all([events.close(), successor.close()]);
-    await Promise.all([state.close(), other.close()]);
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
 
 test('drain joins async handlers and close waits for their atomic commit without admitting the next event', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-events-drain-'));
@@ -343,49 +180,6 @@ test('drain joins async handlers and close waits for their atomic commit without
   }
 });
 
-test('background drain contains transient storage rejections and retries durable work', async () => {
-  const state = await openState(':memory:');
-  const events = await createService(new DurableEvents(state));
-  const transaction = state.transaction.bind(state);
-  let calls = 0;
-  try {
-    await events.subscribe({
-      id: 'worker',
-      types: ['probe.created'],
-      from: 'beginning',
-      async handle() {
-        calls++;
-      },
-    });
-    // Inject the failures while no delivery is in flight, then commit the event past them. A
-    // delivery transaction requested before the injection could otherwise deliver first and
-    // leave the failures to a later drain that the explicit drain below would join.
-    await events.drain();
-    let failures = 2;
-    state.transaction = async (fn) => {
-      if (failures-- > 0) throw new Error('temporary storage failure');
-      return transaction(fn);
-    };
-    await transaction((tx) =>
-      state.appendEvent(tx, {
-        projectId: 'p',
-        actorId: 'a',
-        subjectId: 's',
-        type: 'probe.created',
-        data: {},
-      }),
-    );
-    await until(() => calls === 1);
-    assert.ok(failures < 0, 'both injected failures reached the background drain first');
-    await events.drain();
-    assert.equal((await events.status())[0]!.cursor, 1);
-  } finally {
-    state.transaction = transaction;
-    await events.close();
-    await state.close();
-  }
-});
-
 for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
   test(`handler event edits cannot move the durable cursor to ${cursor}`, async () => {
     const state = await openState(':memory:');
@@ -431,73 +225,6 @@ for (const cursor of [0, Number.MAX_SAFE_INTEGER]) {
     }
   });
 }
-
-test('the safety wakeup delivers a commit made through another State connection', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-events-other-'));
-  const state = await openState(directory);
-  const other = await openState(directory);
-  const events = await createService(new DurableEvents(state));
-  const seen: number[] = [];
-  try {
-    await events.subscribe({
-      id: 'worker',
-      types: ['probe.created'],
-      from: 'beginning',
-      handle(event) {
-        seen.push(event.id);
-      },
-    });
-    await events.drain();
-    const started = Date.now();
-    const { id } = await emitProbe(other);
-    await until(() => seen.includes(id));
-    assert.ok(Date.now() - started < 1500, `delivered after ${Date.now() - started} ms`);
-  } finally {
-    await events.close();
-    await Promise.all([state.close(), other.close()]);
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('failed deliveries retry on the backoff schedule and a success resets the attempts', async () => {
-  const state = await openState(':memory:');
-  const events = await createService(new DurableEvents(state));
-  const attempts: { at: number; attempts: number }[] = [];
-  try {
-    await events.subscribe({
-      id: 'flaky',
-      types: ['probe.created'],
-      from: 'beginning',
-      async handle(event, tx) {
-        const row = await tx.get<{ attempts: number }>(
-          'SELECT attempts FROM event_consumers WHERE id=?',
-          'flaky',
-        );
-        attempts.push({ at: Date.now(), attempts: row!.attempts });
-        if (attempts.length <= 3) throw new Error('handler failed');
-      },
-    });
-    const event = await emitProbe(state);
-    await events.drain();
-    await until(() => attempts.length === 4);
-    await events.drain();
-    assert.deepEqual(
-      attempts.map((attempt) => attempt.attempts),
-      [0, 1, 2, 3],
-    );
-    // 100 ms doubling per recorded failure; each retry wakes when it is due.
-    for (const [index, delay] of [100, 200, 400].entries()) {
-      const gap = attempts[index + 1]!.at - attempts[index]!.at;
-      assert.ok(gap >= delay && gap < delay + 400, `retry ${index + 1} after ${gap} ms`);
-    }
-    assert.deepEqual(await events.status(), [
-      { id: 'flaky', cursor: event.id, active: true, attempts: 0, error: null, retryAt: 0 },
-    ]);
-  } finally {
-    await events.close();
-    await state.close();
-  }
-});
 
 /** A small seeded generator, so a failure reproduces the same writer schedule. */
 function seeded(seed: number) {

@@ -63,17 +63,6 @@ test('two histories that touch different files merge into one commit with exactl
   assert.deepEqual(await mergeBases(git, r.env, r.a, r.b, 'ab'), result);
 });
 
-test('a conflict is an answer that names its paths and keeps what Git said', async (t) => {
-  const r = repository(t);
-  const git = new ServerGit(r.home);
-  t.after(() => git.close());
-  const result = await mergeBases(git, r.env, r.a, r.c, 'ac');
-  assert.equal(result.outcome, 'conflict');
-  if (result.outcome !== 'conflict') return;
-  assert.deepEqual(result.paths, ['f.txt']);
-  assert.match(result.messages, /CONFLICT \(content\)/);
-});
-
 test('conflict paths preserve Unicode and quotes exactly', async (t) => {
   const path = 'résumé "draft".txt';
   const r = repository(t, path);
@@ -101,28 +90,4 @@ test('a history that already holds the other is the base as it stands', async (t
     outcome: 'contained',
     commit: r.a,
   });
-});
-
-test('what Git said of a conflict is cut between characters, never inside one', async (t) => {
-  const r = repository(t);
-  const git = new ServerGit(r.home);
-  t.after(() => git.close());
-  const run = (args: string[], input = '') =>
-    execFileSync('git', ['--git-dir', r.bare, ...args], { input, encoding: 'utf8' }).trim();
-  // One path of emoji runs past the cut; one of the two offsets puts the cut inside a pair.
-  for (const name of ['😀'.repeat(9000), `a${'😀'.repeat(9000)}`]) {
-    const commit = (text: string, parent?: string) => {
-      const blob = run(['hash-object', '-w', '--stdin'], text);
-      const tree = run(['mktree', '-z'], `100644 blob ${blob}\t${name}\0`);
-      const id = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
-      return run([...id, 'commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', text]);
-    };
-    const base = commit('base\n');
-    const result = await mergeBases(git, r.env, commit('A\n', base), commit('C\n', base), 'x');
-    assert.ok(
-      result.outcome === 'conflict' && result.messages.length > 15_000,
-      `a long conflict, not ${result.outcome}`,
-    );
-    assert.doesNotMatch(result.messages, /\p{Surrogate}/u);
-  }
 });

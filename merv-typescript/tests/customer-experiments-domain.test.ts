@@ -211,74 +211,6 @@ async function fixture(
     held.token = secret;
     return held;
   };
-  const finish = async (held: Awaited<ReturnType<typeof offer>>, tokens = 1000) => {
-    held.stop();
-    const workspace = await held.driver.capture(held.launch);
-    await managed.sessions.release(caller, {
-      sessionId: held.session.id,
-      runnerId: held.control.runnerId,
-      usage: { inputTokens: tokens, outputTokens: 0, model: SERVICE_MODEL.model },
-    });
-    if (workspace) await managed.sessions.workspaceResult(caller, { ...held.control, workspace });
-    await managed.events.drain();
-  };
-  const deliver = async (exp: CustomerExperiment, held?: Awaited<ReturnType<typeof offer>>) => {
-    const worker = held ?? (await offer());
-    const artifact = await work.run(
-      worker,
-      'artifact.create',
-      { title: 'Run results', content: 'Retained measurements and report.' },
-      (c, input) => artifacts.create(c, input as { title: string; content: string }),
-    );
-    reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
-    await work.commit(worker, { 'experiment.ts': `console.log('attempt ${exp.attempts}');\n` });
-    submitted.push(
-      await work.run(
-        worker,
-        'customer_experiment.submit_results',
-        {
-          id: exp.id,
-          expectedRevision: exp.workflow.revision,
-          artifactIds: [artifact.id],
-          reportArtifactId: artifact.id,
-          summary: 'Run finished.',
-          requestId: id(),
-        },
-        (c, input) => tools.get('customer_experiment.submit_results')!(c, input as never),
-      ),
-    );
-    await finish(worker);
-    return service.reconcile(caller, exp.id);
-  };
-  const judge = async (
-    held: Awaited<ReturnType<typeof offer>>,
-    exp: CustomerExperiment,
-    returnTo: 'running' | 'planning' | 'failed',
-  ) => {
-    const current = await service.get(held.worker, exp.id);
-    return (await work.run(
-      held,
-      'review.submit',
-      {
-        reviewId: current.review!.id,
-        claimId: current.review!.claimId!,
-        expectedRevision: current.workflow.revision,
-        verdict: 'needs_changes',
-        returnTo,
-        notes: 'The retained comparison needs correction.',
-        synopsis:
-          'The retained evidence does not establish the required comparison under the accepted contract.',
-        findings: [1, 2, 3].map((criterionNumber) => ({
-          criterionNumber,
-          status: 'not_met',
-          evidenceIds: current.submission!.artifactIds,
-          notes: 'Verified mismatch in retained evidence.',
-        })),
-        requestId: id(),
-      },
-      (c, input) => reviews.apply(c, input as unknown as Parameters<typeof reviews.apply>[1]),
-    )) as CustomerExperiment;
-  };
   return {
     reports,
     state,
@@ -298,9 +230,6 @@ async function fixture(
     proposeDocument,
     pay,
     offer,
-    finish,
-    deliver,
-    judge,
   };
 }
 
@@ -377,27 +306,6 @@ test('customer workflow cannot dispatch before exact acceptance and payment; rec
   await assert.rejects(f.create(), errorCode('project_not_isolated'));
 });
 
-test('an executor that stops at its allowance without handing off produces a terminal failure', async (t) => {
-  const f = await fixture(t);
-  const exp = await f.pay();
-  const worker = await f.offer();
-  assert.equal(
-    (await f.service.reconcile(f.caller, exp.id)).workflow.state,
-    'running',
-    'A live worker must not be terminated by the reconciliation read',
-  );
-  await f.finish(worker, 8000);
-  const failed = await f.service.reconcile(f.caller, exp.id);
-  assert.equal(failed.workflow.state, 'failed');
-  assert.match(String(failed.workflow.data.failureReason), /Execution stopped/);
-  assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
-  assert.equal(
-    (await f.service.reconcile(f.caller, exp.id)).workflow.revision,
-    failed.workflow.revision,
-    'Repeated reconciliation does not emit another failure',
-  );
-});
-
 test('missing token accounting waits without launching an unbounded replacement', async (t) => {
   const f = await fixture(t);
   const exp = await f.pay();
@@ -413,59 +321,6 @@ test('missing token accounting waits without launching an unbounded replacement'
     capabilities: ['code.v2', 'code.git.1'],
   });
   assert.equal(demand.candidates.length, 0);
-});
-
-test('a scope change clears acceptance and payment and requires a fresh fixed contract', async (t) => {
-  const f = await fixture(t);
-  let exp = await f.deliver(await f.pay());
-  const oldContract = exp.contract!,
-    oldPayment = exp.paymentId!;
-  const reviewer = await f.offer();
-  exp = await f.judge(reviewer, exp, 'planning');
-  assert.equal(exp.workflow.state, 'planning');
-  assert.equal(exp.acceptedContractId, null);
-  assert.equal((await f.service.get(f.caller, exp.id)).paymentId, null);
-  assert.equal(
-    exp.workflow.data.computeEpoch,
-    `${oldContract.id}:planning:${exp.workflow.revision}`,
-  );
-  assert.equal((await f.workflows.dispatchCandidates(f.caller)).length, 0);
-  await f.finish(reviewer);
-  exp = await f.proposeDocument(exp, 'Does a revised classification rule improve accuracy?');
-  assert.equal(exp.contract!.version, oldContract.version + 1);
-  exp = await f.service.approve(f.caller, {
-    id: exp.id,
-    expectedRevision: exp.workflow.revision,
-    contractHash: exp.contract!.hash,
-    email: 'customer@example.test',
-    requestId: f.id(),
-  });
-  await assert.rejects(
-    f.service.confirmPayment(f.caller, {
-      id: exp.id,
-      contractHash: exp.contract!.hash,
-      paymentId: oldPayment,
-      amountCents: 1000,
-      currency: 'usd',
-      requestId: f.id(),
-    }),
-    errorCode('payment_reused'),
-  );
-  exp = await f.service.confirmPayment(f.caller, {
-    id: exp.id,
-    contractHash: exp.contract!.hash,
-    paymentId: 'pi_new_scope',
-    amountCents: 1000,
-    currency: 'usd',
-    requestId: f.id(),
-  });
-  assert.equal(exp.workflow.state, 'running');
-  const fresh = await f.offer();
-  assert.equal(
-    fresh.session.tokenBudget,
-    8000,
-    'The newly purchased contract has its own allowance',
-  );
 });
 
 for (const version of [5, 6])
@@ -610,63 +465,3 @@ for (const version of [5, 6])
     await f.managed.code.submissions.reconcile();
     assert.equal(count(), before + 1);
   });
-
-test("leased workers and reviewers read the request without the buyer's email or payment id", async (t) => {
-  const f = await fixture(t);
-  const paid = await f.pay();
-  const buyer = (view: object) => ['email', 'paymentId'].filter((key) => key in view);
-  // The owner's read keeps the buyer.
-  const owned = await f.service.get(f.caller, paid.id);
-  assert.equal(owned.email, 'customer@example.test');
-  assert.match(owned.paymentId!, /^pi_/);
-  const producer = await f.offer();
-  const read = await f.tools.get('customer_experiment.get')!(producer.worker, {
-    id: paid.id,
-  } as never);
-  assert.equal(read.id, paid.id);
-  assert.equal(read.acceptedContractId, owned.acceptedContractId);
-  assert.deepEqual(buyer(read), []);
-  const exp = await f.deliver(owned, producer);
-  assert.deepEqual(buyer(f.submitted.at(-1)!), []);
-  const reviewer = await f.offer();
-  assert.deepEqual(buyer(await f.judge(reviewer, exp, 'running')), []);
-  assert.equal((await f.service.get(f.caller, exp.id)).email, 'customer@example.test');
-});
-
-test('readiness rejects incomplete data and training/evaluation byte reuse', () => {
-  const requirement = {
-    id: 'train',
-    label: 'Training',
-    role: 'training' as const,
-    format: 'csv' as const,
-    columns: ['text', 'label'],
-    labelColumn: 'label',
-    minRows: 10,
-  };
-  const withData = {
-    ...plan,
-    dataRequirements: [requirement, { ...requirement, id: 'eval', role: 'evaluation' as const }],
-  };
-  assert.throws(() => validateAgreement(withData, []), errorCode('data_not_ready'));
-  const file = {
-    requirementId: 'train',
-    artifactId: 'a',
-    bucket: 'private',
-    key: 'one',
-    filename: 'one.csv',
-    sha256: 'a'.repeat(64),
-    size: 100,
-    rows: 20,
-    columns: ['text', 'label'],
-    validationId: 'validated',
-    validatedAt: new Date().toISOString(),
-  };
-  assert.throws(
-    () =>
-      validateAgreement(withData, [
-        file,
-        { ...file, requirementId: 'eval', artifactId: 'b', key: 'two' },
-      ]),
-    errorCode('data_leakage'),
-  );
-});

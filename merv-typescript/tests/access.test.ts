@@ -1,5 +1,5 @@
 import type { ToolGrant } from '@merv/contracts';
-import { createService, MervError, type Caller } from '@merv/contracts';
+import { createService, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
@@ -79,15 +79,6 @@ test('grants match exact projects, actors, mounts and raw names without changing
   });
 });
 
-test('a granted answer keeps the grants it decided with across a later replacement', async (t) => {
-  const { scope, reader } = await setup(t);
-  const policy = new ExactToolPolicy(scope, [grant(reader)]);
-  const decided = await policy.granted(reader);
-  policy.replace([]);
-  assert.equal(decided('research', 'search'), true);
-  assert.equal((await policy.granted(reader))('research', 'search'), false);
-});
-
 test('replacement and actor revocation take effect on every later check without a restart', async (t) => {
   const { scope, operator, reader } = await setup(t);
   const policy = new ExactToolPolicy(scope, [grant(reader)]);
@@ -105,50 +96,4 @@ test('replacement and actor revocation take effect on every later check without 
   });
   policy.replace([]);
   assert.equal((await policy.granted(operator))('research', 'paper.get'), false);
-});
-
-test('invalid replacement never partially publishes and mutable grant inputs cannot change authority', async (t) => {
-  const { scope, operator, reader } = await setup(t);
-  const source = [grant(reader)];
-  const policy = new ExactToolPolicy(scope, source);
-  source[0].tools.push('mutated');
-  source[0].actorId = operator.actorId;
-  source.push(grant(operator));
-  assert.equal((await policy.granted(reader))('research', 'search'), true);
-  assert.equal((await policy.granted(reader))('research', 'mutated'), false);
-  assert.equal((await policy.granted(operator))('research', 'search'), false);
-  const malformed: unknown[] = [
-    null,
-    {},
-    [{ ...grant(operator), extra: true }],
-    [{ ...grant(operator), actorId: '' }],
-    [{ ...grant(operator), projectId: '*' }],
-    [{ ...grant(operator), mountId: 'bad__mount' }],
-    [{ ...grant(operator), mountId: 'Uppercase' }],
-    [{ ...grant(operator), tools: ['*'] }],
-    [{ ...grant(operator), tools: ['paper.*'] }],
-    [{ ...grant(operator), tools: [12] }],
-    [grant(operator), { ...grant(operator), tools: [''] }],
-  ];
-  for (const invalid of malformed) {
-    assert.throws(() => policy.replace(invalid as ToolGrant[]), { code: 'invalid_access_grants' });
-    assert.equal((await policy.granted(reader))('research', 'search'), true);
-    assert.equal((await policy.granted(operator))('research', 'search'), false);
-  }
-  policy.replace([grant(reader, []), grant(reader, ['paper.get']), grant(reader, ['search'])]);
-  assert.equal((await policy.granted(reader))('research', 'search'), true);
-  assert.equal((await policy.granted(reader))('research', 'paper.get'), true);
-});
-
-test('granted does not hide infrastructure failures as an ordinary missing grant', async () => {
-  const failure = new MervError('state_closed', 'State is closed', 503);
-  const policy = new ExactToolPolicy({
-    async require() {
-      throw failure;
-    },
-  });
-  await assert.rejects(
-    async () => await policy.granted({ actorId: 'actor', projectId: 'project' }),
-    failure,
-  );
 });

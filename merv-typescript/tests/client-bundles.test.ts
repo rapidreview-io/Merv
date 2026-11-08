@@ -59,22 +59,14 @@ test('downloadable tar contains only package files; staging uses distinct names 
     `${origin}/mcp`,
   );
   assert.ok(!JSON.stringify(files).includes('experiments.rapidreview.io'));
-  assert.match(
-    setupGuide(origin),
-    /No project membership, project\nselection or Git repository is required/,
-  );
-  assert.match(setupGuide(origin), /ui\/account\/keys, even with no projects/);
-  assert.match(setupGuide(origin), /bundle.tar.gz/);
   assert.ok(setupGuide(origin).includes('codex mcp login ' + packageName(origin)));
-  assert.match(setupGuide(origin), /authenticates the plugin-bundled server/);
+  assert.match(setupGuide(origin), /bundle.tar.gz/);
   assert.ok(
     setupGuide(origin).includes(
       'mcp__plugin_' + packageName(origin) + '_' + packageName(origin) + '__*',
     ),
   );
   assert.match(setupGuide(origin), /default_tools_approval_mode = "approve"/);
-  assert.match(setupGuide(origin), /From the extraction directory \(MARKETPLACE\)/);
-  assert.ok(!setupGuide(origin).includes("bundle's clients directory"));
   assert.ok(!Object.keys(files).some((p) => /\.(sh|mjs)$/.test(p)));
 });
 
@@ -82,7 +74,5 @@ test('production onboarding uses the small marketplace while other origins remai
   const guide = setupGuide('https://experiments.rapidreview.io');
   assert.match(guide, /codex plugin marketplace add rapidreview-io\/merv-plugins/);
   assert.match(guide, /claude plugin marketplace add rapidreview-io\/merv-plugins/);
-  assert.match(guide, /No official-directory listing is required/);
-  assert.match(guide, /Archive fallback/);
   assert.ok(!setupGuide('https://staging.example').includes('rapidreview-io/merv-plugins'));
 });

@@ -180,12 +180,15 @@ export async function accountRequest<T>(
     /** The body is these bytes, not JSON. */
     raw?: BufferSource;
     scoped?: boolean;
+    /** Scope captured before queued work; refuse if the account or project changed. */
+    epoch?: number;
     credentials?: 'same-origin';
     /** The answer is bytes, read as a Blob; a refusal is still JSON. */
     bytes?: boolean;
   } = {},
 ): Promise<T> {
-  const epoch = scopeEpoch;
+  const epoch = options.epoch ?? scopeEpoch;
+  requireScope(epoch);
   const project = selectedProject;
   let bearer = memoryToken;
   for (let attempt = 0; ; attempt++) {
@@ -257,12 +260,17 @@ export const codeFile = (ref: string, path: string) =>
 
 /** One tool call over the same-origin JSON endpoint agents use. `name` may be an address
  *  `tool:action`, which takes that action's own arguments. */
-export async function call<T>(name: string, input: Record<string, unknown> = {}): Promise<T> {
+export async function call<T>(
+  name: string,
+  input: Record<string, unknown> = {},
+  epoch?: number,
+): Promise<T> {
   const path = encodeURIComponent(name).replace('%3A', ':');
   const body = await accountRequest<{ result: T }>(`/tools/${path}`, {
     method: 'POST',
     body: input,
     scoped: true,
+    epoch,
   });
   return body.result as T;
 }

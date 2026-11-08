@@ -23,6 +23,7 @@ import {
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
 import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
 import { openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const code = (expected: string) => (error: unknown) =>
   (error as { code?: string }).code === expected;
@@ -314,131 +315,88 @@ async function fixture() {
   return { state, store, storage, lifecycles, files, request, upload };
 }
 
-test('v3 request files: upload, list, rename, delete, download, manifest and the 1 TB cap', async () => {
+test('files retain the uploaded manifest, freeze mutations, and replay completion after service restart', async (t) => {
   const f = await fixture();
-  const old = await f.request(2);
-  await assert.rejects(f.files.list(old), code('not_found'));
-  await assert.rejects(
-    new FilesService(f.state, f.store, undefined, async () => f.lifecycles.get(old.id)!).list(old),
-    code('files_unavailable'),
-  );
-
+  t.after(() => f.state.close());
   const r = await f.request();
-  assert.deepEqual((await f.files.list(r)).files, []);
-  assert.deepEqual(await f.files.manifest(r.id), []);
-  assert.deepEqual(await f.upload(r, '/data/train.csv', 10), {
-    key: 'data/train.csv',
-    size: 10,
-    uploaded: f.storage.buckets.get(r.id)!.get('data/train.csv')!.uploaded,
-  });
-  await f.upload(r, 'data/nested/eval.csv', 20);
-  await f.upload(r, 'paper.pdf', 30);
-  const root = await f.files.list(r);
-  assert.deepEqual(root.folders, [{ prefix: 'data/', size: 30, count: 2 }]);
-  assert.deepEqual(
-    root.files.map((x) => x.key),
-    ['paper.pdf'],
+  const created = await f.files.createUpload(r, { key: '/data/train.csv', size: 10 });
+  const input = {
+    key: created.key,
+    parts: created.parts.map((p) => ({ partNumber: p.partNumber, etag: f.storage.put(p.url, 10) })),
+  };
+  const first = await f.files.complete(r, created.uploadId, input);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE customer_experiment_file_uploads SET created_at=? WHERE upload_id=?',
+      new Date(0).toISOString(),
+      created.uploadId,
+    ),
   );
-  assert.equal(root.totalBytes, 60);
-  assert.equal(root.limitBytes, FILES_LIMIT_BYTES);
-  assert.equal(root.deleteAt, null);
-  assert.equal(root.deletionPolicy, 'Deleted 48 hours after the experiment ends');
-
-  // Multi-part: the first batch is presigned with the create, the rest on request.
-  const size = 150 * 8 * MIB + 3;
-  const created = await f.files.createUpload(r, { key: 'big.bin', size });
-  assert.equal(created.partSize, 8 * MIB);
-  assert.equal(created.partCount, 151);
-  assert.equal(created.parts.length, 100);
-  const more = await f.files.parts(r, created.uploadId, {
-    key: 'big.bin',
-    partNumbers: Array.from({ length: 51 }, (_, i) => i + 101),
-  });
-  await assert.rejects(
-    f.files.parts(r, created.uploadId, { key: 'big.bin', partNumbers: [152] }),
-    code('invalid_part'),
-  );
-  await assert.rejects(
-    f.files.parts(r, created.uploadId, { key: 'other.bin', partNumbers: [1] }),
-    code('not_found'),
-  );
-  const all = [...created.parts, ...more.parts];
-  await assert.rejects(
-    f.files.complete(r, created.uploadId, { key: 'big.bin', parts: [] }),
-    code('invalid_part'),
-  );
-  assert.equal(
-    (
-      await f.files.complete(r, created.uploadId, {
-        key: 'big.bin',
-        parts: all.map((p) => ({
-          partNumber: p.partNumber,
-          etag: f.storage.put(p.url, partLength(size, created.partSize, p.partNumber)),
-        })),
-      })
-    ).size,
-    size,
-  );
-
-  // A part short of its declared size leaves no file behind.
-  const short = await f.files.createUpload(r, { key: 'short.bin', size: 5 });
-  f.storage.uploads.get(short.uploadId)!.parts.set(1, 4);
-  await assert.rejects(
-    f.files.complete(r, short.uploadId, {
-      key: 'short.bin',
-      parts: [{ partNumber: 1, etag: 'x' }],
-    }),
-    code('invalid_upload'),
-  );
-  assert.equal(await f.storage.head(r.id, 'short.bin'), null);
-
-  // Abort releases a pending upload's share of the cap.
-  const pending = await f.files.createUpload(r, {
-    key: 'pending.bin',
-    size: FILES_LIMIT_BYTES / 2,
-  });
-  await assert.rejects(
-    f.files.createUpload(r, { key: 'over.bin', size: FILES_LIMIT_BYTES / 2 }),
-    code('files_limit'),
-  );
-  await f.files.abort(r, pending.uploadId, 'pending.bin');
-  assert.equal(f.storage.uploads.has(pending.uploadId), false);
-  await assert.rejects(
-    f.files.createUpload(r, { key: 'over.bin', size: FILES_LIMIT_BYTES }),
-    code('files_limit'),
-  );
-  await assert.rejects(f.files.createUpload(r, { key: '../escape', size: 1 }), code('invalid_key'));
-
-  // Rename a file, then a folder with everything under it.
-  assert.deepEqual(await f.files.rename(r, { from: 'paper.pdf', to: 'docs/paper.pdf' }), {
-    renamed: 1,
-  });
-  await assert.rejects(
-    f.files.rename(r, { from: 'big.bin', to: 'docs/paper.pdf' }),
-    code('file_exists'),
-  );
-  assert.deepEqual(await f.files.rename(r, { from: 'data/', to: 'inputs' }), { renamed: 2 });
-  await assert.rejects(f.files.rename(r, { from: 'inputs', to: 'inputs/x' }), code('invalid_key'));
-  await assert.rejects(f.files.rename(r, { from: 'missing', to: 'x' }), code('not_found'));
-  assert.deepEqual(
-    (await f.files.manifest(r.id)).map((m) => m.key),
-    ['big.bin', 'docs/paper.pdf', 'inputs/nested/eval.csv', 'inputs/train.csv'],
-  );
-  assert.deepEqual(Object.keys((await f.files.manifest(r.id))[0]!), ['key', 'size', 'etag']);
-
-  assert.deepEqual(await f.files.remove(r, { prefix: 'inputs' }), { deleted: 2 });
-  assert.deepEqual(await f.files.remove(r, { key: 'big.bin' }), { deleted: 1 });
-  await assert.rejects(f.files.remove(r, { key: 'big.bin' }), code('not_found'));
-  await assert.rejects(f.files.remove(r, { prefix: '/' }), code('invalid_key'));
-  assert.match((await f.files.download(r, '/docs/paper.pdf')).url, /docs\/paper\.pdf\?get$/);
-  await assert.rejects(f.files.download(r, 'nope'), code('not_found'));
-
-  // The accepted contract freezes the files; reads go on.
+  assert.equal((await f.files.list(r)).totalBytes, 10);
+  assert.deepEqual((await f.files.list(r)).folders, [{ prefix: 'data/', size: 10, count: 1 }]);
   f.lifecycles.set(r.id, { version: 3, state: 'ready', updatedAt: new Date().toISOString() });
-  await assert.rejects(f.files.createUpload(r, { key: 'late', size: 1 }), code('files_frozen'));
-  await assert.rejects(f.files.remove(r, { key: 'docs/paper.pdf' }), code('files_frozen'));
-  await assert.rejects(f.files.rename(r, { from: 'docs/', to: 'd' }), code('files_frozen'));
-  assert.equal((await f.files.manifest(r.id)).length, 1);
+  const restarted = new FilesService(f.state, f.store, f.storage, async (record) =>
+    f.lifecycles.get(record.id)!,
+  );
+  await restarted.initialize();
+  assert.deepEqual(await restarted.complete(r, created.uploadId, input), first);
+  await assert.rejects(
+    restarted.complete(r, created.uploadId, {
+      ...input,
+      parts: [{ partNumber: 1, etag: 'changed' }],
+    }),
+    code('request_conflict'),
+  );
+  await assert.rejects(restarted.createUpload(r, { key: 'late', size: 1 }), code('files_frozen'));
+  await assert.rejects(restarted.remove(r, { key: input.key }), code('files_frozen'));
+  await assert.rejects(restarted.rename(r, { from: 'data/', to: 'renamed' }), code('files_frozen'));
+  assert.deepEqual(
+    (await restarted.manifest(r.id)).map((x) => [x.key, x.size]),
+    [['data/train.csv', 10]],
+  );
+  assert.match((await restarted.download(r, input.key)).url, /data\/train.csv/);
+});
+
+test('upload reservations retain the 1 TB cap across completion during an in-flight storage listing', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const r = await f.request(),
+    size = FILES_LIMIT_BYTES * 0.6;
+  const a = await f.files.createUpload(r, { key: 'a', size });
+  // Metadata-only large objects: never allocate or transfer these bytes.
+  const multipart = f.storage.uploads.get(a.uploadId)!;
+  const parts = Array.from({ length: a.partCount }, (_, i) => {
+    multipart.parts.set(i + 1, partLength(size, a.partSize, i + 1));
+    return { partNumber: i + 1, etag: 'part-' + i };
+  });
+  const listed = deferred(),
+    resume = deferred();
+  const list = f.storage.listFiles;
+  let paused = false;
+  f.storage.listFiles = async (id) => {
+    const snapshot = await list(id);
+    if (!paused) {
+      paused = true;
+      listed.resolve();
+      await resume.promise;
+    }
+    return snapshot;
+  };
+  const second = f.files.createUpload(r, { key: 'b', size });
+  const rejected = assert.rejects(second, code('files_limit'));
+  await listed.promise;
+  const completing = f.files.complete(r, a.uploadId, { key: 'a', parts });
+  resume.resolve();
+  await Promise.all([rejected, completing]);
+  assert.equal((await f.files.list(r)).totalBytes, size);
+  assert.equal(f.storage.uploads.size, 0, 'refused provider upload is aborted');
+  const remaining = await f.files.createUpload(r, {
+    key: 'remainder',
+    size: FILES_LIMIT_BYTES - size,
+  });
+  await assert.rejects(f.files.createUpload(r, { key: 'extra', size: 1 }), code('files_limit'));
+  await f.files.abort(r, remaining.uploadId, 'remainder');
+  await f.files.createUpload(r, { key: 'replacement', size: 1 });
 });
 
 test('a rename checks every new name first and leaves no copies when it fails; files hold still while the plan is verified', async () => {
@@ -480,8 +438,9 @@ test('a rename checks every new name first and leaves no copies when it fails; f
   assert.deepEqual(await f.files.rename(r, { from: 'data/', to: 'in' }), { renamed: 2 });
 });
 
-test('the sweeper deletes every object and the bucket at deleteAt and records it', async () => {
+test('the sweeper retains concurrent activity and deletes ended files exactly once', async (t) => {
   const f = await fixture();
+  t.after(() => f.state.close());
   const r = await f.request(),
     other = await f.request();
   await f.upload(r, 'a.csv', 3);
@@ -519,6 +478,52 @@ test('the sweeper deletes every object and the bucket at deleteAt and records it
   await f.files.sweep();
   assert.deepEqual(f.storage.destroyed, [r.id]);
   assert.equal((await f.files.list(other)).files.length, 1);
+
+  // A sweep scans an old row while a rename is in flight; the finished rename renews activity.
+  const active = await f.request(),
+    old = new Date(Date.now() - 10 * 86400_000).toISOString();
+  await f.upload(active, 'original', 3);
+  await f.store.mutate(active.id, (record) => {
+    record.createdAt = old;
+  });
+  f.lifecycles.set(active.id, { version: 3, state: 'planning', updatedAt: old });
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE customer_experiment_files SET last_activity_at=? WHERE request_id=?',
+      old,
+      active.id,
+    ),
+  );
+  const copied = deferred(),
+    resume = deferred(),
+    scanned = deferred();
+  const copy = f.storage.copyFile,
+    read = f.state.read.bind(f.state);
+  f.storage.copyFile = async (...args) => {
+    await copy(...args);
+    copied.resolve();
+    await resume.promise;
+  };
+  f.state.read = async (fn) => {
+    const result = await read(fn);
+    if (Array.isArray(result) && result.some((row) => row.request_id === active.id))
+      scanned.resolve();
+    return result;
+  };
+  const renaming = f.files.rename(active, { from: 'original', to: 'renamed' });
+  await copied.promise;
+  const sweeping = f.files.sweep();
+  await scanned.promise;
+  resume.resolve();
+  try {
+    await Promise.all([renaming, sweeping]);
+    assert.equal((await f.storage.head(active.id, 'renamed'))?.size, 3);
+    assert.deepEqual(f.storage.destroyed, [r.id]);
+  } finally {
+    resume.resolve();
+    f.storage.copyFile = copy;
+    f.state.read = read;
+  }
 });
 
 test('v1 to v6 migration never enrolls legacy buckets in document-plan retention or its file manager', async (t) => {
@@ -729,4 +734,160 @@ test('the intake agent gets a short-lived link to one of its own request files, 
     f.files.link(other.id, 'data/train.csv'),
     (e: { code?: string }) => e.code === 'not_found',
   );
+});
+
+test(
+  'abort cannot release an in-flight completion reservation or erase its retry receipt',
+  { timeout: 5000 },
+  async (t) => {
+    const f = await fixture();
+    const r = await f.request(),
+      size = FILES_LIMIT_BYTES * 0.6;
+    const a = await f.files.createUpload(r, { key: 'a', size });
+    const multipart = f.storage.uploads.get(a.uploadId)!;
+    const input = {
+      key: a.key,
+      parts: Array.from({ length: a.partCount }, (_, i) => {
+        multipart.parts.set(i + 1, partLength(size, a.partSize, i + 1));
+        return { partNumber: i + 1, etag: 'part-' + i };
+      }),
+    };
+    const published = deferred(),
+      resumeHead = deferred();
+    const head = f.storage.head;
+    f.storage.head = async (id, key) => {
+      published.resolve();
+      await resumeHead.promise;
+      return head(id, key);
+    };
+    const completing = f.files.complete(r, a.uploadId, input);
+    t.after(async () => {
+      resumeHead.resolve();
+      await completing.catch(() => {});
+      await f.state.close();
+    });
+    await published.promise;
+    const rejected = assert.rejects(
+      f.files.createUpload(r, { key: 'b', size }),
+      code('files_limit'),
+    );
+    const aborting = f.files.abort(r, a.uploadId, a.key);
+    const retrying = f.files.complete(r, a.uploadId, input);
+    resumeHead.resolve();
+    const completed = await completing;
+    await rejected;
+    assert.deepEqual(await aborting, { aborted: true });
+    assert.deepEqual(await retrying, completed);
+    assert.deepEqual(await f.files.complete(r, a.uploadId, input), completed);
+    assert.equal((await f.files.list(r)).totalBytes, size);
+  },
+);
+
+test('a failed completion releases its operation gate for retry or abort', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const r = await f.request();
+  const complete = f.storage.completeMultipart;
+  for (const recovery of ['retry', 'abort']) {
+    const created = await f.files.createUpload(r, { key: recovery, size: 1 });
+    const input = {
+      key: created.key,
+      parts: created.parts.map((p) => ({
+        partNumber: p.partNumber,
+        etag: f.storage.put(p.url, 1),
+      })),
+    };
+    f.storage.completeMultipart = async () => {
+      throw new Error('provider unavailable');
+    };
+    await assert.rejects(f.files.complete(r, created.uploadId, input), /provider unavailable/);
+    f.storage.completeMultipart = complete;
+    if (recovery === 'retry')
+      assert.equal((await f.files.complete(r, created.uploadId, input)).size, 1);
+    else await f.files.abort(r, created.uploadId, created.key);
+    assert.equal(f.storage.uploads.has(created.uploadId), false);
+  }
+});
+
+test('an expired upload cannot complete after its quota reservation has been reused', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const r = await f.request(),
+    size = FILES_LIMIT_BYTES * 0.6;
+  const old = await f.files.createUpload(r, { key: 'old', size });
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE customer_experiment_file_uploads SET created_at=? WHERE upload_id=?',
+      new Date(0).toISOString(),
+      old.uploadId,
+    ),
+  );
+  await f.files.createUpload(r, { key: 'new', size });
+  f.storage.completeMultipart = async () => assert.fail('expired bytes must never be published');
+  await assert.rejects(
+    f.files.complete(r, old.uploadId, {
+      key: old.key,
+      parts: Array.from({ length: old.partCount }, (_, i) => ({
+        partNumber: i + 1,
+        etag: 'part-' + i,
+      })),
+    }),
+    { code: 'upload_expired', status: 410 },
+  );
+  await f.files.abort(r, old.uploadId, old.key);
+  assert.equal(f.storage.uploads.has(old.uploadId), false);
+  assert.equal((await f.files.list(r)).totalBytes, 0);
+});
+
+test('overlapping completions and renames preserve each successful file mutation', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  for (const operation of ['complete', 'rename'] as const) {
+    const r = await f.request();
+    const paused = deferred(),
+      resume = deferred();
+    const head = f.storage.head,
+      copy = f.storage.copyFile;
+    let first: Promise<unknown>;
+    if (operation === 'complete') {
+      const a = await f.files.createUpload(r, { key: 'same.csv', size: 10 });
+      f.storage.head = async (id, key) => {
+        if (id === r.id) {
+          paused.resolve();
+          await resume.promise;
+        }
+        return head(id, key);
+      };
+      first = f.files.complete(r, a.uploadId, {
+        key: a.key,
+        parts: a.parts.map((p) => ({ partNumber: p.partNumber, etag: f.storage.put(p.url, 10) })),
+      });
+    } else {
+      await f.upload(r, 'same.csv', 10);
+      f.storage.copyFile = async (id, from, to) => {
+        await copy(id, from, to);
+        paused.resolve();
+        await resume.promise;
+      };
+      first = f.files.rename(r, { from: 'same.csv', to: 'renamed.csv' });
+    }
+    await paused.promise;
+    const manifest = f.files.manifest(r.id);
+    const next = f.upload(r, 'same.csv', 20);
+    // Deliberately overlap the second mutation with the first provider response.
+    const timer = setTimeout(() => resume.resolve(), 30);
+    t.after(() => {
+      clearTimeout(timer);
+      resume.resolve();
+    });
+    await Promise.all([first, next]);
+    assert.deepEqual(
+      (await manifest).map(({ key, size }) => ({ key, size })),
+      [{ key: operation === 'rename' ? 'renamed.csv' : 'same.csv', size: 10 }],
+    );
+    f.storage.head = head;
+    f.storage.copyFile = copy;
+    assert.equal((await head(r.id, 'same.csv'))?.size, 20);
+    if (operation === 'rename') assert.equal((await head(r.id, 'renamed.csv'))?.size, 10);
+  }
 });

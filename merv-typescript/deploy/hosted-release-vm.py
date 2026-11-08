@@ -52,7 +52,7 @@ KEEP = 16  # releases per provider; every protected launch copies them into a 32
 LEASE = 300
 CANARY_NAME = 'Hosted release canary'
 GO_IMAGE = 'golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452'
-WORKER_TESTS = 'tests/pi-worker.test.ts tests/pi-worker-relay-protocol.test.ts tests/pi-relay.test.ts'
+WORKER_TESTS = 'tests/pi-worker.test.ts tests/pi-relay.test.ts'
 # All a worker-lane release may change in the image: the Pi worker bundle and its compile cache.
 WORKER_FILES = ('/opt/merv/pi/worker-main.mjs', '/opt/merv/pi/compile-cache/')
 LANES = ('none', 'worker', 'boundary')

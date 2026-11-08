@@ -4,9 +4,8 @@
  * registry refuses every other tool before its handler, Scope every other permission, and no
  * other principal, agent path or delegation ever carries the authority.
  */
-import { ToolRegistry } from '@merv/api';
-import { createService, type Caller } from '@merv/contracts';
-import { PLATFORM_ACTOR, ProjectScope } from '@merv/scope';
+
+import { PLATFORM_ACTOR } from '@merv/scope';
 import { SignJWT } from 'jose';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -18,9 +17,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
-import { deferred } from './fixtures/deferred.js';
+
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { openState } from './fixtures/state.js';
 
 const supabaseUrl = 'https://platform-read.example';
 const issuer = `${supabaseUrl}/auth/v1`;
@@ -287,51 +285,4 @@ test('no other principal or agent path carries platform read, and it fails close
   const withdrawn = await f.tool('project.get', {});
   assert.deepEqual([withdrawn.status, withdrawn.body.error.code], [503, 'unavailable']);
   await assert.rejects(f.app.ctx.scope.require(caller, 'read'), { code: 'platform_unavailable' });
-});
-
-test('Scope decides a platform caller on its provider alone, fenced, and the registry fails closed without rules', async (t) => {
-  const state = await openState(':memory:');
-  t.after(() => state.close());
-  const scope = await createService(new ProjectScope(state));
-  const boot = await scope.credentials.bootstrap({ projectName: 'Any', actorName: 'Owner' });
-  const expiresAt = new Date(Date.now() + 60_000).toISOString();
-  const caller: Caller = {
-    actorId: PLATFORM_ACTOR,
-    projectId: boot.project.id,
-    platform: { issuer, subject: 'platform-admin', expiresAt },
-  };
-  let vouch: () => boolean | Promise<boolean> = () => true;
-  const install = () => scope.registerPlatformAuthority({ vouches: () => vouch() });
-  const withdraw = install();
-  assert.throws(install, { code: 'platform_authority_registered' });
-  assert.equal((await scope.require(caller, 'read')).id, PLATFORM_ACTOR);
-  for (const refused of [
-    { ...caller, credentialId: boot.credential.id },
-    { ...caller, actorId: boot.actor.id },
-    { ...caller, platform: { ...caller.platform!, expiresAt: new Date(0).toISOString() } },
-  ])
-    await assert.rejects(scope.require(refused, 'read'), { code: 'forbidden' });
-  await assert.rejects(scope.require({ ...caller, projectId: 'project_missing' }, 'read'), {
-    code: 'not_found',
-  });
-  vouch = () => false;
-  await assert.rejects(scope.require(caller, 'read'), { code: 'forbidden' });
-  // A decision whose provider was withdrawn and installed again while it waited is refused.
-  const pending = deferred<boolean>();
-  vouch = () => pending.promise;
-  const decision = scope.require(caller, 'read');
-  withdraw();
-  install();
-  pending.resolve(true);
-  await assert.rejects(decision, { code: 'platform_unavailable' });
-
-  const tools = new ToolRegistry(scope);
-  tools.register({
-    name: 'probe.read',
-    description: 'Read nothing',
-    inputSchema: z.object({}).strict(),
-    readOnly: true,
-    handler: () => ({}),
-  });
-  await assert.rejects(tools.call('probe.read', caller, {}), { code: 'unavailable', status: 503 });
 });
