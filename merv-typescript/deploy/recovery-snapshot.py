@@ -437,7 +437,7 @@ class Recovery:
         listed = self.run(['docker', 'ps', '--all', '--filter', 'name=^/' + name + '$', '--format', '{{.Names}}']).decode().strip()
         if listed:
             require(listed == name, 'verification cleanup container mismatch')
-            self.run(['docker', 'rm', '--force', name])
+            self.run(['docker', 'rm', '--force', '--volumes', name])
         self.verification_record.unlink()
         sync_dir(self.state)
 

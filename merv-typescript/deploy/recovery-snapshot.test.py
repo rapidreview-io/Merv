@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 import uuid
 from urllib.parse import urlparse, unquote
 
@@ -190,12 +190,28 @@ class RecoveryTests(unittest.TestCase):
 
 
 
-    def test_resume_after_crash_and_container_identity_guard(self):
+    def test_resume_after_crash_guards_identity_and_cleans_only_owned_verifier(self):
         m.durable_json(self.r.resume, {'deployment': 'test', 'container': 'control', 'id': 'container-one', 'image': 'sha256:test', 'running': True})
         self.r.control['State']['Running'] = False
         self.r.recover()
         self.assertTrue(self.r.control['State']['Running'])
         self.assertFalse(self.r.resume.exists())
+        verifier = 'merv-verify-' + 'a' * 32
+        record = {'deployment': 'test', 'container': verifier}
+        listed = ['docker', 'ps', '--all', '--filter', 'name=^/' + verifier + '$', '--format', '{{.Names}}']
+        m.durable_json(self.r.verification_record, record)
+        with patch.object(self.r, 'run', return_value=verifier.encode()) as docker:
+            self.r.recover()
+        self.assertEqual(docker.call_args_list, [
+            call(listed), call(['docker', 'rm', '--force', '--volumes', verifier]),
+        ], 'remove only the recorded verifier and its anonymous volumes, never prune other resources')
+        self.assertFalse(self.r.verification_record.exists())
+        m.durable_json(self.r.verification_record, record)
+        with patch.object(self.r, 'run', return_value=('merv-verify-' + 'b' * 32).encode()) as docker:
+            with self.assertRaisesRegex(m.Failure, 'verification cleanup container mismatch'):
+                self.r.recover()
+        docker.assert_called_once_with(listed)
+        self.assertTrue(self.r.verification_record.exists(), 'a mismatched verifier is untouched and remains recoverable')
         m.durable_json(self.r.resume, {'deployment': 'test', 'container': 'control', 'id': 'different', 'image': 'sha256:test', 'running': True})
         with self.assertRaises(m.Failure):
             self.r.recover()
