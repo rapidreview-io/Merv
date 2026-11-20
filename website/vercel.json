@@ -30,6 +30,10 @@
   ],
   "rewrites": [
     {
+      "source": "/desk/",
+      "destination": "https://merv-board.eastus2.cloudapp.azure.com/desk"
+    },
+    {
       "source": "/ui",
       "destination": "https://merv-board.eastus2.cloudapp.azure.com/ui/index.html"
     },
