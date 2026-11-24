@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import type { AgentEvent } from '@merv/sessions/agent-stream';
+import type {} from '@merv/metrics/service';
+import { MetricsRenderer } from '@merv/metrics/renderer';
+import type { DemoTrackio } from './ui-demo-trackio.js';
 
 /**
  * What the Running page draws, seeded in the demo server's own process: work in every state a
@@ -165,8 +168,16 @@ export async function seedRunning(
       runnerId?: string,
     ) => Promise<{ session: Session; token: string }>;
     sweep: DemoLease & { taskId: string };
+    /** Real Trackio: the running experiment logs live curves, the finished one keeps its figure. */
+    trackio?: DemoTrackio;
   },
-): Promise<{ machines: DemoMachine[]; leases: DemoLease[]; close(): Promise<void> }> {
+): Promise<{
+  machines: DemoMachine[];
+  leases: DemoLease[];
+  close(): Promise<void>;
+  /** The experiments seeded here, by what they show. */
+  items: { running: string; complete: string; returned: string; failed?: string };
+}> {
   const { ctx } = app;
   const { url, owner, token, offerTo, sweep } = input;
   const p = input.producer;
@@ -572,6 +583,30 @@ export async function seedRunning(
     ['experiment.get_state', { experimentId: experiment.id }],
     ['artifact.read', { artifactId: log.id }],
   );
+  if (input.trackio) {
+    // Three decays training now on lab-gpu-01: their curves move while the page is open.
+    const { env, project } = await ctx.metrics.connect(
+      input.producerCaller,
+      { experimentId: experiment.id },
+      'lab-gpu-01 · 1× A100 80GB',
+    );
+    input.trackio.live(
+      env,
+      project,
+      [0.3, 1.0, 3.0].map((decay, i) => ({
+        name: `decay-${decay}`,
+        curve: 'grok' as const,
+        steps: 20000,
+        every: 100,
+        at: 15000 - i * 3500,
+        seed: 113 + i,
+        config: { weight_decay: decay, p: 113, lr: 1e-3 },
+        fast_until: 9000 + i * 1500,
+        delay: 15,
+        cost_per_step: 0.00004,
+      })),
+    );
+  }
 
   // An experiment whose design review sent it back: it is designed again, the returned
   // design beside the reviewer's verdict.
@@ -763,6 +798,46 @@ export async function seedRunning(
     await work.run(decayRun, 'artifact.create', { title, content, mediaType }, (caller, input) =>
       ctx.artifacts.create(caller, input),
     );
+  if (input.trackio) {
+    // The sweep logged three decays; export keeps their series and draws the key figure, which
+    // it attaches to the attempt's results beside results.json.
+    const { env, project } = await ctx.metrics.connect(
+      input.producerCaller,
+      { experimentId: decay.id },
+      'lab-gpu-01 · 1× A100 80GB',
+    );
+    await input.trackio.log(
+      env,
+      project,
+      [
+        [0.3, 14200],
+        [1.0, 9810],
+        [3.0, 6050],
+      ].map(([wd, at], i) => ({
+        name: `decay-${wd}`,
+        curve: 'grok' as const,
+        steps: 20000,
+        every: 100,
+        at,
+        seed: 97 + i,
+        config: { weight_decay: wd, p: 97, lr: 1e-3 },
+        cost_per_step: 0.000045,
+      })),
+    );
+    const renderer = new MetricsRenderer();
+    try {
+      await work.run(decayRun, 'metrics.export', { experimentId: decay.id }, (caller) =>
+        ctx.metrics.export(
+          caller,
+          { experimentId: decay.id },
+          (svg: string, width: number, height: number) =>
+            renderer.render(svg, width, height, 'png'),
+        ),
+      );
+    } finally {
+      await renderer.close();
+    }
+  }
   const decayResult = await made(
     'Results: decay-sweep-p97',
     JSON.stringify({ grokking_step: { '0.3': 14200, '1.0': 9810, '3.0': 6050 } }),
@@ -852,6 +927,133 @@ export async function seedRunning(
   await work.release(decayRun);
   await pass(decay, 'demo-running-decay-results-verdict');
 
+  // An experiment that failed while it ran: the higher learning rate diverged, and its curves
+  // and figure say so.
+  let failedId: string | undefined;
+  if (input.trackio) {
+    const lr = await currentExperiment(ctx, input.producerCaller, {
+      name: 'lr-3e-3-stability',
+      intent: 'Does a three times higher learning rate still grok at p = 97, and sooner?',
+      details: 'The p = 97 reproduction at learning rate 1e-3 (control) and 3e-3, two seeds each.',
+      requestId: 'demo-running-lr',
+    });
+    failedId = lr.id;
+    await designed(
+      lr,
+      [
+        {
+          role: 'plan',
+          path: 'plan.md',
+          title: 'Plan: lr-3e-3-stability',
+          content: [
+            '## Summary',
+            'Question: Does a 3× learning rate still grok at p = 97, and sooner?',
+            '## Objective & hypothesis',
+            'A higher learning rate reaches the grokking step sooner without diverging.',
+            '## Evaluation',
+            '| Arm | What it varies |',
+            '|---|---|',
+            '| Control | lr 1e-3 |',
+            '| High lr | lr 3e-3 |',
+            '',
+            '- Primary measure: validation accuracy',
+            '- Success: High lr reaches 95% validation accuracy before the control does.',
+            '- Budget: 2 GPU-hours.',
+          ].join('\n'),
+          mediaType: 'text/markdown',
+        },
+        {
+          role: 'feasibility',
+          path: 'feasibility.json',
+          title: 'Feasibility: lr-3e-3-stability',
+          content: JSON.stringify({
+            formatVersion: 1,
+            resources: [
+              {
+                kind: 'data',
+                name: 'modular addition p=97',
+                unit: 'examples',
+                required: 9409,
+                available: 9409,
+                basis: 'The harness generates the whole table.',
+              },
+              {
+                kind: 'compute',
+                name: 'single GPU',
+                unit: 'hours',
+                required: 2,
+                available: 8,
+                basis: 'lab-gpu-01 reports eight idle hours.',
+              },
+            ],
+            dependencies: [
+              { name: 'evaluation harness', present: true, basis: 'In this project.' },
+            ],
+            blockers: [],
+          }),
+          mediaType: 'application/json',
+        },
+      ],
+      'demo-running-lr',
+    );
+    await pass(lr, 'demo-running-lr-design-verdict');
+    const lrRun = await lease(await p('experiment.get_state', { experimentId: lr.id }));
+    const { env, project } = await ctx.metrics.connect(
+      input.producerCaller,
+      { experimentId: lr.id },
+      'lab-gpu-01 · 1× A100 80GB',
+    );
+    await input.trackio.log(env, project, [
+      ...[1, 2].map((seed) => ({
+        name: `control-seed${seed}`,
+        curve: 'grok' as const,
+        steps: 12000,
+        every: 100,
+        at: 9000 + seed * 300,
+        seed,
+        config: { lr: 1e-3, p: 97, seed },
+        cost_per_step: 0.00004,
+      })),
+      ...[1, 2].map((seed) => ({
+        name: `high-lr-seed${seed}`,
+        curve: 'diverge' as const,
+        steps: 12000,
+        every: 100,
+        at: 3800 + seed * 400,
+        seed: 10 + seed,
+        config: { lr: 3e-3, p: 97, seed },
+        cost_per_step: 0.00004,
+      })),
+    ]);
+    const renderer = new MetricsRenderer();
+    try {
+      await work.run(lrRun, 'metrics.export', { experimentId: lr.id }, (caller) =>
+        ctx.metrics.export(
+          caller,
+          { experimentId: lr.id },
+          (svg: string, width: number, height: number) =>
+            renderer.render(svg, width, height, 'png'),
+        ),
+      );
+    } finally {
+      await renderer.close();
+    }
+    await work.run(
+      lrRun,
+      'experiment.transition',
+      {
+        transition: 'mark_failed',
+        evidence: {
+          reason:
+            'Both high-lr seeds diverged near step 4,500: the loss blew up and validation accuracy fell to chance, so the question cannot be answered at 3e-3.',
+        },
+        requestId: 'demo-running-lr-failed',
+      },
+      (caller, bound) => ctx.experiments.transition(caller, bound),
+    );
+    await work.release(lrRun);
+  }
+
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
   await currentExperiment(ctx, input.producerCaller, {
     name: 'embedding-width-ablation',
@@ -860,7 +1062,17 @@ export async function seedRunning(
     requestId: 'demo-running-ablation',
   });
 
-  return { machines, leases, close: () => work.close() };
+  return {
+    machines,
+    leases,
+    close: () => work.close(),
+    items: {
+      running: experiment.id,
+      complete: decay.id,
+      returned: warmup.id,
+      ...(failedId && { failed: failedId }),
+    },
+  };
 }
 
 /** A runner's script for its agent's stream, from its first word. */

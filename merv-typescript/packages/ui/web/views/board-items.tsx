@@ -81,7 +81,7 @@ export function BoardItems({ api }: { api: ExcalidrawImperativeAPI }) {
             style={{
               left: at.x,
               top: at.y,
-              width: Math.max(card.width, 300),
+              width: Math.max(card.width, 400),
               transform: `scale(${zoom})`,
             }}
           >

@@ -252,8 +252,7 @@ export function Timeline({ status }: { status: Pick<AutoresearchStatus, 'lines' 
           <Ago at={line.at} className="wake-at" />
           <span className="wake-dot" aria-hidden="true" />
           <div className="wake-body">
-            <p className="wake-text">
-              {KIND[line.kind] && line.kind !== 'decide' ? `${KIND[line.kind]}: ` : ''}
+            <p className="wake-text" title={KIND[line.kind]}>
               {line.text}
             </p>
             {(scheduled.get(line.id)?.length ?? 0) > 0 && (

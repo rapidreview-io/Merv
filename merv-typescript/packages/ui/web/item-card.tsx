@@ -32,7 +32,6 @@ import {
   isMetricsFigure,
   usd,
 } from './item-model';
-import './item-card.css';
 
 /** One mark per state, the same shape wherever an item is shown; its name for whoever cannot see it. */
 export function ItemMark({ state, size = 16 }: { state: ItemState; size?: number }) {
@@ -332,7 +331,7 @@ export function PlanFlow({
 }
 const shortMeasure = (text: string) => {
   const words = text.replace(/\(.*?\)/g, '').trim();
-  return words.length > 28 ? `${words.slice(0, 27).trimEnd()}…` : words;
+  return words.length > 40 ? `${words.slice(0, 39).trimEnd()}…` : words;
 };
 
 /** Passed or failed against its success check, said with a sign, never by colour alone. */
@@ -468,7 +467,10 @@ export function ResultCard({
       {finding && <p className="item-finding">{finding}</p>}
       {figureId ? (
         <figure className="item-figure">
-          <ArtifactFigure artifactId={figureId} alt={metrics?.metric ?? 'Key figure'} />
+          <ArtifactFigure
+            artifactId={figureId}
+            alt={`Kept figure: ${metrics?.metric ?? 'key metric'}, every run overlaid`}
+          />
         </figure>
       ) : (
         metrics && <KeyCurve metrics={metrics} live={false} />

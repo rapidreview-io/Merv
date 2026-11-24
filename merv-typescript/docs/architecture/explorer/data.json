@@ -1289,6 +1289,11 @@
           "name": "metrics.chart",
           "description": "What a page's metric charts draw (the page itself reads this).",
           "readOnly": true
+        },
+        {
+          "name": "metrics.items",
+          "description": "Items' key curves for cards and the board: each task or experiment that logged runs, by id.",
+          "readOnly": true
         }
       ]
     },
@@ -1314,6 +1319,11 @@
         {
           "name": "metrics.chart",
           "description": "What a page's metric charts draw (the page itself reads this).",
+          "readOnly": true
+        },
+        {
+          "name": "metrics.items",
+          "description": "Items' key curves for cards and the board: each task or experiment that logged runs, by id.",
           "readOnly": true
         }
       ]

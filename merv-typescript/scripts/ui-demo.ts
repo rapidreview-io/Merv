@@ -14,6 +14,8 @@ import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
 import { seedTrajectory } from './ui-demo-trajectory.js';
+import { startTrackio } from './ui-demo-trackio.js';
+import { seedItems } from './ui-demo-items.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
@@ -45,6 +47,18 @@ async function main() {
   const schema = useRunSchema(directory);
   const configFile = process.env.MERV_DEMO_CONFIG ?? defaultConfigFile;
   const config = JSON.parse(readFileSync(configFile, 'utf8')) as ApplicationConfig;
+  const port = Number(process.env.PORT ?? 3081);
+  // MERV_TRACKIO_PYTHON: a Python with trackio installed. The demo runs its own Trackio server
+  // and logs real runs through Merv's proxy (scripts/ui-demo-trackio.ts).
+  const trackio = process.env.MERV_TRACKIO_PYTHON
+    ? await startTrackio(process.env.MERV_TRACKIO_PYTHON)
+    : undefined;
+  if (trackio) {
+    process.env.MERV_METRICS_UPSTREAM = trackio.upstream;
+    process.env.MERV_METRICS_SECRET = trackio.secret;
+    process.env.MERV_METRICS_WRITE_TOKEN = trackio.writeToken;
+    process.env.MERV_METRICS_MEDIA_DIR = trackio.mediaDir;
+  }
   if (process.env.MERV_METRICS_UPSTREAM) {
     config.plugins.push(
       {
@@ -54,6 +68,7 @@ async function main() {
           upstream: process.env.MERV_METRICS_UPSTREAM,
           secret: process.env.MERV_METRICS_SECRET,
           writeToken: process.env.MERV_METRICS_WRITE_TOKEN,
+          publicOrigin: `http://127.0.0.1:${port}`,
           ...(process.env.MERV_METRICS_MEDIA_DIR && {
             mediaDir: process.env.MERV_METRICS_MEDIA_DIR,
           }),
@@ -66,7 +81,7 @@ async function main() {
   const app = await createApp({
     directory,
     ...(process.env.MERV_METRICS_UPSTREAM ? { config } : { configFile }),
-    port: Number(process.env.PORT ?? 3081),
+    port,
   });
   const url = app.ctx.api.url!;
   const boot = await app.ctx.scope.credentials.bootstrap({
@@ -328,6 +343,7 @@ async function main() {
     machines,
     leases,
     close: closeRunning,
+    items: seeded,
   } = await seedRunning(app, {
     url,
     directory,
@@ -338,6 +354,7 @@ async function main() {
     reviewer: r,
     reviewerCaller,
     offerTo,
+    trackio,
     sweep: {
       taskId: sweepTask.id,
       sessionId: execution.id,
@@ -375,6 +392,8 @@ async function main() {
   const talker = setInterval(() => void talk(), 1200);
   talker.unref();
   if (process.argv.includes('--agent')) await seedAgent(app, url);
+  // Items with real Trackio runs: a failed one, an autoresearch round and a board of cards.
+  const items = trackio ? await seedItems(app, { owner, items: seeded }) : undefined;
   const heartbeat = setInterval(() => void beat(), 20_000);
   heartbeat.unref();
 
@@ -387,6 +406,7 @@ async function main() {
         directory,
         schema,
         ...(git ? { git: git.report } : {}),
+        ...(items && { items }),
         tokens: {
           operator: boot.token,
           producer: producer.token,
@@ -408,6 +428,7 @@ async function main() {
         await closeRunning();
         await work.close();
         await app.stop();
+        await trackio?.close();
         process.exit(0);
       } else if ((verb === 'disable' || verb === 'enable') && id) {
         await app.setEnabled(id, verb === 'enable');
@@ -423,6 +444,7 @@ async function main() {
     void closeRunning()
       .then(() => work.close())
       .then(() => app.stop())
+      .then(() => trackio?.close())
       .then(() => process.exit(0));
   };
   process.once('SIGINT', stop);

@@ -106,7 +106,9 @@ const optional = <K extends string>(key: K, value: string | undefined) =>
 /** What a report found, in one sentence: its Summary's first, else its first. */
 export function findingOf(markdown: string | undefined): string | undefined {
   if (!markdown) return undefined;
-  const summary = section(markdown, /summary|answer|what (was )?found/i);
+  // A rendered report opens with YAML front matter: its answer is below it.
+  markdown = markdown.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  const summary = section(markdown, /summary|answer|result|what (was )?found/i);
   const line = oneLine(summary ?? markdown.replace(/^#.*$/m, ''));
   return line || undefined;
 }

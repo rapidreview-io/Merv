@@ -17,6 +17,7 @@
   "exclude": [
     "tests/ui-render.ts",
     "tests/ui-work.test.ts",
+    "tests/ui-item-trackio.test.ts",
     "tests/ui-oauth-consent.test.ts",
     "tests/ui-artifact-upload.test.ts",
     "tests/ui-markdown.test.ts",
