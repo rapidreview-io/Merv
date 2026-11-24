@@ -6,6 +6,8 @@ Personal agents use noun tools with `{"action":"x","x":{...}}` and a top-level
 `projectId` when selecting a project. Leased workers keep the alias names and flat
 inputs granted by their pinned workflows. See the [tool overview](../README.md#agent-tools).
 
+> 2026-11-24: Reflections are removed. Research cycles (`research@7`) wait on their tasks and experiments only, and no plan creates a next wave; `research@10` drops the reflections tables. The S4-1 reflection waves, change specifications and next-wave materialisation below describe that former implementation.
+
 > 2026-09-22: The dedicated Consolidation plugin and its version-5 execution/publication path are retired. Historical design sections below describe that former implementation. Current research uses ordinary [consolidation tasks](CONSOLIDATION.md) and unit publication.
 
 Status: accepted design, 2026-09-21. Written by GPT-6 Astra across three rounds (an adversarial review of the first
@@ -561,7 +563,7 @@ workspace: { provider: "none" } | { provider: "code"; version: 1 }
 
 No explicit `baseTaskId` or commit appears. Research materialization passes this declaration through atomically. Version 1 keeps its historical behavior.
 
-S4-1 implements both the strict version-2 schema and transactional materialisation. Code absence refuses creation with the item owner’s `code_unavailable`, leaving the approved reflection retryable; an unhosted project keeps the legacy Git versions.
+S4-1 implemented both the strict version-2 schema and transactional materialisation (removed with Reflections on 2026-11-24). Code absence refuses creation with the item owner’s `code_unavailable`, leaving the approved reflection retryable; an unhosted project keeps the legacy Git versions.
 
 **10. Reconciliation, admission, and visibility**
 
@@ -672,7 +674,7 @@ S1–S3 ship together as described in Implementation status: hosted automatic ba
 
 **S4 — consolidation and executable workspace declarations**
 
-- **Versions:** S4-1 implements `reflection@3`, `change-spec@2`, and synthesis/review recipe 8; lens workflow 2 and recipe 7 stay unchanged. Research uses its existing wave machinery without another version. Consolidation is unreleased version 5; S4-3 modifies that version in place.
+- **Versions (historical; Reflections was removed on 2026-11-24):** S4-1 implemented `reflection@3`, `change-spec@2`, and synthesis/review recipe 8; lens workflow 2 and recipe 7 stay unchanged. Research uses its existing wave machinery without another version. Consolidation is unreleased version 5; S4-3 modifies that version in place.
 - **Tables:** versioned payload additions to existing consolidation/proposal/publication/review records; no new server table.
 - **Tools:** `consolidation.decide` freezes branch inputs before work; consolidation and publication tools retain frozen candidates and the decision manifest, with stale-base handling still planned; research materialization accepts v2 workspace declarations.
 - **UI:** candidate decisions, retained frontier, ancestry conflicts, exact reviewed tree/base, PR, enforcement warnings, publication state.

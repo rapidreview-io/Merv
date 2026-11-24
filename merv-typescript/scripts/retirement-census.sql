@@ -45,6 +45,10 @@
 --   C14 Managed runners bound to a session of an experiment.plan task in R. Must be 0: the plan
 --       migrations refuse the release otherwise (planRetirementPreconditionsSql).
 --
+-- research@10 (2026-11-24, the removal of Reflections) drops the reflections tables and
+-- research_automation.root_id, cycle_index and max_cycles. Where they are gone, the parts that
+-- read them report nothing (C4's root rows, C11, the lens edges of C12) and C8 counts NULL.
+--
 -- A future retirement that deletes worker sessions must first delete their session_transcripts
 -- rows with the session_transcripts_immutable trigger disabled (session_transcripts@1 made them
 -- write-once).
@@ -120,8 +124,29 @@ DECLARE
 BEGIN
   EXECUTE query INTO n;
   RETURN n;
-EXCEPTION WHEN undefined_table THEN
+EXCEPTION WHEN undefined_table OR undefined_column THEN
   RETURN NULL;
+END $census$;
+-- The automation roots of C4, while research_automation still has root_id (before research@10).
+CREATE TEMP TABLE census_roots (project_id TEXT, research_id TEXT, root_id TEXT);
+DO $census$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+    AND table_name = 'research_automation' AND column_name = 'root_id') THEN
+    EXECUTE 'INSERT INTO census_roots SELECT project_id, research_id, root_id FROM research_automation';
+  END IF;
+END $census$;
+-- Open waves (C11) and lenses under their wave (C12), while Reflections' tables exist.
+CREATE TEMP TABLE census_waves (project_id TEXT, id TEXT, approved TEXT);
+CREATE TEMP TABLE census_lenses (project_id TEXT, reflection_id TEXT, id TEXT);
+DO $census$
+BEGIN
+  IF to_regclass('reflections') IS NOT NULL THEN
+    EXECUTE 'INSERT INTO census_waves SELECT project_id, id, approved FROM reflections';
+  END IF;
+  IF to_regclass('reflection_lenses') IS NOT NULL THEN
+    EXECUTE 'INSERT INTO census_lenses SELECT project_id, reflection_id, id FROM reflection_lenses';
+  END IF;
 END $census$;
 
 -- C1
@@ -150,7 +175,7 @@ FROM research_cycles c
 WHERE c.predecessor_id IN (SELECT id FROM census_r) AND c.id NOT IN (SELECT id FROM census_r)
 UNION ALL
 SELECT 'C4', 'automation root re-pointed', a.project_id, a.research_id, a.root_id
-FROM research_automation a
+FROM census_roots a
 WHERE a.root_id IN (SELECT id FROM census_r) AND a.research_id NOT IN (SELECT id FROM census_r)
 UNION ALL
 SELECT 'C4', 'survivor staged on a retired wave (must be empty)', c.project_id, c.id,
@@ -352,7 +377,7 @@ ORDER BY 2, 3;
 
 -- C11
 SELECT 'C11' AS census, r.project_id, r.id AS reflection_id, i.workflow, i.version, i.state
-FROM reflections r LEFT JOIN wf_instances i ON i.id = r.id
+FROM census_waves r LEFT JOIN wf_instances i ON i.id = r.id
 WHERE r.id IN (SELECT id FROM census_r) AND r.approved IS NULL
 ORDER BY r.project_id, r.id;
 
@@ -366,7 +391,7 @@ WITH RECURSIVE
 edges AS (
   SELECT project_id, source_id AS source, target_id AS target FROM wf_dependencies
   UNION ALL
-  SELECT project_id, reflection_id, id FROM reflection_lenses
+  SELECT project_id, reflection_id, id FROM census_lenses
 ),
 reach(project_id, scope_id, id, through_r) AS (
   SELECT b.project_id, b.scope_id, i.id, false

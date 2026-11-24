@@ -71,7 +71,6 @@ test('assembled Cordis application preserves current MCP task closure across two
       ),
       ...['context', 'checkpoint', 'submit_delivery'].map((v) => `task.${v}`),
       'session.question.resolve',
-      ...['read', 'write', 'submit', 'submit_lens'].map((v) => `reflection.${v}`),
     ])
       assert.ok(
         !catalog.some((tool) => tool.name === name),
