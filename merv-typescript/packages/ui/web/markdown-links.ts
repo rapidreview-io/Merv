@@ -53,3 +53,39 @@ export function codeFile(href: string): { ref: string; path: string } | null {
     !path.split('/').some((part) => part === '' || part === '.' || part === '..');
   return refOk && pathOk ? { ref, path } : null;
 }
+
+/** What an image in Markdown may show: a retained artifact (read with the reader's own access), a
+ *  picture on the open web, or a small raster picture written into the text itself. */
+export type ImageSource = { artifactId: string } | { src: string };
+
+const ARTIFACT = /^(?:merv:)?(art_[0-9a-f]{32})$/;
+/** An artifact's own page, written as a path or a whole address on any host: only its id is kept,
+ *  and it is read from the reader's project, never fetched from the address. */
+const ARTIFACT_PAGE = /^(?:https?:\/\/[^/?#\s]+)?\/(?:ui\/)?artifacts\/(art_[0-9a-f]{32})\/?$/;
+/** Raster pictures only: an SVG may carry script and a picture has no business running any. */
+const DATA_IMAGE = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Where an image's address leads, or null where it is not shown and stays its words. Accepted:
+ * `art_…` (also `merv:art_…` and an artifact page's address), `https:` and a raster `data:` URI.
+ * Refused: `http:` (it would mix insecure content into the page), `javascript:`, `file:`, `blob:`,
+ * an SVG or any other `data:`, and a path on this computer, which the browser cannot read.
+ */
+export function imageSource(raw: string): ImageSource | null {
+  // eslint-disable-next-line no-control-regex
+  const url = raw
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\ufeff]/g, '')
+    .replace(/\s/g, '');
+  const id = ARTIFACT.exec(url)?.[1] ?? ARTIFACT_PAGE.exec(url)?.[1];
+  if (id) return { artifactId: id };
+  if (DATA_IMAGE.test(url)) return { src: url };
+  if (!/^https:\/\//i.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && parsed.hostname && !parsed.username && !parsed.password
+      ? { src: parsed.href }
+      : null;
+  } catch {
+    return null;
+  }
+}

@@ -9,6 +9,11 @@ Object.assign(globalThis, {
     observe() {}
     disconnect() {}
   },
+  // The first-run card's orb watches its own size.
+  ResizeObserver: class {
+    observe() {}
+    disconnect() {}
+  },
 });
 
 const { createElement } = await import('react');

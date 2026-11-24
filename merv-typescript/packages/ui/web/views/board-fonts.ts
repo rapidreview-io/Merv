@@ -1,4 +1,5 @@
 import fonts from 'virtual:board-fonts';
+import { fontRangeMatcher } from '@merv/board/font-ranges';
 // Same native family IDs as persisted Excalidraw scenes. Helvetica is a system font.
 const families: Record<number, string> = {
   1: 'Virgil',
@@ -26,26 +27,18 @@ export async function ensureBoardFonts(
     if (e.type !== 'text') continue;
     const text = String(e.originalText ?? e.text ?? '');
     const family = families[Number(e.fontFamily)] ?? 'Excalifont';
-    textByFamily.set(family, (textByFamily.get(family) ?? '') + text);
-    allText += text;
+    textByFamily.set(family, (textByFamily.get(family) ?? '') + '\n' + text);
+    allText += '\n' + text;
   }
   // Xiaolai is native's fallback, including Korean and compatibility glyphs. Request
   // only subsets containing actual scene characters, not its entire CJK font set.
   textByFamily.set('Xiaolai', allText);
-  const covers = (range: string | undefined, text: string) =>
-    !range ||
-    range.split(',').some((part) => {
-      const [low, high = low] = part.trim().replace(/^U\+/i, '').split('-');
-      const start = parseInt(low.replace(/\?/g, '0'), 16);
-      const end = parseInt(high.replace(/\?/g, 'F'), 16);
-      return [...text].some((char) => {
-        const code = char.codePointAt(0)!;
-        return code >= start && code <= end;
-      });
-    });
+  const covers = new Map(
+    [...textByFamily].map(([family, text]) => [family, fontRangeMatcher(text)]),
+  );
   await Promise.all(
     fonts
-      .filter((f) => textByFamily.has(f.family) && covers(f.range, textByFamily.get(f.family)!))
+      .filter((f) => covers.get(f.family)?.(f.range))
       .map((f) => {
         let request = pending.get(f.url);
         if (!request) {

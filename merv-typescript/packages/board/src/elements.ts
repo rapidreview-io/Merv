@@ -1,11 +1,14 @@
+import { freePlace, fitInside } from './placement.js';
 /**
  * An agent's operations as Excalidraw shapes. The agent names what to draw and where it goes
  * relative to what is there (beside a shape, inside a frame, or the next free place); Board works
  * out every coordinate, binds arrows to the shapes they join and sizes text roughly, which the
  * page measures exactly when it draws. Nothing here reads outside the board.
  */
+import { isDark } from '@merv/protocol/looks';
 import { randomBytes } from 'node:crypto';
 import { clip, MervError } from '@merv/contracts';
+import { agentSession } from '@merv/api/audience';
 import { COLORS, INKS, PAINTS, paint, type DrawOp } from './input.js';
 import { strokesOf } from './path.js';
 import type { BoardElement, PlacedImage } from './types.js';
@@ -14,6 +17,12 @@ type El = BoardElement & Record<string, any>;
 type Point = { x: number; y: number };
 type Rect = Point & { width: number; height: number };
 const GAP = 40;
+/** Whose browser tab a card may name: a lent session's thread on its Mac (the board route runs it
+ *  as [device, agent, thread]), else Merv's own agent; a person's card names none. */
+const tabOwner = (agent: boolean) => {
+  const thread = (JSON.parse(agentSession.getStore() ?? 'null') as unknown[] | null)?.[2];
+  return typeof thread === 'string' ? thread : agent ? 'merv' : undefined;
+};
 /** How faint what an agent proposes stands until the person keeps it. */
 const PROPOSED_OPACITY = 45;
 /** How wide a new image stands, unless asked or smaller. */
@@ -48,7 +57,7 @@ function cardTitle(text: string) {
 const partOf = (part: El, card: El) =>
   part !== card &&
   !!part.customData?.card &&
-  card.customData?.target !== undefined &&
+  (card.customData?.target !== undefined || card.type === 'image') &&
   !!card.groupIds?.[0] &&
   part.groupIds?.[0] === card.groupIds[0];
 /** A page's card has no address, but the link is what opens a card's popup. */
@@ -162,6 +171,8 @@ export class Drawing {
   constructor(
     existing: BoardElement[],
     private readonly agent: boolean,
+    /** Authored paper sets only readable defaults; preferences never constrain drawing values. */
+    private readonly paper = '#ffffff',
   ) {
     for (const element of existing) this.elements.set(element.id, element as El);
     for (const el of this.live())
@@ -172,6 +183,23 @@ export class Drawing {
     const x = box ? box.x + box.width + 120 : 0;
     const y = box ? box.y : 0;
     this.cursor = { x, y, startX: x, rowBottom: y, inRow: 0 };
+  }
+  private get defaultInk() {
+    return isDark(this.paper) ? '#f5f5f5' : '#1e1e1e';
+  }
+  private ink(value: string) {
+    return paint(INKS, value);
+  }
+  private fillOf(value: string) {
+    return paint(COLORS, value);
+  }
+  private paintOf(value: string) {
+    return paint(PAINTS, value);
+  }
+  /** The ink a label on a filled shape takes, so it reads on the fill whatever the paper. */
+  private inkOn(fill: unknown) {
+    if (typeof fill !== 'string' || !/^#[0-9a-f]{6}$/i.test(fill)) return undefined;
+    return isDark(fill) ? '#f8f9fa' : '#1e1e1e';
   }
   /**
    * Text that names a shape as its container the shape no longer lists is a label that came loose
@@ -281,7 +309,7 @@ export class Drawing {
       type,
       ...at,
       angle: 0,
-      strokeColor: '#1e1e1e',
+      strokeColor: this.defaultInk,
       backgroundColor: 'transparent',
       fillStyle: 'solid',
       strokeWidth: 2,
@@ -352,7 +380,7 @@ export class Drawing {
     });
   }
   /** Text centred in a shape, bound to it so it moves and wraps with it. */
-  private label(container: El, content: string, size = FONT) {
+  private label(container: El, content: string, size = FONT, ink?: string) {
     const wrapped =
       container.type === 'arrow'
         ? content
@@ -369,6 +397,7 @@ export class Drawing {
       verticalAlign: 'middle',
       containerId: container.id,
       frameId: container.frameId,
+      ...(ink && { strokeColor: ink }),
     });
     centre(text, container);
     this.bind(container, 'text', text.id);
@@ -409,7 +438,7 @@ export class Drawing {
    * meets at most four; a shape is filed with a GAP of room, more than the margin, and one that
    * would meet more than nine cells is filed under `all`, which every spot asks.
    */
-  private taken(size: { width: number; height: number }) {
+  private taken(size: { width: number; height: number }, occupied = this.occupied) {
     const side = Math.max(200, Math.abs(size.width), Math.abs(size.height));
     const cellsOf = (r: Rect, pad: number) => {
       const [x0, x1, y0, y1] = [
@@ -426,13 +455,17 @@ export class Drawing {
       return keys;
     };
     const cells = new Map<string, Rect[]>();
-    for (const o of this.occupied) {
+    for (const o of occupied) {
       const keys = cellsOf(o, GAP);
       for (const key of keys.length ? keys : ['all'])
         (cells.get(key) ?? cells.set(key, []).get(key)!).push(o);
     }
     return (r: Rect) =>
       [...cellsOf(r, 0), 'all'].some((key) => !!cells.get(key)?.some((o) => overlaps(o, r)));
+  }
+  private free(at: Rect) {
+    const occupied = [...this.occupied, ...this.frames];
+    return freePlace(at, occupied, this.taken(at, occupied), GAP);
   }
   /**
    * Where a new shape of this size goes: at the place the operation names (`at`, the top-left
@@ -450,6 +483,7 @@ export class Drawing {
     let frameId: string | null = null;
     if (where.at) {
       at = { x: where.at[0], y: where.at[1], ...size };
+      if (where.free) at = this.free(at);
       frameId = into ? this.find(into).id : null;
     } else if (into) {
       const frame = this.find(into);
@@ -489,7 +523,10 @@ export class Drawing {
         above: { x: mid.x, y: t.y - GAP - size.height },
       };
       const sides = [...new Set([side ?? 'right', 'right', 'below', 'left', 'above'] as const)];
-      const taken = this.taken(size);
+      const taken = this.taken(size, [
+        ...this.occupied,
+        ...this.frames.filter((frame) => target.type === 'frame' || !contains(frame, t)),
+      ]);
       // Outward from the shape ring by ring: an asked side keeps its first rings to itself, then
       // the nearest room there is.
       for (let step = side ? -7 : 0; !at && step <= 25; step++) {
@@ -512,7 +549,7 @@ export class Drawing {
           }
         }
       }
-      at ??= { ...beside[side ?? 'right'], ...size };
+      at ??= this.free({ ...beside[side ?? 'right'], ...size });
       // It joins the frame only inside it: Excalidraw cuts members, a sketch wholly, at its edge.
       const frame = this.elements.get(target.frameId);
       frameId = frame && contains(frame, at) ? frame.id : null;
@@ -543,17 +580,16 @@ export class Drawing {
     fontSize = FONT,
   ) {
     const at = this.place(size, where);
+    const filled = !!fields.backgroundColor && fields.backgroundColor !== 'transparent';
     const el = this.add(kind, at, {
       frameId: at.frameId,
       customData: { semanticKind: 'box' },
-      strokeColor:
-        fields.backgroundColor && fields.backgroundColor !== 'transparent'
-          ? 'transparent'
-          : '#868e96',
+      strokeColor: filled ? 'transparent' : '#868e96',
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
-    if (content) this.label(el, content, fontSize);
+    if (content)
+      this.label(el, content, fontSize, filled ? this.inkOn(fields.backgroundColor) : undefined);
     return el;
   }
   /**
@@ -654,10 +690,15 @@ export class Drawing {
             strokeColor: node.color ? 'transparent' : '#868e96',
             customData: { semanticKind: 'box' },
             roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
-            ...(node.color && { backgroundColor: paint(COLORS, node.color) }),
+            ...(node.color && { backgroundColor: this.fillOf(node.color) }),
           },
         );
-        this.label(el, node.text);
+        this.label(
+          el,
+          node.text,
+          FONT,
+          node.color ? this.inkOn(this.fillOf(node.color)) : undefined,
+        );
         this.keyed(node.key, el);
         cross += size[down ? 'width' : 'height'] + crossGap;
       }
@@ -777,9 +818,9 @@ export class Drawing {
   }
 
   /** Does one op; a line it says goes on the first thing it made, or else the first it changed. */
-  apply(op: DrawOp, file?: PlacedImage) {
+  apply(op: DrawOp, file?: PlacedImage, edit: { within?: string } = {}) {
     this.made = this.touched = undefined;
-    this.perform(op, file);
+    this.perform(op, file, edit);
     const first = (this.made ?? this.touched) as El | undefined;
     // Two lines on one shape are said together, the later after the earlier.
     if (op.say && first) {
@@ -787,13 +828,13 @@ export class Drawing {
       this.lines.set(first.id, held ? `${held} ${op.say}` : op.say);
     }
   }
-  private perform(op: DrawOp, file?: PlacedImage) {
+  private perform(op: DrawOp, file: PlacedImage | undefined, edit: { within?: string }) {
     this.proposing = 'proposed' in op && !!op.proposed;
     this.exactly = 'at' in op && !!op.at;
     switch (op.op) {
       case 'note': {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
-          backgroundColor: paint(COLORS, op.color ?? 'yellow'),
+          backgroundColor: this.fillOf(op.color ?? 'yellow'),
           strokeColor: 'transparent',
           customData: { semanticKind: 'note' },
         });
@@ -826,7 +867,7 @@ export class Drawing {
           size,
           op,
           {
-            ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
+            ...(op.color && { backgroundColor: this.fillOf(op.color) }),
           },
           op.fontSize ?? FONT,
         );
@@ -841,7 +882,7 @@ export class Drawing {
           this.text(at, content, size, {
             originalText: op.text,
             frameId: at.frameId,
-            ...(op.color && { strokeColor: paint(INKS, op.color) }),
+            ...(op.color && { strokeColor: this.ink(op.color) }),
           }),
         );
       }
@@ -854,7 +895,8 @@ export class Drawing {
         const targets = page ? [] : typeof op.target === 'string' ? [op.target] : op.target;
         const kind = page ? 'page' : targets.length > 1 ? 'collection' : cardKind(targets[0]!);
         const { name, title, height } = cardTitle(op.text);
-        const at = this.place({ width: 280, height }, op);
+        // A board's card is a window onto that board: tall enough for its picture (board-tiles.tsx).
+        const at = this.place({ width: 280, height: kind === 'board' ? 180 : height }, op);
         const groupIds = [elementId()];
         const card = this.add('rectangle', at, {
           frameId: at.frameId,
@@ -876,15 +918,16 @@ export class Drawing {
             { ...part, strokeColor: '#495057', strokeWidth: 1.5 },
           );
         const fact = page
-          ? 'Note'
+          ? (op.fact ?? 'Note')
           : (op.fact ??
             (kind === 'web'
               ? new URL(targets[0]!).hostname
               : { board: 'Board', page: 'File', collection: `${targets.length} items`, record: '' }[
                   kind
                 ]));
-        if (fact)
-          this.text({ x: at.x + 42, y: at.y + 16, ...measure(fact, 14) }, fact, 14, {
+        const shownFact = fact.length > 30 ? `${clip(fact, 29)}…` : fact;
+        if (shownFact)
+          this.text({ x: at.x + 42, y: at.y + 16, ...measure(shownFact, 14) }, shownFact, 14, {
             ...part,
             strokeColor: '#868e96',
           });
@@ -894,12 +937,34 @@ export class Drawing {
           FONT,
           {
             ...part,
+            // A card's face is white under every look: its title stays dark on it.
+            strokeColor: '#1e1e1e',
+            fontFamily: 5,
             originalText: name,
             autoResize: false,
             customData: { ...part.customData, title: true },
           },
         );
         return this.keyed(op.key, card);
+      }
+      case 'browser': {
+        // The rectangle a page is laid over (board-pages.tsx), as a new page there: 16:10.
+        const width = op.width ?? 1440;
+        const at = this.place({ width, height: (width * 10) / 16 }, op);
+        const page = this.add('rectangle', at, {
+          frameId: at.frameId,
+          strokeColor: '#868e96',
+          backgroundColor: 'transparent',
+          strokeWidth: 1,
+          roughness: 0,
+          roundness: { type: 3 },
+          // A tab it names stays the drawer's own: Merv.app binds only a tab its owner opened.
+          customData: {
+            browser: op.url,
+            ...(op.tab && { tab: op.tab, owner: tabOwner(this.agent) }),
+          },
+        });
+        return this.keyed(op.key, page);
       }
       case 'arrow':
         return this.keyed(op.key, this.arrow(op.from, op.to, op.label, op.fontSize));
@@ -922,7 +987,29 @@ export class Drawing {
       case 'flow':
         return this.flowFitted(op);
       case 'edit': {
+        // A sketch group changes opacity as one shape.
+        const group = this.group(op.id);
+        if (
+          group.length &&
+          op.opacity !== undefined &&
+          Object.keys(op).every((key) => ['op', 'id', 'opacity'].includes(key))
+        ) {
+          for (const part of group) {
+            part.opacity = op.opacity;
+            this.touch(part);
+          }
+          return;
+        }
         const el = this.find(op.id);
+        const frame = edit.within
+          ? this.find(edit.within)
+          : (this.elements.get(el.frameId) ??
+            this.live().find(
+              (frame) =>
+                frame.type === 'frame' && frame.id !== el.id && contains(frame, rectOf(el)),
+            ));
+        if (edit.within && frame?.type !== 'frame')
+          throw new MervError('board_not_a_frame', `"${edit.within}" is not a frame`, 400);
         const textOf =
           el.type === 'text'
             ? el
@@ -930,7 +1017,7 @@ export class Drawing {
                 (part) => part.containerId === el.id || (partOf(part, el) && part.customData.title),
               );
         if (op.text !== undefined) {
-          if (textOf?.customData?.title) {
+          if (textOf?.customData?.title && el.type !== 'image') {
             // A card's title keeps the card's rule, and the card grows or shrinks to hold it.
             const { name, title, height } = cardTitle(op.text);
             Object.assign(textOf, { text: title, originalText: name, ...measure(title, FONT) });
@@ -938,11 +1025,29 @@ export class Drawing {
             el.height = height;
             this.touch(textOf);
             this.touch(el);
+          } else if (el.type === 'image' && textOf) {
+            Object.assign(textOf, {
+              text: op.text,
+              originalText: op.text,
+              ...measure(op.text, textOf.fontSize ?? 12),
+            });
+            this.touch(textOf);
           } else if (textOf) {
             this.refit(el, op.text, textOf.fontSize ?? FONT);
             const content =
               el.type === 'text' || el.type === 'arrow'
-                ? op.text
+                ? frame && el.type === 'text'
+                  ? wrap(
+                      op.text,
+                      Math.max(
+                        1,
+                        Math.floor(
+                          (frame.width - 60) /
+                            ((textOf.fontSize ?? FONT) * this.labelCharWidth(op.text)),
+                        ),
+                      ),
+                    )
+                  : op.text
                 : wrap(
                     op.text,
                     Math.floor(
@@ -965,6 +1070,30 @@ export class Drawing {
             el.name = op.text;
             this.touch(el);
           }
+          if (
+            frame?.type === 'frame' &&
+            el.type !== 'arrow' &&
+            !el.containerId &&
+            !contains(frame, rectOf(el))
+          ) {
+            const { dx, dy } = fitInside(frame, el);
+            for (const part of [el, ...this.carried(el)]) {
+              part.x += dx;
+              part.y += dy;
+              part.frameId = frame.id;
+              this.touch(part);
+            }
+            this.touch(frame);
+            this.landed(el);
+            this.reroute([el]);
+            this.survey();
+          }
+        }
+        if (op.opacity !== undefined) {
+          for (const part of [el, ...this.carried(el)]) {
+            part.opacity = op.opacity;
+            this.touch(part);
+          }
         }
         if (op.reverse) {
           if (el.type !== 'arrow')
@@ -981,7 +1110,7 @@ export class Drawing {
           this.touch(el);
         }
         if (op.ink) {
-          el.strokeColor = paint(INKS, op.ink);
+          el.strokeColor = this.ink(op.ink);
           this.touch(el);
         }
         if (op.color) {
@@ -991,8 +1120,18 @@ export class Drawing {
             el.strokeColor === '#868e96'
           )
             el.strokeColor = 'transparent';
-          el.backgroundColor = paint(COLORS, op.color);
+          el.backgroundColor = this.fillOf(op.color);
           this.touch(el);
+          // Its label reads on the new fill whatever the paper; an arrow paints no fill under its label.
+          const ink = el.type === 'arrow' ? undefined : this.inkOn(el.backgroundColor);
+          if (ink)
+            for (const bound of el.boundElements ?? []) {
+              const text = this.elements.get(bound.id);
+              if (text?.type === 'text' && text.strokeColor !== ink) {
+                text.strokeColor = ink;
+                this.touch(text);
+              }
+            }
         }
         return;
       }
@@ -1072,12 +1211,13 @@ export class Drawing {
               drawn.push([...drawn[0]!]);
             const el = this.line(drawn, {
               strokeColor: stroke.color
-                ? paint(INKS, stroke.color)
-                : (pen?.strokeColor ?? '#1e1e1e'),
-              backgroundColor: filled ? paint(PAINTS, stroke.fill!) : 'transparent',
+                ? this.ink(stroke.color)
+                : (pen?.strokeColor ?? this.defaultInk),
+              backgroundColor: filled ? this.paintOf(stroke.fill!) : 'transparent',
               strokeWidth: stroke.width
                 ? { thin: 1, medium: 2, bold: 4 }[stroke.width]
                 : (pen?.strokeWidth ?? 2),
+              // A continuation takes the original pen; a new stroke keeps its requested values.
               ...(pen && { roughness: pen.roughness ?? 0 }),
               groupIds: [group],
               frameId: at.frameId,
@@ -1091,20 +1231,46 @@ export class Drawing {
       }
       case 'image': {
         if (!file) throw new MervError('board_image_source', 'This image was not stored', 400);
-        const { artifactId, page, region, alt } = op;
+        const { artifactId, page, region, alt, target, fact } = op;
+        const groupIds = fact ? [elementId()] : [];
         const width = op.width ?? Math.min(IMAGE_WIDTH, file.width);
-        const at = this.place({ width, height: (width * file.height) / file.width }, op);
-        const el = this.add('image', at, {
-          fileId: file.fileId,
-          status: 'saved',
-          scale: [1, 1],
-          crop: null,
-          strokeColor: 'transparent',
-          customData: {
-            ...(alt && { alt }),
-            source: { artifactId, ...(page && { page }), ...(region && { region }) },
+        const height = op.height ?? (width * file.height) / file.width;
+        const line = fact?.replace(/\s+/g, ' ');
+        const shown = line && (line.length > 48 ? `${clip(line, 47)}…` : line);
+        const caption = shown ? measure(shown, 12) : undefined;
+        const at = this.place(
+          {
+            width: Math.max(width, caption?.width ?? 0),
+            height: height + (caption ? caption.height + 8 : 0),
           },
-        });
+          op,
+        );
+        const el = this.add(
+          'image',
+          { ...at, width, height },
+          {
+            fileId: file.fileId,
+            groupIds,
+            ...(target && { link: target }),
+            status: 'saved',
+            scale: [1, 1],
+            crop: null,
+            strokeColor: 'transparent',
+            customData: {
+              ...(alt && { alt }),
+              ...(target && { target }),
+              ...(fact && { details: { title: alt, text: fact } }),
+              source: { artifactId, ...(page && { page }), ...(region && { region }) },
+            },
+          },
+        );
+        if (shown && caption) {
+          this.text({ x: at.x, y: at.y + height + 8, ...caption }, shown, 12, {
+            groupIds,
+            strokeColor: '#868e96',
+            customData: { card: true, title: true },
+          });
+        }
         return this.keyed(op.key, el);
       }
     }
@@ -1210,6 +1376,7 @@ export function rectOf(el: El): Rect {
 /** Where an operation puts what it makes. */
 type Where = {
   near?: string;
+  free?: boolean;
   in?: string;
   side?: 'right' | 'left' | 'above' | 'below';
   at?: [number, number];
@@ -1219,6 +1386,15 @@ const contains = (outer: Rect, inner: Rect) =>
   inner.y >= outer.y &&
   inner.x + inner.width <= outer.x + outer.width &&
   inner.y + inner.height <= outer.y + outer.height;
+/** Export only this frame's material; the renderer's margin must not reveal its neighbours. */
+export function frameElements(elements: BoardElement[], id: string) {
+  const frame = elements.find((el) => el.id === id && !el.isDeleted);
+  if (!frame) return [];
+  const box = rectOf(frame as El);
+  return elements.filter(
+    (el) => !el.isDeleted && (el.id === id || contains(box, rectOf(el as El))),
+  );
+}
 /** The box around these, walked once: a sketch's points are too many to spread into Math.min. */
 export function bounds(rects: Rect[]): Rect | undefined {
   if (!rects.length) return undefined;
@@ -1265,9 +1441,15 @@ function layers(keys: string[], edges: { from: string; to: string }[]) {
 }
 
 /** What a read asks for: words and a place to look for, and what changed since it last read. */
-export type Asked = { text?: string; region?: Rect; changed?: BoardElement[] };
+type Asked = {
+  text?: string;
+  region?: Rect;
+  changed?: BoardElement[];
+  /** The revision each shape was last edited at, by id: each entry says its own. */
+  edited?: Record<string, number>;
+};
 /** The board as its agent reads it: what each shape says and where, without Excalidraw's fields. */
-export function summarize(elements: BoardElement[], { text, region, changed }: Asked = {}) {
+export function summarize(elements: BoardElement[], { text, region, changed, edited }: Asked = {}) {
   // A card's icon, fact and title are read as the card: one shape, its title its text.
   const parts = (elements as El[]).filter((el) => !el.isDeleted && el.customData?.card);
   const live = (elements as El[]).filter((el) => !el.isDeleted && !el.customData?.card);
@@ -1287,6 +1469,16 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
             .filter((t: El | undefined) => t?.type === 'text')
             .map((t: El) => t.originalText ?? t.text)
             .join(' ') || undefined;
+  // An entry was last edited when any part of it was: its label, its strokes.
+  const editedOf = (...parts: El[]) => {
+    if (!edited) return {};
+    const at = Math.max(...parts.map((el) => edited[el.id] ?? -1));
+    return at < 0 ? {} : { edited: at };
+  };
+  const labelsOf = (el: El) =>
+    (el.boundElements ?? [])
+      .map((b: { id: string }) => byId.get(b.id))
+      .filter((t: El | undefined) => t?.type === 'text') as El[];
   const where = (el: Rect) => ({
     at: [Math.round(el.x), Math.round(el.y)],
     size: [Math.round(el.width), Math.round(el.height)],
@@ -1297,12 +1489,22 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
   // A line that joins shapes is an arrow; any other line, and every pen stroke, is a mark.
   const joins = (el: El) =>
     el.type === 'arrow' || (el.type === 'line' && !!(el.startBinding || el.endBinding));
-  const marks = live.filter((el) => (el.type === 'line' || el.type === 'freedraw') && !joins(el));
+  const marks = new Set(
+    live.filter((el) => (el.type === 'line' || el.type === 'freedraw') && !joins(el)),
+  );
+  const labels = new Map<string, El[]>();
+  for (const el of live)
+    if (el.type === 'text' && el.containerId) {
+      const parts = labels.get(el.containerId) ?? [];
+      parts.push(el);
+      labels.set(el.containerId, parts);
+    }
   const arrows = live.filter(joins).map((el) => ({
     id: el.id,
     ...(el.startBinding?.elementId && { from: el.startBinding.elementId }),
     ...(el.endBinding?.elementId && { to: el.endBinding.elementId }),
     ...(said(el) && { label: said(el) }),
+    ...editedOf(el, ...labelsOf(el)),
   }));
   const shapes = live
     .filter(
@@ -1315,38 +1517,47 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
       kind:
         el.customData?.target === ''
           ? 'page'
-          : el.customData?.target
-            ? 'link'
-            : el.type === 'rectangle' &&
-                el.strokeColor === 'transparent' &&
-                el.customData?.semanticKind !== 'box'
-              ? 'note'
-              : el.type === 'rectangle'
-                ? 'box'
-                : el.type,
+          : typeof el.customData?.browser === 'string'
+            ? 'browser'
+            : el.customData?.target
+              ? 'link'
+              : el.type === 'rectangle' &&
+                  el.strokeColor === 'transparent' &&
+                  el.customData?.semanticKind !== 'box'
+                ? 'note'
+                : el.type === 'rectangle'
+                  ? 'box'
+                  : el.type,
       ...(said(el) && { text: said(el) }),
       ...(el.customData?.target && { target: el.customData.target }),
+      ...(typeof el.customData?.browser === 'string' && { url: el.customData.browser }),
       ...(el.customData?.details && { details: el.customData.details }),
       ...(el.customData?.alt && { alt: el.customData.alt }),
       ...(el.customData?.source && { source: el.customData.source }),
       ...(el.frameId && { frame: el.frameId }),
       ...(el.customData?.by === 'agent' && { by: 'agent' }),
       ...(el.customData?.proposed && { proposed: true }),
+      ...editedOf(el, ...labelsOf(el)),
       ...where(el),
     }));
   // Strokes drawn as one sketch, or grouped by hand, read as one drawing.
   const drawings = new Map<string, El[]>();
-  for (const el of live.filter((e) => (e.groupIds?.length && !titleOf(e)) || marks.includes(e))) {
+  for (const el of live.filter((e) => (e.groupIds?.length && !titleOf(e)) || marks.has(e))) {
     const group = el.groupIds?.at(-1) ?? el.id;
-    drawings.set(group, [...(drawings.get(group) ?? []), el]);
+    const parts = drawings.get(group) ?? [];
+    parts.push(el);
+    drawings.set(group, parts);
   }
   for (const [groupId, parts] of drawings) {
-    const owners = new Set(parts.map((e) => e.id));
-    for (const label of live)
-      if (label.type === 'text' && owners.has(label.containerId) && !parts.includes(label))
-        parts.push(label);
+    const included = new Set(parts);
+    for (const owner of [...parts])
+      for (const label of labels.get(owner.id) ?? [])
+        if (!included.has(label)) {
+          parts.push(label);
+          included.add(label);
+        }
     // A shape alone in its group (a proposal's label) has already been said.
-    if (parts.length === 1 && !marks.includes(parts[0]!)) continue;
+    if (parts.length === 1 && !marks.has(parts[0]!)) continue;
     const box = bounds(parts.map(rectOf))!;
     const first = parts[0]!;
     shapes.push({
@@ -1356,6 +1567,7 @@ export function summarize(elements: BoardElement[], { text, region, changed }: A
       ...(first.frameId && { frame: first.frameId }),
       ...(first.customData?.by === 'agent' && { by: 'agent' }),
       ...(first.customData?.proposed && { proposed: true }),
+      ...editedOf(...parts),
       ...where(box),
     } as (typeof shapes)[number]);
   }

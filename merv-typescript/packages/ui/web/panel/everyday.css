@@ -1,0 +1,916 @@
+/* Shared everyday controls. Native window framing stays in styles.css. */
+.completion-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 6;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 210px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px var(--shadow-faint);
+}
+.completion-menu button {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 4px;
+}
+.completion-menu button[aria-selected='true'],
+.completion-menu button:hover {
+  background: var(--panel);
+}
+.queued {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.queued-head {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  opacity: 0.85;
+}
+.queued-head[hidden] {
+  display: none;
+}
+.queued-head > span {
+  color: var(--tertiary);
+  font-size: 14px;
+  transition: transform 220ms ease-out;
+}
+.queued-head[aria-expanded='true'] > span {
+  transform: rotate(90deg);
+}
+.queued-body,
+.queued-item {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms ease-out;
+}
+.queued-body:not(.is-open),
+.queued-item.is-leaving {
+  grid-template-rows: 0fr;
+}
+.queued-body > div,
+.queued-item > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.queued-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.queued-text .soft {
+  color: var(--tertiary);
+}
+.queued-row button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--secondary);
+  opacity: 0;
+}
+.queued-row:hover button,
+.queued-row:focus-within button {
+  opacity: 1;
+}
+.queued-row .queued-send {
+  width: auto;
+  padding: 0 8px;
+  opacity: 1;
+  font-size: 12px;
+}
+.queued-row button:hover {
+  color: var(--text);
+}
+.file-chip.is-missing {
+  text-decoration: line-through;
+  color: var(--tertiary);
+}
+.changes {
+  gap: 4px;
+}
+.changes .commit {
+  margin-top: 12px;
+}
+.changes .pr-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.change-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 13px;
+}
+.change-dir,
+.change-status {
+  color: var(--secondary);
+}
+.change-by {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 2px;
+  border-radius: 5px;
+  color: var(--secondary);
+}
+.change-by:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.change-others {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  color: var(--tertiary);
+}
+.revert {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--secondary);
+}
+.revert:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+.revert.is-sure {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--error);
+  background: var(--error-bg);
+}
+.setting + .update-notes {
+  margin: 0 14px 8px 44px;
+}
+.agent-next {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  text-align: left;
+  font-size: 12px;
+}
+
+/* File and hunk choices stay beside the changes being committed. */
+.changes input[type='checkbox'] {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--secondary);
+}
+.change-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.change-note button {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Find in a chat: one quiet line under its head; the words are lit where they were said. */
+.find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 var(--pad) 6px;
+  font-size: 12px;
+}
+.find input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--raised);
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+}
+::highlight(find) {
+  background-color: #e2c47e44;
+}
+::highlight(find-current) {
+  background-color: #e2c47e;
+  color: #18191b;
+}
+.review-hunk {
+  position: relative;
+}
+.review-diff {
+  display: block;
+  position: relative;
+}
+.review-diff > .is-picked,
+.review-diff > .source-evidence {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.diff-ask-wrap {
+  position: sticky;
+  top: 4px;
+  right: 4px;
+  float: right;
+  height: 0;
+  z-index: 1;
+  font-family: inherit;
+  user-select: none;
+}
+.diff-ask {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: var(--raised);
+  font:
+    13px 'Geist Sans',
+    -apple-system,
+    sans-serif;
+  color: var(--text);
+}
+.diff-ask:hover {
+  background: var(--panel);
+}
+.review-hunk > .menu {
+  top: 36px;
+  right: 4px;
+}
+
+/* Attaching: a paperclip beside the choices; a file that is not a picture shows as its name. */
+.attach {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--secondary);
+}
+.attach:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.file-chip {
+  align-self: center;
+  max-width: 180px;
+  padding: 4px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-hover);
+  border-radius: 999px;
+}
+.file-chip span {
+  color: var(--secondary);
+}
+
+.settings-view {
+  display: grid;
+  gap: 10px;
+  padding: 8px var(--pad);
+}
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  background: var(--raised);
+  border-radius: 10px;
+  color: var(--secondary);
+}
+.setting > svg {
+  flex: none;
+}
+.setting > span {
+  color: var(--text);
+}
+.setting span {
+  flex: 1;
+}
+/* A row that leads one level in is pressed whole; what it says of itself sits before its mark. */
+button.setting-go {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+button.setting-go:hover {
+  background: var(--hover-bg, var(--raised));
+  filter: brightness(1.08);
+}
+.setting-go > small,
+.setting small {
+  flex: none;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.setting-go > small.setting-wants {
+  color: var(--accent);
+}
+.setting-go-mark {
+  flex: none;
+  color: var(--tertiary);
+}
+.settings-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  color: var(--secondary);
+  font-size: 12px;
+  text-align: left;
+}
+.settings-back:hover {
+  color: var(--text);
+}
+.settings-back strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.settings-back strong::before {
+  content: '/';
+  margin-right: 6px;
+  color: var(--tertiary);
+  font-weight: 400;
+}
+.body > .settings-back {
+  margin: 8px var(--pad) 0;
+}
+.settings-error {
+  margin: 0 2px;
+  color: var(--error);
+  font-size: 12px;
+}
+.setting select {
+  flex: none;
+  max-width: 55%;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--control-off);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.settings-view .agent-next {
+  padding: 8px 12px;
+}
+
+/* An agent's page, the same for both: flat rows on the panel, no boxes, each action plain words. */
+.agent-page {
+  gap: 20px;
+}
+.agent-page section {
+  display: grid;
+  gap: 2px;
+}
+.agent-heading {
+  margin: 0 0 2px;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.agent-row,
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  font-size: 13px;
+}
+.agent-row > span:first-child {
+  flex: 1;
+  color: var(--text);
+}
+.agent-status {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.agent-status > svg {
+  flex: none;
+}
+.agent-status.is-wanting > svg {
+  opacity: 0.45;
+}
+.agent-status .hint {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+.agent-status > .agent-note {
+  flex-basis: 100%;
+  margin: 0 0 0 28px;
+}
+.agent-note code,
+.agent-confirm code {
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.agent-confirm {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 28px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.agent-confirm > span {
+  flex: 1;
+}
+.agent-action.is-danger {
+  color: var(--error);
+}
+.agent-heading small {
+  color: var(--tertiary);
+  font-size: 11px;
+  font-weight: 400;
+}
+.usage-limit .agent-row {
+  min-height: 22px;
+}
+.agent-action {
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  margin-right: -8px;
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background var(--hover);
+}
+.agent-action.is-quiet {
+  color: var(--secondary);
+}
+.agent-action:has(+ .agent-action) {
+  margin-right: 0;
+}
+.agent-action:hover {
+  background: var(--surface-hover);
+}
+.agent-path {
+  flex-wrap: wrap;
+}
+.agent-path > span:first-child {
+  flex: 0 0 48px;
+}
+.agent-path code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--secondary);
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.agent-path small {
+  flex-basis: 100%;
+  margin: -6px 0 4px 58px;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+.agent-path input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.agent-path input:focus {
+  background: var(--surface-hover);
+}
+
+/* A select in shadcn's shape: the choice and a chevron, no border; its list floats with a check on the chosen one. */
+.select {
+  position: relative;
+  flex: none;
+}
+.select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  margin-right: -8px;
+  border-radius: 6px;
+  color: var(--secondary);
+  font-size: 13px;
+  transition:
+    background var(--hover),
+    color var(--hover);
+}
+.select-trigger:hover,
+.select-trigger[aria-expanded='true'] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.select-trigger > svg {
+  flex: none;
+  opacity: 0.7;
+}
+.select-value {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: -8px;
+  min-width: max(100%, 168px);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--raised);
+  border-radius: 10px;
+  box-shadow:
+    0 10px 28px var(--shadow-strong),
+    0 0 0 1px var(--hairline);
+}
+.select-list.is-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--secondary);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: default;
+}
+.select-option > span {
+  flex: 1;
+}
+.select-option[aria-selected='true'] {
+  color: var(--text);
+}
+.select-option.is-active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+/* Focus from the keyboard shows as a fill, never a ring; a mouse leaves nothing behind. */
+.agent-page :focus-visible {
+  outline: none;
+}
+.agent-page :is(button, .select-trigger):focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.find .is-none {
+  opacity: 0.45;
+}
+
+/* A command's description trails its name, quietly. */
+.completion-menu button .soft {
+  margin-left: 6px;
+}
+
+/* Search floats in the pane; the conversation keeps its place beneath it. */
+.pane-session:has(> .palette) > *:not(.palette) {
+  opacity: 0.55;
+  pointer-events: none;
+}
+/* Keep the sheet's 12px inset below the pane's 39px header. */
+.palette.completion-menu {
+  top: 51px;
+  bottom: auto;
+  left: 16px;
+  right: 16px;
+  width: auto;
+  max-height: min(60%, 480px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 12px 28px var(--shadow-strong);
+}
+.palette > input {
+  flex: none;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--text);
+}
+.palette > input::placeholder {
+  color: var(--tertiary);
+}
+.palette-results {
+  overflow-y: auto;
+  padding: 4px;
+}
+.palette-group + .palette-group {
+  margin-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--divider) 60%, transparent);
+}
+.palette .row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 40px;
+  padding: 0 8px;
+  gap: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.palette .row[aria-selected='true'],
+.palette .row:hover {
+  background: var(--panel);
+}
+.palette .row-title {
+  display: flex;
+  align-items: baseline;
+}
+.palette-mark {
+  width: 20px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+  color: var(--secondary);
+}
+/* The way to what needs the person wears the one accent that means it. */
+.palette-mark.is-needs {
+  color: var(--approval);
+}
+.palette-quote {
+  color: var(--tertiary);
+  font-size: 14px;
+}
+.palette-context {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  text-align: left;
+}
+.palette-context mark {
+  background: none;
+  color: var(--accent);
+  font-weight: 500;
+}
+.palette-source {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-results > .soft {
+  margin: 0;
+  padding: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .queued-body,
+  .queued-item,
+  .queued-head > span {
+    transition: none;
+    animation: none;
+  }
+}
+.project-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+.project-sheet .mark {
+  color: var(--secondary);
+}
+.pr-word {
+  font-size: 12px;
+  color: var(--secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pr-word:hover {
+  color: var(--text);
+}
+.pr-word + button[aria-pressed='true'] {
+  color: var(--accent);
+}
+.pr-feedback {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.pr-feedback a {
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.pr-feedback a:hover {
+  color: var(--text);
+}
+.pr-feedback .actions {
+  margin-top: 4px;
+}
+.fix-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.fix-target:hover,
+.fix-target[aria-expanded='true'] {
+  color: var(--text);
+}
+.pr-feedback .menu {
+  top: auto;
+  bottom: 30px;
+  left: 0;
+  right: auto;
+}
+
+.change-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 20px;
+}
+.change-jumps button {
+  color: var(--secondary);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+}
+.change-jumps button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.change-jumps button:hover {
+  color: var(--text);
+}
+.change {
+  scroll-margin-top: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
+.welcome-agents .agent-next {
+  padding: 6px 0 0;
+  font-size: 13px;
+}
+.setting > button.quiet {
+  flex: none;
+  color: var(--accent);
+}
+.setting > button.quiet:disabled {
+  color: var(--tertiary);
+}
+
+.agent-note {
+  margin: 2px 0 0;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+.agent-who {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  color: var(--text);
+}
+.agent-who > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-who small {
+  color: var(--tertiary);
+  font-size: 12px;
+}
+.agent-who small.is-error {
+  color: var(--error);
+}
+.usage-limit {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0 10px;
+}
+.usage-used {
+  flex: none;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.usage-meter {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--raised);
+  overflow: hidden;
+}
+.usage-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--secondary);
+}
+.usage-meter > span.is-high {
+  background: var(--error);
+}
+.usage-reset {
+  color: var(--tertiary);
+  font-size: 11px;
+}
+.usage-none {
+  margin: 0;
+  color: var(--tertiary);
+  font-size: 12px;
+}
+.usage-none.is-error {
+  color: var(--error);
+}
+.agent-version {
+  flex: none;
+  color: var(--tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

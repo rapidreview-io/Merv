@@ -873,4 +873,7 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
     DROP CONSTRAINT session_messages_project_id_sender_actor_id_request_id_key;
     CREATE UNIQUE INDEX session_messages_request_kind ON session_messages
       (project_id,sender_actor_id,request_id,COALESCE(inquiry_role,''));`,
+  // (unpublished) A question may offer its owner a few worded answers, pressed as buttons.
+  // Existing questions keep none: the column is nullable and nothing is backfilled.
+  28: `ALTER TABLE session_questions ADD COLUMN options_json TEXT;`,
 };

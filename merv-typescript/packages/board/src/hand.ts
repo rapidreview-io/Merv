@@ -11,10 +11,6 @@ const NAMES = 160;
 
 /** What a shape's customData says of it. */
 const data = (el: BoardElement) => (el.customData ?? {}) as Record<string, unknown>;
-const middle = (el: BoardElement) => {
-  const { x, y, width, height } = boxOf(el);
-  return { x: x + width / 2, y: y + height / 2 };
-};
 const stroke = (el: BoardElement) =>
   (el.type === 'freedraw' || el.type === 'line') && !data(el).sketch;
 const text = (el?: BoardElement) => (typeof el?.text === 'string' ? el.text.trim() : '');
@@ -40,88 +36,97 @@ const closed = (el: BoardElement) => {
   );
 };
 
-/**
- * A shape as an agent is told of it, in words so it need not stop to read: its id, for what it does
- * next, with what it says, or what its label says, or else the label it stands by.
- */
-function called(el: BoardElement, live: BoardElement[], beside = live): string {
-  const group = (el.groupIds as string[] | undefined)?.at(-1);
-  const mate = group && live.find((o) => text(o) && (o.groupIds as string[])?.includes(group));
-  const own =
-    text(el) ||
-    text(live.find(({ containerId }) => containerId === el.id)) ||
-    text(mate || undefined);
-  if (own) return `${named(el)} ${quoted(own)}`;
-  const { x, y } = middle(el);
-  const label = nearest(
-    beside.filter((o) => text(o)),
-    x,
-    y,
-  );
-  return label && Math.hypot(middle(label).x - x, middle(label).y - y) < NAMES
-    ? `${named(el)} by ${quoted(text(label))}`
-    : named(el);
-}
-
-/** One line for a run of strokes, by what they lie on: only ever a guess, so it asks. */
-function strokes(drawn: BoardElement[], live: BoardElement[]): string[] {
-  const others = live.filter((el) => !stroke(el) && !el.containerId);
-  const within = (el: BoardElement) => {
-    const box = boxOf(el);
-    return others.filter((other) => {
-      const at = middle(other);
-      return closed(el)
-        ? inStroke(at, el)
-        : at.x > box.x && at.x < box.x + box.width && at.y > box.y && at.y < box.y + box.height;
-    });
-  };
-  const ids = (shapes: BoardElement[]) =>
-    [...new Set(shapes.map((el) => called(el, live)))].slice(0, 4).join(', ');
-  const count = (n: number) => (n === 1 ? 'a stroke' : `${n} strokes`);
-  const lines: string[] = [];
-  const crossing: BoardElement[] = [];
-  const loose: BoardElement[] = [];
-  for (const el of drawn) {
-    const under = within(el);
-    if (!under.length) loose.push(el);
-    else if (closed(el)) lines.push(`a stroke around ${ids(under)} (circled?)`);
-    else crossing.push(el);
-  }
-  if (crossing.length)
-    lines.push(`${count(crossing.length)} across ${ids(crossing.flatMap(within))} (crossed out?)`);
-  if (loose.length) {
-    const { x, y } = middle(loose.at(-1)!);
-    const near = nearest(others, x, y);
-    lines.push(`${count(loose.length)}${near ? ` near ${called(near, live)}` : ''} (a sketch?)`);
-  }
-  return lines;
-}
-function nearest(shapes: BoardElement[], x: number, y: number) {
-  const away = (el: BoardElement) => Math.hypot(middle(el).x - x, middle(el).y - y);
-  return shapes.reduce<BoardElement | undefined>(
-    (best, el) => (!best || away(el) < away(best) ? el : best),
-    undefined,
-  );
-}
-
-/**
- * What people did on a board after a revision, in words, from its history: their shapes as they
- * were then against how they stand now, so a shape moved twice is one move and one made and erased
- * is nothing. Texts, moves, edits, deletions and arrows are facts; strokes are guesses and say so.
- * `live` is the board now. `after` is the revision they are told from; changes up to it only say
- * how a shape stood.
- */
-export const handLog = (changes: BoardChange[], live: BoardElement[], after: number) =>
-  handRead(changes, live, after).lines;
 /** The log, and where the newest mark on another's shape stands: a stroke on or around one, or
  *  words beside one, since `after`. An agent told of a mark is sent there. */
-export function handRead(changes: BoardChange[], live: BoardElement[], after: number) {
+export function handRead(
+  changes: BoardChange[],
+  live: BoardElement[],
+  after: number,
+  everyone = false,
+) {
+  const centers = new WeakMap<BoardElement, { x: number; y: number }>();
+  const middle = (el: BoardElement) => {
+    const cached = centers.get(el);
+    if (cached) return cached;
+    const { x, y, width, height } = boxOf(el);
+    const point = { x: x + width / 2, y: y + height / 2 };
+    centers.set(el, point);
+    return point;
+  };
+  /**
+   * A shape as an agent is told of it, in words so it need not stop to read: its id, for what it does
+   * next, with what it says, or what its label says, or else the label it stands by.
+   */
+  function called(el: BoardElement, live: BoardElement[], beside = live): string {
+    const group = (el.groupIds as string[] | undefined)?.at(-1);
+    const mate = group && live.find((o) => text(o) && (o.groupIds as string[])?.includes(group));
+    const own =
+      text(el) ||
+      text(live.find(({ containerId }) => containerId === el.id)) ||
+      text(mate || undefined);
+    if (own) return `${named(el)} ${quoted(own)}`;
+    const { x, y } = middle(el);
+    const label = nearest(
+      beside.filter((o) => text(o)),
+      x,
+      y,
+    );
+    return label && Math.hypot(middle(label).x - x, middle(label).y - y) < NAMES
+      ? `${named(el)} by ${quoted(text(label))}`
+      : named(el);
+  }
+
+  /** One line for a run of strokes, by what they lie on: only ever a guess, so it asks. */
+  function strokes(drawn: BoardElement[], live: BoardElement[]): string[] {
+    const others = live.filter((el) => !stroke(el) && !el.containerId);
+    const within = (el: BoardElement) => {
+      const box = boxOf(el);
+      return others.filter((other) => {
+        const at = middle(other);
+        return closed(el)
+          ? inStroke(at, el)
+          : at.x > box.x && at.x < box.x + box.width && at.y > box.y && at.y < box.y + box.height;
+      });
+    };
+    const ids = (shapes: BoardElement[]) =>
+      [...new Set(shapes.map((el) => called(el, live)))].slice(0, 4).join(', ');
+    const count = (n: number) => (n === 1 ? 'a stroke' : `${n} strokes`);
+    const lines: string[] = [];
+    const crossing: BoardElement[] = [];
+    const loose: BoardElement[] = [];
+    for (const el of drawn) {
+      const under = within(el);
+      if (!under.length) loose.push(el);
+      else if (closed(el)) lines.push(`a stroke around ${ids(under)} (circled?)`);
+      else crossing.push(el);
+    }
+    if (crossing.length)
+      lines.push(
+        `${count(crossing.length)} across ${ids(crossing.flatMap(within))} (crossed out?)`,
+      );
+    if (loose.length) {
+      const { x, y } = middle(loose.at(-1)!);
+      const near = nearest(others, x, y);
+      lines.push(`${count(loose.length)}${near ? ` near ${called(near, live)}` : ''} (a sketch?)`);
+    }
+    return lines;
+  }
+  function nearest(shapes: BoardElement[], x: number, y: number) {
+    const away = (el: BoardElement) => Math.hypot(middle(el).x - x, middle(el).y - y);
+    return shapes.reduce<BoardElement | undefined>(
+      (best, el) => (!best || away(el) < away(best) ? el : best),
+      undefined,
+    );
+  }
+
   const stood = new Map<string, BoardElement>();
   const touched = new Map<string, BoardElement>();
   for (const { revision, kind, shapes } of changes)
     for (const shape of shapes) {
-      // Only what a person's hand made: an agent's own call is the agent's to know.
-      const told = revision <= after || kind === 'before' || data(shape).changedBy === 'agent';
+      // Only what a person's hand made: an agent's own call is the agent's to know. A rewind,
+      // telling the board's story, tells everyone's.
+      const told =
+        revision <= after || kind === 'before' || (!everyone && data(shape).changedBy === 'agent');
       if (told) {
         if (!touched.has(shape.id)) stood.set(shape.id, shape);
       } else {

@@ -1,10 +1,13 @@
+import { publicError } from '../errors';
 import { useEffect, useRef, useState } from 'react';
 import { ellipsis } from '@merv/contracts/text';
 import { ApiError, call } from '../api';
 import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
 import { toolTransport, type PiTransport } from './pi-transport';
+import { holdStaleBuild } from '../stale-build';
 import type { PiConversation, PiEvent, PiHostView, PiSnapshot } from '@merv/pi/models';
+import { useLongGone } from '../quiet';
 
 type PiDelta = PiEvent & { streamId: string };
 const isDelta = (value: object): value is PiDelta =>
@@ -53,14 +56,7 @@ const WAITS = ['queued', 'machine', 'agent', 'thinking'];
 const UNNAMED = 'New conversation';
 const RECONNECTING = 'Reconnecting…';
 const UNAVAILABLE = 'This conversation isn’t available right now.';
-/** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
-const said = (cause: unknown, fallback: string): string => {
-  if (!(cause instanceof ApiError)) return fallback;
-  if (cause.status === 0) return 'Merv didn’t answer. Try again.';
-  if (cause.status >= 500 || cause.code.startsWith('http_') || cause.code === 'invalid_response')
-    return 'Something went wrong on the server. Try again.';
-  return cause.message;
-};
+const said = publicError;
 /**
  * The open conversation: what the Agent page held, read, streamed and sent, now held by
  * `PiProvider` so that it outlives the page. It begins as the page did when it opened.
@@ -74,7 +70,12 @@ export function useConversation(transport: PiTransport = toolTransport) {
   const [response, setResponse] = useState<TransientResponse | null>(null);
   const [draft, setDraft] = useState('');
   const [listed, setListed] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, renderBusy] = useState(false);
+  const busyNow = useRef(false);
+  const setBusy = (value: boolean) => {
+    busyNow.current = value;
+    renderBusy(value);
+  };
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
@@ -96,6 +97,7 @@ export function useConversation(transport: PiTransport = toolTransport) {
   // How far the server's clock ran ahead of this one when the latest snapshot arrived.
   const skew = useRef(0);
   const selection = useRef<string | null>(null);
+  const opening = useRef(0);
   // The page's first conversation warms at once; another only once a question is begun in it.
   const eager = useRef(true);
   const warming = useRef(false);
@@ -214,24 +216,34 @@ export function useConversation(transport: PiTransport = toolTransport) {
     };
   }, [selected, snapshotRetry]);
   const live = streaming !== null && streaming === selected;
-  const stream = useEventStream(live ? transport.events(streaming) : null, (event, value) => {
-    if (!valid() || !streaming || selection.current !== streaming) return;
-    if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
-      return replace(value as PiSnapshot);
-    if (event !== 'delta' || !isDelta(value)) return;
-    const current = canonical.current;
-    if (!current || current.streamId !== value.streamId) return void refresh(streaming);
-    if (value.sequence <= current.sequence) return;
-    canonical.current = { ...current, sequence: value.sequence };
-    // A turn's own step changes no record: the stage is shown as of this event.
-    if (value.stage)
-      setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
-    else if (value.type === 'changed') void refresh(streaming);
-    else setResponse((before) => accumulateResponse(before, value));
-  });
+  const stream = useEventStream(
+    live ? transport.events(streaming) : null,
+    (event, value) => {
+      if (!valid() || !streaming || selection.current !== streaming) return;
+      if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
+        return replace(value as PiSnapshot);
+      if (event !== 'delta' || !isDelta(value)) return;
+      const current = canonical.current;
+      if (!current || current.streamId !== value.streamId) return void refresh(streaming);
+      if (value.sequence <= current.sequence) return;
+      canonical.current = { ...current, sequence: value.sequence };
+      // A turn's own step changes no record: the stage is shown as of this event.
+      if (value.stage)
+        setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
+      else if (value.type === 'changed') void refresh(streaming);
+      else setResponse((before) => accumulateResponse(before, value));
+    },
+    () => {
+      const current = canonical.current;
+      return current?.conversation.id === streaming
+        ? `${current.streamId}:${current.sequence}`
+        : '';
+    },
+  );
   const retrying = live && stream.state === 'retrying';
   const unavailable = live && stream.state === 'refused';
-  const streamError = retrying ? RECONNECTING : unavailable ? UNAVAILABLE : '';
+  // Retrying is said only after a minute of it: a dropped stream is nearly always back sooner.
+  const streamError = useLongGone(retrying) ? RECONNECTING : unavailable ? UNAVAILABLE : '';
   // While the stream is away, or while an answer is under way (a stream that went quiet without
   // closing must not leave the page thinking forever), the conversation is still read now and then.
   const answering = !!snapshot?.conversation.activeCommandId;
@@ -247,6 +259,9 @@ export function useConversation(transport: PiTransport = toolTransport) {
   const latest = snapshot?.commands.at(-1);
   const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
   const active = inFlight(status);
+  const reloadBusy = useRef(false);
+  reloadBusy.current = active || busy;
+  useEffect(() => holdStaleBuild(() => reloadBusy.current), []);
   const blocked = refused || snapshot?.available === false;
   const visible =
     response &&
@@ -268,13 +283,20 @@ export function useConversation(transport: PiTransport = toolTransport) {
       : stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
         ? 'writing'
         : (stage?.name ?? '');
-  const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
+  const phrase = ['queued', 'machine', 'agent', 'ready'].includes(step)
+    ? step === 'ready'
+      ? 'Ready'
+      : 'Getting ready'
+    : STAGE[step];
   // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
   // while the stream that would end it is away.
   const standing: [string, string, string?] = unavailable
     ? ['Unavailable', '']
     : !phrase
-      ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
+      ? [
+          ['waiting', 'starting'].includes(status) ? 'Getting ready' : (STATUS[status] ?? 'Ready'),
+          active ? 'active' : '',
+        ]
       : WAITS.includes(step)
         ? [phrase, 'active', streamError ? undefined : stage?.since]
         : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
@@ -320,8 +342,8 @@ export function useConversation(transport: PiTransport = toolTransport) {
   };
   /** Whether the words reached the server; `commandId` names the turn they start, where it is
    * theirs before they are sent. Said while an answer runs, they reach it at its next chance. */
-  const send = async (text = draft.trim(), commandId?: string): Promise<boolean> => {
-    if (busy || blocked || unavailable || !text) return false;
+  const send = async (text = draft.trim(), commandId?: string, aloud = false): Promise<boolean> => {
+    if (busyNow.current || blocked || unavailable || !text) return false;
     let id = selection.current;
     setBusy(true);
     try {
@@ -336,7 +358,12 @@ export function useConversation(transport: PiTransport = toolTransport) {
       // Sent on the model the bar shows, or not at all.
       const shown =
         canonical.current?.conversation.id === id && canonical.current.conversation.model;
-      await transport.send(id, { commandId, text, ...(shown && { model: shown }) });
+      await transport.send(id, {
+        commandId,
+        text,
+        ...(aloud && { aloud }),
+        ...(shown && { model: shown }),
+      });
       if (!valid() || selection.current !== id) return true;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
@@ -395,16 +422,28 @@ export function useConversation(transport: PiTransport = toolTransport) {
         if (picking.current?.done === done) picking.current = null;
       });
     picking.current = { id, done };
+    return done;
   };
   const stop = async () => {
-    if (!selected || busy || unavailable || !active) return;
+    const id = selection.current,
+      current = canonical.current;
+    const command = current?.commands.find(
+      (item) => item.id === current.conversation.activeCommandId,
+    );
+    if (
+      !id ||
+      current?.conversation.id !== id ||
+      busyNow.current ||
+      !command ||
+      !inFlight(command.status)
+    )
+      return;
     setBusy(true);
     setError('');
     try {
-      replace(await transport.stop(selected));
+      replace(await transport.stop(id));
     } catch (cause) {
-      if (valid() && selection.current === selected)
-        setError(said(cause, 'Could not stop the agent.'));
+      if (valid() && selection.current === id) setError(said(cause, 'Could not stop the agent.'));
     } finally {
       if (valid()) setBusy(false);
     }
@@ -442,8 +481,21 @@ export function useConversation(transport: PiTransport = toolTransport) {
     machine,
     pickModel,
     stop,
+    /** The conversation `key` always names, made the first time; each board has its own this way. */
+    openKeyed: async (key: string) => {
+      const request = ++opening.current;
+      const item = await transport.create!(key);
+      if (!valid() || request !== opening.current) return;
+      pending.current = null;
+      setDraft('');
+      setError('');
+      setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
+      choose(item.id);
+      return item.id;
+    },
     /** Another conversation, with nothing of this one's carried into it. */
     switchTo: (id: string) => {
+      opening.current++;
       pending.current = null;
       setDraft('');
       setError('');

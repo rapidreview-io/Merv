@@ -1,16 +1,24 @@
+import type { BoardRendering } from './rendering.js';
+import type { LookName } from '@merv/protocol/looks';
 import type { Caller, Transaction } from '@merv/contracts';
-import type { DrawInput, OutcomeInput, OutcomeSentInput } from './input.js';
+import type { DrawInput } from './input.js';
 import type {
   BoardChange,
   BoardElement,
   BoardHistory,
+  BoardSaid,
   BoardScene,
   BoardSummary,
-  Outcome,
-  OutcomeLine,
 } from './models.js';
 
 export type * from './models.js';
+
+/** A stretch of a board's history: how it stood before, then each step in order. */
+export interface BoardRewound {
+  board: BoardSummary;
+  before: BoardElement[];
+  steps: BoardChange[];
+}
 
 /** What board.draw did: the board, and the id each keyed shape got. */
 export interface BoardDrawn {
@@ -29,6 +37,8 @@ export interface BoardDrawn {
   region?: { x: number; y: number; width: number; height: number };
   /** How long a pen takes to draw what the call made, for the same; no answer carries it either. */
   penMs?: number;
+  /** The sheet of the look this call put on the board, for the agent to follow from here. */
+  look?: string;
 }
 
 /** An image already stored, for an image operation: tools turn its source into this first. */
@@ -39,19 +49,32 @@ export interface PlacedImage {
 }
 
 export interface Board {
+  drawing(board: string): boolean;
+  /** Render a board or a scene already read by this caller, without changing the agent camera. */
+  render: BoardRendering['render'];
+  display: BoardRendering['display'];
   share(caller: Caller, id: string, revoke?: boolean): Promise<{ token?: string }>;
-  sharedScene(
-    token: string,
-  ): Promise<{ title: string; revision: number; elements: BoardElement[] }>;
+  sharedScene(token: string): Promise<{
+    title: string;
+    revision: number;
+    look?: LookName;
+    paper?: string;
+    elements: BoardElement[];
+  }>;
   sharedHistory(token: string, after?: number): Promise<BoardHistory>;
   sharedImage(token: string, fileId: string): Promise<{ mediaType: string; content: Buffer }>;
   list(caller: Caller): Promise<BoardSummary[]>;
-  scene(caller: Caller, id: string, since?: number): Promise<BoardScene>;
+  scene(
+    caller: Caller,
+    id: string,
+    since?: number,
+    edited?: Record<string, number>,
+  ): Promise<BoardScene>;
   create(caller: Caller, title: string): Promise<BoardSummary>;
   set(
     caller: Caller,
     id: string,
-    change: { title?: string; archived?: boolean },
+    change: { title?: string; archived?: boolean; look?: LookName | null; paper?: string },
   ): Promise<BoardSummary>;
   /** Merges shapes a page drew: each shape is kept where its version is newer than the stored one. */
   save(
@@ -62,6 +85,13 @@ export interface Board {
   /** A member's page of the board's history, oldest first, after a revision. */
   history(caller: Caller, id: string, after?: number): Promise<BoardHistory>;
   changesAfter(caller: Caller, id: string, after: number): Promise<BoardChange[]>;
+  /** Keeps a line said aloud in a live session as a step of the board's history. */
+  said(caller: Caller, id: string, line: BoardSaid): Promise<{ revision: number }>;
+  /** The revision each live shape was last edited at, by id. */
+  /** How the board stood just before step `from`, and each step from `from` to `to`. */
+  rewind(caller: Caller, id: string, from: number, to: number): Promise<BoardRewound>;
+  /** The board as it stood at a revision. */
+  sceneAt(caller: Caller, id: string, revision: number): Promise<BoardScene>;
   /** Keeps an image's bytes under its file id in the caller's project, once: PNG, JPEG, WebP or
    *  GIF by their content, at most 10 MiB. */
   storeImage(
@@ -79,15 +109,8 @@ export interface Board {
     images?: PlacedImage[],
     agent?: boolean,
   ): Promise<BoardDrawn>;
-  /** One of a board's outcomes with its text; `scene` lists them. */
-  outcome(caller: Caller, board: string, id: string): Promise<Outcome>;
-  /** Creates an outcome, or changes one: edits apply at any revision, content only at its own. */
-  writeOutcome(caller: Caller, input: OutcomeInput, writer?: string): Promise<OutcomeLine>;
-  deleteOutcome(caller: Caller, board: string, outcome: string, revision: number): Promise<void>;
-  /** Notes the file frozen from an outcome; its revision stays, so an unchanged resend is the same. */
-  outcomeSent(caller: Caller, input: OutcomeSentInput): Promise<OutcomeLine>;
-  /** A new task names these files: the sends to Fleet that froze them have become it. */
-  taskMade(projectId: string, taskId: string, files: string[], tx: Transaction): Promise<void>;
+  /** Moves each retired outcome left in board_outcomes to a page card on its board, once. */
+  pageOutcomes(): Promise<number>;
 }
 
 declare module 'cordis' {

@@ -1,0 +1,622 @@
+/* The project's column beside the chat: its name with the way back, the Main thread, and its
+   jobs in the card's sections. Merv.app and runmerv.com both draw it from this one sheet, so it has one look. */
+/* The time and pin share a resting place with the hover controls. */
+.row-slot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  width: 50px;
+  position: relative;
+}
+.row-controls {
+  position: absolute;
+  right: 0;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+.row-archive {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--secondary);
+  border-radius: 4px;
+}
+.row:is(:hover, :focus-within) .row-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.row-archive:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.folder-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.folder-title > .folder-name {
+  flex: 0 1 auto;
+}
+.folders.stage-list {
+  margin: 0 -8px;
+  padding: 6px 4px 16px;
+}
+/* Every heading and row icon shares the same edge; disclosure arrows sit in its gutter. */
+.folder {
+  --edge: 24px;
+}
+.folder .folder-head {
+  padding-left: var(--edge);
+}
+.folder .folder-back,
+.folder .folder-chevron {
+  position: absolute;
+  left: -18px;
+  margin-left: 0;
+}
+.folder .folder-lead,
+.folder .folder-toggle {
+  position: relative;
+}
+.folder .folder-rows > .row {
+  margin-left: 0;
+  width: 100%;
+  padding-left: var(--edge);
+}
+.stage-list .folder {
+  --back-width: 18px;
+}
+.stage-list .folder-head {
+  padding-top: 6px;
+}
+.folder-lead {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.folder-title:has(.folder-lead) {
+  align-items: center;
+}
+.folder-title > .folder-lead {
+  flex: 0 1 auto;
+}
+.folder-back {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--back-width, 18px);
+  height: 22px;
+  margin-left: var(--back-shift, -1px);
+  border-radius: 6px;
+  color: var(--tertiary);
+}
+.folder-back:hover,
+.folder-back:focus-visible {
+  outline: none;
+  color: var(--text);
+  background: var(--raised);
+}
+.stage-list .folder-lead .folder-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.stage-list .folder-rows > .row,
+.stage-list .folder > .row {
+  margin-left: 0;
+  width: 100%;
+  padding-left: var(--edge);
+}
+.stage-list .main-row.is-unstarted {
+  padding-left: calc(var(--edge) + 32px);
+}
+.stage-list .folder-rows > .history,
+.stage-list .folder > .history {
+  padding-left: var(--edge);
+}
+.stage-list .archive-undo {
+  margin-left: 0;
+  width: 100%;
+  padding-left: var(--edge);
+}
+/* A row beside the chat reads icon, title, then the spinner while it works, in its agent's colour, right after the title.
+   The provider icon stays still. The title shrinks to its words and gives way before the spinner; the time and the
+   controls keep the far right.
+   Without motion the spinner stands still (.spin stops): the same arc in the agent's colour still says it works. */
+.stage-list .folder-rows > .row > .row-title {
+  flex: 0 1 auto;
+}
+.stage-list .folder-rows > .row > .state-mark {
+  order: 3;
+}
+.stage-list .folder-rows > .row > .state-mark.is-running {
+  order: 1;
+  margin-left: -4px;
+}
+.stage-list .folder-rows > .row > :is(.row-slot, .row-age) {
+  order: 2;
+  margin-left: auto;
+}
+.stage-list .folder-rows > .row:has(> .mark.is-claude) {
+  --agent: var(--claude);
+}
+.stage-list .folder-rows > .row:has(> .mark.is-codex) {
+  --agent: var(--codex);
+}
+.stage-list .row.is-working > .state-mark.is-running {
+  color: var(--agent, var(--run));
+}
+/* Jobs beneath the main thread share one grid: mark, title (it gives way first), and state. The mark starts at the project's
+   own edge, where its name and the Main thread's mark start; the title column is where the Main thread's title is, and
+   both folds start there. No fill, no edge, no box; the time shows only under the pointer. */
+.col-table {
+  --col-mark: 20px;
+  --col-gap: 12px;
+  --col-state: 108px;
+  --col-right: 10px;
+  --col-left: var(--edge, 8px);
+}
+/* With room, the state column is wide enough for a job's round in words ("reviewing · round 2"); narrower, names keep
+   their room and the words show whole under the pointer. Every row keeps one grid. */
+.col-table {
+  container-type: inline-size;
+}
+@container (min-width: 400px) {
+  .col-row {
+    --col-state: 136px;
+  }
+}
+.col-head {
+  margin: 10px 0 2px;
+  padding: 0 var(--col-right) 0 var(--col-left);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--tertiary);
+}
+.col-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.col-item {
+  position: relative;
+}
+.col-row {
+  display: grid;
+  grid-template-columns: var(--col-mark) minmax(0, 1fr) var(--col-state);
+  column-gap: var(--col-gap);
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--col-right) 0 var(--col-left);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--hover);
+}
+.col-item:hover > .col-row {
+  background: var(--raised);
+}
+.col-row:focus-visible,
+.col-fold:focus-visible,
+.col-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.col-mark {
+  display: grid;
+  place-items: center;
+  width: var(--col-mark);
+  height: 20px;
+  color: var(--text);
+}
+.col-title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  white-space: nowrap;
+}
+.col-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.col-row.is-current .col-text {
+  font-weight: 600;
+}
+.col-row.is-past,
+.col-row.is-ended {
+  color: var(--secondary);
+}
+.col-row.is-past .col-mark .mark {
+  opacity: 0.7;
+}
+.col-row.is-archiving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.col-state {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  font-size: 12px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.col-words {
+  display: block;
+  min-width: 0;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.col-spin {
+  display: block;
+  margin-top: 3px;
+}
+.col-row.is-needs .col-words {
+  color: var(--approval);
+}
+.col-row[data-agent='claude'] {
+  --agent: var(--claude);
+}
+.col-row[data-agent='codex'] {
+  --agent: var(--codex);
+}
+.col-spin {
+  color: var(--agent, var(--run));
+}
+.col-time {
+  position: absolute;
+  left: 0;
+  top: 0;
+  line-height: 20px;
+  font-size: 11px;
+  color: var(--tertiary);
+  visibility: hidden;
+}
+.col-item:is(:hover, :focus-within) .col-time {
+  visibility: visible;
+}
+.col-item:is(:hover, :focus-within) .col-words {
+  visibility: hidden;
+}
+.col-row.is-ended .col-mark {
+  color: var(--secondary);
+}
+/* A row's controls stand over the right of its state cell, under the pointer, beside the row's button and never in it. */
+.col-controls {
+  position: absolute;
+  top: 0;
+  right: var(--col-right);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  opacity: 0;
+  pointer-events: none;
+}
+.col-item:is(:hover, :focus-within) > .col-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.col-control {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.col-control:hover {
+  color: var(--text);
+}
+.col-control.job-stop {
+  padding: 0 2px;
+}
+.col-control:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+/* A fold starts at the title column; "Earlier jobs · N" starts at the project's edge, where the rows' marks do. */
+.col-fold {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 var(--col-right) 0 calc(var(--col-left) + var(--col-mark) + var(--col-gap));
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.col-fold:hover {
+  color: var(--text);
+}
+.col-fold.is-edge {
+  padding-left: var(--col-left);
+}
+.col-fold-chevron {
+  transition: transform 150ms ease-out;
+}
+.col-fold[aria-expanded='true'] .col-fold-chevron {
+  transform: rotate(90deg);
+}
+.col-error {
+  margin: 0;
+  padding: 0 var(--col-right) 4px calc(var(--col-left) + var(--col-mark) + var(--col-gap));
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--error);
+}
+@media (prefers-reduced-motion: reduce) {
+  .col-row,
+  .col-fold-chevron {
+    transition: none;
+  }
+}
+/* A row's time is for looking: it shows while the row is hovered or has focus, beside the controls that take that place. */
+.stage-list .row-age:not(.is-armed) {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.stage-list .row:is(:hover, :has(:focus-visible), :focus-visible) .row-age:not(.is-armed) {
+  opacity: 1;
+}
+.stage-list .row-slot {
+  width: 76px;
+}
+.stage-list .row-slot > .row-age:not(.is-armed) {
+  margin-right: 52px;
+}
+.stage-list
+  .row:is(:hover, :has(:focus-visible), :focus-visible)
+  .row-slot
+  > .row-age:not(.is-armed) {
+  visibility: visible;
+}
+/* The session the person is in is told by its weight, not a lighter panel behind it. */
+.row.is-current .row-text {
+  font-weight: 600;
+}
+/* One list: "Needs you" apart in the one accent, then everything else under no heading. A job is a quiet diamond beside
+   the agents' icons, its round after its spinner while it works; an ended one's age shows without the pointer. */
+.col-section.is-needs > .col-head,
+.col-row.is-needs .col-text {
+  color: var(--approval);
+}
+.col-going {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.col-going > .col-spin {
+  flex: none;
+  margin-top: 0;
+}
+.col-round {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-glyph {
+  display: block;
+  color: var(--secondary);
+}
+.col-row.is-needs .job-glyph {
+  color: var(--approval);
+}
+/* The manager's note, how the project stands: under the Main thread with a little room, plain gray text on the ground,
+   wrapping to at most three lines. No box, no edge. */
+.main-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  margin: 0 0 8px;
+  padding: 2px 10px 0 calc(var(--edge, 8px) + 32px);
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--secondary);
+  white-space: normal;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+/* A row's time is one line: never a mark stacked over it. */
+.row-age {
+  white-space: nowrap;
+}
+/* Todos, under Jobs: the column's own rows, read like an issue list. The shape says the stage: a gray ring waits, the
+   accent's half-filled ring is in a job (its dot whole once the job ended), a check is done, a struck ring dropped. On the
+   right, muted, the job's state then the age, its own narrow column. Closed rows are muted. Under the pointer, on focus or
+   a long press the state gives way to Start, Done and Drop as icons. Opened, the title wraps whole and the todo reads
+   under it at the title's x: plain text, gray labels, no box. */
+.todo-mark {
+  display: block;
+  color: var(--tertiary);
+}
+.todo-mark:is(.is-working, .is-ready) {
+  color: var(--accent);
+}
+.todo-mark.is-needs {
+  color: var(--approval);
+}
+.todo-mark.is-done {
+  color: var(--secondary);
+}
+.todo-row:is(.is-done, .is-dropped) {
+  color: var(--secondary);
+}
+.todo-row:is(.is-done, .is-dropped) .todo-meta {
+  color: var(--tertiary);
+}
+.todo-row {
+  -webkit-touch-callout: none;
+}
+/* The meta hugs the right edge; the title takes what it leaves, never less room than the three actions need. */
+.todo-row {
+  grid-template-columns: var(--col-mark) minmax(0, 1fr) minmax(76px, auto);
+}
+.todo-row > .col-state {
+  max-width: var(--col-state);
+  justify-content: flex-end;
+}
+.todo-row .col-words {
+  width: 100%;
+}
+.todo-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.todo-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.todo-row.is-needs .todo-words {
+  color: var(--approval);
+}
+.todo-age {
+  flex: none;
+  min-width: 3ch;
+  text-align: right;
+  color: var(--tertiary);
+}
+.todo-row[aria-expanded='true'] {
+  height: auto;
+  min-height: 32px;
+  padding-block: 6px;
+  align-items: start;
+}
+.todo-row[aria-expanded='true'] :is(.col-title, .col-text) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.todo-row[aria-expanded='true'] .col-text {
+  font-weight: 500;
+  line-height: 20px;
+}
+.todo-list .col-item:not(:has(> .col-controls)) .col-words {
+  visibility: visible;
+}
+.todo-row.is-held ~ .col-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.todo-row.is-held .col-words {
+  visibility: hidden;
+}
+.todo-control {
+  color: var(--tertiary);
+}
+.todo-control:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--raised);
+}
+.todo-control:disabled {
+  opacity: 0.45;
+}
+.todo-page {
+  margin: 0 0 8px;
+  padding: 0 var(--col-right) 4px calc(var(--col-left) + var(--col-mark) + var(--col-gap));
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--secondary);
+}
+.todo-page p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.todo-page .todo-text {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 19px;
+}
+.todo-label {
+  color: var(--tertiary);
+  margin-right: 4px;
+}
+.todo-history {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--tertiary);
+}
+.todo-acts {
+  display: flex;
+  gap: 16px;
+}
+.todo-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.todo-act:hover {
+  color: var(--text);
+}
+.todo-act:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+.todo-act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.other-chats {
+  --col-left: 24px;
+  --col-right: 10px;
+  --col-mark: 20px;
+  --col-gap: 12px;
+}
+.other-chats > .row {
+  padding-left: var(--col-left);
+}
+/* Branches, under the todos: closed to one line. Open, a branch's sessions start where its title does. */
+.branch-glyph {
+  display: block;
+  color: var(--secondary);
+}
+.col-row.branch-session {
+  padding-left: calc(var(--col-left) + var(--col-mark) + var(--col-gap));
+}

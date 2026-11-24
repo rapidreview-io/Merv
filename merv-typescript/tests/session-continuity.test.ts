@@ -399,3 +399,41 @@ test('an answer waits for the asking visit’s conversation to be uploaded, not 
   );
   assert.equal(resumed.status, 200, resumed.text);
 });
+
+test('an agent may offer its owner worded answers: they stand on its question, and a pressed one answers it', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  const threadId = first.session.threadId;
+  const worker = await f.sessions.authenticate(first.input.secret);
+  const question = 'Which GPU should the sweep rent?';
+  // Fewer than two, more than four, repeated or empty answers are not a choice to press.
+  for (const options of [['Only one'], ['a', 'b', 'c', 'd', 'e'], ['Same', 'Same'], ['', 'b']])
+    await assert.rejects(
+      f.app.ctx.tools.invoke('session.ask_owner', worker, { question, options }),
+      /options|validation/i,
+    );
+  const options = ['Rent one A100', 'Rent two L4s', 'Wait for tomorrow'];
+  const asked = (await f.app.ctx.tools.invoke('session.ask_owner', worker, { question, options }))
+    .value as { question: ThreadQuestion };
+  assert.deepEqual(asked.question.options, options);
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const path = `/sessions/threads/${threadId}/messages`;
+  const read: ThreadMessages = await f.ok('GET', path, f.token);
+  assert.deepEqual(
+    read.questions.map((item) => item.options),
+    [options],
+  );
+  // The Agents page's card carries them, for the panel to draw as buttons.
+  const card = (await f.ok('GET', '/sessions/threads', f.token)).threads.find(
+    (item: { id: string }) => item.id === threadId,
+  );
+  assert.deepEqual([card.question?.question, card.question?.options], [question, options]);
+  // A pressed button is the person's answer, sent as any typed answer is.
+  await f.ok('POST', path, f.token, { body: options[1], requestId: 'pressed-1' });
+  const after = (await f.ok('GET', '/sessions/threads', f.token)).threads.find(
+    (item: { id: string }) => item.id === threadId,
+  );
+  assert.deepEqual([after.question, after.message?.body], [undefined, options[1]]);
+});

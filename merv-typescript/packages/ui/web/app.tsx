@@ -13,8 +13,8 @@ import { Moved, VIEW_KINDS, viewFor } from './views';
 import { HomeView } from './views/home';
 import { AdminApp } from './admin/app';
 import { PiProvider } from './views/pi';
-import { PiDock } from './views/pi-dock';
-import { Tour } from './tour';
+import { MervPanel } from './board-app/merv-panel';
+import { FirstRun } from './board-app/first-run';
 
 /**
  * An address nothing answers. A mistyped one is only that: a few words and the way
@@ -122,9 +122,10 @@ function Workspace() {
           )}
         </PageLede>
       </ShellFrame>
-      {!readOnly() && <PiDock rows={rows} />}
-      {/* Once the rail is drawn, the first visit is shown around it. */}
-      {shell.data && !readOnly() && <Tour who={whoOf(account)} />}
+      {/* Merv's chat panel, beside every page: the Agent, the project's agents and what waits. */}
+      {!readOnly() && <MervPanel />}
+      {/* Once the rail is drawn, a first visit is asked what it wants to learn. */}
+      {shell.data && !readOnly() && <FirstRun who={whoOf(account)} />}
     </PiProvider>
   );
 }

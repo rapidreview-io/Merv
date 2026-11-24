@@ -716,6 +716,7 @@ export class SessionThreads {
               question: {
                 id: question.id,
                 question: question.question,
+                ...(question.options_json ? { options: JSON.parse(question.options_json) } : {}),
                 askedAt: question.asked_at,
                 ...(question.response_json ? { response: JSON.parse(question.response_json) } : {}),
               },

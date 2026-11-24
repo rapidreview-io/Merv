@@ -27,8 +27,8 @@ import {
   type PenStep,
   type PenUnit,
 } from '@merv/board/models';
-import { accountRequest, type ApiError, scopeVersion } from '../api';
-import type { Rect } from './board-place';
+import { accountRequest, type ApiError } from '../api';
+import { leastOpening, type Rect } from './board-place';
 
 type Point = [number, number];
 /** A unit as the scene will draw it, on a canvas of its own: where it stands, and its pixels a unit. */
@@ -183,8 +183,8 @@ export class Player {
   idle?: () => void;
   /** Hears where the pen's tip is on the board as it draws and lifts, and null when it is done. */
   pen?: (tip: Point | null) => void;
-  /** Hears a line an agent said with what it drew, as the pen comes to it. */
-  say?: (line: string) => void;
+  /** Hears a line an agent said with what it drew, as the pen comes to it, and the shapes it came with. */
+  say?: (line: string, shapes: readonly BoardElement[]) => void;
   /**
    * @param behind How far behind it plays at a hand's pace, in milliseconds: given more, it hurries,
    * up to three times that, and at ten times what is oldest lands at once. Infinity never hurries.
@@ -203,18 +203,28 @@ export class Player {
   get waiting() {
     return this.queue.length;
   }
+  /** How many lines the pen has still to come to: said with ink that has not been reached yet. */
+  get unsaid() {
+    return this.queue.filter((unit) => !unit.said && !unit.quiet && lineOf(unit)).length;
+  }
   add(shapes: BoardElement[]) {
     if (!shapes.length) return;
-    if (this.instant || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (this.instant || document.hidden) {
       this.finish();
       this.stage.show(shapes, true);
-      // Without motion nothing is reached in turn: what was said last is what there is to say.
-      const line = penUnits(shapes, () => false)
-        .map(lineOf)
-        .filter(Boolean)
-        .at(-1);
-      if (line && !this.instant) this.say?.(line);
       this.idle?.();
+      return;
+    }
+    if (still) {
+      // Without motion nothing is drawn stroke by stroke, but the telling is the same: each thing
+      // lands whole in its turn, and every line is said as its turn comes, none skipped.
+      const units = penUnits(shapes, () => true).map((unit) => ({ ...unit, ms: 0, at: 0 }));
+      this.queue.push(...units);
+      if (!this.frame) {
+        this.last = performance.now();
+        this.frame = requestAnimationFrame(this.tick);
+      }
       return;
     }
     // What is on its way counts as there: a later change to it is no second drawing of it.
@@ -263,10 +273,26 @@ export class Player {
     this.draw();
     this.pen?.(null);
   }
-  /** Draws a unit whole, as the scene will, at the scale the view now shows it. */
+  /**
+   * Draws a unit whole, as the scene will, at the scale the view now shows it. Ink that cannot be
+   * drawn lands without a show, so the pen never waits on it and what follows still comes.
+   */
   private async inked(unit: Unit) {
     if (unit.inking) return;
     unit.inking = true;
+    try {
+      await this.inking(unit);
+    } catch (error) {
+      console.warn('Board ink could not be drawn; it lands without a show.', error);
+      if (!unit.ink) {
+        unit.ink = null;
+        unit.quiet = true;
+      }
+    } finally {
+      unit.inking = false;
+    }
+  }
+  private async inking(unit: Unit) {
     const scale = devicePixelRatio * this.stage.camera().zoom.value;
     const drawn = unit.steps.map(({ shape }) => shape);
     const shapes = restored(
@@ -298,7 +324,6 @@ export class Player {
           inkOf(shapes),
           bare.length && bare.length < shapes.length ? inkOf(bare) : null,
         ]).catch(() => null);
-    unit.inking = false;
     if (!canvases) {
       unit.ink = null;
       unit.quiet = true;
@@ -357,7 +382,9 @@ export class Player {
         if (!head.said && !head.quiet) {
           head.said = true;
           const line = lineOf(head);
-          if (line) this.say?.(line);
+          if (line) this.say?.(line, head.shapes);
+          // Whoever heard it may have paused the pen for it: it spends nothing of this frame then.
+          if (this.stage.held()) break;
         }
         const takes = step ? step.rest + step.ms : head.quiet ? 0 : head.ms;
         if (this.spent + budget < takes) {
@@ -436,6 +463,8 @@ export class Player {
     const head = this.queue[0];
     const step = head?.steps[head.at];
     if (!head?.ink || !head.marks || !step || head.quiet) return;
+    // The pen has come to this unit but not begun it: no mark yet, not even the round end of one.
+    if (!head.at && this.spent <= step.rest) return;
     const { ink, marks } = head;
     // A zoom has moved on: the next frames draw it again at the scale now shown.
     if (Math.abs(ink.scale / scale - 1) > 0.08) void this.inked(head);
@@ -517,6 +546,38 @@ export class Player {
   }
 }
 
+/** The kinds of shape this page's Excalidraw draws; Excalidraw silently drops any other. */
+const DRAWN = new Set(
+  'rectangle ellipse diamond text arrow line freedraw frame magicframe image embeddable iframe selection'.split(
+    ' ',
+  ),
+);
+/**
+ * A shape this page cannot draw (a kind a newer Board knows) stands as a quiet dashed box where it
+ * is, locked, at the version Board holds, so it is never saved back as a box, and nothing after it
+ * is held up or lost.
+ */
+const placeholderOf = (shape: BoardElement): BoardElement => ({
+  ...shape,
+  type: 'rectangle',
+  strokeColor: '#adb5bd',
+  backgroundColor: 'transparent',
+  fillStyle: 'solid',
+  strokeStyle: 'dashed',
+  strokeWidth: 1,
+  roughness: 0,
+  opacity: 60,
+  locked: true,
+  width: Math.max(1, Number(shape.width) || 40),
+  height: Math.max(1, Number(shape.height) || 40),
+  customData: {
+    ...(shape.customData && typeof shape.customData === 'object' ? shape.customData : {}),
+    placeholder: String(shape.type),
+  },
+});
+const drawable = (shape: BoardElement) =>
+  DRAWN.has(String(shape.type)) ? shape : placeholderOf(shape);
+
 /**
  * Shapes ready for a scene, at the versions Board holds. Where fractional indices clash (two people
  * adding at once, or a shape put where a deleted one stands), Excalidraw ranks them again and counts
@@ -527,7 +588,7 @@ export const restored = (shapes: readonly BoardElement[], repairBindings: boolea
   // Given a shape twice, as what was waiting can be, the last is the newest: Excalidraw would take
   // the other for a new shape.
   const as = new Map(shapes.map((el) => [el.id, el]));
-  const out = restoreElements(stacked([...as.values()]) as never, null, {
+  const out = restoreElements(stacked([...as.values()].map(drawable)) as never, null, {
     refreshDimensions: true,
     repairBindings,
   });
@@ -557,23 +618,55 @@ export const stageOf = (
     // Never repair bindings on these alone: they are only the shapes that changed, and a box whose
     // text did not change would lose it. Nor while more is to land: a box already names an arrow
     // that is on its way, and would forget it.
-    const held = api.getSceneElementsIncludingDeleted();
-    const remote = restored(shapes, false) as unknown as RemoteExcalidrawElement[];
-    const versions = new Map(
-      [...held, ...remote].map((el) => [
-        el as object,
-        { version: el.version, versionNonce: el.versionNonce },
-      ]),
-    );
-    const merged = reconcileElements(held, remote, api.getAppState());
-    for (const el of merged) Object.assign(el, versions.get(el));
-    api.updateScene({
-      // All of a large board need not be gone over for each shape, only at the last.
-      elements: settled
-        ? restoreElements(merged, null, { refreshDimensions: true, repairBindings: true })
-        : merged,
-      captureUpdate: CaptureUpdateAction.NEVER,
-    });
+    const land = (shapes: BoardElement[], settled: boolean) => {
+      const held = api.getSceneElementsIncludingDeleted();
+      const remote = restored(shapes, false) as unknown as RemoteExcalidrawElement[];
+      const versions = new Map(
+        [...held, ...remote].map((el) => [
+          el as object,
+          { version: el.version, versionNonce: el.versionNonce },
+        ]),
+      );
+      const merged = reconcileElements(held, remote, api.getAppState());
+      for (const el of merged) Object.assign(el, versions.get(el));
+      api.updateScene({
+        // All of a large board need not be gone over for each shape, only at the last.
+        elements: settled
+          ? restoreElements(merged, null, { refreshDimensions: true, repairBindings: true })
+          : merged,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    };
+    try {
+      land(shapes, settled);
+    } catch (error) {
+      // One shape this page cannot take must not cost it the rest: each lands on its own, and one
+      // that still fails stands as a placeholder where it is.
+      console.warn('Board shapes did not land together; landing them one by one.', error);
+      for (const shape of shapes) {
+        try {
+          land([shape], false);
+        } catch {
+          try {
+            land([placeholderOf(shape)], false);
+          } catch (again) {
+            console.warn(`Board shape ${shape.id} could not be shown.`, again);
+          }
+        }
+      }
+      if (settled)
+        try {
+          api.updateScene({
+            elements: restoreElements(api.getSceneElementsIncludingDeleted(), null, {
+              refreshDimensions: true,
+              repairBindings: true,
+            }),
+            captureUpdate: CaptureUpdateAction.NEVER,
+          });
+        } catch {
+          // What landed stays as it is.
+        }
+    }
   },
 });
 
@@ -605,6 +698,26 @@ export const clearView = (api: ExcalidrawImperativeAPI): Rect => {
   );
 };
 
+/** How wide the panel over the board's right edge is: Merv.app's sessions, or the web's own. */
+const panelWidth = () => {
+  const probe = document.createElement('div');
+  probe.style.cssText =
+    'position:fixed;visibility:hidden;pointer-events:none;height:0;width:var(--desk-panel-width,0px)';
+  document.body.append(probe);
+  const { width } = probe.getBoundingClientRect();
+  probe.remove();
+  return width;
+};
+/** The clear view that can be seen: less what a panel over the board's right edge covers. */
+export const seenView = (api: ExcalidrawImperativeAPI, panel = panelWidth()): Rect => {
+  const clear = clearView(api);
+  if (!panel) return clear;
+  const edge = innerWidth - panel - api.getAppState().offsetLeft - SIDE;
+  // A panel that leaves nothing, as on a phone, is over the whole board: there is no part to choose.
+  if (edge - clear.x < clear.width / 4) return clear;
+  return { ...clear, width: Math.min(clear.width, edge - clear.x) };
+};
+
 /** How long a change of view takes to dissolve. */
 const DISSOLVE_MS = 220;
 /**
@@ -621,22 +734,40 @@ export const dissolve = (root: Element | null | undefined) => {
     held.remove();
 };
 
-/** Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`. */
+/**
+ * Puts these in the middle of the clear view, zoomed out as far as that takes and in only to `most`.
+ * Opening a board (`opening`) sets the zoom even with nothing on it, and what is too large to read
+ * whole starts at its top left corner instead.
+ */
 export const fitView = (
   api: ExcalidrawImperativeAPI,
   shapes: readonly OrderedExcalidrawElement[],
   most = 1,
+  opening = false,
 ) => {
-  if (!shapes.length) return;
+  if (!shapes.length) {
+    if (opening && most !== 1)
+      api.updateScene({
+        appState: { zoom: { value: most as never } },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    return;
+  }
   const [x1, y1, x2, y2] = getCommonBounds(shapes);
   const { x, y, width, height } = clearView(api);
-  const fit = Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (most > 1 ? 0.8 : 0.9);
-  const zoom = Math.max(0.1, Math.min(most, fit));
+  const fit =
+    Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (most > 1 && !opening ? 0.8 : 0.9);
+  const least = opening ? leastOpening() : 0.1;
+  const zoom = Math.max(least, Math.min(most, fit));
+  const cut = least > 0.1 && fit < least;
   api.updateScene({
     appState: {
       zoom: { value: zoom as never },
-      scrollX: (x + width / 2) / zoom - (x1 + x2) / 2,
-      scrollY: (y + height / 2) / zoom - (y1 + y2) / 2,
+      scrollX: cut ? (x + 16) / zoom - x1 : (x + width / 2) / zoom - (x1 + x2) / 2,
+      scrollY:
+        cut && (y2 - y1) * zoom > height
+          ? (y + 16) / zoom - y1
+          : (y + height / 2) / zoom - (y1 + y2) / 2,
     },
     captureUpdate: CaptureUpdateAction.NEVER,
   });
@@ -649,24 +780,98 @@ export const imageAt = (fileId: string) => `/board-images/${encodeURIComponent(f
  * Brings in an image on the board that this page has not got, once each: its shape shows a
  * placeholder until it comes.
  */
-export const imageBringer = (api: ExcalidrawImperativeAPI, brought?: (fileId: FileId) => void) => {
-  const epoch = scopeVersion();
+export const imageBringer = (
+  api: ExcalidrawImperativeAPI,
+  brought?: (fileId: FileId) => void,
+  visibleOnly = false,
+) => {
   const asked = new Set<string>();
-  return (elements: readonly OrderedExcalidrawElement[], held: BinaryFiles) => {
-    for (const el of elements) {
-      const fileId = el.isDeleted ? null : fileOf(el);
-      if (!fileId || held[fileId] || asked.has(fileId)) continue;
-      asked.add(fileId);
-      accountRequest<Blob>(imageAt(fileId), { scoped: true, bytes: true, epoch })
+  const queue: FileId[] = [];
+  const waits = new Map<string, number>();
+  const retries = new Map<ReturnType<typeof setTimeout>, string>();
+  let active = 0,
+    disposed = false;
+  const pump = () => {
+    while (!disposed && active < 4 && queue.length) {
+      const fileId = queue.shift()!;
+      active++;
+      accountRequest<Blob>(imageAt(fileId), {
+        scoped: true,
+        bytes: true,
+        signal: AbortSignal.timeout(20_000),
+      })
         .then(async (blob) => {
           const dataURL = await getDataURL(blob);
+          if (disposed) {
+            asked.delete(fileId);
+            return;
+          }
+          waits.delete(fileId);
           brought?.(fileId);
           api.addFiles([
             { id: fileId, mimeType: blob.type as never, dataURL, created: Date.now() },
           ]);
         })
-        // Refused or gone, it stays a placeholder; anything else is asked again at the next change.
-        .catch((error: ApiError) => [403, 404].includes(error.status) || asked.delete(fileId));
+        // Retain bounded backoff: an idle board must recover a transient image failure too.
+        .catch((error: ApiError) => {
+          if (disposed) {
+            asked.delete(fileId);
+            return;
+          }
+          if ([403, 404].includes(error.status)) return;
+          const wait = Math.min((waits.get(fileId) ?? 1000) * 2, 60_000);
+          waits.set(fileId, wait);
+          const retry = setTimeout(() => {
+            retries.delete(retry);
+            asked.delete(fileId);
+            bring(api.getSceneElements(), api.getFiles());
+          }, wait);
+          retries.set(retry, fileId);
+        })
+        .finally(() => {
+          active--;
+          pump();
+        });
     }
   };
+  const bring = (elements: readonly OrderedExcalidrawElement[], held: BinaryFiles) => {
+    if (disposed) return;
+    const state = visibleOnly ? api.getAppState() : undefined;
+    for (const el of elements) {
+      const fileId = el.isDeleted ? null : fileOf(el);
+      if (!fileId || held[fileId] || asked.has(fileId)) continue;
+      if (state) {
+        const zoom = state.zoom.value;
+        // An overview needs placeholders, not every full-resolution image on the board.
+        if (zoom < 0.5 && Math.max(el.width, el.height) * zoom < 32) continue;
+        const reach = Math.hypot(el.width, el.height),
+          margin = 200 / zoom;
+        if (
+          el.x + reach < -state.scrollX - margin ||
+          el.y + reach < -state.scrollY - margin ||
+          el.x - reach > -state.scrollX + state.width / zoom + margin ||
+          el.y - reach > -state.scrollY + state.height / zoom + margin
+        )
+          continue;
+      }
+      asked.add(fileId);
+      queue.push(fileId);
+    }
+    pump();
+  };
+  bring.resume = () => {
+    disposed = false;
+    pump();
+  };
+  bring.dispose = () => {
+    disposed = true;
+    for (const fileId of queue.splice(0)) asked.delete(fileId);
+    for (const [timer, fileId] of retries) {
+      clearTimeout(timer);
+      asked.delete(fileId);
+    }
+    retries.clear();
+    // Keep in-flight identities: a StrictMode setup can resume the same API before they settle.
+  };
+  return bring;
 };

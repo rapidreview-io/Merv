@@ -92,6 +92,24 @@ const changed = () => {
 export const currentToken = () => memoryToken;
 export const identityVersion = () => identityEpoch;
 export const scopeVersion = () => scopeEpoch;
+/** In-memory private views release their previews immediately on signout or scope change. */
+export const onScopeChange = (listener: () => void) => {
+  scopeListeners.add(listener);
+  return () => {
+    scopeListeners.delete(listener);
+  };
+};
+/** A validated rendered project's owner. Credentials are deliberately never captured here. */
+export type ProjectOwner = Readonly<{
+  project: string;
+  identity: number;
+  epoch: number;
+}>;
+export function captureProjectOwner(project: string, epoch: number): ProjectOwner | null {
+  return project && project === selectedProject && epoch === scopeEpoch
+    ? Object.freeze({ project, identity: identityEpoch, epoch })
+    : null;
+}
 export function useScopeVersion() {
   return useSyncExternalStore(
     (listener) => {
@@ -140,7 +158,10 @@ let refreshing:
   | { identity: number; handler: () => Promise<string | null>; result: Promise<string | null> }
   | undefined;
 /** A bearer for one the server refused: one renewed meanwhile, else one refresh shared, or null. */
-export async function renewed(bearer: string | null): Promise<string | null> {
+export async function renewed(
+  bearer: string | null,
+  options: { throwOnError?: boolean } = {},
+): Promise<string | null> {
   const handler = refreshToken;
   if (!bearer || !handler) return null;
   if (memoryToken !== bearer) return memoryToken;
@@ -150,14 +171,16 @@ export async function renewed(bearer: string | null): Promise<string | null> {
       handler,
       result: Promise.resolve()
         .then(handler)
-        .catch(() => null)
         .finally(() => {
           if (refreshing === pending) refreshing = undefined;
         }),
     };
     refreshing = pending;
   }
-  return await refreshing.result;
+  return await refreshing.result.catch((error: unknown) => {
+    if (options.throwOnError) throw error;
+    return null;
+  });
 }
 function requireScope(epoch: number): void {
   if (epoch !== scopeEpoch)
@@ -176,52 +199,66 @@ export async function accountRequest<T>(
   path: string,
   options: {
     method?: string;
+    signal?: AbortSignal;
     body?: unknown;
     /** The body is these bytes, not JSON. */
     raw?: BufferSource;
     scoped?: boolean;
-    /** Scope captured before queued work; refuse if the account or project changed. */
-    epoch?: number;
+    /** Pins deferred work to its rendered project. Explicit null fails closed. */
+    owner?: ProjectOwner | null;
     credentials?: 'same-origin';
     /** The answer is bytes, read as a Blob; a refusal is still JSON. */
     bytes?: boolean;
   } = {},
 ): Promise<T> {
-  const epoch = options.epoch ?? scopeEpoch;
-  requireScope(epoch);
+  const epoch = scopeEpoch;
   const project = selectedProject;
+  const owner = options.owner,
+    owned = owner !== undefined;
+  const guard = () => {
+    if (!owned) return requireScope(epoch);
+    if (!owner?.project || owner.identity !== identityEpoch)
+      throw new ApiError('owner_changed', 'The account owning this work changed', 409);
+  };
+  guard();
   let bearer = memoryToken;
   for (let attempt = 0; ; attempt++) {
+    guard();
     let response: Response;
     try {
       response = await fetch(path, {
         method: options.method ?? 'GET',
+        signal: options.signal,
         credentials: options.credentials ?? 'omit',
         headers: {
           ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(options.raw && { 'content-type': 'application/octet-stream' }),
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-          ...(options.scoped ? scopeHeaders(project) : {}),
+          ...(owned
+            ? { 'x-merv-project-id': owner!.project }
+            : options.scoped
+              ? scopeHeaders(project)
+              : {}),
         },
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         ...(options.raw && { body: options.raw }),
       });
     } catch {
-      requireScope(epoch);
+      guard();
       throw new ApiError('offline', 'The Merv server did not answer', 0);
     }
-    requireScope(epoch);
+    guard();
     if (options.bytes && response.ok) {
       const blob = await response.blob();
-      requireScope(epoch);
+      guard();
       return blob as T;
     }
     const body = (await response.json().catch(() => null)) as
       (T & { error?: { code: string; message: string; details?: unknown } }) | null;
-    requireScope(epoch);
+    guard();
     if (response.status === 401 && attempt === 0) {
       const refreshed = await renewed(bearer);
-      requireScope(epoch);
+      guard();
       if (refreshed) {
         setToken(refreshed, { refresh: true });
         bearer = refreshed;
@@ -240,7 +277,10 @@ export async function accountRequest<T>(
         .map((d) => [d.code !== 'custom' && d.path?.join('.'), d.message].filter(Boolean).join(' '))
         .join('; ');
       const error = new ApiError(failure.code, details || failure.message, response.status);
-      if (response.status === 401 || error.code === 'membership_required') {
+      if (
+        (response.status === 401 || error.code === 'membership_required') &&
+        (!owned || owner!.epoch === scopeEpoch)
+      ) {
         for (const listener of authListeners) listener(error);
       }
       throw error;
@@ -263,14 +303,14 @@ export const codeFile = (ref: string, path: string) =>
 export async function call<T>(
   name: string,
   input: Record<string, unknown> = {},
-  epoch?: number,
+  owner?: ProjectOwner | null,
 ): Promise<T> {
   const path = encodeURIComponent(name).replace('%3A', ':');
   const body = await accountRequest<{ result: T }>(`/tools/${path}`, {
     method: 'POST',
     body: input,
     scoped: true,
-    epoch,
+    ...(owner !== undefined && { owner }),
   });
   return body.result as T;
 }

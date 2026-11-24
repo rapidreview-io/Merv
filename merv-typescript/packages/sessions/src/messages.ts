@@ -56,6 +56,7 @@ export interface QuestionRow {
   instance_id: string;
   revision: number | string;
   question: string;
+  options_json?: string | null;
   asked_at: string;
   answered_at: string | null;
   answer_message_id: string | null;
@@ -115,6 +116,7 @@ const question = (row: QuestionRow, open: boolean): ThreadQuestion => ({
   instanceId: row.instance_id,
   revision: Number(row.revision),
   question: row.question,
+  ...(row.options_json ? { options: JSON.parse(row.options_json) as string[] } : {}),
   askedAt: row.asked_at,
   answeredAt: row.answered_at,
   answerMessageId: row.answer_message_id,
@@ -640,13 +642,27 @@ export class SessionMessages {
    * and dispatch withholds the work until a message to the thread answers. A visit without a
    * continuity key cannot ask: no later visit would continue its conversation.
    */
-  async ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion> {
+  async ask(
+    caller: Caller,
+    input: { question: string; options?: string[] },
+  ): Promise<ThreadQuestion> {
     ordinary(caller);
     check(caller.session, 'session_required', 'Only an assigned worker asks its owner', 403);
     check(
       text(input?.question, 4_000),
       'invalid_question',
       'A question of 1–4000 visible characters is required',
+    );
+    const options = input.options;
+    check(
+      options === undefined ||
+        (Array.isArray(options) &&
+          options.length >= 2 &&
+          options.length <= 4 &&
+          options.every((option) => text(option, 80)) &&
+          new Set(options).size === options.length),
+      'invalid_question',
+      'options, when given, are 2–4 distinct answers of 1–80 visible characters each',
     );
     caller = structuredClone(caller);
     const asked = input.question;
@@ -662,7 +678,7 @@ export class SessionMessages {
       );
       const id = newId('session_question');
       await tx.run(
-        'INSERT INTO session_questions(id,project_id,thread_id,session_id,instance_id,revision,question,asked_at) VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO session_questions(id,project_id,thread_id,session_id,instance_id,revision,question,options_json,asked_at) VALUES(?,?,?,?,?,?,?,?,?)',
         id,
         session.projectId,
         session.threadId,
@@ -670,6 +686,7 @@ export class SessionMessages {
         session.instanceId,
         session.expectedRevision,
         asked,
+        options ? JSON.stringify(options) : null,
         isoNow(this.clock),
       );
       const reserved = await this.responders.reserve(tx, id);

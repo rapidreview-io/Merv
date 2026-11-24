@@ -6,7 +6,7 @@
 import { MervError } from '@merv/contracts';
 
 type Point = [number, number];
-export interface Stroke {
+interface Stroke {
   points: Point[];
   closed: boolean;
 }

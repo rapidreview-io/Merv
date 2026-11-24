@@ -1,9 +1,40 @@
 import { z } from 'zod';
+import { LOOK_NAMES } from '@merv/protocol/looks';
+
+/** One of the five looks a board can wear. */
+const look = z.enum(LOOK_NAMES);
 import { idSchema, jsonBytes, parsed, visible } from '@merv/contracts';
 
 export const id = idSchema;
 export const title = z.string().trim().min(1).max(200).refine(visible);
 const text = z.string().trim().min(1).max(2_000).refine(visible);
+/**
+ * Why a page's body names a picture no reader will ever see, or undefined. A page shows
+ * `![alt](art_…)`, an https address or a raster data URI (packages/ui/web/markdown-links.ts);
+ * a path on someone's computer and a plain http address never show, so the call says so rather
+ * than leave a picture's words where the picture was meant to be. Merv.app on a Mac uploads a
+ * local picture before the call arrives here, so a path that reaches the board was not uploaded.
+ */
+export function pageImageProblem(body: string): string | undefined {
+  // What is written as code is shown as code: a picture's syntax there is an example, not a picture.
+  const prose = body
+    .replace(/(^|\n) {0,3}(`{3,}|~{3,})[^]*?(\n {0,3}\2[^\n]*|$)/g, '\n')
+    .replace(/(`+)[^`]*?\1/g, '');
+  for (const [, address = ''] of prose.matchAll(/!\[(?:[^\]\\]|\\.)*\]\(\s*<?([^\s)>]+)/g)) {
+    if (/^http:\/\//i.test(address))
+      return `Page image ${address.slice(0, 120)} is plain http and will not show: use https, or upload it with artifact.write and write ![alt](art_…).`;
+    const local =
+      /^(?:file:|~\/|\.{1,2}\/)/i.test(address) ||
+      (address.startsWith('/') && !/^\/(?:ui\/)?artifacts\/art_/.test(address)) ||
+      (!/^[a-z][a-z0-9+.-]*:/i.test(address) &&
+        !address.startsWith('art_') &&
+        /\.(?:png|jpe?g|gif|webp|svg)$/i.test(address));
+    if (local)
+      return `Page image ${address.slice(0, 120)} is a file on a computer, which the board cannot read: upload it with artifact.write (create, or upload_begin for a file on disk) and write ![alt](art_…) with the id it returns.`;
+  }
+  return undefined;
+}
+
 /** A shape this call keys, or the id of one already on the board. */
 const shape = z.string().min(1).max(100);
 /** A name this call gives what it draws, for its later operations and its answer. */
@@ -58,6 +89,8 @@ const stroke = z.strictObject({
 /** Where a new shape goes: beside a shape, inside a frame, or (neither) the next free place. */
 const place = {
   near: shape.optional(),
+  /** Find room right or below at when that spot is occupied. */
+  free: z.boolean().optional(),
   in: shape.optional(),
   /** Which side of `near` to try first. */
   side: z.enum(['right', 'left', 'above', 'below']).optional(),
@@ -87,7 +120,7 @@ const opens = z.union([
     .max(2_000)
     .refine((v) => /^https?:\/\//.test(v)),
 ]);
-export const opSchema = z.discriminatedUnion('op', [
+const opSchema = z.discriminatedUnion('op', [
   z
     .object({ op: z.literal('note'), key, say, text, color: color.optional(), proposed, ...place })
     .strict(),
@@ -150,7 +183,30 @@ export const opSchema = z.discriminatedUnion('op', [
     say,
     /** Its title, on the card; what it opens to read needs no record or address behind it. */
     text,
-    body: z.string().trim().min(1).max(20000),
+    body: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100_000)
+      .superRefine((body, ctx) => {
+        const problem = pageImageProblem(body);
+        if (problem) ctx.addIssue({ code: 'custom', message: problem });
+      }),
+    fact: z.string().trim().max(80).optional(),
+    ...place,
+  }),
+  z.strictObject({
+    op: z.literal('browser'),
+    key,
+    say,
+    /** A live web page on the board; in Merv.app it is also a tab of the browser, `tab` that tab. */
+    url: z
+      .string()
+      .url()
+      .max(2_000)
+      .refine((v) => /^https?:\/\//.test(v)),
+    tab: z.string().min(1).max(100).optional(),
+    width: z.number().finite().min(200).max(4_000).optional(),
     ...place,
   }),
   z.strictObject({
@@ -192,6 +248,7 @@ export const opSchema = z.discriminatedUnion('op', [
     ink: ink.optional(),
     /** An arrow turned to go the other way, its bends and label kept. */
     reverse: z.literal(true).optional(),
+    opacity: z.number().int().min(0).max(100).optional(),
   }),
   z.object({ op: z.literal('move'), say, id: shape, ...place }).strict(),
   z.object({ op: z.literal('delete'), say, ids: z.array(shape).min(1).max(200) }).strict(),
@@ -225,8 +282,15 @@ export const opSchema = z.discriminatedUnion('op', [
       .optional(),
     /** What it shows, in a few words: what board.read get says of it. */
     alt: z.string().trim().min(1).max(200).refine(visible).optional(),
-    /** Its width on the board, its height following. */
+    target: z
+      .string()
+      .url()
+      .refine((url) => /^https?:/.test(url))
+      .optional(),
+    fact: z.string().min(1).max(2000).optional(),
+    /** Its width on the board; an explicit height fits a comparison sketch. */
     width: z.number().finite().min(20).max(4_000).optional(),
+    height: z.number().finite().min(20).max(4_000).optional(),
     ...place,
   }),
 ]);
@@ -234,6 +298,9 @@ export type DrawOp = z.infer<typeof opSchema>;
 export const drawSchema = z.strictObject({
   board: id.optional(),
   title: title.optional(),
+  /** Preferred drawing guidance only; it never changes paper or existing shapes. */
+  look: look.optional(),
+  paper: hex.optional(),
   ops: z.array(opSchema).max(100).default([]),
 });
 export type DrawInput = z.input<typeof drawSchema>;
@@ -290,38 +357,28 @@ export const elementSchema = z
   // Every read of a board holds all of it; an agent's longest sketch stroke is about 150 KiB.
   .refine((el) => jsonBytes(el) <= 256 * 1024, 'A shape is at most 256 KiB');
 export const saveSchema = z.strictObject({ id, elements: z.array(elementSchema).min(1).max(500) });
+/** A line said aloud on a board: by the person or an agent's voice, named, in its own words. */
+export const saidSchema = z.strictObject({
+  by: z.enum(['person', 'agent']),
+  name: z.string().trim().min(1).max(40).optional(),
+  words: z.string().trim().min(1).max(4000),
+});
+export const saidInputSchema = saidSchema.extend({ id });
+/** How far back one rewind goes, in steps. */
+const MOST_REWOUND = 100;
+export const rewindSchema = z.strictObject({
+  board: id,
+  step: z.number().int().safe().min(0),
+  back: z.number().int().min(0).max(MOST_REWOUND),
+});
 export const setSchema = z.strictObject({
   id,
   title: title.optional(),
   archived: z.boolean().optional(),
+  /** Preferred drawing guidance; null removes it. */
+  look: look.nullable().optional(),
+  paper: hex.optional(),
 });
-
-/** Postgres text holds no NUL. */
-const outcomeText = z.string().refine((value) => !value.includes('\0'), 'Text holds no NUL');
-export const outcomeSchema = z.strictObject({
-  board: id,
-  /** Without it, a new outcome, which needs a title. */
-  outcome: id.optional(),
-  title: title.optional(),
-  /** The whole text: at exactly expectedRevision, or to begin a new outcome. */
-  content: outcomeText.optional(),
-  /** In turn at any revision, each find occurring exactly once in the text before it. */
-  edits: z
-    .array(z.strictObject({ find: z.string().min(1), replace: outcomeText }))
-    .min(1)
-    .max(50)
-    .optional(),
-  expectedRevision: z.number().int().safe().min(1).optional(),
-});
-export type OutcomeInput = z.input<typeof outcomeSchema>;
-export const outcomeSentSchema = z.strictObject({
-  board: id,
-  outcome: id,
-  how: z.enum(['claude', 'copy', 'fleet']),
-  artifactId: z.string().regex(/^art_[A-Za-z0-9_-]{1,190}$/),
-  revision: z.number().int().safe().min(1),
-});
-export type OutcomeSentInput = z.input<typeof outcomeSentSchema>;
 
 export const parse = <T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown) =>
   parsed(schema, value, 'invalid_board_input', { nodes: 200_000, depth: 10, bytes: 4_000_000 });

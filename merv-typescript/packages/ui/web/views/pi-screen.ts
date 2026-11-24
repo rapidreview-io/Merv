@@ -12,7 +12,6 @@ import type { PiShow } from '@merv/pi/models';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { call, safely } from '../api';
-import { routeOf, type Reference } from '../markdown';
 import { useRows } from '../navigation';
 import type { Conversation } from './pi-conversation';
 
@@ -39,7 +38,7 @@ function pictured(canvas: HTMLCanvasElement, doc: Document): HTMLImageElement | 
 }
 
 /** The page in `win` as it stands, for Cloudflare to draw: see the top of this file. */
-export function snapshotPage(win: Window = window) {
+function snapshotPage(win: Window = window) {
   const doc = win.document;
   // Each scrolled box is marked on the live page for as long as the clone takes.
   const scrolled = [...doc.querySelectorAll<HTMLElement>('body *')].filter(
@@ -101,67 +100,7 @@ export function snapshotPage(win: Window = window) {
   };
 }
 
-/** Until nothing on the page has changed for `quiet` ms, at least `least` and at most `most`. */
-function settled(doc: Document, { quiet = 800, least = 1500, most = 9000 } = {}) {
-  return new Promise<void>((resolve) => {
-    const began = Date.now();
-    let timer: ReturnType<typeof setTimeout>;
-    const done = () => {
-      watch.disconnect();
-      clearTimeout(timer);
-      clearTimeout(cap);
-      resolve();
-    };
-    const wait = () => {
-      clearTimeout(timer);
-      timer = setTimeout(done, Math.max(quiet, least - (Date.now() - began)));
-    };
-    const watch = new MutationObserver(wait);
-    watch.observe(doc, { subtree: true, childList: true, attributes: true, characterData: true });
-    const cap = setTimeout(done, most);
-    wait();
-  });
-}
-
-/** Another page of this app, opened out of the person's sight at their window's size, as it
- *  stands once it has loaded, the way they would see it. */
-async function snapshotAt(path: string) {
-  const frame = document.createElement('iframe');
-  frame.setAttribute('aria-hidden', 'true');
-  frame.tabIndex = -1;
-  Object.assign(frame.style, {
-    position: 'fixed',
-    left: '-20000px',
-    top: '0',
-    width: `${window.innerWidth}px`,
-    height: `${window.innerHeight}px`,
-    border: '0',
-    opacity: '0',
-    pointerEvents: 'none',
-  });
-  try {
-    const loaded = new Promise((resolve) =>
-      frame.addEventListener('load', resolve, { once: true }),
-    );
-    frame.src = `/ui${path}`;
-    document.body.append(frame);
-    await loaded;
-    let win: Window;
-    try {
-      win = frame.contentWindow!;
-      if (!win.location.pathname.startsWith('/ui')) throw new Error();
-    } catch {
-      throw new Error('the page refused to open in a frame');
-    }
-    await settled(win.document);
-    return snapshotPage(win);
-  } finally {
-    frame.remove();
-  }
-}
-
-/** Where a show goes on this composition's rows: a page by its row's id, name, path or kind, or a
- *  record wherever project.references says it opens. A miss says what there is instead. */
+/** Only a board record has a page in this app. */
 export async function placeOf(
   show: PiShow,
   rows: readonly UiRowDescription[],
@@ -176,23 +115,12 @@ async function placed(
   { record, page }: PiShow,
   rows: readonly UiRowDescription[],
 ): Promise<{ path: string; title: string } | string> {
-  if (page) {
-    const name = page.toLowerCase().replace(/^\//, '');
-    const row = rows.find((row) =>
-      [row.id, row.label, row.path.slice(1), row.view.kind].some((it) => it.toLowerCase() === name),
-    );
-    return row
-      ? { path: row.path, title: row.label }
-      : `There is no page called "${page}". The pages are: ${rows.map((row) => row.label).join(', ')}.`;
-  }
-  // A row that owns an id's prefix opens it without asking anyone what it is.
-  const owner = rows.find((row) => row.opens && record!.startsWith(row.opens));
+  if (page) return `There is no page called "${page}". Open a board by its record id.`;
+  const owner = rows.find(
+    (row) => row.view.kind === 'boards' && row.opens && record?.startsWith(row.opens),
+  );
   if (owner) return { path: `${owner.path}/${record}`, title: owner.label };
-  const [found] = await call<Reference[]>('project.read:references', { refs: [record] });
-  const path = found?.status === 'resolved' && routeOf(found, rows);
-  return path
-    ? { path, title: found.label ?? found.id ?? record! }
-    : `No record "${record}" opens in this project${found?.status ? ` (${found.status})` : ''}.`;
+  return `No record "${record}" opens in this project.`;
 }
 
 /** Answers what the agent asks of the screen, once, from the page in view: a look with its
@@ -202,6 +130,12 @@ export function useScreenAnswer(pi: Conversation | null) {
   const rows = useRows();
   const [shown, setShown] = useState<{ title: string; at: number } | null>(null);
   const answered = useRef<string>();
+  const [visible, setVisible] = useState(!document.hidden);
+  useEffect(() => {
+    const changed = () => setVisible(!document.hidden);
+    document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
   const asked = pi?.snapshot?.screen;
   const id = pi?.snapshot?.conversation.id;
   useEffect(() => {
@@ -224,12 +158,11 @@ export function useScreenAnswer(pi: Conversation | null) {
         .then(async (place) =>
           typeof place === 'string'
             ? answer({ missing: place })
-            : answer({
-                shot:
-                  place.path === location.pathname.replace(/^\/ui/, '')
-                    ? snapshotPage()
-                    : await snapshotAt(place.path),
-              }),
+            : answer(
+                place.path.split('?')[0] === location.pathname.replace(/^\/ui/, '')
+                  ? { shot: snapshotPage() }
+                  : { missing: 'Open that board before asking to see it.' },
+              ),
         )
         .catch((error: Error) =>
           answer({
@@ -249,6 +182,6 @@ export function useScreenAnswer(pi: Conversation | null) {
       });
     // The rows are read when the ask comes, not watched.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asked, id]);
+  }, [asked, id, visible]);
   return shown;
 }

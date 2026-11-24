@@ -1,0 +1,363 @@
+/* A hand-off waiting here: one message, the picture and the instructions running on from it, then Send.
+   The picture lands, the prompt writes itself in behind it, and Send fills up over 30 seconds until it
+   goes. Every colour is the panel's own token, so the card reads the same in light and dark. */
+/* The cards take what the panel can give and no more: the chat above shrinks first, and past that the
+   picture and prompt scroll inside the card while its foot, with Send, stays in sight. */
+.handoffs {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.handoffs::-webkit-scrollbar {
+  display: none;
+}
+.handoff {
+  position: relative;
+  flex: 0 1 auto;
+  min-height: 150px;
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  animation: handoff-rise 320ms ease-out;
+}
+.handoff > * {
+  min-width: 0;
+  flex: none;
+}
+.handoff > .handoff-message {
+  flex: 0 1 auto;
+  min-height: 64px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+/* Said to assistive tech only: the picture, the field and the button carry it for everyone else. */
+.handoff-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* Shown only when there is something to read: the prompt is slow, or none came and why. */
+.handoff-note {
+  margin: 0;
+  padding: 2px 4px;
+  color: var(--secondary);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+.handoff-note.is-failed {
+  color: var(--text);
+}
+.handoff-note.is-failed::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 7px 1px 0;
+  border-radius: 50%;
+  background: var(--approval);
+}
+/* One message: the picture, and the instructions running on from it below, on one surface. No
+   outline of its own: the card's fill around it is edge enough. */
+.handoff-message {
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+/* The picture lands from the board's side, as the person saw it; the agent's own copy fades in over it. */
+.handoff-shot {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+  animation: handoff-land 650ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* Its foot dissolves into the text below, so the two read as one. */
+.handoff-shot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--panel));
+  pointer-events: none;
+  z-index: 1;
+}
+.handoff-shot img[hidden] {
+  display: none;
+}
+.handoff-shot img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  object-position: top;
+}
+/* The agent's picture sets the frame; the person's screenshot lies over it and fades off, so the two are seen to agree. */
+.handoff-shot img.is-shot {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  object-fit: cover;
+  animation: handoff-fade-out 900ms ease-out 200ms both;
+  pointer-events: none;
+}
+/* While Merv writes, a slow scan passes over what it is reading. */
+.handoff-shot.is-reading::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 36%;
+  top: -36%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--accent) 20%, transparent) 80%,
+    color-mix(in srgb, var(--accent) 55%, transparent)
+  );
+  animation: handoff-scan 1.3s ease-in-out infinite;
+  pointer-events: none;
+}
+.handoff-fit {
+  position: absolute;
+  left: 8px;
+  right: 36px;
+  bottom: 10px;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--approval);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+.handoff-cancel {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 22px;
+  text-align: center;
+  padding: 0;
+  opacity: 0.75;
+  box-shadow: 0 0 0 1px var(--divider);
+}
+.handoff-cancel:hover:not(:disabled) {
+  opacity: 1;
+}
+.handoff-brief {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 6px 12px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 19px;
+}
+.handoff-brief:focus {
+  outline: none;
+  border: 0;
+}
+/* Focus shows as a faint tint of the field, not another outline. */
+.handoff-brief:focus:not([readonly]) {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* Empty until Merv's prompt arrives: a slow shimmer says it is on its way. */
+.handoff-brief.is-writing {
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--raised) 60%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 240% 100%;
+  animation: handoff-shimmer 1.6s linear infinite;
+}
+/* Arriving: written in, with no caret of the person's own yet. */
+.handoff-brief.is-arriving {
+  caret-color: transparent;
+}
+/* The foot is one quiet line: the agent, the folder as words, and Send at the end. */
+.handoff-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px 0 2px;
+}
+/* Which agent, when both are here: two marks, the chosen one in a pill. */
+.handoff-pick {
+  display: inline-flex;
+  gap: 2px;
+}
+.handoff-pick button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--secondary);
+  opacity: 0.45;
+  transition:
+    background var(--hover),
+    opacity var(--hover);
+}
+.handoff-pick button:hover {
+  opacity: 0.8;
+}
+.handoff-pick button.is-on {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text);
+  opacity: 1;
+}
+/* Where it goes: the end of its path, in the panel's own quiet folder words; its list opens upward, over the card. */
+.handoff-foot .place {
+  min-width: 0;
+  margin-right: auto;
+}
+.handoff-foot .place-chip {
+  max-width: 100%;
+  font-size: 12.5px;
+}
+.handoff .place-menu {
+  top: auto;
+  bottom: 30px;
+}
+/* Send: a flat key; the time until it goes is Merv's blue filling it from the left. Full, it sends. */
+.handoff-send {
+  --fill: 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  color: var(--text);
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--divider);
+  background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 55%, transparent) calc(var(--fill) * 100%),
+      transparent 0
+    )
+    color-mix(in srgb, var(--panel) 55%, var(--raised));
+  transition:
+    background 200ms linear,
+    box-shadow var(--hover);
+}
+.handoff-send:not(:disabled):hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--divider));
+}
+.handoff-send:disabled {
+  opacity: 0.45;
+}
+/* Asking Merv again: quiet words beside Send. */
+.handoff-retry {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.handoff-retry:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.handoff-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--error);
+}
+@keyframes handoff-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes handoff-land {
+  from {
+    opacity: 0;
+    transform: translateX(-60%) scale(1.25);
+  }
+  60% {
+    opacity: 1;
+  }
+}
+@keyframes handoff-fade-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@keyframes handoff-scan {
+  to {
+    top: 100%;
+  }
+}
+@keyframes handoff-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .handoff,
+  .handoff-shot,
+  .handoff-brief.is-writing {
+    animation: none;
+  }
+  .handoff-shot img.is-shot,
+  .handoff-shot.is-reading::after {
+    display: none;
+  }
+}
+
+.handoff-configuration {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 75px;
+  gap: 6px;
+  padding: 4px 0;
+}
+.handoff-configuration label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  min-width: 0;
+}
+.handoff-configuration select {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  padding: 4px;
+}

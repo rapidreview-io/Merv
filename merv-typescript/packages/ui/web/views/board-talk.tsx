@@ -3,15 +3,15 @@
  * while something is happening, naming who and what, which takes the view there when pressed.
  */
 import { useEffect, useState } from 'react';
-import { readOnly } from '../api';
-import { useRoomy } from '../theme';
+
 import { useAgent } from './pi';
-import { docked } from './pi-dock';
+
+import { speech } from '../speech';
 
 /** How long the last ink still counts as drawing, and how long a line says when it was. */
 const [DRAWING_MS, DREW_MS] = [1_500, 30_000];
 
-export interface Doing {
+interface Doing {
   /** Who drew or looked last, and how long ago they drew; nothing yet when no agent has. */
   name?: string;
   drewMs?: number;
@@ -21,26 +21,15 @@ export interface Doing {
   waiting: number;
   /** Whether what an agent drew is still being played. */
   playing: boolean;
-  /** Whether Pi is on a turn nothing else on the page says so of. */
-  thinking: boolean;
   /** What the one drawing last said about it, in place of saying that it draws. */
   saying?: string;
 }
 
 /** The line for this moment, or nothing when nothing is happening. */
-export function statusLine({
-  name,
-  drewMs = Infinity,
-  looking,
-  waiting,
-  playing,
-  thinking,
-  saying,
-}: Doing) {
+function statusLine({ name, drewMs = Infinity, looking, waiting, playing, saying }: Doing) {
   if (waiting) return name ? `${waiting} waiting from ${name}` : `${waiting} waiting`;
   if (name && (playing || drewMs < DRAWING_MS)) return saying || `${name} is drawing`;
   if (looking) return `${looking} is looking`;
-  if (thinking) return 'Pi is thinking';
   if (name && drewMs < DREW_MS) return `${name} drew ${Math.round(drewMs / 1000)} s ago`;
   return null;
 }
@@ -51,23 +40,28 @@ export function BoardTalk({
   jump,
   stepIn,
 }: {
-  doing(): Omit<Doing, 'thinking'>;
+  doing(): Doing;
   following(): boolean;
   jump(): void;
   /** The person stops what is drawing: what it has drawn stops being played. */
   stepIn(): void;
 }) {
   const agent = useAgent();
-  const roomy = useRoomy();
   const [, beat] = useState(0);
   useEffect(() => {
     const beating = setInterval(() => beat((count) => count + 1), 500);
     return () => clearInterval(beating);
   }, []);
-  const open = docked(agent, roomy);
   const pi = agent?.pi;
   const now = doing();
-  const line = statusLine({ ...now, thinking: !!pi?.active && !open });
+  // The board app is heard, not read, and its orb says when Pi works: a line there only takes the
+  // view back to a drawing out of it, or counts what waits.
+  const said = statusLine({
+    ...now,
+    saying: undefined,
+  });
+  const quiet = !now.waiting && following();
+  const line = quiet ? null : said;
   return (
     <>
       {line && (
@@ -77,7 +71,8 @@ export function BoardTalk({
             {!following() && <span className="board-status-follow">Follow</span>}
           </button>
           {pi?.active &&
-            (line === 'Pi is drawing' || (now.name === 'Pi' && line === now.saying)) && (
+            (line === `${speech.pi} is drawing` ||
+              (now.name === speech.pi && line === now.saying)) && (
               <button
                 type="button"
                 className="board-status-stop"
@@ -91,11 +86,6 @@ export function BoardTalk({
               </button>
             )}
         </div>
-      )}
-      {agent && !open && !readOnly() && (
-        <button type="button" className="board-ask" onClick={agent.ask}>
-          Ask Pi
-        </button>
       )}
     </>
   );

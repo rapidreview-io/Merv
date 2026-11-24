@@ -479,6 +479,8 @@ export async function seedRunning(
   await asker.call('session.ask_owner', {
     question:
       'p = 113 or p = 127 for the held-out runs? 113 keeps the vocabulary close to 97; 127 tests a larger gap.',
+    // Pressed as buttons in Merv's panel; any other answer is a message to the thread.
+    options: ['Use p = 113', 'Use p = 127'],
   });
   leases.splice(leases.indexOf(asker), 1);
   await work.release(asker.held).catch(() => undefined);

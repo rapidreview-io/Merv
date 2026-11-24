@@ -1,6 +1,6 @@
 import { personInterrupts } from '@merv/api/audience';
 
-/** How long after a page's last ask it still counts as open: its asks come every 1.5 s or sooner. */
+/** How long after a page's last ask it still counts as open: its active pen asks every 400 ms. */
 const WATCHED_MS = 4_000;
 /** The longest an answer is held, within every client's tool timeout (Codex allows 60 s). */
 const MOST_HOLD_MS = 40_000;
@@ -11,8 +11,10 @@ const PICKUP_MS = 300;
  * the pen draws this one, so neither waits, and a person who steps in stops it within this much.
  */
 const AHEAD_MS = 12_000;
-/** How often a hold checks that the page is still asking. */
-const CHECK_MS = 500;
+/** How often a hold checks that the page is still asking, and how far its telling has got. */
+const CHECK_MS = 250;
+/** The longest a page's wait for new ink is held open before it asks again. */
+const MOST_WAIT_MS = 25_000;
 /** How long an agent told of a person's hand may not draw there unless it reads the board first. */
 const READ_FIRST_MS = 20_000;
 /** How many agents are remembered for each board, and how many boards. */
@@ -37,7 +39,16 @@ interface Desk {
   barred: Map<string, number>;
   /** A hand has come down and what it did has not been saved yet. */
   unsaved: boolean;
+  handAt: number;
   wake: Set<() => void>;
+  /** The newest revision committed here, and the pages waiting to be told of the next. */
+  revision: number;
+  landing: Set<() => void>;
+  /**
+   * What a page that says the lines aloud last told of its telling: the revision it had fetched and
+   * how many lines it had still to send to its voice. Absent where no page speaks.
+   */
+  voice?: { at: number; since: number; unsaid: number };
 }
 
 /**
@@ -63,43 +74,88 @@ export class BoardWatch {
         told: new Map(),
         barred: new Map(),
         unsaved: false,
+        handAt: 0,
         wake: new Set(),
+        revision: 0,
+        landing: new Set(),
       };
       this.desks.set(board, desk);
       for (const [id, other] of this.desks) {
         if (this.desks.size <= MOST_BOARDS) break;
-        if (!other.wake.size) this.desks.delete(id);
+        if (!other.wake.size && !other.landing.size) this.desks.delete(id);
       }
     }
     return desk;
   }
-  /** A person's page asked what changed on this board. */
-  asked(board: string): void {
-    this.desk(board).polled = Date.now();
+  /**
+   * A person's page asked what changed on this board. A page that speaks the lines says with it how
+   * far its telling is: `since`, the revision it holds, and `unsaid`, the lines its pen has not yet
+   * handed to its voice.
+   */
+  asked(board: string, telling?: { since: number; unsaid: number }): void {
+    const desk = this.desk(board);
+    desk.polled = Date.now();
+    if (telling) desk.voice = { at: desk.polled, ...telling };
+  }
+  /** A board change committed at `revision`: every page waiting on this board is told now. */
+  landed(board: string, revision: number): void {
+    const desk = this.desk(board);
+    desk.revision = Math.max(desk.revision, revision);
+    for (const told of [...desk.landing]) told();
+  }
+  /**
+   * Answers as soon as a board changes past `since`, or after `ms`: a page waits here so that
+   * new ink reaches it as it lands, not at its next look. A page waiting is a page watching.
+   */
+  async next(board: string, since: number, ms = MOST_WAIT_MS): Promise<number> {
+    const desk = this.desk(board);
+    if (desk.revision <= since && !this.closed)
+      await new Promise<void>((resolve) => {
+        const told = () => {
+          clearTimeout(timer);
+          clearInterval(here);
+          desk.landing.delete(told);
+          resolve();
+        };
+        const timer = setTimeout(told, ms);
+        // While it waits it is watching: an agent's answer is held for it as for one that asks.
+        const here = setInterval(() => (desk.polled = Date.now()), 1_000);
+        desk.polled = Date.now();
+        desk.landing.add(told);
+      });
+    return desk.revision;
   }
   /** A person drew or changed something: `saved` when it is stored, else they have only begun to. */
   hand(board: string, saved = true): void {
     const desk = this.desk(board);
     desk.seq++;
     desk.unsaved = !saved;
+    desk.handAt = Date.now();
     for (const wake of desk.wake) wake();
   }
   /**
-   * Answers once the pen is within AHEAD_MS of finishing `ms` more of drawing, or at once if nobody is watching,
+   * Answers once the pen is within AHEAD_MS of finishing `ms` more of drawing and, where a page speaks the
+   * lines, once every line up to `revision` has gone to its voice; at once if nobody is watching,
    * early if a person steps in or stops watching, and says if a person stepped in since this agent
    * was last told. `patient` is false for what must never wait, as a leased worker's call.
    */
-  async hold(board: string, agent: string, ms: number, patient: boolean) {
+  async hold(board: string, agent: string, ms: number, patient: boolean, revision = 0) {
     const desk = this.desk(board);
     const told = desk.told.get(agent) ?? desk.seq;
     const said = personInterrupts.getStore();
     const watched = () => this.watched(board);
     const stepped = () => desk.seq > told || !!said?.aborted;
+    // A page that says the lines aloud tells how far it is: the next call waits until it has
+    // fetched this one and handed every line of it to its voice, so the model is never more than
+    // the chunk being spoken ahead of what the person has heard.
+    const speaking = () => !!desk.voice && Date.now() - desk.voice.at < WATCHED_MS;
+    const toldAll = () =>
+      !speaking() || (desk.voice!.since >= revision && desk.voice!.unsaid === 0);
     if (watched() && ms) {
       const now = Date.now();
       desk.penDone = Math.max(desk.penDone, now + PICKUP_MS) + ms;
-      const waits = desk.penDone - AHEAD_MS - now;
-      if (patient && waits > 0 && !stepped())
+      const inked = desk.penDone - AHEAD_MS;
+      if (patient && !stepped() && (inked > now || !toldAll()))
         await new Promise<void>((resolve) => {
           const end = () => {
             clearTimeout(timer);
@@ -108,8 +164,11 @@ export class BoardWatch {
             said?.removeEventListener('abort', end);
             resolve();
           };
-          const timer = setTimeout(end, Math.min(waits, MOST_HOLD_MS));
-          const check = setInterval(() => watched() || end(), CHECK_MS);
+          const timer = setTimeout(end, MOST_HOLD_MS);
+          const check = setInterval(
+            () => (!watched() || (Date.now() >= inked && toldAll())) && end(),
+            CHECK_MS,
+          );
           desk.wake.add(end);
           said?.addEventListener('abort', end);
         });
@@ -137,6 +196,11 @@ export class BoardWatch {
     const stepped = this.tell(desk, agent, desk.told.get(agent) ?? desk.seq);
     if (stepped) return stepped;
     return (desk.barred.get(agent) ?? 0) > Date.now() ? { how: 'drew' } : undefined;
+  }
+  /** Automatic findings leave room for a hand still drawing or just saved. */
+  drawing(board: string): boolean {
+    const desk = this.desk(board);
+    return Date.now() - desk.handAt < (desk.unsaved ? READ_FIRST_MS : WATCHED_MS);
   }
   /** Whether a page is watching this board now, whose pen says what an agent says with its ink. */
   watched(board: string): boolean {
@@ -197,6 +261,7 @@ export class BoardWatch {
   /** Main is going down: every answer held comes back now. */
   close(): void {
     this.closed = true;
-    for (const desk of this.desks.values()) for (const wake of desk.wake) wake();
+    for (const desk of this.desks.values())
+      for (const wake of [...desk.wake, ...desk.landing]) wake();
   }
 }

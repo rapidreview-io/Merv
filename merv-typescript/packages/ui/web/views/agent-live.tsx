@@ -12,15 +12,18 @@ import {
   type Step,
   type VisitBlocks,
 } from '../conversation';
-import { Icon, type IconName } from '../icons';
 import { JsonView, readJson } from '../json-view';
 import { MarkdownPieces } from '../markdown';
+import type { Step as TrailStep } from '../panel/chat-events';
+import { toolKind } from '../panel/marks';
+import { MERV_STEP, mervKind } from '../panel/tool-words';
+import { Trail } from '../panel/trail';
 
 /**
  * A thread's conversation, in its dialog and in a unit's Agents tab: a timeline, newest at the
  * foot. What the agent says is the prose the eye lands on; the steps it took between two things
- * it said are one quiet group line, each step one short line a press opens to its raw input and
- * output; a step that failed is a red line that stays in sight; a person's line stands on an
+ * it said are merv-desktop's quiet trail, one plain-words line per run of a kind, each opening
+ * to what it answered; a person's line stands on an
  * accent bar; a visit or a milestone is a thin divider. The visit that holds its lease is read
  * live; the others are what Sessions kept of them. Sessions says what each event is
  * (`../conversation`); this only draws.
@@ -104,86 +107,68 @@ export function StepBody({ block }: { block: AgentBlock }) {
   );
 }
 
-const ICONS: Record<string, IconName> = {
-  Ran: 'code',
-  Read: 'paper',
-  Wrote: 'paper',
-  Edited: 'edit',
-  Updated: 'edit',
-};
-const iconOf = (step: Step): IconName =>
-  step.kind === 'error'
-    ? 'close'
-    : step.kind === 'thinking'
-      ? 'fallback'
-      : (ICONS[step.label.split(' ', 1)[0]!] ?? 'connections');
-
-/** One step as one line; a press opens what it did, raw, and only there. */
-const StepLine = memo(function StepLine({ step }: { step: Step }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={cx('agent-step', `agent-step--${step.kind}`, open && 'agent-step--open')}>
-      <button
-        type="button"
-        className="agent-step-line"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {step.running ? (
-          <span className="live-dot live-dot--moving" aria-hidden="true" />
-        ) : (
-          <Icon name={iconOf(step)} size={12} className="agent-step-icon" />
-        )}
-        <span className="agent-step-label">{step.label}</span>
-        {step.summary && <span className="agent-step-summary">{step.summary}</span>}
-      </button>
-      {open && <StepBody block={step.block} />}
-    </div>
-  );
-});
+/** Claude Code's and Codex's own tools, which desk-ui words from what they were given. */
+const HARNESS =
+  /^(Bash|Read|Edit|MultiEdit|Write|NotebookEdit|NotebookRead|Grep|Glob|LS|WebFetch|WebSearch|Task|Agent|TodoWrite|exec|shell|command|apply_patch|update_plan|web_search)$/i;
 
 /**
- * The steps between two lines that are not steps: one alone is its line; more are one group
- * line, "12 steps", with the newest step's summary while the visit is live, opened to every
- * step. A step that failed stays in sight under the group while it is shut.
+ * A step of the conversation as a step of merv-desktop's trail: one plain-words line per run of a
+ * kind ("Read app.tsx", "Ran npm test", "Created a task"), each opening to what it answered.
  */
+export function trailStep(step: Step, live: boolean): TrailStep {
+  const block = step.block;
+  const at = Date.parse(block.at) || undefined;
+  if (step.kind === 'thinking')
+    return { item: step.key, kind: 'think', title: 'Thinking', done: !live, failed: false, at };
+  if (block.kind !== 'tool')
+    return {
+      item: step.key,
+      kind: 'tool',
+      title: [step.label, step.summary].filter(Boolean).join(' · '),
+      ...(step.summary && { detail: step.summary }),
+      done: true,
+      failed: true,
+      at,
+    };
+  const name = (block.name ?? '').replace(/^mcp__[^_]+__/, '');
+  const output =
+    block.result && !emptyOutput(block.result.output) ? block.result.output : undefined;
+  const ended = block.result ? Date.parse(block.until) || undefined : undefined;
+  const base = { item: step.key, done: !step.running, failed: step.kind === 'error', at, ended };
+  if (!name || !HARNESS.test(name)) {
+    // One of Merv's own tools: said by its noun and the action it took ("Read the board").
+    const tool = name.replace(/\./g, '_');
+    const action = (() => {
+      try {
+        const value = JSON.parse(block.input ?? '{}') as { action?: unknown };
+        return typeof value.action === 'string' ? value.action : '';
+      } catch {
+        return '';
+      }
+    })();
+    return {
+      ...base,
+      kind: mervKind(tool),
+      title: `${MERV_STEP}${tool}${action ? `.${action}` : ''}`,
+      ...(output !== undefined && { detail: output }),
+    };
+  }
+  const kind = toolKind(name, `${name} ${step.summary}`);
+  return {
+    ...base,
+    kind,
+    title: kind === 'tool' ? `${name} ${step.summary}` : step.summary || name,
+    ...(output !== undefined && { detail: output }),
+  };
+}
+
+/** The steps between two lines that are not steps, as merv-desktop's quiet trail draws them. */
 function Steps({ entry, last }: { entry: Extract<Entry, { type: 'steps' }>; last: boolean }) {
-  const [open, setOpen] = useState(false);
-  const { steps } = entry;
-  if (steps.length === 1) return <StepLine step={steps[0]!} />;
-  const errors = steps.filter((step) => step.kind === 'error');
-  const newest = steps.at(-1)!;
-  const following = entry.live && last;
+  const live = entry.live && last;
+  const steps = useMemo(() => entry.steps.map((step) => trailStep(step, live)), [entry, live]);
   return (
-    <div className={cx('agent-steps', open && 'agent-steps--open')}>
-      <button
-        type="button"
-        className="agent-step-line agent-steps-head"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {following && newest.running ? (
-          <span className="live-dot live-dot--moving" aria-hidden="true" />
-        ) : (
-          <Icon name="chevrons" size={12} className="agent-step-icon" />
-        )}
-        <span className="agent-step-label">{steps.length} steps</span>
-        {errors.length > 0 && <span className="agent-steps-failed">· {errors.length} failed</span>}
-        {following && !open && (
-          <span className="agent-step-summary">
-            {[newest.label, newest.summary].filter(Boolean).join(' · ')}
-          </span>
-        )}
-      </button>
-      {open ? (
-        <div className="agent-steps-list">
-          {steps.map((step) => (
-            <StepLine key={step.key} step={step} />
-          ))}
-        </div>
-      ) : (
-        errors.map((step) => <StepLine key={step.key} step={step} />)
-      )}
+    <div className="web-panel is-inline agent-trail">
+      <Trail steps={steps} live={live} />
     </div>
   );
 }

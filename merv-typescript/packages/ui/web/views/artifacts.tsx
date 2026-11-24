@@ -1003,6 +1003,8 @@ interface FileProps {
     header: (title: string, actions: ReactNode) => ReactNode;
     hideMatchingHeading?: boolean;
     before?: ReactNode;
+    /** Told how this file is read (`pdf`, `image`, `markdown`…), once that is known. */
+    loaded?: (reads: string) => void;
   };
 }
 
@@ -1014,6 +1016,12 @@ function FileBody({ artifactId, metadata, named, embedded }: FileProps) {
   const meta = useTool<Artifact>(metadata ? null : 'artifact.read:get', { artifactId });
   const markUnread = useCallback(() => setUnread(true), []);
   const artifact = metadata ?? meta.data;
+  const loaded = embedded?.loaded,
+    kind = artifact && fileType(artifact).reads;
+  useEffect(() => {
+    if (kind) loaded?.(kind);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
   if (!artifact) {
     const pending = <LoadState loading={meta.loading} error={meta.error} />;
     return embedded ? (

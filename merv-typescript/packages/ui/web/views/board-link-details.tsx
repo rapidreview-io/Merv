@@ -1,7 +1,7 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -12,17 +12,16 @@ import { createPortal } from 'react-dom';
 import { linkArtifactId, linkExpansionMode } from './board-link-layout';
 import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import { ArtifactBody } from './artifacts';
-import { MetricsCharts } from './metrics';
 import { useTool } from '../api';
 import { Icon } from '../icons';
-import { Markdown, useReferences } from '../markdown';
-import { rowOf, useRows } from '../navigation';
+import { Markdown } from '../markdown';
+import { DiagramTheme } from '../mermaid';
 import { Link } from 'react-router-dom';
 import type { BoardSummary } from '@merv/board/models';
 import './board-link-details.css';
 
 /** The small, persisted payload of board.draw's link operation. No remote HTML is embedded. */
-export type LinkDetails = {
+type LinkDetails = {
   title?: string;
   text?: string;
   preview?: { title: string; description?: string };
@@ -52,7 +51,9 @@ function usePlacement(anchor: RefObject<HTMLElement | null>) {
         height = px(popup.style.getPropertyValue('--card-height'));
       const w = popup.offsetWidth,
         h = popup.offsetHeight,
-        room = { x: stage.clientWidth - 16, y: stage.clientHeight - 16 };
+        // On a phone the toolbar and the voice's chip hold the canvas's foot: the reader stays above them.
+        foot = parseFloat(getComputedStyle(popup).getPropertyValue('--reader-foot')) || 16,
+        room = { x: stage.clientWidth - 16, y: stage.clientHeight - foot };
       let x = left + width + 12,
         y = top;
       if (x + w > room.x) x = left - 12 - w;
@@ -75,13 +76,11 @@ function usePlacement(anchor: RefObject<HTMLElement | null>) {
 /** What each target is called and where it opens; boards are named by their own list. */
 function useNamed(targets: string[]) {
   const records = targets.filter((target) => !/^https?:/.test(target));
-  const names = useReferences(useMemo(() => records, [records.join()]));
   const boards = useTool<{ boards: BoardSummary[] }>(
     records.some((target) => target.startsWith('board_')) ? 'board.read' : null,
     {},
   ).data?.boards;
   return (target: string) =>
-    names.get(target) ??
     (() => {
       const board = boards?.find((b) => b.id === target);
       return board && { name: board.title, to: `/boards/${board.id}` };
@@ -114,6 +113,15 @@ export function BoardLinkDetails({
         : undefined,
   };
   const [expanded, setExpanded] = useState(false);
+  // A PDF is read at full size or not at all: its card opens the reader at once, and leaving the
+  // reader leaves the card, with no small picture of a page in between.
+  const [direct, setDirect] = useState(false);
+  const loaded = useCallback((reads: string) => {
+    if (reads !== 'pdf') return;
+    setDirect(true);
+    setExpanded(true);
+  }, []);
+  const collapse = () => (direct ? close() : setExpanded(false));
   const anchor = useRef<HTMLElement>(null);
   usePlacement(anchor);
   const link = element.link ?? '';
@@ -126,23 +134,11 @@ export function BoardLinkDetails({
   const page = link === PAGE_LINK;
   const web = !members && /^https?:\/\//i.test(link);
   const artifactId = members ? undefined : linkArtifactId(details.artifactId, link);
-  // A record's card is named for the record and opens it; an experiment's shows its runs' curves.
+  // A record's card is named for the record and opens it.
   const record = !members && !page && !artifactId && link.startsWith('merv:') ? link.slice(5) : '';
   const named = useNamed(record ? [record] : (members ?? []));
   const opens = named(record);
-  const rows = useRows();
-  const experiments = rowOf(rows, 'experiment')?.path;
-  const { data: runs } = useTool<unknown[]>(
-    rows.some((row) => row.id === 'metrics') &&
-      experiments &&
-      opens?.to === `${experiments}/${record}`
-      ? 'metrics.read:runs'
-      : null,
-    { experimentId: record },
-  );
-  const charted = !!record && !!runs?.length;
-  const written = linkExpansionMode(details.text, artifactId);
-  const mode = charted && written === 'none' ? 'reading' : written;
+  const mode = linkExpansionMode(details.text, artifactId);
   const dialog = useRef<HTMLElement>(null);
   const expandControl = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -155,15 +151,17 @@ export function BoardLinkDetails({
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        // A picture or diagram shown at full size over the card closes first, on its own.
+        if (document.querySelector('.md-lightbox')) return;
         event.preventDefault();
         event.stopPropagation();
-        if (expanded) setExpanded(false);
+        if (expanded && !direct) setExpanded(false);
         else close();
       }
     };
     window.addEventListener('keydown', escape, true);
     return () => window.removeEventListener('keydown', escape, true);
-  }, [close, expanded]);
+  }, [close, expanded, direct]);
   // A web card's address is the row Excalidraw keeps under this; with nothing written about
   // it there is nothing to add, and only the reader's place beside the card is kept.
   if (web && !details.text && !details.preview) return <span ref={anchor} hidden />;
@@ -181,7 +179,7 @@ export function BoardLinkDetails({
           <button
             ref={expandControl}
             type="button"
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => (expanded ? collapse() : setExpanded(true))}
             aria-label={expanded ? 'Back to the board' : 'Read in full'}
             title={expanded ? 'Back to the board' : 'Read in full'}
           >
@@ -194,9 +192,12 @@ export function BoardLinkDetails({
       </div>
     </header>
   );
+  // A diagram is drawn in the board's theme, which may not be the page's.
   const notes = details.text && (
     <div className="board-reference-notes">
-      <Markdown source={details.text} />
+      <DiagramTheme.Provider value={theme}>
+        <Markdown source={details.text} />
+      </DiagramTheme.Provider>
     </div>
   );
   const content = (
@@ -230,7 +231,7 @@ export function BoardLinkDetails({
       {artifactId ? (
         <ArtifactBody
           artifactId={artifactId}
-          embedded={{ header, hideMatchingHeading: true, before: notes || undefined }}
+          embedded={{ header, hideMatchingHeading: true, before: notes || undefined, loaded }}
         />
       ) : (
         <>
@@ -248,11 +249,7 @@ export function BoardLinkDetails({
                 {details.preview.description && <p>{details.preview.description}</p>}
               </a>
             )}
-            {members ? (
-              <CardMembers targets={members} named={named} />
-            ) : (
-              charted && <MetricsCharts experimentId={record} compact={expanded ? 4 : 1} />
-            )}
+            {members && <CardMembers targets={members} named={named} />}
           </div>
         </>
       )}
@@ -267,7 +264,7 @@ export function BoardLinkDetails({
           className={`board-reference-overlay board-reference-${theme}`}
           onPointerDown={(event) => {
             event.stopPropagation();
-            if (event.target === event.currentTarget) setExpanded(false);
+            if (event.target === event.currentTarget) collapse();
           }}
         >
           {content}

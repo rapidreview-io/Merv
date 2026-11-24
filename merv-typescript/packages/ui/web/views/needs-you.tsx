@@ -17,6 +17,7 @@ import {
 import { Icon } from '../icons';
 import { personMove } from '@merv/code-work/blockers';
 import { pathOf } from '../navigation';
+import { AgentQuestion } from '../board-app/agent-question';
 import { namesOf } from './people';
 import { useClaim } from './reviews';
 // The record shapes the home pages read are declared once, beside the graph they feed.
@@ -55,6 +56,8 @@ export interface Line {
   claim?: string;
   /** The desk where the move is made, where a page of this app holds one. */
   desk?: { label: string; to: string };
+  /** The agent thread whose question this is, answered on the line with its worded buttons. */
+  thread?: string;
 }
 type Named = (id: string | null | undefined) => string | undefined;
 
@@ -190,6 +193,7 @@ export function needsYou(
         at: blocker.since,
         sentence,
         ...(move ? { who: move.who } : {}),
+        ...(thread ? { thread: thread.id } : {}),
         says: [...said(decision), blocker.message, blocker.next].filter(
           (text, index, all) => !!text && all.indexOf(text) === index && text !== sentence,
         ),
@@ -320,6 +324,7 @@ function Card({ line }: { line: Line }) {
           {line.name ?? kindOf(line.kind).label}
         </Link>
         <p className="ov-say">{line.sentence}</p>
+        {line.thread && <AgentQuestion thread={line.thread} />}
         <span className="ov-meta">
           {line.who && <span>{line.who}</span>}
           <Ago at={line.at} />
