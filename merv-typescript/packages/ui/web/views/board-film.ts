@@ -27,7 +27,7 @@ export class BoardFilm<T> {
   private versions: Version[][];
   private scene_?: T[];
   constructor(
-    private line: Timeline,
+    line: Timeline,
     private restore: Restore<T>,
     private made = new WeakMap<BoardElement, { shape: T | undefined }>(),
   ) {

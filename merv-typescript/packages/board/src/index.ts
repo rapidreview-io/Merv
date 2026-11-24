@@ -1,3 +1,6 @@
+import { BoardWatch } from './hold.js';
+import { BoardRendering, type RenderOptions } from './rendering.js';
+import { LOOKS, LOOK_NAMES, lookSheet, type LookName } from '@merv/protocol/looks';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Context } from 'cordis';
 import {
@@ -8,6 +11,8 @@ import {
   newId,
   now,
   recorded,
+  digest,
+  RequestJournal,
   type Caller,
   type Scope,
   type State,
@@ -20,14 +25,12 @@ import {
   fileIdSchema,
   id,
   imageType,
-  outcomeSchema,
-  outcomeSentSchema,
   parse,
+  saidSchema,
   setSchema,
   title,
   type DrawInput,
-  type OutcomeInput,
-  type OutcomeSentInput,
+  type DrawOp,
 } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 import type {
@@ -36,15 +39,15 @@ import type {
   BoardDrawn,
   BoardElement,
   BoardHistory,
+  BoardRewound,
+  BoardSaid,
   BoardScene,
   BoardSummary,
-  Outcome,
-  OutcomeLine,
-  OutcomeSent,
   PlacedImage,
 } from './types.js';
 import { MOST_IMAGE_BYTES, penMs, penUnits, stacked } from './models.js';
 export type * from './types.js';
+export { drawSchema } from './input.js';
 
 /** The most live shapes one board holds. */
 const MOST = 5_000;
@@ -56,19 +59,25 @@ const [STEP_MS, STEP_BYTES] = [5_000, 1_000_000];
 const [HISTORY_PAGE, HISTORY_BYTES] = [100, 2_000_000];
 /** The most shapes one read recalls the earlier state of. */
 const MOST_RECALLED = 32;
-/** The most outcomes one board holds, the characters one holds, and the sends it remembers. */
-const [MOST_OUTCOMES, OUTCOME_CHARS, SENDS_KEPT] = [50, 200_000, 20];
-/** An outcome's row as a line; Postgres may answer a BIGINT as text. */
-type OutcomeRow = { id: string; revision: number; record: string };
-const outcomeLine = (row: OutcomeRow) =>
-  ({ id: row.id, revision: Number(row.revision), ...JSON.parse(row.record) }) as OutcomeLine;
-const lineOf = ({
-  text: _text,
-  createdBy: _by,
-  updatedBy: _last,
-  writer: _writer,
-  ...line
-}: Outcome): OutcomeLine => line;
+/** The most a page card's body holds: a longer retired outcome becomes several cards. */
+const PAGE_CHARS = 100_000;
+/** A step of history as stored; Postgres may answer a BIGINT as text. */
+type HistoryRow = {
+  revision: number;
+  actor_id: string;
+  began_at: string;
+  kind: BoardChange['kind'];
+  shapes: string;
+  said: string | null;
+};
+const stepOf = (row: HistoryRow): BoardChange => ({
+  revision: Number(row.revision),
+  actorId: row.actor_id,
+  at: row.began_at,
+  kind: row.kind,
+  shapes: JSON.parse(row.shapes) as BoardElement[],
+  ...(row.said && { said: JSON.parse(row.said) as BoardSaid }),
+});
 /** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
 const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
@@ -93,6 +102,21 @@ const publicShape = (shape: BoardElement): BoardElement => {
  * Session writes still re-check their live authority in this transaction.
  */
 export class BoardService implements Board {
+  private readonly rendering = new BoardRendering(this);
+  display(caller: Caller, board: string, appearance: 'light' | 'dark') {
+    this.rendering.display(caller, board, appearance);
+  }
+  render<T extends RenderOptions>(
+    caller: Caller,
+    board: string | import('./types.js').BoardScene,
+    options?: T,
+  ) {
+    return this.rendering.render(caller, board, options);
+  }
+  readonly watch = new BoardWatch();
+  drawing(board: string): boolean {
+    return this.watch.drawing(board);
+  }
   private closed = false;
   constructor(
     private state: State,
@@ -100,9 +124,13 @@ export class BoardService implements Board {
   ) {}
   async initialize(): Promise<void> {
     await this.state.migrate('board', postgresMigrations);
+    const moved = await this.pageOutcomes();
+    if (moved) console.log(`board: moved ${moved} outcome${moved === 1 ? '' : 's'} to page cards`);
   }
-  close(): void {
+  close() {
     this.closed = true;
+    this.watch.close();
+    return this.rendering.close();
   }
   private open(caller: Caller): Caller {
     check(!this.closed, 'board_unavailable', 'Boards are unavailable', 503);
@@ -116,50 +144,126 @@ export class BoardService implements Board {
       caller.projectId,
     );
     check(row, 'not_found', 'Board not found', 404);
-    return [JSON.parse(row.record) as BoardSummary, row.purged] as const;
+    // A look is the person's, never the record's: one written there earlier is not read back.
+    const { look: _worn, ...board } = JSON.parse(row.record) as BoardSummary;
+    return [board as BoardSummary, row.purged] as const;
   }
-  private async elements(boardId: string, since: number | undefined, tx: Transaction) {
-    const rows = await tx.all<{ record: string }>(
-      `SELECT record FROM board_elements WHERE board_id=? AND ${since === undefined ? 'NOT deleted' : 'revision>?'}`,
+  /** The look this person draws in now, on every board of theirs. */
+  private async lookOf(projectId: string, tx: Transaction): Promise<LookName | undefined> {
+    const row = await tx.get<{ look: string }>(
+      'SELECT look FROM board_looks WHERE project_id=?',
+      projectId,
+    );
+    return row && (LOOK_NAMES as readonly string[]).includes(row.look)
+      ? (row.look as LookName)
+      : undefined;
+  }
+  private async setLook(caller: Caller, look: LookName | null, tx: Transaction) {
+    if (look)
+      await tx.run(
+        'INSERT INTO board_looks(project_id,look,updated_at) VALUES(?,?,?) ON CONFLICT(project_id) DO UPDATE SET look=excluded.look,updated_at=excluded.updated_at',
+        caller.projectId,
+        look,
+        now(),
+      );
+    else await tx.run('DELETE FROM board_looks WHERE project_id=?', caller.projectId);
+  }
+  /** A board as the person sees it now: in the look they draw in. */
+  private dressed(board: BoardSummary, look: LookName | undefined): BoardSummary {
+    return look ? { ...board, look } : board;
+  }
+  /**
+   * Gives back the lines said since `since` that a later call took off their shape. A line lives on
+   * the shape it was said with and is cleared when that shape changes again (an arrow joined to a
+   * box is such a change), so a page that had not yet fetched it would never hear it. History has
+   * every call as it was: each line said after `since` goes on its shape as the page gets it, in
+   * the order said. One at or before `since` was fetched then, and is not said twice.
+   */
+  private async resaid(boardId: string, since: number, elements: BoardElement[], tx: Transaction) {
+    const steps = await tx.all<{ shapes: string }>(
+      `SELECT shapes FROM board_history WHERE board_id=? AND revision>? AND kind='draw' AND strpos(shapes,'"say"')>0 ORDER BY revision LIMIT 200`,
+      boardId,
+      since,
+    );
+    if (!steps.length) return;
+    const said = new Map<string, string[]>();
+    for (const step of steps)
+      for (const shape of JSON.parse(step.shapes) as BoardElement[]) {
+        const line = (shape.customData as { say?: unknown } | undefined)?.say;
+        if (typeof line !== 'string') continue;
+        const lines = said.get(shape.id) ?? [];
+        if (!lines.includes(line)) said.set(shape.id, [...lines, line]);
+      }
+    for (const el of elements) {
+      const lines = said.get(el.id);
+      if (lines)
+        el.customData = {
+          ...(el.customData as Record<string, unknown> | undefined),
+          say: lines.join(' '),
+        };
+    }
+  }
+  private async elements(
+    boardId: string,
+    since: number | undefined,
+    tx: Transaction,
+    edited?: Record<string, number>,
+  ) {
+    const rows = await tx.all<{ record: string; element_id: string; revision: number }>(
+      `SELECT record,element_id,revision FROM board_elements WHERE board_id=? AND ${since === undefined ? 'NOT deleted' : 'revision>?'}`,
       boardId,
       ...(since === undefined ? [] : [since]),
     );
+    if (edited) for (const row of rows) edited[row.element_id] = Number(row.revision);
     return stacked(rows.map((row) => JSON.parse(row.record) as BoardElement));
   }
   private async write(board: BoardSummary, tx: Transaction) {
+    const { look: _worn, ...record } = board;
     await tx.run(
       'UPDATE boards SET revision=?,record=? WHERE id=?',
       board.revision,
-      JSON.stringify(board),
+      JSON.stringify(record),
       board.id,
     );
+    this.state.afterCommit(() => this.watch.landed(board.id, board.revision));
   }
 
   async list(caller: Caller): Promise<BoardSummary[]> {
     caller = this.open(caller);
     return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      const look = await this.lookOf(caller.projectId, tx);
       return (
         await tx.all<{ record: string }>(
           'SELECT record FROM boards WHERE project_id=?',
           caller.projectId,
         )
       )
-        .map((row) => JSON.parse(row.record) as BoardSummary)
+        .map((row) => {
+          const { look: _worn, ...board } = JSON.parse(row.record) as BoardSummary;
+          return this.dressed(board as BoardSummary, look);
+        })
         .filter((board) => !board.archived)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     });
   }
-  async scene(caller: Caller, boardId: string, since?: number): Promise<BoardScene> {
+  async scene(
+    caller: Caller,
+    boardId: string,
+    since?: number,
+    edited?: Record<string, number>,
+  ): Promise<BoardScene> {
     caller = this.open(caller);
     return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const [board, purged] = await this.summary(caller, boardId, tx);
+      const [stored, purged] = await this.summary(caller, boardId, tx);
+      const board = this.dressed(stored, await this.lookOf(caller.projectId, tx));
       // A deletion purged after `since` can no longer be named, so that reader is told it all.
       const whole = since !== undefined && since < purged;
-      const elements = await this.elements(board.id, whole ? undefined : since, tx);
-      const outcomes = await this.lines(board.id, tx);
-      return whole ? { board, outcomes, elements, whole } : { board, outcomes, elements };
+      const elements = await this.elements(board.id, whole ? undefined : since, tx, edited);
+      if (since !== undefined && !whole && elements.length)
+        await this.resaid(board.id, since, elements, tx);
+      return whole ? { board, elements, whole } : { board, elements };
     });
   }
   async history(caller: Caller, boardId: string, after = 0): Promise<BoardHistory> {
@@ -182,8 +286,9 @@ export class BoardService implements Board {
       began_at: string;
       kind: BoardChange['kind'];
       shapes: string;
+      said: string | null;
     }>(
-      `SELECT revision,actor_id,began_at,kind,shapes FROM (SELECT *,SUM(octet_length(shapes)) OVER (ORDER BY revision)-octet_length(shapes) AS earlier
+      `SELECT revision,actor_id,began_at,kind,shapes,said FROM (SELECT *,SUM(octet_length(shapes)) OVER (ORDER BY revision)-octet_length(shapes) AS earlier
            FROM board_history WHERE board_id=? AND revision>? ORDER BY revision LIMIT ${HISTORY_PAGE}) h WHERE earlier<${HISTORY_BYTES} ORDER BY revision`,
       boardId,
       after,
@@ -194,13 +299,7 @@ export class BoardService implements Board {
       boardId,
     );
     return {
-      changes: rows.map((row) => ({
-        revision: row.revision,
-        actorId: row.actor_id,
-        at: row.began_at,
-        kind: row.kind,
-        shapes: JSON.parse(row.shapes) as BoardElement[],
-      })),
+      changes: rows.map(stepOf),
       total: count!.total,
       ...(count!.left > rows.length && { next: rows.at(-1)!.revision }),
     };
@@ -239,9 +338,12 @@ export class BoardService implements Board {
   async sharedScene(token: string) {
     return forRead(this.state, async (tx) => {
       const board = await this.shared(token, tx);
+      const look = await this.lookOf(board.projectId, tx);
       return {
         title: board.title,
         revision: board.revision,
+        ...(look && { look }),
+        paper: board.paper ?? '#ffffff',
         elements: (await this.elements(board.id, undefined, tx)).map(publicShape),
       };
     });
@@ -252,15 +354,18 @@ export class BoardService implements Board {
       const page = await this.historyPage(board.id, after, tx);
       return {
         ...page,
-        changes: page.changes.map((change) => ({
-          ...change,
-          actorId: createHash('sha256')
-            .update(token)
-            .update(change.actorId)
-            .digest('hex')
-            .slice(0, 16),
-          shapes: change.shapes.map(publicShape),
-        })),
+        // A share shows the drawing; what was said aloud beside it stays with the project.
+        changes: page.changes
+          .filter(({ kind }) => kind !== 'said')
+          .map((change) => ({
+            ...change,
+            actorId: createHash('sha256')
+              .update(token)
+              .update(change.actorId)
+              .digest('hex')
+              .slice(0, 16),
+            shapes: change.shapes.map(publicShape),
+          })),
       };
     });
   }
@@ -271,7 +376,9 @@ export class BoardService implements Board {
       const row = await tx.get<{ content: Buffer }>(
         `SELECT content FROM board_images WHERE project_id=? AND file_id=? AND (
           EXISTS(SELECT 1 FROM board_elements WHERE board_id=? AND file_id=?) OR
-          EXISTS(SELECT 1 FROM board_history h, jsonb_array_elements(h.shapes::jsonb) e WHERE h.board_id=? AND e->>'fileId'=?))`,
+          EXISTS(SELECT 1 FROM board_history h
+         CROSS JOIN LATERAL (SELECT CASE WHEN pg_input_is_valid(h.shapes,'jsonb') THEN h.shapes::jsonb ELSE '[]'::jsonb END AS shapes OFFSET 0) decoded,
+         jsonb_array_elements(decoded.shapes) e WHERE h.board_id=? AND e->>'fileId'=?))`,
         board.projectId,
         file,
         board.id,
@@ -287,24 +394,40 @@ export class BoardService implements Board {
   async changesAfter(caller: Caller, boardId: string, after: number) {
     const { changes } = await this.history(caller, boardId, after);
     const ids = [...new Set(changes.flatMap(({ shapes }) => shapes.map((el) => el.id)))];
+    if (!ids.length) return changes;
     return await forRead(this.state, async (tx) => {
-      const stood: BoardChange[] = [];
-      for (const shape of ids.slice(0, MOST_RECALLED)) {
-        const row = await tx.get<{ revision: number; shapes: string }>(
-          'SELECT revision,shapes FROM board_history WHERE board_id=? AND revision<=? AND strpos(shapes,?)>0 ORDER BY revision DESC LIMIT 1',
-          boardId,
-          after,
-          shape,
-        );
-        if (row)
-          stood.push({
-            revision: Number(row.revision),
-            actorId: '',
-            at: '',
-            kind: 'before',
-            shapes: (JSON.parse(row.shapes) as BoardElement[]).filter((el) => el.id === shape),
-          });
-      }
+      const rows = await tx.all<{ revision: number; shape: BoardElement }>(
+        `SELECT DISTINCT ON (e->>'id') h.revision, e AS shape
+         FROM board_history h
+         CROSS JOIN LATERAL (SELECT CASE WHEN pg_input_is_valid(h.shapes,'jsonb') THEN h.shapes::jsonb ELSE '[]'::jsonb END AS shapes
+           WHERE h.shapes LIKE ANY(ARRAY(SELECT jsonb_array_elements_text(?::jsonb))) OFFSET 0) decoded,
+         jsonb_array_elements(decoded.shapes) e
+         WHERE h.board_id=? AND h.revision<=? AND e->>'id'=ANY(ARRAY(SELECT jsonb_array_elements_text(?::jsonb)))
+         ORDER BY e->>'id', h.revision DESC`,
+        JSON.stringify(
+          ids
+            .slice(0, MOST_RECALLED)
+            .map((id) => '%"id":' + JSON.stringify(id).replace(/[\\%_]/g, '\\$&') + '%'),
+        ),
+        boardId,
+        after,
+        JSON.stringify(ids.slice(0, MOST_RECALLED)),
+      );
+      const byId = new Map(rows.map((row) => [row.shape.id, row]));
+      const stood: BoardChange[] = ids.flatMap((id) => {
+        const row = byId.get(id);
+        return row
+          ? [
+              {
+                revision: Number(row.revision),
+                actorId: '',
+                at: '',
+                kind: 'before' as const,
+                shapes: [row.shape],
+              },
+            ]
+          : [];
+      });
       return [...stood, ...changes];
     });
   }
@@ -325,6 +448,7 @@ export class BoardService implements Board {
       id: newId('board'),
       projectId: caller.projectId,
       title: parse(title, name),
+      paper: '#ffffff',
       revision: 0,
       archived: false,
       createdBy: caller.actorId,
@@ -346,17 +470,33 @@ export class BoardService implements Board {
     caller = this.open(caller);
     return await this.state.transaction(async (tx) => await this.created(caller, name, tx));
   }
-  async set(caller: Caller, boardId: string, change: { title?: string; archived?: boolean }) {
+  async set(
+    caller: Caller,
+    boardId: string,
+    change: { title?: string; archived?: boolean; look?: LookName | null; paper?: string },
+  ) {
     caller = this.open(caller);
     // Parsed as plain data, which drops what is undefined: only the fields given are changed.
-    const { id: _id, ...fields } = parse(setSchema, { id: boardId, ...change });
+    const { id: _id, look, ...fields } = parse(setSchema, { id: boardId, ...change });
     return await this.state.transaction(async (tx) => {
       await this.editable(caller, tx);
       const [board] = await this.summary(caller, boardId, tx);
-      const next = { ...board, ...fields, updatedBy: caller.actorId, updatedAt: now() };
-      await this.write(next, tx);
-      await recorded(this.state, tx, caller, 'board.set', board.id, fields);
-      return next;
+      const next: BoardSummary = {
+        ...board,
+        ...fields,
+        revision:
+          board.revision + (fields.paper !== undefined && fields.paper !== board.paper ? 1 : 0),
+        updatedBy: caller.actorId,
+        updatedAt: now(),
+      };
+      // The look is the person's: set here, it is how every board of theirs draws from now on.
+      if (look !== undefined) await this.setLook(caller, look, tx);
+      if (Object.keys(fields).length) await this.write(next, tx);
+      await recorded(this.state, tx, caller, 'board.set', board.id, {
+        ...fields,
+        ...(look !== undefined && { look }),
+      });
+      return this.dressed(next, await this.lookOf(caller.projectId, tx));
     });
   }
   /**
@@ -371,6 +511,7 @@ export class BoardService implements Board {
     shapes: BoardElement[],
     kind: BoardChange['kind'],
     tx: Transaction,
+    said?: BoardSaid,
   ) {
     const last = await tx.get<{
       revision: number;
@@ -384,13 +525,14 @@ export class BoardService implements Board {
     );
     const step = (revision: number, at: string, kind: string, shapes: BoardElement[]) =>
       tx.run(
-        'INSERT INTO board_history(board_id,revision,actor_id,began_at,kind,shapes) VALUES(?,?,?,?,?,?)',
+        'INSERT INTO board_history(board_id,revision,actor_id,began_at,kind,shapes,said) VALUES(?,?,?,?,?,?,?)',
         board.id,
         revision,
         caller.actorId,
         at,
         kind,
         JSON.stringify(shapes),
+        kind === 'said' && said ? JSON.stringify(said) : null,
       );
     // A board older than history starts it from how it stands, as there is no knowing how it came.
     const before = !last && board.revision ? await this.elements(board.id, undefined, tx) : [];
@@ -451,10 +593,20 @@ export class BoardService implements Board {
     const kept = [...latest.values()].filter((shape) => newer(shape, stored.get(shape.id)));
     // A page's save is a person's hand, whichever last drew the shape it holds.
     if (kind === 'save')
-      for (const { customData } of kept) {
-        delete (customData as { changedBy?: string })?.changedBy;
+      for (const shape of kept) {
+        const customData = shape.customData as
+          { changedBy?: string; say?: string; tab?: string; owner?: string } | undefined;
+        delete customData?.changedBy;
         // And it says nothing: a line copied or moved with its shape is no agent speaking.
-        delete (customData as { say?: string })?.say;
+        delete customData?.say;
+        // Which browser tab a page is, and whose, only an agent's draw says; a save keeps what was.
+        const was = stored.get(shape.id)?.customData as
+          { tab?: string; owner?: string } | undefined;
+        if (customData)
+          for (const key of ['tab', 'owner'] as const) {
+            if (was?.[key] === undefined) delete customData[key];
+            else customData[key] = was[key];
+          }
       }
     if (!kept.length) return { board, accepted: 0 };
     // Enforce the live count after the entire merge, including accepted deletions.
@@ -484,18 +636,23 @@ export class BoardService implements Board {
       updatedAt: now(),
     };
     await this.remember(caller, board, next, kept, kind, tx);
-    for (const shape of kept)
+    // Bound each statement (seven parameters per shape), including larger agent draws.
+    for (let offset = 0; offset < kept.length; offset += 500) {
+      const batch = kept.slice(offset, offset + 500);
       await tx.run(
-        `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record,file_id) VALUES(?,?,?,?,?,?,?)
+        `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record,file_id) VALUES ${batch.map(() => '(?,?,?,?,?,?,?)').join(',')}
          ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,deleted_at=excluded.deleted_at,record=excluded.record,file_id=excluded.file_id`,
-        board.id,
-        shape.id,
-        next.revision,
-        shape.isDeleted ? 'true' : 'false',
-        shape.isDeleted ? next.updatedAt : null,
-        JSON.stringify(shape),
-        typeof shape.fileId === 'string' ? shape.fileId : null,
+        ...batch.flatMap((shape) => [
+          board.id,
+          shape.id,
+          next.revision,
+          shape.isDeleted ? 'true' : 'false',
+          shape.isDeleted ? next.updatedAt : null,
+          JSON.stringify(shape),
+          typeof shape.fileId === 'string' ? shape.fileId : null,
+        ]),
       );
+    }
     // Shapes deleted over 30 days ago go, the oldest first and a bounded number a save; the board
     // keeps the newest revision it purged, so scene() knows which readers missed a deletion.
     const cutoff = new Date(Date.parse(next.updatedAt) - KEEP_MS).toISOString();
@@ -520,8 +677,76 @@ export class BoardService implements Board {
     await recorded(this.state, tx, caller, 'board.changed', board.id, {
       revision: next.revision,
       shapes: kept.length,
+      // Position and styling changes do not make frozen work stale.
+      words: kept.some((shape) => {
+        const words = (value?: BoardElement) =>
+          value?.isDeleted
+            ? ''
+            : JSON.stringify([
+                value?.text,
+                value?.originalText,
+                value?.name,
+                (value?.customData as { details?: unknown } | undefined)?.details,
+              ]);
+        return words(shape) !== words(stored.get(shape.id));
+      }),
     });
     return { board: next, accepted: kept.length };
+  }
+  /**
+   * A line said aloud in a live session on this board, by the person or the agent's voice: a step
+   * of its history like a drawing, numbered on the same line, so a rewind tells words and ink in
+   * the order they came. The shapes stay as they were.
+   */
+  async said(caller: Caller, boardId: string, line: BoardSaid) {
+    caller = this.open(caller);
+    const said = parse(saidSchema, line);
+    return await this.state.transaction(async (tx) => {
+      await this.editable(caller, tx);
+      const [board] = await this.summary(caller, boardId, tx);
+      const next = { ...board, revision: board.revision + 1, updatedAt: now() };
+      await this.remember(caller, board, next, [], 'said', tx, said);
+      await this.write(next, tx);
+      return { revision: next.revision };
+    });
+  }
+  /**
+   * The board as it stood just before step `from`, and every step from `from` to `to` in order:
+   * shapes drawn and saved, and lines said. Members alone, as history is.
+   */
+  async rewind(caller: Caller, boardId: string, from: number, to: number): Promise<BoardRewound> {
+    caller = this.open(caller);
+    return await forRead(this.state, async (tx) => {
+      await this.editable(caller, tx);
+      const [board] = await this.summary(caller, boardId, tx);
+      const rows = await tx.all<HistoryRow>(
+        'SELECT revision,actor_id,began_at,kind,shapes,said FROM board_history WHERE board_id=? AND revision BETWEEN ? AND ? ORDER BY revision',
+        board.id,
+        from,
+        to,
+      );
+      const prior = await tx.all<{ shape: BoardElement }>(
+        `SELECT DISTINCT ON (e->>'id') e AS shape
+         FROM board_history h
+         CROSS JOIN LATERAL (SELECT CASE WHEN pg_input_is_valid(h.shapes,'jsonb') THEN h.shapes::jsonb ELSE '[]'::jsonb END AS shapes OFFSET 0) decoded,
+         jsonb_array_elements(decoded.shapes) e
+         WHERE h.board_id=? AND h.revision<? AND h.revision<=?
+         ORDER BY e->>'id', h.revision DESC`,
+        board.id,
+        from,
+        to,
+      );
+      return {
+        board,
+        before: stacked(prior.map(({ shape }) => shape).filter((el) => !el.isDeleted)),
+        steps: rows.map(stepOf),
+      };
+    });
+  }
+  /** The board as it stood at a revision, rebuilt from its history, for a picture of it then. */
+  async sceneAt(caller: Caller, boardId: string, revision: number): Promise<BoardScene> {
+    const { board, before } = await this.rewind(caller, boardId, revision + 1, revision);
+    return { board, elements: before };
   }
   async save(caller: Caller, boardId: string, shapes: BoardElement[]) {
     caller = this.open(caller);
@@ -538,8 +763,36 @@ export class BoardService implements Board {
     check(bytes.length <= MOST_IMAGE_BYTES, 'image_too_large', 'An image is at most 10 MiB', 413);
     const mediaType = imageType(bytes);
     check(mediaType, 'image_type', 'An image is a PNG, JPEG, WebP or GIF', 415);
-    await this.state.transaction(async (tx) => {
+    // A caller already in a transaction (a return landing with its receipt) is joined, not nested.
+    const write = <T>(fn: (tx: Transaction) => Promise<T>) =>
+      this.state.ambient ? fn(this.state.ambient) : this.state.transaction(fn);
+    await write(async (tx) => {
       await this.editable(caller, tx);
+      const limit = 1024 ** 3;
+      const usage = () =>
+        tx.get<{ bytes: string; present: boolean }>(
+          'SELECT COALESCE(SUM(octet_length(content)),0) AS bytes, COALESCE(bool_or(file_id=?),false) AS present FROM board_images WHERE project_id=?',
+          file,
+          caller.projectId,
+        );
+      let held = (await usage())!;
+      if (Number(held.bytes) + (held.present ? 0 : bytes.length) > limit * 0.8) {
+        await tx.run(
+          `DELETE FROM board_images i WHERE project_id=? AND file_id<>? AND stored_at<?
+           AND NOT EXISTS(SELECT 1 FROM board_elements e JOIN boards b ON b.id=e.board_id WHERE b.project_id=i.project_id AND e.file_id=i.file_id)
+           AND NOT EXISTS(SELECT 1 FROM board_history_files f WHERE f.project_id=i.project_id AND f.file_id=i.file_id)`,
+          caller.projectId,
+          file,
+          new Date(Date.now() - KEEP_MS).toISOString(),
+        );
+        held = (await usage())!;
+      }
+      check(
+        Number(held.bytes) + (held.present ? 0 : bytes.length) <= limit,
+        'image_quota',
+        'Board images use at most 1 GiB per project',
+        507,
+      );
       // The same file again is kept once; its date moves, so a purge spares what is about to be drawn.
       await tx.run(
         `INSERT INTO board_images(project_id,file_id,content,stored_at) VALUES(?,?,?,?)
@@ -580,7 +833,7 @@ export class BoardService implements Board {
       'invalid_board_input',
       'Name a board, or a title for a new one',
     );
-    return await this.state.transaction(async (tx) => {
+    const draw = async (tx: Transaction) => {
       await this.editable(caller, tx);
       let board = input.board
         ? (await this.summary(caller, input.board, tx))[0]
@@ -590,8 +843,27 @@ export class BoardService implements Board {
         await this.write(board, tx);
         await recorded(this.state, tx, caller, 'board.set', board.id, { title: board.title });
       }
+      // The preferred look is guidance returned to agents, never a drawing constraint.
+      const worn = await this.lookOf(caller.projectId, tx);
+      const changed = !!input.look && input.look !== worn;
+      if (changed) {
+        await this.setLook(caller, input.look!, tx);
+        await recorded(this.state, tx, caller, 'board.set', board.id, { look: input.look! });
+      }
+      const look = input.look ?? worn;
       const before = await this.elements(board.id, undefined, tx);
-      const drawing = new Drawing(before, agent);
+      if (input.paper !== undefined && input.paper !== board.paper) {
+        board = {
+          ...board,
+          paper: input.paper,
+          revision: board.revision + 1,
+          updatedBy: caller.actorId,
+          updatedAt: now(),
+        };
+        await this.write(board, tx);
+        await recorded(this.state, tx, caller, 'board.set', board.id, { paper: input.paper });
+      }
+      const drawing = new Drawing(before, agent, board.paper);
       const waiting = [...images];
       for (const op of input.ops) {
         if (agent && op.op === 'link' && [op.target].flat().includes(board.id))
@@ -602,206 +874,113 @@ export class BoardService implements Board {
           );
         drawing.apply(op, op.op === 'image' ? waiting.shift() : undefined);
       }
-      const changed = drawing.result();
-      const merged = changed.length
-        ? await this.merge(caller, board, changed, 'draw', tx)
+      const drawn = drawing.result();
+      const merged = drawn.length
+        ? await this.merge(caller, board, drawn, 'draw', tx)
         : { board, accepted: 0 };
-      const region = bounds(changed.map(rectOf));
+      const region = bounds(drawn.map(rectOf));
       const standing = new Set(before.map((el) => el.id));
       return {
-        board: merged.board,
+        board: this.dressed(merged.board, look),
         created: drawing.created,
         changed: merged.accepted,
         ...(drawing.proposal && { proposal: drawing.proposal }),
         ...drawing.report(),
         ...(region && { region }),
-        penMs: penMs(penUnits(changed, (el) => standing.has(el))),
+        penMs: penMs(penUnits(drawn, (el) => standing.has(el))),
+        // A look just put on comes with its sheet; one already worn is known.
+        ...(changed && { look: lookSheet(LOOKS[input.look!]) }),
       };
-    });
+    };
+    // A return and its drawing commit together, through the usual board tool.
+    const tx = this.state.ambient;
+    return tx ? draw(tx) : this.state.transaction(draw);
   }
-  private async lines(boardId: string, tx: Transaction) {
-    const rows = await tx.all<{ id: string; revision: number; record: string }>(
-      'SELECT id,revision,record FROM board_outcomes WHERE board_id=?',
-      boardId,
+  /**
+   * Board outcomes were retired on 2026-11-18 for page cards (founder's ruling). Each outcome still
+   * kept in the read-only board_outcomes becomes a page card on its own board, titled the same with
+   * its whole text, in the board's next free place; board_outcome_pages remembers which were moved,
+   * so this runs at every start and moves each once. Answers how many it moved now.
+   */
+  async pageOutcomes(): Promise<number> {
+    const waiting = await this.state.transaction((tx) =>
+      tx.all<{ board_id: string; id: string }>(
+        `SELECT o.board_id,o.id FROM board_outcomes o JOIN boards b ON b.id=o.board_id
+         WHERE NOT EXISTS(SELECT 1 FROM board_outcome_pages p WHERE p.board_id=o.board_id AND p.outcome_id=o.id)
+         ORDER BY o.board_id,o.record::jsonb->>'createdAt',o.id`,
+      ),
     );
-    return rows
-      .map((row) => outcomeLine(row))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }
-  /** One outcome of a board this caller's project holds. */
-  private async held(caller: Caller, boardId: string, outcomeId: string, tx: Transaction) {
-    await this.summary(caller, boardId, tx);
-    const row = await tx.get<{ id: string; revision: number; record: string; text: string }>(
-      'SELECT id,revision,record,text FROM board_outcomes WHERE board_id=? AND id=?',
-      boardId,
-      parse(id, outcomeId),
-    );
-    check(row, 'not_found', 'Outcome not found', 404);
-    return { ...outcomeLine(row), text: row.text } as Outcome;
-  }
-  private async keepOutcome(outcome: Outcome, tx: Transaction, boardId: string) {
-    const { id, revision, text, ...record } = outcome;
-    await tx.run(
-      `INSERT INTO board_outcomes(board_id,id,revision,record,text) VALUES(?,?,?,?,?)
-       ON CONFLICT(board_id,id) DO UPDATE SET revision=excluded.revision,record=excluded.record,text=excluded.text`,
-      boardId,
-      id,
-      revision,
-      JSON.stringify(record),
-      text,
-    );
-  }
-  async outcome(caller: Caller, boardId: string, outcomeId: string): Promise<Outcome> {
-    caller = this.open(caller);
-    return await forRead(this.state, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return await this.held(caller, boardId, outcomeId, tx);
-    });
-  }
-  async writeOutcome(caller: Caller, value: OutcomeInput, writer?: string): Promise<OutcomeLine> {
-    caller = this.open(caller);
-    const input = parse(outcomeSchema, value);
-    check(
-      input.content === undefined || !input.edits,
-      'invalid_board_input',
-      'An outcome takes content, which replaces it whole, or edits, which change part of it, not both',
-    );
-    return await this.state
-      .transaction(async (tx) => {
-        await this.editable(caller, tx);
-        await this.summary(caller, input.board, tx);
-        const at = now();
-        let before: Outcome;
-        if (input.outcome) before = await this.held(caller, input.board, input.outcome, tx);
-        else {
-          check(input.title, 'invalid_board_input', 'A new outcome needs a title');
-          check(
-            !input.edits,
-            'invalid_board_input',
-            'A new outcome has nothing to edit: give content',
-          );
-          const held = await tx.get<{ n: number }>(
-            'SELECT COUNT(*)::int AS n FROM board_outcomes WHERE board_id=?',
-            input.board,
-          );
-          check(
-            (held?.n ?? 0) < MOST_OUTCOMES,
-            'board_full',
-            `A board holds at most ${MOST_OUTCOMES} outcomes`,
-            409,
-          );
-          before = {
-            id: newId('outcome'),
-            title: input.title,
-            revision: 0,
-            text: '',
-            createdBy: caller.actorId,
-            createdAt: at,
-            updatedBy: caller.actorId,
-            updatedAt: at,
-            sent: [],
-          };
-        }
-        let text = before.text;
-        if (input.content !== undefined) {
-          if (input.outcome)
-            check(
-              input.expectedRevision === before.revision,
-              'board_outcome_conflict',
-              `Expected revision ${input.expectedRevision ?? 'none'}, found ${before.revision}: read the outcome again with board.read outcome and change it with edits [{find, replace}], or resend content with expectedRevision ${before.revision}`,
-              409,
-            );
-          text = input.content;
-        }
-        for (const [edit, { find, replace }] of (input.edits ?? []).entries()) {
-          const found = text.indexOf(find);
-          const repeated = found >= 0 && text.includes(find, found + 1);
-          check(
-            found >= 0 && !repeated,
-            'board_outcome_conflict',
-            `Edit ${edit + 1} finds ${JSON.stringify(find.slice(0, 80))} ${repeated ? 'more than once, so quote more of the text around it' : 'nowhere'} in outcome ${before.id} revision ${before.revision}${edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once, as board.read outcome returns it`,
-            409,
-          );
-          text = text.slice(0, found) + replace + text.slice(found + find.length);
-        }
-        check(
-          text.length <= OUTCOME_CHARS,
-          'invalid_board_input',
-          `An outcome holds at most ${OUTCOME_CHARS} characters; this would hold ${text.length}`,
+    let moved = 0;
+    for (const { board_id, id } of waiting) {
+      try {
+        if (await this.state.transaction((tx) => this.pageOutcome(board_id, id, tx))) moved++;
+      } catch (error) {
+        // A full board keeps its outcome where it is, to move at the next start.
+        console.error(
+          `board: outcome ${id} on ${board_id} stays unmoved: ${(error as Error).message}`,
         );
-        const name = input.title ?? before.title;
-        if (input.outcome && text === before.text && name === before.title) return before;
-        const { writer: _was, ...kept } = before;
-        const next = {
-          ...kept,
-          title: name,
-          text,
-          revision: before.revision + 1,
-          updatedBy: caller.actorId,
-          updatedAt: at,
-          ...(writer && { writer }),
-        };
-        await this.keepOutcome(next, tx, input.board);
-        await recorded(this.state, tx, caller, 'board.outcome', input.board, {
-          outcome: next.id,
-          revision: next.revision,
-        });
-        return next;
-      })
-      .then(lineOf);
-  }
-  /** A draft nobody wants, as it stood when they said so. What was sent from it stays in Files. */
-  async deleteOutcome(caller: Caller, boardId: string, outcomeId: string, revision: number) {
-    caller = this.open(caller);
-    await this.state.transaction(async (tx) => {
-      await this.editable(caller, tx);
-      const outcome = await this.held(caller, boardId, outcomeId, tx);
-      check(
-        outcome.revision === revision,
-        'board_outcome_conflict',
-        `Expected revision ${revision}, found ${outcome.revision}: it has changed since`,
-        409,
-      );
-      await tx.run('DELETE FROM board_outcomes WHERE board_id=? AND id=?', boardId, outcomeId);
-    });
-  }
-  async outcomeSent(caller: Caller, value: OutcomeSentInput): Promise<OutcomeLine> {
-    caller = this.open(caller);
-    const input = parse(outcomeSentSchema, value);
-    return await this.state.transaction(async (tx) => {
-      await this.editable(caller, tx);
-      // Whoever may keep a file: a reader, who may edit the board, sends nothing in anyone's name.
-      await this.scope.require(caller, 'write', tx);
-      const outcome = await this.held(caller, input.board, input.outcome, tx);
-      const { board: _board, outcome: _outcome, ...sent } = input;
-      const others = outcome.sent.filter(
-        (was) => was.how !== sent.how || was.artifactId !== sent.artifactId,
-      );
-      const next = {
-        ...outcome,
-        sent: [...others, { at: now(), ...sent }].slice(-SENDS_KEPT),
-      };
-      await this.keepOutcome(next, tx, input.board);
-      return lineOf(next);
-    });
-  }
-  async taskMade(projectId: string, taskId: string, files: string[], tx: Transaction) {
-    for (const file of files)
-      for (const row of await tx.all<OutcomeRow & { board_id: string; text: string }>(
-        `SELECT o.board_id,o.id,o.revision,o.record,o.text FROM board_outcomes o JOIN boards b ON b.id=o.board_id
-          WHERE b.project_id=? AND strpos(o.record,?)>0`,
-        projectId,
-        file,
-      )) {
-        const outcome = { ...outcomeLine(row), text: row.text } as Outcome;
-        // The first task to name it is what the send became; a later one merely mentions it.
-        const made = (one: OutcomeSent) =>
-          one.how === 'fleet' && one.artifactId === file && !one.taskId;
-        if (!outcome.sent.some(made)) continue;
-        const sent = outcome.sent.map((one) => (made(one) ? { ...one, taskId } : one));
-        await this.keepOutcome({ ...outcome, sent }, tx, row.board_id);
       }
+    }
+    return moved;
   }
+  private async pageOutcome(boardId: string, outcomeId: string, tx: Transaction): Promise<boolean> {
+    // The board's row is held first, so two starting servers never move one outcome twice.
+    const row = await tx.get<{ project_id: string; record: string }>(
+      'SELECT project_id,record FROM boards WHERE id=? FOR UPDATE',
+      boardId,
+    );
+    const outcome = await tx.get<{ record: string; text: string }>(
+      `SELECT record,text FROM board_outcomes o WHERE board_id=? AND id=?
+         AND NOT EXISTS(SELECT 1 FROM board_outcome_pages p WHERE p.board_id=o.board_id AND p.outcome_id=o.id)`,
+      boardId,
+      outcomeId,
+    );
+    if (!row || !outcome) return false;
+    const { look: _worn, ...stored } = JSON.parse(row.record) as BoardSummary;
+    const board = stored as BoardSummary;
+    const record = JSON.parse(outcome.record) as {
+      title?: string;
+      createdBy?: string;
+      updatedBy?: string;
+    };
+    const caller: Caller = {
+      projectId: row.project_id,
+      actorId: record.updatedBy ?? record.createdBy ?? board.createdBy,
+    };
+    const name = (record.title ?? '').trim() || 'Outcome';
+    const parts = pagesOf(outcome.text, PAGE_CHARS);
+    // Built here rather than parsed, so the text is kept to the character, its edges included.
+    const ops: DrawOp[] = parts.map((body, at) => ({
+      op: 'page',
+      key: `outcome${at}`,
+      text: parts.length > 1 ? `${name.slice(0, 190)} (${at + 1}/${parts.length})` : name,
+      body: body.trim() ? body : name,
+    }));
+    const drawing = new Drawing(await this.elements(boardId, undefined, tx), false, board.paper);
+    for (const op of ops) drawing.apply(op);
+    await this.merge(caller, board, drawing.result(), 'draw', tx);
+    await tx.run(
+      'INSERT INTO board_outcome_pages(board_id,outcome_id,elements,moved_at) VALUES(?,?,?,?)',
+      boardId,
+      outcomeId,
+      JSON.stringify(Object.values(drawing.created)),
+      now(),
+    );
+    return true;
+  }
+}
+
+/** A text cut into bodies of at most `most` characters, at a line's end where there is one. */
+export function pagesOf(text: string, most: number): string[] {
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > most) {
+    const end = rest.lastIndexOf('\n', most);
+    const cut = end > most / 2 ? end + 1 : most;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  return [...parts, rest];
 }
 
 export const boardPlugin = {

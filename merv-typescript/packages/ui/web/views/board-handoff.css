@@ -1,0 +1,277 @@
+/* Handing board work to an agent: the selection's mark, the agent's cursor taking the snapshot, and
+   its questions beside the work. */
+.handoff-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  font:
+    13px/18px system-ui,
+    -apple-system,
+    sans-serif;
+}
+.handoff-mark {
+  pointer-events: auto;
+  position: fixed;
+  transform: translate(8px, 0);
+  animation: handoff-in 160ms ease-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--active, #5b6cff);
+  color: #fff;
+  box-shadow: 0 6px 18px #0005;
+  cursor: pointer;
+}
+.handoff-mark:hover {
+  filter: brightness(1.1);
+}
+.handoff-field {
+  all: unset;
+  pointer-events: auto;
+  position: fixed;
+  transform: translate(8px, 0);
+  width: 340px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: var(--bg-elev, #0f1013);
+  color: var(--text, #e9eaf0);
+  font:
+    14px/20px system-ui,
+    -apple-system,
+    sans-serif;
+  animation: handoff-in 160ms ease-out;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--active, #8391ff) 55%, transparent),
+    0 8px 24px #0004;
+}
+.handoff-field::placeholder {
+  color: var(--faint, #8e8e98);
+}
+.handoff-marquee {
+  position: fixed;
+  border: 1.5px dashed var(--active, #8391ff);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--active, #6474ff) 8%, transparent);
+  transition: background 150ms ease-out;
+}
+.handoff-marquee.is-flash {
+  background: color-mix(in srgb, var(--active, #6474ff) 30%, var(--bg-elev, #fff));
+}
+.handoff-ghost {
+  position: fixed;
+  transform-origin: 0 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--active, #6474ff) 14%, var(--bg-elev, transparent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--active, #8391ff) 40%, transparent),
+    0 14px 34px #0006;
+  overflow: hidden;
+}
+.handoff-parcel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+  padding: 6px 14px 6px 6px;
+  border-radius: 12px;
+  background: var(--bg-elev, #0f1013);
+  color: var(--text, #e9eaf0);
+  font:
+    14px/20px system-ui,
+    -apple-system,
+    sans-serif;
+  outline: 1px solid color-mix(in srgb, var(--active, #8391ff) 55%, transparent);
+  transform-origin: 0 50%;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+.handoff-parcel img {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--bg-soft, #ffffff10);
+}
+.handoff-parcel span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 4px;
+}
+.handoff-ghost img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.handoff-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+.handoff-cursor.is-arriving > * {
+  animation: handoff-arrive 700ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.handoff-cursor.is-arriving > .handoff-card {
+  animation: handoff-pop 220ms ease-out 650ms backwards;
+}
+.handoff-arrow {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  filter: drop-shadow(0 2px 4px #0007);
+}
+.handoff-name {
+  position: absolute;
+  left: 15px;
+  top: 17px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 5px;
+  border-radius: 10px;
+  background: var(--active, #5b6cff);
+  color: #fff;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.handoff-name.is-claude {
+  background: #2b2420;
+}
+.handoff-card {
+  pointer-events: auto;
+  position: absolute;
+  left: 15px;
+  top: 44px;
+  width: 340px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--bg-elev, #0f1013);
+  color: var(--text, #e9eaf0);
+  box-shadow:
+    0 0 0 1px var(--line, #ffffff1a),
+    0 14px 34px #0006;
+}
+.handoff-ask {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+  font-weight: 500;
+}
+.handoff-ask small {
+  margin-left: auto;
+  color: var(--faint, #7d8090);
+  font-weight: 400;
+}
+.handoff-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.handoff-choices button,
+.handoff-quiet,
+.handoff-primary {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: var(--bg-soft, #1c1e24);
+  color: var(--text, #e3e4ea);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+.handoff-choices button:hover,
+.handoff-quiet:hover {
+  background: color-mix(in srgb, var(--bg-soft, #262933) 70%, var(--line, #262933));
+}
+.handoff-choices button.is-on {
+  background: var(--active-fill, #3b44b0);
+  color: #fff;
+}
+.handoff-quiet {
+  background: transparent;
+  color: var(--muted, #a6a9b5);
+  padding: 6px 8px;
+}
+.handoff-primary {
+  background: var(--active-fill, #5b6cff);
+  color: #fff;
+  padding: 6px 12px;
+}
+.handoff-primary:hover {
+  filter: brightness(1.1);
+}
+.handoff-card button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.handoff-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.handoff-row-end {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.handoff-row input {
+  all: unset;
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--bg-soft, #1a1b20);
+  font-size: 12px;
+  color: var(--text, #e9eaf0);
+}
+.handoff-problem {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--refutes, #ff8787);
+  font-size: 11px;
+}
+@keyframes handoff-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes handoff-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+@keyframes handoff-arrive {
+  from {
+    opacity: 0;
+    transform: translateX(50vw);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .handoff-mark,
+  .handoff-field,
+  .handoff-cursor.is-arriving > *,
+  .handoff-cursor.is-arriving > .handoff-card {
+    animation: none;
+  }
+}
+.handoff-parcel:not(:has(img)) {
+  padding-left: 14px;
+}

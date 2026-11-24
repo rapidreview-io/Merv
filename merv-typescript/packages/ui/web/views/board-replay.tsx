@@ -26,14 +26,27 @@ import { recordClip } from './board-clip';
 import { BoardFilm } from './board-film';
 import { ensureBoardFonts } from './board-fonts';
 import { clearView } from './board-player';
-import { picturesOf, Projection, restoreOne, type Shape } from './board-projection';
+import { picturesOf, Projection, restoreOne, type Camera, type Shape } from './board-projection';
 import { Scrubber, whenOf, type ScrubberControl } from './board-scrubber';
-import { captionAt, timelineOf, type Timeline } from './board-timeline';
+import { SPEEDS, storedPace, storePace, Subtitles, type Pace } from './board-subtitles';
+import {
+  linesAt,
+  QUICK_LENGTH,
+  speakerOf,
+  timelineOf,
+  type Line,
+  type Timeline,
+} from './board-timeline';
 import { useActorNames } from './people';
+import { useActor } from '../session';
+import { speech } from '../speech';
 
 /** How long the scrubber stays once now is reached, to be picked up again, and takes to sink. */
 const [LINGER_MS, SINK_MS] = [1400, 560];
-const SPEEDS = [0.25, 0.5, 1, 2, 4];
+/** How far round the drawing a line was said with its highlight stands. */
+const MARK_ROOM = 8;
+/** How fast a demo's pen goes: at a person's writing pace a board of words takes ten minutes. */
+const DEMO_SPEED = 1.5;
 /** What a person hears on reaching for the board during a replay. */
 const NOT_NOW = "Can't draw on the past";
 
@@ -52,8 +65,14 @@ export function BoardReplay({
   revision,
   mode,
   readHistory,
+  demo = false,
+  speak,
 }: {
   id: string;
+  /** Starts at once and from nothing, with no way to stop it: the landing page. */
+  demo?: boolean;
+  /** Takes the lines said as it plays, in place of the replay's own caption. */
+  speak?(line: string, playing: { pause(): void; play(): void }): void;
   readHistory?(after?: number): Promise<BoardHistory>;
   /** The board's own Excalidraw, which keeps going underneath. */
   live: ExcalidrawImperativeAPI;
@@ -68,6 +87,7 @@ export function BoardReplay({
   mode(replaying: boolean): void;
 }) {
   const names = useActorNames();
+  const me = useActor()?.id;
   const recording = useRef<ReturnType<typeof recordClip>>();
   const [clipping, setClipping] = useState(false);
   const finishClip = () => {
@@ -101,6 +121,12 @@ export function BoardReplay({
   const asked = useRef(0);
   /** A frame after it is there, so that it rises. */
   const [risen, setRisen] = useState(false);
+  /** The lines under the playhead: the one being read, and the one before it. */
+  const [words, setWords] = useState<{ now?: Line; before?: Line }>({});
+  const wordsNow = useRef(words);
+  const mark = useRef<HTMLDivElement>(null);
+  const marked = useRef('');
+  const pace = useRef<Pace>(1);
 
   // What the second Excalidraw opens with: the board's look and camera, and nothing on it yet.
   const opening = phase === 'opening';
@@ -137,10 +163,42 @@ export function BoardReplay({
       if (!who) return '';
       const name = names(who.actorId);
       if (who.person) return name ?? 'Someone';
-      return name ? `${name}'s agent` : 'An agent';
+      return speech.agent;
     },
     [names],
   );
+  /** The person who said a line: you, or whoever else in the project it was. */
+  const personOf = useCallback(
+    (line: Line) => (line.actorId === me ? undefined : names(line.actorId)) ?? 'You',
+    [names, me],
+  );
+  /** The words for this moment, taken from the playhead and nothing else. */
+  const tell = (at: number) => {
+    const projection = shown.current;
+    const next = projection && !speak && !projection.back ? linesAt(projection.line, at) : {};
+    const had = wordsNow.current;
+    if (next.now === had.now && next.before === had.before) return;
+    wordsNow.current = next;
+    setWords(next);
+  };
+  /** The highlight on what the line being read was said with, wherever the camera has it. */
+  const point = (camera: Camera) => {
+    const unit = wordsNow.current.now?.unit;
+    const reach = unit === undefined ? undefined : shown.current?.line.units[unit]?.reach;
+    const on = !!reach && phaseNow.current === 'on';
+    const [x, y, right, bottom] = reach ?? [0, 0, 0, 0];
+    const { zoom, scrollX, scrollY } = camera;
+    const box = [x + scrollX, y + scrollY, right - x, bottom - y].map((side) => side * zoom);
+    const said = on ? box.map(Math.round).join() : '';
+    if (said === marked.current || !mark.current) return;
+    marked.current = said;
+    mark.current.classList.toggle('is-on', on);
+    if (!on) return;
+    const [left, top, width, height] = box as [number, number, number, number];
+    mark.current.style.transform = `translate3d(${left - MARK_ROOM}px,${top - MARK_ROOM}px,0)`;
+    mark.current.style.width = `${width + 2 * MARK_ROOM}px`;
+    mark.current.style.height = `${height + 2 * MARK_ROOM}px`;
+  };
   const whenOfStep = useCallback((step: number) => {
     const change = history.current[step];
     return change ? whenOf(change.at) : '';
@@ -183,6 +241,7 @@ export function BoardReplay({
     history.current = [];
     setScreen(null);
     setLine(null);
+    setWords((wordsNow.current = {}));
     setPhase('off');
   }, []);
   const sink = useCallback(() => {
@@ -194,10 +253,15 @@ export function BoardReplay({
   const leave = useCallback(
     (linger: boolean) => {
       finishClip();
-      shown.current?.rest();
+      // A demo was never anyone's board to go back to: it ends where the drawing ended.
+      shown.current?.rest(demo);
       mode(false);
       putBack();
       setSaid(null);
+      setWords((wordsNow.current = {}));
+      // The ring goes with the words, at once: the board under it is the person's again.
+      mark.current?.classList.remove('is-on');
+      marked.current = '';
       if (linger) {
         setPhase('settling');
         clearTimeout(ending.current);
@@ -205,7 +269,7 @@ export function BoardReplay({
       } else sink();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, sink],
+    [demo, mode, sink],
   );
   /** Picked up again before it had gone, unless the person has started drawing since. */
   const again = () => {
@@ -254,7 +318,8 @@ export function BoardReplay({
       await ensureBoardFonts(changes.flatMap((change) => change.shapes));
       if (stale()) return;
       history.current = changes;
-      setLine(timelineOf(changes));
+      pace.current = storedPace();
+      setLine(timelineOf(changes, pace.current === 'quick'));
     } catch (error) {
       if (!stale()) refused(`History did not load: ${(error as Error).message}`);
     }
@@ -268,8 +333,8 @@ export function BoardReplay({
   };
 
   // Once the second Excalidraw is up and holds what the board shows, it takes over and runs back.
-  const latest = useRef({ nameOf, revision, leave, say });
-  latest.current = { nameOf, revision, leave, say };
+  const latest = useRef({ nameOf, revision, leave, say, tell, point });
+  latest.current = { nameOf, revision, leave, say, tell, point };
   useEffect(() => {
     if (phase !== 'opening' || !screen || !line) return;
     let frame = requestAnimationFrame(function ready() {
@@ -285,17 +350,30 @@ export function BoardReplay({
         new BoardFilm<Shape>(line, restoreOne),
         picturesOf(history.current),
         {
-          place: (at) => place.current?.place(at),
+          place: (at) => {
+            place.current?.place(at);
+            latest.current.tell(at);
+          },
           changed: () => {
             setLine(shown.current?.line ?? null);
             redraw((count) => count + 1);
           },
-          ended: () => latest.current.leave(true),
-          say: (line) => say(line),
+          // The last frame and the last line stay until the person leaves; a demo has nobody to.
+          ended: () => {
+            if (demo) return latest.current.leave(true);
+            finishClip();
+            redraw((count) => count + 1);
+          },
+          say: (line) => speak?.(line, shown.current!),
+          view: (camera) => latest.current.point(camera),
           nameOf: (hand) => latest.current.nameOf(hand),
           refused: () => latest.current.say(NOT_NOW, true),
           below: () => {
-            const band = rootOf()?.querySelector('.board-scrub');
+            // Where the app says its words over the canvas, a drawing stands clear of those instead.
+            const band =
+              document.querySelector('.board-landing-spoken') ??
+              rootOf()?.querySelector('.board-subtitle-room') ??
+              rootOf()?.querySelector('.board-scrub');
             if (!band) return 0;
             const clear = clearView(live);
             const top = band.getBoundingClientRect().top - live.getAppState().offsetTop;
@@ -315,13 +393,22 @@ export function BoardReplay({
         },
       );
       shown.current = projection;
+      projection.quick = pace.current === 'quick';
+      if (!demo && pace.current !== 'quick') projection.setSpeed(pace.current);
       projection.match(live.getFiles());
+      // A demo is drawn from nothing: it must not show its end, even for the frame before it rewinds.
+      if (demo) projection.seek(0);
       // Two frames: one for it to paint what it was given, one for that to reach the screen.
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
           flushSync(() => setPhase('on'));
           projection.run();
-          projection.rewind();
+          if (demo) {
+            projection.closeIn();
+            projection.seek(0);
+            projection.setSpeed(DEMO_SPEED);
+            projection.play();
+          } else projection.rewind();
         });
       });
     });
@@ -329,6 +416,7 @@ export function BoardReplay({
   }, [phase, screen, line, live, id]);
   useEffect(
     () => () => {
+      asked.current++;
       clearTimeout(ending.current);
       shown.current?.stop();
     },
@@ -349,6 +437,11 @@ export function BoardReplay({
   };
   const toggling = useRef(toggle);
   toggling.current = toggle;
+  // A demo starts as it opens.
+  useEffect(() => {
+    if (demo) toggling.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const reachNow = () => {
     if (phaseNow.current === 'opening') return cancel();
     shown.current?.pause();
@@ -518,6 +611,26 @@ export function BoardReplay({
   const projection = shown.current;
   const moving = phase === 'on' && !!projection?.moving;
   const theme = String(editor.theme);
+  /** Plays at this pace from here on, in this browser's replays after this one too. */
+  const setPace = (next: Pace) => {
+    if (!projection) return;
+    storePace((pace.current = next));
+    projection.quick = next === 'quick';
+    if (projection.quick !== projection.line.quick)
+      projection.retime(timelineOf(history.current, projection.quick));
+    projection.setSpeed(next === 'quick' ? 1 : next);
+  };
+  const subtitled = phase === 'on' && !!(words.now || words.before);
+  const notice = said && (
+    <p className="board-replay-said" role="status">
+      {said.words}
+      {said.back && (
+        <button type="button" className="btn-text" onClick={reachNow}>
+          Back to now
+        </button>
+      )}
+    </p>
+  );
   return (
     <>
       {phase !== 'off' && (
@@ -568,9 +681,11 @@ export function BoardReplay({
                 const layer = rootOf()?.querySelector<HTMLElement>('.board-replay-layer');
                 if (!layer || phase !== 'on') return say('Start the replay to export a clip');
                 try {
-                  recording.current = recordClip(layer, () =>
-                    captionAt(projection.line, projection.at),
-                  );
+                  // The words of the clip are the words on the page: one rule picks both.
+                  recording.current = recordClip(layer, () => {
+                    const { now } = linesAt(projection.line, projection.at);
+                    return now ? `${speakerOf(now, personOf(now)).name}: ${now.words}` : '';
+                  });
                   setClipping(true);
                   if (!projection.moving) projection.play();
                 } catch (error) {
@@ -580,23 +695,28 @@ export function BoardReplay({
             >
               {clipping ? 'Finish clip' : 'Clip'}
             </button>
-            <div
-              className="board-scrub-speed"
-              role="group"
-              aria-label="Replay speed"
-              data-set={projection.speed !== 1 ? '' : undefined}
-            >
+            <div className="board-scrub-speed" role="group" aria-label="Replay speed">
               {SPEEDS.map((speed) => (
                 <button
                   key={speed}
                   type="button"
                   aria-label={`Play at ${speed} times speed`}
-                  aria-pressed={speed === projection.speed}
-                  onClick={() => projection.setSpeed(speed)}
+                  aria-pressed={!line.quick && speed === projection.speed}
+                  onClick={() => setPace(speed)}
                 >
                   {speed}×
                 </button>
               ))}
+              {(line.quick || line.length > QUICK_LENGTH) && (
+                <button
+                  type="button"
+                  aria-label="Play a quick overview, in a minute"
+                  aria-pressed={line.quick}
+                  onClick={() => setPace('quick')}
+                >
+                  Quick
+                </button>
+              )}
             </div>
             <button
               type="button"
@@ -606,28 +726,28 @@ export function BoardReplay({
               Now
             </button>
           </div>
+          {!!line.lines.length && !speak && <div className="board-subtitle-room" />}
+          <div className="board-subtitle-marks">
+            <div
+              ref={mark}
+              className="board-subtitle-mark"
+              data-voice={words.now && speakerOf(words.now).voice}
+            />
+          </div>
+          {subtitled && (
+            <Subtitles {...words} theme={theme} person={personOf}>
+              {notice}
+            </Subtitles>
+          )}
         </div>
       )}
-      {said && (
-        <p className="board-replay-said" role="status">
-          {said.words}
-          {said.back && (
-            <button type="button" className="btn-text" onClick={reachNow}>
-              Back to now
-            </button>
-          )}
-        </p>
-      )}
+      {!subtitled && notice}
       <button
         ref={play}
         type="button"
         className={`board-play${moving ? ' is-moving' : ''}${opening ? ' is-opening' : ''}`}
         aria-label={moving ? 'Pause the replay' : 'Replay this board'}
-        title={
-          away
-            ? 'Replay. History is on: project members can replay this board, erased work too.'
-            : undefined
-        }
+        title={away ? 'Replay' : undefined}
         onClick={toggle}
       >
         <svg viewBox="0 0 24 24" className="board-play-play" aria-hidden="true">

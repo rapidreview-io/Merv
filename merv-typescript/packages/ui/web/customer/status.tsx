@@ -257,6 +257,7 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
     } as Actor,
     project: { id: view.projectId, name: '' } as Project,
     account: null as never,
+    owner: null,
     chooseProject: () => undefined,
     signOut: () => undefined,
   };

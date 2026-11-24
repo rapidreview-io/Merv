@@ -76,7 +76,10 @@ export function recordClip(root: HTMLElement, caption: () => string) {
     const link = document.createElement('a');
     link.href = url;
     link.download = `board-clip.${recorder.mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+    link.hidden = true;
+    document.body.append(link);
     link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
   try {

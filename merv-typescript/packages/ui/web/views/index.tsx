@@ -11,7 +11,7 @@ import { ExperimentsView } from './experiments';
 import { FeedView } from './feed';
 import { LegacyHistoryView } from './legacy-history';
 import { PaperView } from './paper';
-import { PiView } from './pi';
+import { AgentPage } from '../board-app/merv-panel';
 import { CollectionView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
@@ -49,7 +49,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   code: CodeView,
   experiments: ExperimentsView,
   paper: PaperView,
-  pi: PiView,
+  pi: AgentPage,
   research: ResearchView,
   reflections: ReflectionsView,
   work: WorkView,

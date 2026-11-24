@@ -48,7 +48,6 @@ export function RailRow({
   count,
   badge,
   sick,
-  tour,
 }: {
   to: string;
   label: string;
@@ -57,15 +56,12 @@ export function RailRow({
   count?: number;
   badge?: UiRowDescription['status']['badge'];
   sick?: UiRowDescription;
-  /** What the first-run tour calls this row. */
-  tour?: string;
 }) {
   const counted = count !== undefined && count > 0;
   return (
     <Link
       to={to}
       className={cx('rail-row', active && 'active')}
-      data-tour={tour}
       aria-current={active ? 'page' : undefined}
       // A bare number beside a word is heard as one token; the count says what it counts.
       aria-label={
@@ -104,7 +100,6 @@ const DISCORD_MARK =
 const DiscordRow = () => (
   <a
     className="rail-row rail-row--out"
-    data-tour="discord"
     href="https://discord.gg/p8h6MwpNv"
     target="_blank"
     rel="noreferrer"
@@ -224,7 +219,7 @@ export function SandboxesNav({ row }: { row: UiRowDescription }) {
   const active = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
   const childActive = children.some(([id]) => active(`${row.path}/${id}`));
   return (
-    <div className={cx('sandboxes-nav', active(row.path) && 'open')} data-tour="sandboxes">
+    <div className={cx('sandboxes-nav', active(row.path) && 'open')}>
       <RailRow
         to={row.path}
         label={row.label}
@@ -272,7 +267,6 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         active={holds(row)}
         badge={row.status.badge}
         sick={unwell(row)}
-        tour={row.view.kind}
       />
     );
   return (
@@ -284,7 +278,6 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         <button
           type="button"
           className="rail-project rail-project--switch"
-          data-tour="project"
           onClick={chooseProject}
           title="Switch project"
         >
@@ -292,7 +285,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           <Icon name="chevrons" size={18} className="rail-project-caret" />
         </button>
       ) : (
-        <div className="rail-project" data-tour="project">
+        <div className="rail-project">
           <h2 className="rail-project-name">{project.name}</h2>
         </div>
       )}
@@ -305,14 +298,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
             </div>
           ) : (
             <Fragment key="top">
-              <RailRow
-                to="/"
-                icon="home"
-                label="Home"
-                active={pathname === '/'}
-                count={needsYou}
-                tour="home"
-              />
+              <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
               {section.rows.map(place)}
             </Fragment>
           ),

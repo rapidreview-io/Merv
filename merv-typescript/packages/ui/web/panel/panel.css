@@ -1,0 +1,3837 @@
+/* Shared panel anatomy. The zero-specificity boundary keeps these names local to a desk
+ * surface, while desktop-only rules in styles.css retain their original cascade. */
+:where(.overlay, .strip, .demo, .web-panel, .phone) {
+  /* How plain elements start out on a desk surface. */
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+  }
+  button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  input,
+  textarea {
+    font: inherit;
+    color: var(--text);
+    background: var(--raised);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    outline: none;
+    width: 100%;
+    resize: none;
+  }
+  input:focus,
+  textarea:focus {
+    border-color: var(--divider);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--secondary);
+    opacity: 0.7;
+  }
+  pre,
+  code {
+    font:
+      12px/18px ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      monospace;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--secondary);
+    margin: 6px 0 0;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .panel,
+  .chats {
+    container: panel / inline-size;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 51px;
+    padding: 6px var(--head-right, 153px) 6px var(--head-left, 14px);
+    -webkit-app-region: drag;
+  }
+  .head > * {
+    -webkit-app-region: no-drag;
+  }
+  /* Inside a chat, the other agents at work sit beside the way back. */
+  .head-start,
+  .head-start .head-agents {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .head-start:has(> .head-title:not(:empty)) {
+    flex: 1;
+    min-width: 0;
+  }
+  .head-start > :not(.head-title),
+  .head-start .icon {
+    flex-shrink: 0;
+  }
+  .head-title {
+    flex: 1;
+    min-width: 0;
+  }
+  .head-title .thread-head.is-plain .thread-title {
+    margin: 0;
+    padding-inline: 0;
+  }
+  .head-title:empty {
+    display: none;
+  }
+  .head-title > .thread-head {
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 4px;
+  }
+  /* At the smallest pane width, spend the outer gaps on the menu, never the icons. */
+  @container panel (max-width: 300px) {
+    .head {
+      --head-left: 6px;
+      --head-right: 145px;
+    }
+    .head-title > .thread-head {
+      padding-inline: 0;
+    }
+    .head-title .thread-head.is-plain .head-menu {
+      gap: 0;
+    }
+    .head-title .head-word {
+      margin-left: 0;
+    }
+  }
+  .head-start .head-agents:empty {
+    display: none;
+  }
+  .head-agent {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 4px 6px;
+    border-radius: 8px;
+  }
+  .head-agent:hover {
+    background: var(--raised);
+  }
+  /* The board toolbar's island, to the pixel, so both sides read as one row of controls. */
+  .island {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 38.5px;
+    padding: 3.5px;
+    background: var(--raised);
+    border-radius: 7px;
+    box-shadow:
+      0 0 0 1px var(--hairline),
+      0 2px 6px var(--shadow-faint);
+  }
+  .island .icon {
+    width: 31.5px;
+    height: 31.5px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+  }
+  .island .icon:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .icon {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: var(--secondary);
+    transition:
+      background var(--hover),
+      color var(--hover);
+  }
+  .icon:hover {
+    background: var(--raised);
+    color: var(--text);
+  }
+  .icon.small {
+    width: 28px;
+    height: 28px;
+  }
+  .error {
+    margin: 0 var(--pad) var(--gap);
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    background: var(--error-bg);
+    color: var(--error);
+    text-align: left;
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .you-view {
+    padding: 16px var(--pad) 24px;
+    overflow-y: auto;
+  }
+  .you-view [role='alert'] {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--error);
+  }
+
+  .mark {
+    flex: none;
+    color: var(--text);
+  }
+  .state-mark {
+    flex: none;
+    color: var(--secondary);
+  }
+  .state-mark.is-running {
+    color: var(--run);
+  }
+  .state-mark.is-waiting {
+    color: var(--approval);
+  }
+  .state-mark.is-failed {
+    color: var(--error);
+  }
+  .state-mark.is-idle,
+  .state-mark.is-stopped {
+    color: var(--secondary);
+  }
+  .state-mark.is-past {
+    color: var(--secondary);
+    opacity: 0.6;
+  }
+  .spin {
+    transform-origin: 7px 7px;
+    animation: spin 1200ms linear infinite;
+  }
+
+  /* Each folder is a project: its name heads the section and its sessions sit a step in, by space alone. */
+  .folders {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .folders > * {
+    flex: none;
+  }
+  .folder-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 8px 2px;
+  }
+  .folder-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+    color: var(--secondary);
+    border-radius: var(--radius);
+  }
+  .folder-toggle:hover .folder-name,
+  .folder-toggle:hover .folder-chevron {
+    color: var(--text);
+  }
+  .folder-chevron {
+    flex: none;
+    margin-right: -2px;
+    color: var(--tertiary);
+    transition:
+      transform var(--hover),
+      color var(--hover);
+  }
+  .folder-toggle[aria-expanded='false'] .folder-chevron {
+    transform: rotate(-90deg);
+  }
+  .folder-rows[hidden] {
+    display: none;
+  }
+  .folder-rows > .row {
+    margin-left: 12px;
+    width: calc(100% - 12px);
+  }
+  .folder-rows > .history {
+    padding-left: 52px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-chevron {
+      transition: none;
+    }
+  }
+  .folder-head .plus {
+    opacity: 0;
+    transition: opacity var(--hover);
+  }
+  .folder-main {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: var(--accent);
+    opacity: 0;
+    transition: opacity var(--hover);
+    cursor: pointer;
+  }
+  .folder:hover .folder-main,
+  .folder-main:focus-visible {
+    opacity: 1;
+  }
+  .folder:hover .folder-head .plus,
+  .folder-head .plus:focus-within,
+  .folder-head .plus:has(.menu) {
+    opacity: 1;
+  }
+  .folder-archive {
+    opacity: 0;
+    transition: opacity var(--hover);
+  }
+  .folder:hover .folder-archive,
+  .folder-archive:focus-visible {
+    opacity: 1;
+  }
+  .folder.is-archived .folder-title {
+    opacity: 0.6;
+  }
+  .folder > .row {
+    margin-left: 12px;
+    width: calc(100% - 12px);
+  }
+  .folder > .history {
+    padding-left: 52px;
+  }
+  .plus {
+    position: relative;
+  }
+  .menu {
+    position: absolute;
+    right: 0;
+    top: 30px;
+    z-index: 10;
+    background: var(--raised);
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    padding: 4px;
+    min-width: 170px;
+    box-shadow: 0 12px 28px var(--shadow-strong);
+  }
+  .menu button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+  .menu button:hover {
+    background: var(--surface-hover);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: var(--row);
+    padding: 0 8px;
+    border-radius: var(--radius);
+    text-align: left;
+    transition: background var(--hover);
+  }
+  .row:hover {
+    background: var(--raised);
+  }
+  .row.is-past .mark,
+  .row.is-past .row-title {
+    color: var(--secondary);
+  }
+  .row-title {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    white-space: nowrap;
+  }
+  .row-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-quiet {
+    color: var(--secondary);
+  }
+  .row-title > .row-more {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 50%;
+    margin-left: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-age {
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Merv, the board's own agent, heads the list across its whole width: its orb and name in the middle. */
+  .merv-row .row-age {
+    max-width: 30%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+  .merv-mark {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+  }
+  .merv-mark > canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+  }
+  .merv-mark.is-working {
+    animation: breathe 1400ms ease-in-out infinite;
+  }
+  .merv-row .row-title {
+    font-weight: 500;
+    flex: none;
+  }
+  .merv-row {
+    justify-content: center;
+  }
+  .merv-row .row-age:empty {
+    display: none;
+  }
+  .merv-row .merv-mark {
+    width: 20px;
+    height: 20px;
+  }
+
+  .center {
+    margin: auto;
+    padding: 32px 24px;
+    text-align: center;
+    display: grid;
+    gap: 14px;
+    justify-items: center;
+  }
+  .hand {
+    font:
+      20px/26px Excalifont,
+      -apple-system,
+      sans-serif;
+    margin: 0;
+  }
+  .soft {
+    margin: 0;
+    color: var(--secondary);
+    font-size: 13px;
+  }
+  .said.is-spoken {
+    cursor: pointer;
+  }
+  .said.is-spoken:not(.is-open) {
+    color: var(--secondary);
+  }
+
+  .compose-who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--secondary);
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .actions button {
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 9px;
+    background: var(--raised);
+    transition: background var(--hover);
+  }
+  .actions button:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+  .actions .primary {
+    background: var(--accent-fill);
+    color: #fff;
+    font-weight: 500;
+  }
+  .actions .primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-fill) 85%, white);
+  }
+  .actions .quiet {
+    background: none;
+    color: var(--secondary);
+  }
+  .actions input {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .thread {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    position: relative;
+  }
+  .thread-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px var(--column-pad) 10px;
+    min-height: 48px;
+    position: relative;
+  }
+  .thread-head .status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 48px;
+    font-variant-numeric: tabular-nums;
+  }
+  .thread-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  /* A chat reads as the best agent apps read: one centred column with room on both sides (at least
+ * 32px, at most 720px of text), replies in softer ink, the person's words in a quiet bubble at the
+ * right, and the box to write in on the same column. */
+  .lines {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px var(--column-pad) 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .said {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .said.user {
+    align-self: flex-end;
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: 14px 14px 4px 14px;
+    background: var(--raised);
+    color: var(--text);
+    position: relative;
+    line-height: 1.55;
+  }
+  .sent-attachments {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .sent-attachment {
+    position: relative;
+    display: inline-flex;
+  }
+  .sent-attachments .picture {
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    background: var(--raised);
+    cursor: zoom-in;
+  }
+  .sent-attachments .picture:hover {
+    opacity: 0.9;
+  }
+  .sent-attachments .file-chip {
+    background: color-mix(in srgb, var(--panel) 60%, var(--raised));
+  }
+  .sent-attachments .attachment-more {
+    color: var(--secondary);
+  }
+  .sent-attachments .is-unavailable {
+    cursor: default;
+  }
+  .sent-attachments .picture.is-unavailable {
+    border-style: dashed;
+    opacity: 1;
+  }
+  .sent-attachments .file-chip.is-unavailable {
+    text-decoration: line-through;
+    color: var(--tertiary);
+  }
+  .sent-attachment .menu {
+    top: 100%;
+    right: 0;
+    white-space: nowrap;
+    z-index: 2;
+  }
+  .lines > .said.assistant + .trail {
+    margin-top: -4px;
+  }
+  .said.assistant {
+    position: relative;
+    color: color-mix(in srgb, var(--text) 88%, var(--panel));
+    line-height: 1.6;
+  }
+
+  .said.error-line {
+    color: var(--error);
+    font-size: 13px;
+  }
+
+  .composer textarea {
+    flex: 1;
+    max-height: 160px;
+    border-radius: 0;
+    border: 0;
+    padding: 5px 0;
+    min-height: 31px;
+    font-size: 15px;
+    line-height: 22px;
+    background: none;
+  }
+  .composer textarea:focus,
+  .composer textarea:focus-visible {
+    outline: none;
+  }
+  .composer-input {
+    position: relative;
+    flex: 1;
+    min-width: 80px;
+  }
+  .composer-input textarea {
+    display: block;
+    width: 100%;
+    scrollbar-width: none;
+    scrollbar-gutter: auto;
+  }
+  .composer-input textarea::-webkit-scrollbar {
+    display: none;
+  }
+  .composer-pictures {
+    flex-basis: 100%;
+    display: flex;
+    gap: 6px;
+    padding-top: 8px;
+  }
+  .picture {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    border: 1px solid var(--divider);
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .picture img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .picture span {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 15px;
+    line-height: 15px;
+    background: #17181ccc;
+    color: #fff;
+    border-radius: 0 0 0 4px;
+  }
+  /* Files on their way to Merv: a line each, its state in words, wrapping inside the box at any width. */
+  .merv-files {
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0 2px;
+    min-width: 0;
+  }
+  .merv-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 20px;
+    color: var(--text);
+  }
+  .merv-file img {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
+    object-fit: cover;
+  }
+  .merv-file-words {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .merv-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .merv-file-note {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--secondary);
+  }
+  .merv-file.is-failed .merv-file-note {
+    color: var(--error);
+  }
+  .merv-file-act {
+    flex: none;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0 4px;
+    color: var(--secondary);
+    background: none;
+    border: 0;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .merv-file-act:hover {
+    color: var(--text);
+  }
+  .sent-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .sent-files .file-chip {
+    max-width: 100%;
+  }
+
+  /* Tool calls: one quiet line each, like a terminal's, the newest lit while it runs. */
+  .trail {
+    display: grid;
+    gap: 0;
+  }
+  /* One line, however the step it names changes: long words end in an ellipsis, never a second line. */
+  .trail-more {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    min-width: 0;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--secondary);
+    padding: 3px 0;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .trail-more:hover {
+    color: var(--text);
+  }
+  .trail-more > svg {
+    flex: none;
+    transition: transform 150ms ease-out;
+  }
+  .trail-more[aria-expanded='true'] > svg {
+    transform: rotate(90deg);
+  }
+  .trail-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .trail-more > svg,
+  .trail-live,
+  .trail-time {
+    flex: none;
+  }
+  .trail-time {
+    font-variant-numeric: tabular-nums;
+  }
+  .trail-sum {
+    flex: none;
+    font-size: 12px;
+    color: var(--tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .trail-more:hover .trail-sum {
+    color: var(--secondary);
+  }
+  /* A turn that is thinking, between its steps and its words. It waits a moment before showing, so a quick hand-over never blinks. */
+  /* As tall as the first line of the words that take its place: nothing above moves when they arrive. */
+  .turn-thinking {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+    line-height: 22px;
+    color: var(--secondary);
+    animation: thinking-in 200ms ease-out both;
+  }
+  @keyframes thinking-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .turn-thinking {
+      animation: none;
+    }
+  }
+  .trail-steps {
+    padding: 2px 0 4px 2px;
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 2px 0;
+    color: var(--secondary);
+    text-align: left;
+    transition: color var(--hover);
+  }
+  .step:hover {
+    color: var(--text);
+  }
+  .step svg {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+  .step-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    line-height: 20px;
+  }
+  .step.is-active {
+    color: var(--run);
+  }
+  .step.is-active .step-title {
+    animation: breathe 1400ms ease-in-out infinite;
+  }
+  .step.is-failed {
+    color: var(--error);
+  }
+  .step-detail {
+    margin: 2px 0 6px 22px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--raised);
+  }
+  /* A run under way: three dots that take turns, the agent's sign it is still at it. */
+  .trail-live {
+    display: inline-grid;
+    grid-template-columns: repeat(2, 4px);
+    gap: 2px;
+    width: 10px;
+  }
+  .trail-live i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #d97757;
+    animation: trail-live 1.2s ease-in-out infinite;
+  }
+  .trail-live i:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .trail-live i:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  /* Claude's dots are its orange; Codex's its grey. */
+  .trail-live.is-codex i {
+    background: #b0b4ba;
+  }
+  /* Held for the person's answer: the dots stand still, in the colour of what waits on them. */
+  .trail-live.is-waiting i {
+    background: var(--approval);
+    animation: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .trail-live i,
+    .step.is-active .step-title {
+      animation: none;
+    }
+  }
+
+  .approval-detail {
+    max-height: 120px;
+  }
+  /* The action itself, there to read before Allow: a command, or an edit as its diff. */
+  .diff {
+    margin: 2px 0 10px;
+    padding: 8px 0;
+    max-height: none;
+    border-radius: 8px;
+    background: var(--code-bg);
+    color: var(--secondary);
+    overflow-x: auto;
+    white-space: pre;
+    display: grid;
+    max-width: 100%;
+    word-break: normal;
+    overflow-wrap: normal;
+  }
+  .diff > span {
+    display: block;
+    padding: 0 10px;
+  }
+  .diff .is-add {
+    background: var(--diff-add-bg);
+    color: var(--diff-add);
+  }
+  .diff .is-del {
+    background: var(--diff-del-bg);
+    color: var(--diff-del);
+  }
+  .diff .is-hunk {
+    color: var(--diff-hunk);
+  }
+  .diff > span {
+    min-width: 100%;
+    width: max-content;
+  }
+  .diff mark {
+    color: inherit;
+    border-radius: 2px;
+  }
+  .diff .is-add mark {
+    background: var(--diff-add-word);
+  }
+  .diff .is-del mark {
+    background: var(--diff-del-word);
+  }
+  .approval-preview {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: min(30vh, 240px);
+    overflow: auto;
+    border-radius: 8px;
+    background: var(--code-bg);
+    white-space: pre;
+    font:
+      12px/18px ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      monospace;
+  }
+  .approval-preview.diff {
+    padding: 8px 0;
+  }
+  .approval-plan {
+    max-height: 64px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .approval-plan.is-open {
+    max-height: min(45vh, 360px);
+    overflow: auto;
+  }
+  .approval-plan .prose > :first-child {
+    margin-top: 0;
+  }
+  .plan-read {
+    justify-self: start;
+    font-size: 12px;
+  }
+
+  /* What needs the person: one slot, above everything else at the foot. */
+  .approval {
+    margin: 0 8px 8px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: var(--raised);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--approval) 35%, transparent);
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+  }
+  /* In a chat it stands in the chat's own column, over the reply box, which stays where it is. */
+  .approval-slot:empty {
+    display: none;
+  }
+  .approval-slot > .approval {
+    margin: 0 var(--box-pad) 8px;
+  }
+  .approval-who {
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+  .approval-thread {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--secondary);
+    min-width: 0;
+  }
+  .approval-thread:hover {
+    color: var(--text);
+  }
+  .count {
+    margin-left: auto;
+    color: var(--approval);
+  }
+  .approval-ask {
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-align: left;
+    font:
+      13px/19px ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      monospace;
+    color: var(--text);
+  }
+
+  .thread-where {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--secondary);
+  }
+  .row-more {
+    color: var(--secondary);
+    font-size: 12px;
+  }
+
+  /* A question or a permission: one line to read, two buttons to press. */
+  .approval .actions button {
+    min-height: 30px;
+    padding: 0 12px;
+  }
+  .approval .actions input {
+    min-height: 30px;
+    padding: 4px 10px;
+  }
+  .menu.up {
+    top: auto;
+    bottom: 34px;
+    right: auto;
+    left: 0;
+  }
+
+  /* Where to type, the same in every chat: a card, the words on top, choices and send beneath. */
+  .composer,
+  .composer.has-choices {
+    margin: 0 var(--box-pad) 36px;
+    padding: 10px 10px 8px 14px;
+    background: var(--raised);
+    border: 0;
+    border-radius: 16px;
+    transition: background 160ms;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 2px;
+  }
+  /* No outline: the field is a quiet raised shape that brightens a little while you type. */
+  .composer:focus-within {
+    background: color-mix(in srgb, var(--raised) 94%, var(--text));
+  }
+  .composer .composer-input,
+  .composer > textarea {
+    flex: 1 1 0;
+    order: 2;
+  }
+  .composer .composer-input textarea {
+    border: 0;
+    padding: 5px 0;
+    min-height: 31px;
+    font-size: 15px;
+    line-height: 22px;
+    background: none;
+  }
+  .composer .composer-pictures,
+  .composer .queued {
+    order: 0;
+    flex-basis: 100%;
+  }
+  .composer .choice-summary {
+    order: 2;
+    flex: 1;
+    text-align: left;
+  }
+  .composer .send {
+    order: 3;
+    margin-left: auto;
+    align-self: flex-end;
+    margin-bottom: 1px;
+    width: 30px;
+    height: 30px;
+  }
+  .send {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-fill);
+    color: #fff;
+    transition:
+      opacity var(--hover),
+      background var(--hover);
+  }
+  .send:disabled {
+    background: var(--divider);
+    color: var(--tertiary);
+    opacity: 1;
+  }
+  .send.is-stop {
+    background: var(--text);
+    color: var(--panel);
+  }
+
+  /* A chat's name is the first line of its content, not a second header: mark, title · folder. */
+  .head-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .head-text .thread-title {
+    flex: 0 1 auto;
+    font-size: 14px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .head-text .thread-where {
+    flex: none;
+    font-size: 11px;
+    line-height: 15px;
+  }
+  .head-text .thread-where::before {
+    content: '· ';
+  }
+  .status {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--secondary);
+  }
+  .status.is-running {
+    color: var(--run);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .composer .session-choices {
+    order: 2;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0;
+  }
+  .composer .session-choices .choice-menu {
+    bottom: 30px;
+    left: 0;
+    right: auto;
+  }
+
+  .question-heading {
+    display: flex;
+    align-items: start;
+    gap: 8px;
+  }
+  .question-heading .count {
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+  .question-options {
+    flex-wrap: wrap;
+    max-height: 72px;
+    overflow: auto;
+  }
+  .question-options:empty {
+    display: none;
+  }
+  .question-options button[aria-pressed='true'] {
+    background: var(--approval);
+    color: var(--panel);
+  }
+  .question-answer {
+    flex-wrap: nowrap;
+  }
+  .question-answer input {
+    flex: 1;
+    width: 0;
+    min-width: 40px;
+  }
+
+  .island .mode.is-on {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+  .island .mode {
+    position: relative;
+  }
+  .chat-badge {
+    position: absolute;
+    right: -1px;
+    top: 0;
+    min-width: 13px;
+    padding: 0 2px;
+    border-radius: 7px;
+    background: var(--run);
+    color: var(--panel);
+    font:
+      9px/13px -apple-system,
+      BlinkMacSystemFont,
+      sans-serif;
+  }
+  .chat-badge.is-waiting {
+    background: var(--approval);
+  }
+  .island .mode.has-alert::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .island .mode:focus:not(:focus-visible):not(.is-on):not(:hover) {
+    background: none;
+  }
+  /* Inside the island the focus ring sits on the button's own edge, never over its neighbour. */
+  .island .icon:focus-visible {
+    outline-offset: -2px;
+    border-radius: 5px;
+  }
+
+  .composer .attach,
+  .composer .choice-summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    min-width: 28px;
+    padding: 0 6px;
+    border-radius: 7px;
+    color: var(--secondary);
+    opacity: 1;
+    font-size: 12px;
+  }
+  .composer .attach:hover,
+  .composer .choice-summary:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+  /* At every width the box is the words across the top, then one row of controls: the orb or the paperclip, the one
+   picker (agent, model, effort, access), and send at the right. The picker grows from nothing (flex-basis 0), so it
+   can never push the row into a wrap; its words end in an ellipsis instead. */
+  .composer.has-choices {
+    position: relative;
+    align-items: center;
+    flex-wrap: wrap;
+    row-gap: 0;
+    margin-bottom: 12px;
+  }
+  .composer.has-choices > :is(.composer-input, textarea) {
+    order: 1;
+    flex: 1 0 100%;
+  }
+  .composer.has-choices > :is(.merv-voice, .attach, span:has(> .attach)) {
+    order: 2;
+    align-self: center;
+    margin: 0 0 0 -6px;
+  }
+  .composer.has-choices .attach {
+    margin: 0;
+    align-self: center;
+  }
+  .composer.has-choices > .send {
+    order: 4;
+    align-self: center;
+    margin: 0 0 0 auto;
+  }
+  .composer .attach {
+    order: 1;
+    align-self: flex-end;
+    margin-bottom: 2px;
+  }
+  /* Merv's voice, where the paperclip sits in a main thread's box and before it if both are there: the board toolbar's
+   orb, smaller. Off it rests dim; on it is whole, and while Merv hears it turns and breathes (orb.tsx paints that). */
+  .composer .merv-voice {
+    order: 1;
+    align-self: flex-end;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    margin: 0 4px 0 -6px;
+    padding: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+  }
+  .composer .merv-voice .board-orb-sphere {
+    display: block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    opacity: 0.55;
+    filter: saturate(0.6);
+    transition:
+      opacity var(--hover),
+      transform 140ms ease-out,
+      filter var(--hover);
+  }
+  .composer .merv-voice:hover:not(:disabled) .board-orb-sphere {
+    opacity: 0.85;
+    transform: scale(1.05);
+  }
+  .composer .merv-voice.is-live .board-orb-sphere {
+    opacity: 1;
+    filter: none;
+  }
+  .composer .merv-voice:disabled {
+    cursor: default;
+  }
+  .composer .merv-voice:disabled .board-orb-sphere {
+    opacity: 0.3;
+  }
+  .composer .merv-voice:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .composer.has-choices .session-choices,
+  .composer.has-choices > .choice-summary {
+    position: relative;
+    order: 3;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+  }
+  /* From the row, the choices open upward and leftward-aligned, over the box, never off the panel. */
+  .composer.has-choices .session-choices .choice-menu {
+    top: auto;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: auto;
+  }
+  .composer .session-choices .choice-summary {
+    flex: none;
+  }
+
+  /* Small marks, full-size targets: wide and tall enough to press, in the row the Allow button already makes. */
+  .approval .actions .deny,
+  .approval .actions .plus > button {
+    min-width: 40px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 16px;
+  }
+
+  [data-modes] .mode.is-on {
+    background: var(--accent-fill);
+    color: #eef2fb;
+  }
+  [data-modes] .mode-dot {
+    stroke: var(--accent);
+    transition: stroke var(--hover);
+  }
+  [data-modes] .mode.is-on .mode-dot {
+    stroke: currentColor;
+  }
+  [data-modes] .mode.has-alert .mode-dot {
+    animation: mode-dot 600ms ease-out;
+  }
+  [data-modes] .mode.is-on:hover {
+    background: #3d60b4;
+    color: #fff;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
+  }
+}
+
+@keyframes mode-dot {
+  40% {
+    stroke-width: 3.4;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes trail-live {
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.5;
+  }
+}
+/* Words an agent wrote, as Markdown. */
+:where(.overlay, .strip, .demo, .web-panel, .phone) {
+  .prose {
+    display: grid;
+    gap: 10px;
+    position: relative;
+    min-width: 0;
+  }
+  .prose p {
+    margin: 0;
+  }
+  .prose code {
+    background: var(--raised);
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-size: 12.5px;
+  }
+  .prose-code {
+    background: var(--raised);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    color: var(--text);
+    margin: 0;
+  }
+  .prose-list {
+    margin: 0;
+    padding-left: 20px;
+    display: grid;
+    gap: 4px;
+  }
+  .prose-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 26px;
+    min-height: 26px;
+    padding: 3px 6px;
+    border-radius: 5px;
+    color: var(--secondary);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .prose-action:hover {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .prose-copy-message {
+    position: absolute;
+    right: 0;
+    bottom: -18px;
+    opacity: 0;
+    background: var(--panel);
+    z-index: 1;
+  }
+  .said.assistant:hover .prose-copy-message,
+  .prose:focus-within .prose-copy-message,
+  .prose-copy-message:focus-visible {
+    opacity: 1;
+  }
+  .prose-block {
+    min-width: 0;
+    overflow: hidden;
+    border-radius: var(--radius);
+    background: var(--raised);
+  }
+  .prose-code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 28px;
+    padding: 2px 6px 0 12px;
+    color: var(--secondary);
+    font-size: 11px;
+  }
+  .prose-block .prose-code {
+    margin: 0;
+    padding: 8px 12px;
+    max-height: none;
+    white-space: pre;
+    overflow-x: auto;
+    overflow-wrap: normal;
+    word-break: normal;
+    border-radius: 0;
+    color: var(--text);
+  }
+  .prose-code > code {
+    padding: 0;
+    background: none;
+    border-radius: 0;
+    font: inherit;
+  }
+  .prose-code .hljs-comment,
+  .prose-code .hljs-quote {
+    color: var(--syntax-comment);
+  }
+  .prose-code .hljs-keyword,
+  .prose-code .hljs-selector-tag,
+  .prose-code .hljs-literal,
+  .prose-code .hljs-name {
+    color: var(--accent);
+  }
+  .prose-code .hljs-string,
+  .prose-code .hljs-regexp,
+  .prose-code .hljs-addition {
+    color: var(--syntax-string);
+  }
+  .prose-code .hljs-number,
+  .prose-code .hljs-symbol,
+  .prose-code .hljs-attr,
+  .prose-code .hljs-template-variable {
+    color: var(--syntax-number);
+  }
+  .prose-code .hljs-title,
+  .prose-code .hljs-type,
+  .prose-code .hljs-built_in {
+    color: var(--syntax-title);
+  }
+  .prose-code .hljs-meta,
+  .prose-code .hljs-variable,
+  .prose-code .hljs-params {
+    color: var(--syntax-meta);
+  }
+  .prose-code .hljs-deletion {
+    color: var(--syntax-deletion);
+  }
+  .prose-code .hljs-emphasis {
+    font-style: italic;
+  }
+  .prose-code .hljs-strong {
+    font-weight: 600;
+  }
+  .prose-command-line {
+    display: flex;
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .prose-command-line > .prose-code {
+    flex: 1;
+    min-width: 0;
+  }
+  .prose-command-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    padding: 4px 6px 4px 0;
+  }
+  .prose-output {
+    border-top: 1px solid var(--divider);
+  }
+  .prose-output summary {
+    padding: 6px 12px;
+    color: var(--secondary);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .prose-output .prose-code {
+    max-height: 360px;
+    color: var(--secondary);
+  }
+  .prose-error {
+    color: var(--error);
+    font-size: 12px;
+  }
+  .prose-command > .prose-error {
+    display: block;
+    padding: 4px 12px;
+  }
+  .prose-heading {
+    font-weight: 600;
+  }
+  .prose a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .prose a:hover {
+    text-decoration: underline;
+  }
+  .prose-file {
+    display: inline;
+    text-align: left;
+    color: inherit;
+  }
+  .prose-file:hover {
+    color: var(--accent);
+  }
+  .prose-table {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    border-radius: 6px;
+  }
+  .prose-table:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 3px;
+  }
+  .prose-table table {
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    font-size: 12.5px;
+    line-height: 1.65;
+  }
+  .prose-table th,
+  .prose-table td {
+    max-width: 48ch;
+    min-width: 8ch;
+    padding: 10px 16px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--divider);
+    overflow-wrap: anywhere;
+  }
+  .prose-table th {
+    font-weight: 600;
+    color: var(--text);
+    background: color-mix(in srgb, var(--raised) 65%, transparent);
+  }
+  .prose-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .prose-math {
+    color: var(--text);
+  }
+  .prose-math-source {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.95em;
+    white-space: pre-wrap;
+  }
+  .prose-math-display {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 12px 4px;
+  }
+  .prose-math-display .katex-display {
+    margin: 0;
+  }
+  .prose-math .katex {
+    font-size: 1.08em;
+  }
+  .prose-mermaid {
+    min-width: 0;
+  }
+  .prose-diagram {
+    padding: 18px 16px;
+    overflow-x: auto;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .prose-diagram > svg {
+    display: block;
+    max-width: none;
+    height: auto;
+    margin: 0 auto;
+  }
+  @media (hover: none) {
+    .prose-copy-message {
+      opacity: 1;
+    }
+  }
+}
+
+/* The project's agents in its main thread: one line of text each, opened in place. A turn that ended
+   stands in the thread where it happened; who is at work or asking stands at its foot. Nothing here is
+   a box: a line is a mark, a name and how it stands in a word, and the whole of it is the press target. */
+.agent-cards {
+  display: grid;
+  gap: 0;
+  margin: 4px 0 0;
+}
+/* How things stand now, held over the reply box: the conversation above scrolls on its own and these lines stay. They
+   take 40% of the thread at most, less while a request stands under them. This is their only scroll area,
+   including when a row is open; with nothing live there is nothing here. */
+.lines-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.lines-frame > .behind {
+  bottom: 12px;
+}
+/* It gives way before the reply box does: when the keyboard leaves little room, what is live shrinks and scrolls. */
+.thread-now {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.thread-now:empty {
+  display: none;
+}
+.thread-now > .agent-cards {
+  margin: 0;
+  padding: 12px var(--column-pad) 10px;
+}
+.thread.is-main:has(> .approval-slot > .approval) > .thread-now {
+  max-height: 22%;
+}
+/* One quiet word between what happened and how things stand: the lines under it are the present. */
+.agent-now {
+  margin: 0;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--secondary);
+}
+.agent-card {
+  flex: none;
+  min-width: 0;
+  scroll-margin-bottom: 12px;
+}
+/* Colour where it says something: who works, by the agent's own colour on its mark and its spinner; what waits on the
+   person, in the accent; a failure, in the error's; a review that passed, in a quiet green. Nothing is boxed or filled. */
+.agent-card.is-waiting .agent-state {
+  color: var(--approval);
+}
+.agent-card.is-failed .agent-state,
+.agent-card.is-unreadable .agent-state {
+  color: var(--error);
+}
+.agent-card.is-passed .agent-state {
+  color: var(--diff-add);
+}
+/* A review: the same row, with what it is said quietly before whose work it judged. One that asks for changes reads as plainly as its words. */
+.agent-role {
+  color: var(--secondary);
+  font-weight: 400;
+}
+.agent-card.is-needs-changes .agent-state {
+  color: var(--text);
+}
+.agent-card.is-needs-changes .agent-state .state-mark {
+  color: inherit;
+}
+/* A job: goal and state under its title, actions in plain words, rounds folded. Only "needs you" has the accent. */
+.job-overview {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+.job-summary {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+}
+.job-card > .job-actions {
+  padding-left: 28px;
+}
+.job-needs {
+  color: var(--approval);
+}
+.agent-body.job-body {
+  gap: 0;
+  padding-bottom: 2px;
+}
+.job-body > .agent-card > .agent-head {
+  color: var(--text);
+}
+.job-body > .soft,
+.job-body > .error-line {
+  margin: 0;
+  padding: 6px 0;
+}
+.job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin: 0;
+}
+.job-act {
+  min-height: 36px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.job-act:hover:not(:disabled) {
+  text-decoration-color: currentColor;
+}
+.job-act:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+.agent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.agent-meta .agent-where {
+  color: var(--secondary);
+}
+.agent-body .soft {
+  font-size: 12px;
+}
+.compose-earlier button {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Words a session was sent by the project's main thread, not typed by the person. */
+.said-from {
+  display: block;
+  margin-top: 4px;
+  color: var(--tertiary);
+  font-size: 12px;
+}
+.compose-main {
+  margin: 0 var(--column-pad);
+}
+/* The line is as tall as a finger needs and reaches a little past its text on both sides, so the fill that
+   says "this opens" on hover and focus has room; at rest there is no fill at all. */
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 16px);
+  min-height: 36px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--hover);
+}
+.agent-head:hover,
+.agent-head:focus-visible {
+  background: var(--raised);
+}
+/* Who works is a shape and a colour: the agent's own mark, and the spinner of the one at work in that same colour. */
+.agent-head .job-mark {
+  color: var(--secondary);
+}
+.agent-head .state-mark.is-running {
+  color: inherit;
+}
+.agent-card[data-agent='claude'] > .agent-head .state-mark.is-running {
+  color: var(--claude);
+}
+.agent-card[data-agent='codex'] > .agent-head .state-mark.is-running {
+  color: var(--codex);
+}
+.agent-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* At the foot, an agent still at it: its name a step heavier than a turn that is over. */
+.agent-cards .agent-name {
+  font-weight: 500;
+}
+.agent-where {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--secondary);
+  font-size: 12px;
+}
+/* How it stands, always straight after the name. */
+.agent-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+/* Every line that opens in place ends in the word for what a press does now: "show", or "hide". It is the line's own
+   last word, in the quietest ink that still reads, and never a control of its own. */
+.agent-toggle {
+  flex: none;
+  margin-left: 4px;
+  color: var(--quiet-word);
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  letter-spacing: 0;
+}
+.agent-head:hover .agent-toggle,
+.agent-head:focus-visible .agent-toggle,
+button.agent-file:hover .agent-toggle,
+button.agent-file:focus-visible .agent-toggle {
+  color: var(--text);
+}
+.agent-add {
+  color: var(--diff-add);
+}
+.agent-del {
+  color: var(--diff-del);
+}
+/* A turn that ended speaks in the thread as a member of the conversation: who, on a line that opens its session; then
+   its own words, set as any answer is; then the files it changed, in one quiet line whose names open their diffs.
+   Its words hang under its name. How it ended is said only when that is news, in the colour that news has. */
+.agent-msg {
+  flex: none;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  scroll-margin-bottom: 12px;
+}
+.agent-msg > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.agent-msg > .agent-said,
+.agent-msg > .agent-foot,
+.agent-msg > .agent-body {
+  justify-self: stretch;
+  max-width: none;
+}
+.agent-msg > :not(.agent-line) {
+  margin-left: 24px;
+}
+/* Its line folds the entry away and opens it again. Folded, the line is all there is: who, how it ended, how many files.
+   When, whether a press hides or shows, and the way into its session wait for the pointer or the keyboard, as the sidebar's times do. */
+.agent-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+.agent-by {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+}
+button.agent-by {
+  cursor: pointer;
+}
+.agent-count {
+  flex: none;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.agent-by .agent-age {
+  flex: none;
+}
+.agent-fold-word {
+  flex: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+}
+.agent-session {
+  flex: none;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.agent-session:hover,
+.agent-session:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-line :is(.agent-age, .agent-fold-word, .agent-session) {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.agent-line:is(:hover, :focus-within) :is(.agent-age, .agent-fold-word, .agent-session) {
+  opacity: 1;
+}
+.agent-by .mark {
+  flex: none;
+}
+.agent-by .job-mark {
+  color: var(--secondary);
+}
+.agent-by .agent-name {
+  font-weight: 600;
+}
+button.agent-by:hover .agent-name,
+button.agent-by:focus-visible .agent-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-end {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--secondary);
+}
+.agent-end.is-failed {
+  color: var(--error);
+}
+.agent-end.is-passed {
+  color: var(--diff-add);
+}
+.agent-end.is-needs-changes,
+.agent-end.is-needs-changes .state-mark {
+  color: var(--approval);
+}
+/* The word that copies its message waits at the end of its name line, clear of the files under its words. */
+.agent-said .prose-copy-message {
+  top: -28px;
+  bottom: auto;
+}
+.agent-msg > .soft {
+  font-size: 12px;
+}
+/* Words that open something in place, in the quietest ink that still reads: the rest of a long message, more files, a job's rounds. */
+/* What can be done with finished work, on the entry's one last line after its files: plain muted words, "merge into
+   nightly/manager · pull request · discard", underlined only under the pointer or the keys. Merged or discarded, the
+   same place states it, quietly. A refusal is words under the line. */
+.work-end {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  min-height: 28px;
+}
+.work-each {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.work-sep {
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--tertiary);
+}
+.work-act {
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.work-act:hover:not(:disabled),
+.work-act:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+.work-act:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+.work-act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.work-fact {
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+}
+.agent-foot > .work-reason {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.agent-rest,
+.agent-more-files {
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.agent-rest:hover,
+.agent-more-files:hover,
+.agent-rest:focus-visible,
+.agent-more-files:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-unnamed {
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+}
+/* A finished entry's one quiet last line: "7 files · show changes", then, a wide gap on, what can be done with the work.
+   Opened, the files it names follow under it. */
+.agent-foot {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-foot-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 28px;
+  min-width: 0;
+}
+.agent-changed-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 18px;
+  margin: 0;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* All of them listed: one to a line, so the names read down. */
+.agent-changed-line.is-all {
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* What an agent at work is doing now: the session's own step lines, quieter, never pressed. */
+.agent-activity {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+.agent-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 1px 0;
+  color: var(--secondary);
+}
+.agent-step svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.agent-step-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+}
+.agent-step.is-active {
+  color: var(--run);
+}
+.agent-step.is-active .agent-step-title {
+  animation: breathe 1400ms ease-in-out infinite;
+}
+.agent-step.is-failed {
+  color: var(--error);
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-step.is-active .agent-step-title {
+    animation: none;
+  }
+}
+/* What it changed: one quiet line, opened only when asked. */
+.agent-changes {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--secondary);
+  text-align: left;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.agent-changes-word {
+  color: var(--quiet-word);
+}
+.agent-changes:hover .agent-changes-word,
+.agent-changes:focus-visible .agent-changes-word {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-changes:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agent-foot > .agent-foot-line + .agent-changed-line {
+  margin-top: 2px;
+}
+/* An opened job: its rounds, then a breath, then its writer's closing words, so they never read as the last reviewer's. */
+.job-msg > .job-body + .agent-said {
+  margin-top: 8px;
+}
+.agent-file-name {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: var(--secondary);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.agent-file-name .agent-path {
+  overflow: visible;
+  white-space: normal;
+  direction: ltr;
+  color: color-mix(in srgb, var(--text) 82%, var(--panel));
+}
+.agent-file-name:hover .agent-path,
+.agent-file-name:focus-visible .agent-path,
+.agent-file-name[aria-expanded='true'] .agent-path {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-by:focus-visible,
+.agent-session:focus-visible,
+.agent-rest:focus-visible,
+.agent-more-files:focus-visible,
+.agent-file-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agent-diff {
+  min-width: 0;
+}
+.agent-diff .soft {
+  font-size: 12px;
+}
+.agent-diff .diff {
+  margin: 2px 0 6px;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.agent-diff .diff .is-hunk {
+  color: var(--diff-hunk);
+}
+.agent-msg > .agent-body {
+  padding-left: 0;
+}
+/* Opened, what it said and changed hangs under its name, indented to it. */
+.agent-body {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0 6px 24px;
+  min-width: 0;
+}
+.agent-files {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+/* A file's name is what is read here, so it is the text's own colour; one kept without its text steps back to the secondary. */
+.agent-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 0;
+  text-align: left;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--secondary);
+}
+button.agent-file {
+  cursor: pointer;
+}
+/* The path, the word that says it opens, and at the far end what changed in it. */
+.agent-file > :last-child {
+  flex: none;
+  margin-left: auto;
+}
+.agent-file .agent-toggle {
+  margin-left: -4px;
+}
+.agent-file .agent-path {
+  color: color-mix(in srgb, var(--text) 82%, var(--panel));
+}
+.agent-file:hover .agent-path {
+  color: var(--text);
+}
+.agent-file.is-omitted,
+.agent-file.is-omitted:hover,
+.agent-file.is-omitted .agent-path {
+  color: var(--secondary);
+}
+.agent-file.is-omitted .agent-add,
+.agent-file.is-omitted .agent-del {
+  color: inherit;
+}
+/* The rest of a long list, one press away: it sits where the next file would. */
+.agent-all-files {
+  justify-self: start;
+  min-height: 36px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.agent-all-files:hover {
+  color: var(--text);
+}
+.agent-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.agent-body .diff {
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.agent-body .diff .is-hunk {
+  color: var(--diff-hunk);
+}
+/* The way into the whole session: words at the end of what was read, not a button and not pinned over it. */
+.agent-body > .actions {
+  margin-top: -6px;
+}
+.agent-body .actions .agent-open {
+  min-height: 36px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.agent-body .actions .agent-open:hover:not(:disabled) {
+  background: none;
+  text-decoration-color: currentColor;
+}
+.agent-more {
+  justify-self: start;
+  min-height: 36px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.agent-more:hover {
+  color: var(--text);
+}
+/* A project's main thread leads its rows: the same row, its name a little heavier; before it exists, one quiet line. */
+.main-row .row-text {
+  font-weight: 500;
+}
+.main-row.is-unstarted .row-text {
+  font-weight: 400;
+}
+/* Words alone, set where a row's title stands (past the mark's place), underlined so they read as something to press. */
+.main-row.is-unstarted {
+  padding-left: 40px;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.main-row.is-unstarted .row-text {
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+}
+.main-row.is-unstarted:hover {
+  color: var(--text);
+}
+
+/* A project's main thread is chrome-free: its head is the project's name, its lines are text, and the box to
+   write in is the only framed thing on the screen. What a head otherwise shows is in the menu the name opens. */
+.thread-head.is-plain .plus {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.thread-head.is-plain .thread-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.thread-head.is-plain .head-menu {
+  min-height: 36px;
+  cursor: pointer;
+  transition: background var(--hover);
+}
+.thread-head.is-plain .head-menu:hover,
+.thread-head.is-plain .head-menu[aria-expanded='true'] {
+  background: var(--raised);
+}
+/* After the name: that this is the project's main thread, in the secondary ink, and the word that says the line opens a menu. */
+.head-kind {
+  flex: none;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--secondary);
+}
+.thread-head.is-plain .head-menu {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.thread-head.is-plain .head-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.head-word {
+  flex: none;
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+}
+.thread-head.is-plain .head-menu:hover .head-word {
+  text-decoration-color: currentColor;
+}
+/* In an opened entry an agent's inline code is its words in another hand: the fill that made a name look like something to press is gone. */
+.thread.is-main .agent-body .prose code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+}
+.thread.is-main .agent-body .prose-code > code {
+  color: inherit;
+}
+.thread-head.is-plain .head-text .menu {
+  left: -8px;
+  right: auto;
+  top: calc(100% + 6px);
+  min-width: 220px;
+  font-size: 13px;
+}
+.menu button > kbd {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 12px;
+}
+.menu button:disabled {
+  color: var(--tertiary);
+}
+.menu > .project-mark {
+  display: block;
+  max-width: none;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: inherit;
+  line-height: inherit;
+  color: var(--text);
+}
+.menu > .project-mark:hover {
+  background: var(--surface-hover);
+}
+/* The person's own words: no bubble. They keep their side of the column and the text's full colour. */
+.thread.is-main .said.user {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-weight: 500;
+}
+.thread.is-main .said.user.source-evidence {
+  background-color: #e2c47e44;
+}
+/* one-thread:start */
+/* Merv's one thread: every project's conversation in one column, in the main thread's own lines. What is added here is
+   only what a thread across projects needs: the day and the project, each said once where it changes; a worker
+   starting; a stop; a question and its answer; a manager's note. Each is a line of text with a mark; none is a box,
+   and the accent is used once, for what waits on the person. */
+.one-day,
+.one-project {
+  margin: 6px 0 -6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--quiet-word);
+}
+.one-day + .one-project {
+  margin-top: -6px;
+}
+.one-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--secondary);
+}
+.one-line .mark,
+.one-line svg {
+  flex: none;
+}
+.one-line .row-age {
+  flex: none;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.one-line:is(:hover, :focus-within) .row-age {
+  opacity: 1;
+}
+.one-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  color: color-mix(in srgb, var(--text) 82%, var(--panel));
+  text-align: left;
+  cursor: pointer;
+}
+.one-name:disabled {
+  cursor: default;
+}
+.one-name:not(:disabled):hover,
+.one-name:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.one-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.one-word {
+  flex: none;
+}
+.one-stop .one-word {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.one-step {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--quiet-word);
+}
+.one-dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.one-stop-mark {
+  color: var(--tertiary);
+}
+.agent-by:disabled {
+  cursor: default;
+}
+/* A question: who asks, then its words in the text's own colour. Only while it waits is "asks you" in the accent. */
+.one-ask .one-asks {
+  color: var(--secondary);
+}
+.one-ask.is-waiting .one-asks,
+.one-ask.is-waiting .one-asks .state-mark {
+  color: var(--approval);
+}
+.one-ask-words {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  color: var(--text);
+}
+.one-options,
+.one-answer,
+.one-files {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--secondary);
+}
+.one-exact {
+  margin: 2px 0 4px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--secondary);
+}
+.one-now-ask {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+.one-now-project {
+  color: var(--quiet-word);
+}
+/* A manager's note under what it is about: quiet, unless it changes what the work means. */
+.one-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+.one-note.is-alone {
+  display: block;
+}
+.one-note.is-news {
+  color: var(--text);
+}
+.one-note-by {
+  margin-right: 8px;
+  color: var(--quiet-word);
+}
+.agent-file-name.is-plain {
+  cursor: default;
+}
+.agent-file-name.is-plain:hover .agent-path {
+  text-decoration: none;
+  color: color-mix(in srgb, var(--text) 82%, var(--panel));
+}
+/* The way back to what is earlier, and the thread before anything is in it: words, not controls. */
+.one-earlier {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.one-earlier:hover:not(:disabled),
+.one-earlier:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.one-empty {
+  margin: auto 0;
+  align-self: center;
+  max-width: 30ch;
+  text-align: center;
+  color: var(--secondary);
+}
+/* A name is never squeezed out of its own line. In a narrow column, when it was and the word for the fold step aside
+   for it: both wait under the pointer anyway, and the line itself is the press. */
+.thread.is-one .agent-by .agent-name {
+  min-width: 4ch;
+}
+/* The same in a project's main thread and in Merv's: both are narrow beside the board. "open session" stays a press
+   away under the pointer, and takes no room from the name until then. */
+.thread.is-main .lines {
+  container-type: inline-size;
+}
+@container (max-width: 520px) {
+  .agent-line :is(.agent-age, .agent-fold-word),
+  .one-line .row-age,
+  .job-body .agent-toggle {
+    display: none;
+  }
+  .agent-line:not(:hover, :focus-within) .agent-session {
+    display: none;
+  }
+}
+/* Folded (a phone, or a chat beside the board), what is live waits behind one plain word at the right, over the reply
+   box: "3 running". It stands outside Now's scroll, so it is always in reach; amber only when something needs the person. */
+.running-fold {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--column-pad) 2px;
+}
+.running-toggle {
+  min-height: 28px;
+  padding: 0;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.running-toggle:hover,
+.running-toggle:focus-visible {
+  color: var(--text);
+}
+.running-toggle.is-needs {
+  color: var(--approval);
+}
+:is(.thread-now, .agent-cards)[hidden] {
+  display: none;
+}
+/* A question's choices, where the person can answer with one press: plain words, the one pressed stays dark. */
+.one-options.is-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.one-option {
+  min-height: 32px;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--quiet-word);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.one-option:hover:not(:disabled),
+.one-option:focus-visible {
+  text-decoration-color: currentColor;
+}
+.one-option:disabled:not([aria-pressed='true']) {
+  color: var(--tertiary);
+}
+/* "‹  Merv": the plain head on the panel head's own line, after the way back, as a main thread's head stands there. */
+.head-start > .thread-head.is-plain {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 0 0 4px;
+}
+.thread-head.is-plain .head-still {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+}
+/* one-thread:end */
+/* What needs the person, over the reply box and in the reading column: who, "needs you" in the one accent,
+   the action on its code ground, Allow as the one button and the other answers as words. */
+.approval.is-plain {
+  margin: 0 28px 20px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  gap: 6px;
+}
+.approval-slot > .approval.is-plain {
+  margin: 0 var(--column-pad) 14px;
+}
+.approval.is-plain .approval-who {
+  font-size: 13px;
+  color: var(--text);
+  overflow: visible;
+}
+.approval.is-plain .approval-thread {
+  min-height: 36px;
+  color: var(--text);
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+}
+.approval.is-plain .approval-thread:hover {
+  text-decoration-color: currentColor;
+}
+/* What is asked is there to read, not to type in: its code ground hugs the words and has square corners, the words
+   start where the text above them starts, and a prompt sign says it is a command. */
+.approval.is-plain .approval-preview:not(.diff) {
+  justify-self: start;
+  max-width: calc(100% + 6px);
+  margin: 0 0 0 -6px;
+  padding: 3px 6px;
+  border-radius: 0;
+  color: var(--text);
+}
+.approval-prompt {
+  color: var(--quiet-word);
+  user-select: none;
+}
+/* The exact command, once: wrapped so all of it can be read, six lines of it, and the rest behind a word. A long line
+   breaks between its steps first. */
+.approval-exact {
+  display: grid;
+  justify-items: start;
+  gap: 0;
+  min-width: 0;
+}
+.approval.is-plain .approval-preview.is-wrapped {
+  max-height: 114px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval.is-plain .approval-preview.is-wrapped.is-all {
+  max-height: min(50vh, 480px);
+  overflow: auto;
+}
+.approval-step {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-all {
+  min-height: 28px;
+  padding: 0;
+  background: none;
+  color: var(--quiet-word);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+}
+.approval-all:hover {
+  background: none;
+  text-decoration-color: currentColor;
+}
+.approval-where {
+  flex: none;
+  color: var(--secondary);
+}
+.approval-needs {
+  flex: none;
+  color: var(--approval);
+  font-weight: 500;
+}
+/* What is asked, in a sentence: the words to read first, in the text's own ink. */
+.approval.is-plain .approval-ask {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  -webkit-line-clamp: 3;
+}
+.approval.is-plain .actions {
+  gap: 4px;
+}
+.approval.is-plain .actions button {
+  min-height: 36px;
+}
+.approval.is-plain .actions .primary {
+  margin-right: 8px;
+  padding: 0 16px;
+}
+.approval.is-plain .actions .quiet,
+.approval.is-plain .actions .plus > button {
+  min-width: 0;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--tertiary);
+  text-underline-offset: 3px;
+}
+.approval.is-plain .actions .quiet:hover:not(:disabled),
+.approval.is-plain .actions .plus > button:hover:not(:disabled) {
+  background: none;
+  text-decoration-color: currentColor;
+}
+/* The line under the box (model, access) is out of sight at rest: it shows under the pointer, at the keyboard's
+   focus, while something is being written, and whenever it says something other than what Settings starts with.
+   It is still there for a keyboard and a screen reader, and keeps its place, so nothing moves when it shows. */
+:is(.thread.is-main, .compose.is-main)
+  > .composer
+  .session-choices:not(.is-chosen)
+  > .choice-summary {
+  opacity: 0;
+  transition: opacity var(--hover);
+}
+:is(.thread.is-main, .compose.is-main) > .composer:hover .session-choices > .choice-summary,
+:is(.thread.is-main, .compose.is-main) > .composer .session-choices:focus-within > .choice-summary,
+:is(.thread.is-main, .compose.is-main)
+  > .composer:has(textarea:focus:not(:placeholder-shown))
+  .session-choices
+  > .choice-summary {
+  opacity: 1;
+}
+@media (hover: none) {
+  :is(.thread.is-main, .compose.is-main) > .composer .session-choices > .choice-summary {
+    opacity: 1;
+  }
+}
+/* Before the first word: one sentence under the name, and the other agent a word away. */
+.compose.is-main > .compose-main {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.agent-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--divider);
+}
+.agent-new input {
+  flex: 1 1 200px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.agent-new input::placeholder {
+  color: var(--tertiary);
+}
+.agent-new button[type='submit'] {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: var(--raised);
+  font-size: 12px;
+  color: var(--text);
+}
+.agent-new button[type='submit']:disabled {
+  color: var(--tertiary);
+}
+.agent-pick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.agent-pick:hover {
+  background: var(--raised);
+}
+.agent-new .error-line {
+  flex-basis: 100%;
+}
+
+/* Who answers is said in the box itself, so those words are read, not hinted: the secondary ink whole (at least 4.7:1 on the box in either theme). */
+:is(.thread.is-main, .compose.is-main) > .composer textarea::placeholder {
+  color: var(--secondary);
+  opacity: 1;
+}
+
+/* job-page:start */
+/* A job's own page: one scroll in the reading column under the panel's chat head, and a thin rail of chapter ticks
+   at the pane's right edge. Words and marks only: no boxes, no fills, amber only for "needs you". */
+.job-pane {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  container: job-pane / inline-size;
+  overflow: hidden;
+}
+.job-page {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  position: relative;
+  padding: 12px var(--column-pad) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  scroll-padding-top: 12px;
+}
+.job-brief-word,
+.job-foot-act,
+.job-file,
+.job-tick,
+.job-cell,
+.job-made,
+.job-work-word,
+.job-jump-word {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.job-accent {
+  color: var(--approval);
+}
+.job-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.job-heading {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--quiet-word);
+}
+.job-goal-line {
+  margin: 0;
+  line-height: 1.55;
+  color: var(--text);
+}
+.job-brief-word {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--quiet-word);
+}
+.job-brief-word:hover,
+.job-brief-word:focus-visible {
+  color: var(--text);
+}
+.job-brief {
+  color: color-mix(in srgb, var(--text) 88%, var(--panel));
+  line-height: 1.6;
+}
+.job-turns {
+  display: grid;
+  gap: 0;
+  margin: 2px 0 8px calc(1.6em + 36px);
+}
+.job-turns > .agent-card {
+  margin: 0;
+}
+/* The rounds at a glance: one line per round, its number, then each member's turn in its role's column. */
+.job-round-list {
+  display: grid;
+  grid-template-columns: 1.6em repeat(var(--job-cells, 2), minmax(0, 1fr));
+  column-gap: 36px;
+  align-items: baseline;
+}
+.job-round,
+.job-round-line,
+.job-round-head {
+  display: contents;
+}
+.job-round-role {
+  font-size: 12px;
+  color: var(--quiet-word);
+  line-height: 22px;
+  padding-left: 17px;
+}
+.job-round .job-turns {
+  grid-column: 1 / -1;
+}
+.job-round-n {
+  color: var(--quiet-word);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-right: 2px;
+}
+.job-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  text-align: left;
+  font-size: 13px;
+  line-height: 26px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+.job-cell > svg {
+  flex: none;
+  align-self: center;
+}
+.job-cell-did {
+  color: var(--secondary);
+}
+.job-cell-rest {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-cell-took {
+  color: var(--quiet-word);
+  font-size: 12px;
+}
+.job-cell:hover .job-cell-rest,
+.job-cell:focus-visible .job-cell-rest,
+.job-cell[aria-expanded='true'] .job-cell-rest {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-cell.is-working .job-cell-did {
+  color: var(--text);
+}
+/* What it made: one line of sums; its files open under it. */
+.job-made {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.job-made .job-sep {
+  margin-left: 0;
+}
+.job-made-by {
+  color: var(--secondary);
+}
+.job-fold-word {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--quiet-word);
+}
+.job-made:hover .job-fold-word,
+.job-made:focus-visible .job-fold-word {
+  color: var(--text);
+}
+.job-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.job-file {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+  font-size: 13px;
+  line-height: 22px;
+}
+.job-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.job-file:hover .job-path,
+.job-file:focus-visible .job-path {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-file-meta {
+  flex: none;
+  color: var(--quiet-word);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.job-group + .job-group {
+  margin-top: 8px;
+}
+.job-stream {
+  gap: 12px;
+}
+.job-chapter {
+  margin: 10px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--quiet-word);
+  scroll-margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.job-chapter::before,
+.job-chapter::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--divider);
+}
+.job-chapter.is-end {
+  color: var(--secondary);
+}
+.job-run {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.job-run > .said.user {
+  justify-self: end;
+}
+.job-who {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.job-work-word {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--quiet-word);
+}
+.job-work-word:hover,
+.job-work-word:focus-visible {
+  color: var(--text);
+}
+.job-no-final {
+  margin: 0;
+  font-size: 12px;
+}
+.job-cut {
+  font-size: 12px;
+}
+.job-foot {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+.job-foot-line {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 0;
+  font-size: 13px;
+}
+.job-foot-each {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.job-sep {
+  color: var(--quiet-word);
+  margin-left: 8px;
+}
+.job-foot-act {
+  color: var(--secondary);
+}
+.job-foot-act:hover,
+.job-foot-act:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-foot-act.is-first {
+  color: var(--text);
+}
+.job-foot-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.job-into {
+  color: var(--text);
+}
+.job-guard {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.job-loses {
+  color: var(--secondary);
+  font-size: 12px;
+}
+.job-fact {
+  color: var(--secondary);
+}
+.job-rail {
+  position: absolute;
+  top: 12px;
+  bottom: 16px;
+  right: 4px;
+  width: 14px;
+}
+/* A tick is easy to point at: a wider, taller press than the line it draws at the rail's right edge. */
+.job-tick {
+  position: absolute;
+  right: 0;
+  width: 26px;
+  height: 13px;
+  transform: translateY(-50%);
+}
+.job-tick::before {
+  content: '';
+  position: absolute;
+  right: 2px;
+  width: 8px;
+  top: 6px;
+  height: 1px;
+  background: var(--tertiary);
+  transition:
+    background var(--hover),
+    width var(--hover);
+}
+.job-tick:hover::before,
+.job-tick:focus-visible::before,
+.job-tick.is-current::before {
+  background: var(--text);
+  width: 11px;
+}
+/* A tick's label: under the pointer in full; where the pane has room, short beside every tick that does not crowd. */
+.job-tick-short,
+.job-tick-full {
+  display: none;
+  position: absolute;
+  right: 16px;
+  top: 0;
+  font-size: 10px;
+  line-height: 13px;
+  white-space: nowrap;
+  color: var(--quiet-word);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.job-tick:hover .job-tick-full,
+.job-tick:focus-visible .job-tick-full {
+  display: block;
+  color: var(--text);
+  background: var(--panel);
+  padding-left: 6px;
+  z-index: 1;
+}
+.job-tick:hover .job-tick-short,
+.job-tick:focus-visible .job-tick-short {
+  display: none;
+}
+.job-tick.is-current .job-tick-short {
+  color: var(--text);
+}
+/* The narrow pane's chapters: one line of short labels in the head, in place of the rail. */
+/* Narrow, the chapters stay in sight on one line at the top of the scroll. */
+.job-jump {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  background: var(--panel);
+  margin: -12px -8px 0;
+  padding: 6px 8px;
+  gap: 2px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.job-jump::-webkit-scrollbar {
+  display: none;
+}
+.job-jump-word {
+  flex: none;
+  color: var(--quiet-word);
+  line-height: 22px;
+}
+.job-jump-word:hover,
+.job-jump-word:focus-visible,
+.job-jump-word.is-current {
+  color: var(--text);
+}
+/* Room beside the rail: every tick that does not crowd the one above it carries its short label. */
+@container job-pane (min-width: 521px) {
+  .job-page {
+    padding-right: calc(var(--column-pad) + 24px);
+  }
+  .job-tick.is-named .job-tick-short {
+    display: block;
+  }
+}
+/* A narrow pane is a phone's: the page takes the whole width with the small side padding only, and the rail gives way
+   to the chapter line in the head. */
+@container job-pane (max-width: 520px) {
+  .job-page {
+    padding-inline: 16px;
+  }
+  .job-rail {
+    display: none;
+  }
+  .job-jump {
+    display: flex;
+  }
+  .job-chapter {
+    scroll-margin-top: 44px;
+  }
+}
+/* A narrow pane: the rounds keep both members side by side, the verb gives way when more follows it. */
+@container job-pane (max-width: 520px) {
+  .job-round-list {
+    column-gap: 12px;
+    grid-template-columns: 1.3em repeat(var(--job-cells, 2), minmax(0, 1fr));
+  }
+  .job-round-role {
+    padding-left: 16px;
+  }
+  .job-cell {
+    gap: 4px;
+  }
+  .job-cell-did.has-rest {
+    display: none;
+  }
+  .job-turns {
+    margin-left: 0;
+  }
+}
+.job-reading {
+  margin: 8px 0;
+}
+/* job-page:end */
+.agent-session.job-open {
+  margin-left: 4px;
+}
+/* A job that ended, in a thread: its mark, its name in all the room the line has, and "open job", always there. The name is
+   plain words, cut with an ellipsis only when it does not fit; the one press is the word at the end. */
+.job-row .agent-by {
+  flex: 1 1 auto;
+}
+.job-row > .job-open {
+  flex: none;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.job-row > .job-open:hover,
+.job-row > .job-open:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-row > .job-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Now's rows are one line each at every width: mark, name, state, then one quiet word that opens it ("open job",
+   "open session"). The name gives way with an ellipsis; how it stands and that word are never cut or wrapped. */
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.agent-row > .agent-head {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  margin-right: 0;
+  flex-wrap: nowrap;
+}
+.agent-row .agent-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-row .agent-state {
+  flex: none;
+  white-space: nowrap;
+}
+.agent-row .agent-head > :is(.mark, svg) {
+  flex: none;
+}
+.agent-link {
+  flex: none;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  white-space: nowrap;
+  font:
+    12px/18px -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    sans-serif;
+  color: var(--quiet-word);
+  cursor: pointer;
+}
+.agent-link:hover,
+.agent-link:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.agent-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Keep the row hover's side padding, without introducing a nested scroll area. */
+.now-rows {
+  min-width: 0;
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+.thread-now::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.thread-now .agent-head {
+  flex-wrap: nowrap;
+}
+.thread-now .agent-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-now .agent-state,
+.thread-now .agent-toggle {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* On a phone (the web's surfaces: Merv.app has no phone and keeps its popover) the same row is a finger's size, the
+   picker is words with a chevron, and it opens a sheet along the screen's foot: the whole width, large rows, the page
+   dimmed behind it; it closes on a choice or a tap outside it. */
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) .composer.has-choices {
+    padding: 6px 8px 6px 14px;
+  }
+  :is(.web-panel, .phone) .composer.has-choices > :is(.merv-voice, .attach, span:has(> .attach)) {
+    margin: 0 0 0 -8px;
+  }
+  /* Voice and the paperclip are a finger's size to see, not only to press: side by side, neither reaching over the other. */
+  :is(.web-panel, .phone) .composer.has-choices > .merv-voice ~ :is(.attach, span:has(> .attach)) {
+    margin-left: 0;
+  }
+  :is(.web-panel, .phone) .composer .merv-voice {
+    width: 44px;
+    height: 44px;
+  }
+  :is(.web-panel, .phone) .composer .merv-voice .board-orb-sphere {
+    width: 32px;
+    height: 32px;
+  }
+  :is(.web-panel, .phone) .composer .attach svg {
+    width: 22px;
+    height: 22px;
+  }
+  /* Folded, "N running" takes only its own word's room at the right: the chat runs on under it, in sight and pressable
+     to its left, and its last line ends above the word. Opened, it stands under what runs, as everywhere. */
+  :is(.web-panel, .phone) .thread-now:has(> .agent-cards[hidden]) + .running-fold {
+    position: relative;
+    z-index: 1;
+    height: 0;
+    padding: 0;
+    pointer-events: none;
+  }
+  :is(.web-panel, .phone)
+    .thread-now:has(> .agent-cards[hidden])
+    + .running-fold
+    > .running-toggle {
+    position: absolute;
+    right: var(--column-pad);
+    bottom: 0;
+    padding: 0 0 0 8px;
+    background: var(--panel);
+    pointer-events: auto;
+  }
+  :is(.web-panel, .phone) .thread:has(> .thread-now > .agent-cards[hidden]) .lines {
+    padding-bottom: 40px;
+  }
+  :is(.web-panel, .phone) .composer .session-choices .choice-summary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    height: 44px;
+    padding: 0 8px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--secondary);
+    opacity: 1;
+    background: none;
+  }
+  :is(.web-panel, .phone) .composer .session-choices .choice-summary::after {
+    content: '';
+    flex: none;
+    width: 10px;
+    height: 10px;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  :is(.web-panel, .phone) .composer .session-choices .choice-summary[aria-expanded='true'] {
+    color: var(--text);
+  }
+  /* Always in sight on a phone, where nothing waits for a hover (the desk's line shows under the pointer). */
+  :is(.web-panel, .phone)
+    :is(.thread, .compose)
+    > .composer.has-choices
+    .session-choices
+    > .choice-summary.choice-summary {
+    opacity: 1;
+  }
+  :is(.web-panel, .phone) .composer .session-choices .choice-summary:disabled::after {
+    display: none;
+  }
+  :is(.web-panel, .phone) .composer.has-choices .session-choices .choice-menu,
+  :is(.web-panel, .phone) .session-choices .choice-menu {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    width: auto;
+    max-height: min(80vh, 600px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 10px 8px max(14px, env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 16px 16px 0 0;
+    white-space: normal;
+    box-shadow:
+      0 -8px 28px var(--shadow-strong),
+      0 0 0 100vmax rgb(0 0 0 / 0.28);
+  }
+  :is(.web-panel, .phone) .session-choices .choice-models {
+    max-height: none;
+  }
+  :is(.web-panel, .phone) .session-choices .choice-models button {
+    min-height: 50px;
+    height: auto;
+    font-size: 15px;
+  }
+  :is(.web-panel, .phone) .session-choices :is(.choice-row, .choice-search) {
+    min-height: 52px;
+    height: auto;
+    font-size: 14px;
+  }
+  :is(.web-panel, .phone) .session-choices .choice-models .choice-more {
+    min-height: 44px;
+  }
+  :is(.web-panel, .phone) .session-choices .choice-row {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  :is(.web-panel, .phone) .session-choices .segment button {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 14px;
+    border-radius: 8px;
+  }
+  :is(.web-panel, .phone) .session-choices .dial button {
+    width: 30px;
+  }
+  /* Its small marks keep their size; what a finger can press around them is a whole row tall. */
+  :is(.web-panel, .phone) .session-choices :is(.segment button, .dial button) {
+    position: relative;
+  }
+  :is(.web-panel, .phone) .session-choices :is(.segment button, .dial button)::after {
+    content: '';
+    position: absolute;
+    inset: -9px 0;
+  }
+  :is(.web-panel, .phone) .session-choices .choice-search input {
+    font-size: 16px;
+  }
+  /* The box grows with what is written up to two fifths of what is seen over the keyboard (about eight lines), then
+     scrolls inside, the line being written in view (composer.tsx fitBox). */
+  :is(.web-panel, .phone) .composer textarea {
+    max-height: min(calc(var(--seen-height, 100dvh) * 0.4), 198px);
+  }
+}

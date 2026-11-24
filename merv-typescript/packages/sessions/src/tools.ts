@@ -216,10 +216,15 @@ export const sessionsToolsPlugin = {
       {
         name: 'session.ask_owner',
         description:
-          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.',
+          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; where the answer is one of a few, give them as options (2–4 short worded answers, such as "Use the larger GPU"), which the owner presses as buttons. A visit that keeps no conversation cannot ask.',
         tier: 'worker' as const,
-        inputSchema: z.object({ question: z.string().min(1).max(4000) }).strict(),
-        handler: async (caller: Caller, input: { question: string }) => ({
+        inputSchema: z
+          .object({
+            question: z.string().min(1).max(4000),
+            options: z.array(z.string().min(1).max(80)).min(2).max(4).optional(),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: { question: string; options?: string[] }) => ({
           question: await sessions.messaging.ask(caller, input),
           ended: true,
           next: 'Your visit has ended. Stop now: the owner’s answer reaches you when the work comes back.',

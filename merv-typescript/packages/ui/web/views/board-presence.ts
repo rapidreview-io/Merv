@@ -5,6 +5,7 @@
  * is the page's own view state, so a cursor is never saved, changes no version and enters no undo.
  * It also keeps who last drew, for the line that says so (board-talk.tsx).
  */
+import { speech } from '../speech';
 import { CaptureUpdateAction } from '@excalidraw/excalidraw';
 import type { Collaborator, ExcalidrawImperativeAPI, SocketId } from '@excalidraw/excalidraw/types';
 import type { BoardLooking } from '@merv/board/models';
@@ -30,12 +31,16 @@ interface Cursor extends BoardLooking {
   y: number;
   toX: number;
   toY: number;
-  /** When it was last heard of, on this page's clock. */
+  /** When the page heard the look, or last heard its pen. */
   heardAt: number;
 }
 
+/** Who hears an agent's opening look at a hand-off: the snapshot it just took. */
+export const agentLooks = new Set<(where: BoardLooking) => void>();
+
 export class BoardPresence {
   private cursors = new Map<string, Cursor>();
+  private moments = new Map<string, number>();
   private ticking?: ReturnType<typeof setInterval>;
   private shown = '';
   private drawn = { at: 0, name: '' };
@@ -72,19 +77,29 @@ export class BoardPresence {
   }
   /** What the page was just told of where agents are. */
   heard(looking: BoardLooking[]) {
+    const now = Date.now();
+    for (const [moment, at] of this.moments) if (now - at > GONE_MS) this.moments.delete(moment);
     for (const where of looking) {
+      // The app's own hand on the board is the person's: only agents are named.
+      if (/^merv\.?app$/i.test(where.name)) continue;
       const key = `${where.actor}:${where.name}`;
+      const moment = `${key}:${where.at}`;
+      if ((where.snapshot && !where.drew && now - where.at > LOOK_MS) || this.moments.has(moment))
+        continue;
+      this.moments.set(moment, now);
       const held = this.cursors.get(key);
-      if (held?.at === where.at) continue;
+      if (where.snapshot && Date.now() - where.at < LOOK_MS)
+        for (const hear of agentLooks) hear(where);
       const toX = where.region.x + where.region.width / 2;
       const toY = where.region.y + where.region.height / 2;
       this.cursors.set(key, {
         ...where,
+        name: where.name === 'Pi' ? speech.pi : where.name,
         toX,
         toY,
         x: held?.x ?? toX,
         y: held?.y ?? toY,
-        heardAt: Date.now(),
+        heardAt: now,
       });
     }
     this.ticking ??= setInterval(this.tick, TICK_MS);
@@ -109,7 +124,8 @@ export class BoardPresence {
     const now = Date.now();
     const shown = new Map<SocketId, Collaborator>();
     for (const [key, cursor] of this.cursors) {
-      if (now - cursor.heardAt > GONE_MS) {
+      // One that only took its snapshot goes with the look; one that drew or read stays a while.
+      if (now - cursor.heardAt > (cursor.snapshot && !cursor.drew ? LOOK_MS : GONE_MS)) {
         this.cursors.delete(key);
         continue;
       }
@@ -146,5 +162,6 @@ export class BoardPresence {
     clearInterval(this.ticking);
     this.ticking = undefined;
     this.cursors.clear();
+    this.moments.clear();
   }
 }

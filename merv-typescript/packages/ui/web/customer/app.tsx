@@ -4,7 +4,7 @@ import type { createClient } from '@supabase/supabase-js';
 import { safely } from '../api';
 import { Records } from '../navigation';
 import { Speak, Transcript } from '../views/pi';
-import { Floating } from '../views/pi-dock';
+import { Floating } from './floating';
 import { useVoice, type Voice } from '../views/pi-voice';
 import { useConversation, type Conversation } from '../views/pi-conversation';
 import { currentCredentials, customerRequest, requestOf } from './api';

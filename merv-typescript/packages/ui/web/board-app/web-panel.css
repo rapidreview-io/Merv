@@ -1,0 +1,1288 @@
+@import '../panel/theme.css';
+@import '../panel/panel.css';
+@import '../panel/column.css';
+@import '../panel/choices.css';
+@import '../panel/everyday.css';
+
+/* The panel's colours and measures are Merv.app's own (theme.css), scoped to these two web surfaces
+   since this page's :root is the board's; here, only the element defaults that go with them. */
+.web-panel,
+.phone {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  color: var(--text);
+  color-scheme: dark;
+  font:
+    14px/21px 'Geist Sans',
+    -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+:where(.web-panel, .phone),
+:where(.web-panel, .phone) * {
+  box-sizing: border-box;
+}
+:where(.web-panel, .phone) :focus-visible {
+  outline: 2px solid #5f85d6;
+  outline-offset: 2px;
+}
+
+.web-panel {
+  /* Flush with the window's right edge, top to bottom: the board ends at one hairline, nothing floats.
+     `--edge-in` keeps the head and the mode bar on the row of the closed button (14px from the corner). */
+  --edge-in: 8px;
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 100vw;
+  padding-top: var(--edge-in);
+  box-shadow: -1px 0 0 var(--hairline);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(calc(100% + 16px));
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms cubic-bezier(0.33, 1, 0.68, 1),
+    visibility 220ms;
+}
+.web-panel.is-open {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  visibility: visible;
+  transition-property: opacity, transform;
+}
+.web-panel > .island {
+  position: absolute;
+  z-index: 4;
+  top: calc(6px + var(--edge-in));
+  right: calc(6px + var(--edge-in));
+  background: none;
+  box-shadow: none;
+}
+/* Reserve the mode toolbar's space, as the native panel does. Otherwise it covers New session. */
+@media not ((max-width: 730px) or ((max-height: 500px) and (pointer: coarse))) {
+  .web-panel .chats .head {
+    padding-right: var(--head-right, 153px);
+  }
+}
+/* The one button: top right beside the toolbar's row; on a phone, in the bottom bar where undo was. */
+.web-open {
+  position: fixed;
+  z-index: 31;
+  top: 14px;
+  right: 14px;
+  width: 38.5px;
+  height: 38.5px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: pointer;
+  background: var(--island-bg-color, var(--bg-elev));
+  box-shadow: var(--shadow-island, 0 0 0 1px #ffffff08, 0 2px 6px #0004);
+}
+.web-open:hover {
+  color: var(--text);
+}
+.web-open:focus-visible {
+  outline: 2px solid #5f85d6;
+  outline-offset: 2px;
+}
+.web-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #3456a4;
+  color: #fff;
+  font:
+    600 9px/13px -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    sans-serif;
+}
+.web-badge.is-waiting {
+  background: #f2c94c;
+  color: #171717;
+}
+/* The chats button's dot: Merv's light ink on the dark board, its deeper blue on the light one. */
+.web-open-dot {
+  stroke: #8aa6e6;
+}
+html[data-theme='light'] .web-open-dot {
+  stroke: #2f5bd3;
+}
+
+:is(.web-panel, .phone) {
+  .chats {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  /* A job's page fills the panel under its head, so its own scroll (.job-page) is the one that moves. */
+  .web-job {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .head {
+    flex: none;
+    min-height: 51px;
+    padding: 6px 14px;
+  }
+  .connection-note {
+    flex: none;
+    margin: 0;
+    padding: 0 16px 8px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+  .connection-note button {
+    margin-left: 6px;
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .row {
+    flex-direction: row;
+    border-top: 0;
+  }
+  .row.is-past .mark path {
+    fill: currentColor;
+  }
+  .thread-title {
+    margin: 0;
+    line-height: 21px;
+  }
+  /* The page has a .status of its own, in capitals: here it is the panel's quiet word. */
+  .status {
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .stop {
+    margin: 0;
+  }
+  .lines {
+    min-height: 0;
+  }
+  .lines > * {
+    flex-shrink: 0;
+  }
+  .chat-error {
+    margin: 0 16px 8px;
+    color: var(--muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .approval {
+    flex: none;
+    max-height: 40%;
+    overflow-y: auto;
+  }
+  .composer {
+    flex: none;
+    margin-bottom: 12px;
+  }
+  .composer textarea {
+    min-width: 0;
+  }
+  .web-compose-new > textarea {
+    flex-basis: 100%;
+    order: 1;
+  }
+  .compose-picker {
+    order: 2;
+    position: relative;
+    min-width: 0;
+    max-width: calc(100% - 36px);
+  }
+  .compose-who {
+    height: 28px;
+    padding: 0 6px;
+    gap: 6px;
+    border-radius: 7px;
+    font-size: 12px;
+    max-width: 100%;
+  }
+  .compose-who > span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  button.compose-who:hover {
+    background: var(--surface-hover, #2e3135);
+    color: var(--text);
+  }
+  .menu {
+    max-width: min(350px, calc(100vw - 64px));
+    max-height: min(50dvh, 360px);
+    overflow-y: auto;
+  }
+  .menu button {
+    text-align: left;
+  }
+  .menu-group + .menu-group {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--divider);
+  }
+  .menu-check {
+    margin-left: auto;
+    color: var(--accent);
+  }
+  .menu-check:first-child {
+    margin-left: 0;
+    flex: none;
+    width: 16px;
+  }
+  .head > .head-start:only-child {
+    margin-right: auto;
+  }
+  .start-missing {
+    flex: none;
+    margin: 0 var(--pad) 12px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: var(--raised);
+    color: var(--secondary);
+    font-size: 13px;
+  }
+  .web-you {
+    flex: 1;
+    min-height: 0;
+  }
+}
+.web-panel .head {
+  padding-right: 120px;
+}
+/* Browsing, the panel is as wide as a page needs, and the board keeps half the window. */
+.web-panel.is-browsing {
+  width: min(760px, 50vw);
+}
+.web-browser {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.web-browser-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px 8px;
+}
+.web-browser-bar :is(button, a) {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.web-browser-bar :is(button, a):hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
+}
+.web-browser-bar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.web-browser-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin: 0 4px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.web-browser iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+.web-browser iframe.is-in {
+  opacity: 1;
+}
+.web-browser-note {
+  flex: none;
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+.web-browser-note a {
+  color: var(--secondary);
+}
+/* Settings, as Merv.app lists them: rows on the panel's ground, one of them leading a level in. */
+.web-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 8px var(--pad);
+}
+/* Settings as plain rows on the panel's ground: no cards, no fills; a row that leads somewhere has its chevron. */
+.web-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--secondary);
+  font: inherit;
+  text-align: left;
+}
+.web-settings > .credits {
+  padding: 8px 0;
+  border-radius: 0;
+  background: none;
+}
+.web-setting > svg {
+  flex: none;
+}
+.web-setting > span {
+  flex: 1;
+  color: var(--text);
+}
+.web-setting > small {
+  flex: none;
+  font-size: 12px;
+}
+.web-setting.is-go {
+  cursor: pointer;
+}
+.web-setting.is-go:hover > span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.web-settings-note {
+  margin: 0 2px;
+  color: var(--tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.web-settings-note a {
+  color: var(--secondary);
+}
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  .web-open {
+    top: auto;
+    bottom: var(--phone-foot, 14px);
+    right: 14px;
+  }
+}
+@media (width < 640px), (max-height: 500px) and (pointer: coarse) {
+  .web-panel {
+    --edge-in: 0px;
+    inset: 0;
+    width: 100vw;
+    max-width: none;
+    box-shadow: none;
+  }
+  /* Fitted to what is seen: with the keyboard up, the reply box stands just over it. */
+  .web-panel.is-open {
+    top: var(--seen-top, 0px);
+    bottom: auto;
+    height: var(--seen-height, 100dvh);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .web-panel {
+    transition: none;
+  }
+}
+/* Touch: nothing that waits for a hover. */
+@media (hover: none) {
+  :is(.web-panel, .phone) .prose-copy-message {
+    display: none;
+  }
+}
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) .persona-head > button {
+    opacity: 1;
+  }
+  :is(.web-panel, .phone) .persona-stage {
+    height: 84px;
+  }
+  :is(.web-panel, .phone) .persona-form {
+    height: 70px;
+  }
+}
+
+/* Merv's own chat (talk.tsx Conversation) in the sessions' skin: one way a chat looks on the web. It is
+   the page's own component, so it reads the page's Sand 1 and 3 where the panel's names are not set (dark). */
+html:not(.in-app) .board-talk-pane {
+  background: var(--panel, var(--bg));
+  color: var(--text);
+  border-left: 0;
+  box-shadow: 0 0 0 1px var(--hairline, #ffffff0a);
+  font:
+    14px/21px -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    sans-serif;
+  .pi-messages {
+    padding: 8px 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .pi-speaker {
+    display: none;
+  }
+  .pi-message {
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+  }
+  .pi-message--assistant {
+    color: color-mix(in srgb, var(--text) 88%, var(--panel, var(--bg)));
+    line-height: 1.6;
+  }
+  .pi-message--user {
+    align-self: flex-end;
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: 14px 14px 4px 14px;
+    background: var(--raised, var(--bg-soft));
+    line-height: 1.55;
+  }
+  .pi-compose {
+    margin: 0 24px 12px;
+    padding: 10px 10px 8px 14px;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--raised, var(--bg-soft));
+    border: 0;
+    border-radius: 16px;
+  }
+  .pi-compose textarea {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    resize: none;
+    color: inherit;
+    font: 15px/22px inherit;
+  }
+  .pi-compose-actions {
+    flex: none;
+    align-self: flex-end;
+  }
+  .pi-compose .btn--primary {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    font-size: 0;
+    background: center / contain no-repeat
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3E%3Ccircle cx='15' cy='15' r='15' fill='%233456a4'/%3E%3Cpath d='M15 21V9m-5 5 5-5 5 5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  .pi-compose .btn--primary:disabled {
+    opacity: 0.45;
+  }
+}
+/* On a phone the panel's controls sit at the foot, where the button that opened it was: back or close
+   at the right, in its place, and the rest at the left. */
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) .head {
+    order: 99;
+    flex-direction: row-reverse;
+    padding: 6px 18px max(14px, env(safe-area-inset-bottom));
+  }
+  :is(.web-panel, .phone) .head > .head-start:only-child {
+    margin-right: 0;
+    margin-left: auto;
+  }
+  :is(.web-panel, .phone) .connection-note {
+    order: 98;
+  }
+  .web-panel > .island {
+    top: auto;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    left: 14px;
+    right: auto;
+  }
+  .web-panel .head {
+    padding-left: 124px;
+  }
+  html:not(.in-app) .board-talk-pane .pi-messages {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  html:not(.in-app) .board-talk-pane .pi-compose {
+    margin-left: 12px;
+    margin-right: 12px;
+  }
+}
+
+:is(.web-panel, .phone) {
+  .attach {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .attach input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+}
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) {
+    --column-pad: 16px;
+    --box-pad: 12px;
+    .thread-where,
+    .prose-action {
+      display: none;
+    }
+    .row-age {
+      white-space: nowrap;
+    }
+  }
+  .web-panel .head {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  /* Every chat keeps its head at the top on a phone, "‹ Merv", "‹ merv-desktop · main thread", "‹ ✳ Terms review",
+     so back is where a chat's back always is and nothing stands under the reply box. */
+  :is(.web-panel, .phone) .head:is(.is-merv, .is-chat, .is-top) {
+    order: 0;
+    flex-direction: row;
+    padding: max(4px, env(safe-area-inset-top)) 12px 0 4px;
+  }
+  :is(.web-panel, .phone) .head:is(.is-merv, .is-chat, .is-top) > .head-start {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+  }
+  :is(.web-panel, .phone) .head.is-chat {
+    flex: none;
+    min-height: 51px;
+  }
+  :is(.web-panel, .phone) .head.is-chat .thread-head {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0 0 0 4px;
+    border: 0;
+  }
+  /* The model's line is inside the box on a phone (panel.css), so every reply box is the screen's last thing, over its edge. */
+  :is(.web-panel, .phone) .thread > .composer,
+  :is(.web-panel, .phone) .thread > .composer.has-choices,
+  :is(.web-panel, .phone) .head.is-merv + .thread.is-one > .composer {
+    margin-bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px));
+  }
+}
+
+/* With no Mac linked: the one way to get one. */
+.get-mac {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: var(--accent-fill, #3456a4);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 14px;
+}
+.get-mac:hover {
+  background: color-mix(in srgb, var(--accent-fill, #3456a4) 85%, white);
+}
+/* A project's name folds its sessions away; folded, it keeps its name and whatever needs the person. */
+:is(.web-panel, .phone) {
+  .folder-rows {
+    display: flex;
+    flex-direction: column;
+  }
+  .folder-rows[hidden] {
+    display: none;
+  }
+  .folder-rows > .row {
+    margin-left: 12px;
+    width: calc(100% - 12px);
+  }
+}
+/* Touch: every row and project name is a whole, finger-sized target, with room between them. */
+@media (max-width: 730px), (pointer: coarse) {
+  :is(.web-panel, .phone) {
+    .folders {
+      gap: 8px;
+    }
+    .folder-toggle {
+      min-height: 48px;
+      padding: 12px 8px 4px;
+    }
+    .folder-rows {
+      gap: 4px;
+    }
+    .folders .row {
+      height: auto;
+      min-height: 52px;
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.web-panel, .phone) .folder-chevron {
+    transition: none;
+  }
+}
+
+/* The chat's stage, as Merv.app's Chat first (⌘\): the chat has the window, flat on its ground. At its left, as in the
+   app, the board lies small and live over the top (the page's own canvas: board-app.css), its controls overlaid at bottom left,
+   and the project the person is in stands under it, drawn from its card. This column is there whatever the chat shows:
+   Merv's thread, the list of projects, or a session. One pane is read in a column centred on the room that is left.
+   The measures are Merv.app's (panel-size.ts STAGE and boardCard): a column of 26% of the window between 360 and 480,
+   and a board nearly square, never more than half the height under it. */
+html.chat-stage,
+.web-panel.is-stage {
+  /* `--stage-kept`: the width the person dragged the column to (web-panel.tsx), within what leaves the chat its room. */
+  --stage-left: var(--stage-kept, clamp(360px, 26vw, 480px));
+  --card-top: 0px;
+  --card-height: max(
+    240px,
+    min(calc((var(--stage-left) - 24px) * 1.1), calc((100vh - var(--card-top) - 12px) * 0.5))
+  );
+}
+/* Every chat on the stage is read in the same column, a project's main thread and Merv's own alike: Merv.app's measure. */
+.web-panel.is-stage {
+  --edge-in: 0px;
+  inset: 0;
+  width: auto;
+  max-width: none;
+  box-shadow: none;
+  transform: none;
+  padding-left: var(--stage-left);
+  --column-pad: max(56px, calc((100% - 880px) / 2));
+  --box-pad: max(48px, calc((100% - 896px) / 2));
+}
+/* In the dark the board's ground (#121212, white paper through Excalidraw's dark filter) is a shade off the panel's:
+   on the stage the panel takes the board's, so the small board has no edge to see. */
+html.chat-stage:not([data-theme='light']) .web-panel.is-stage {
+  --panel: #121212;
+}
+/* A chat's name stands on the head's own line, at the column's edge, as Merv.app raises it: a session's, a main
+   thread's and Merv's in the same place. Presses fall through it to the row beneath. */
+@media (min-width: 901px) {
+  .web-panel.is-stage:not(.is-sideways) {
+    --island-room: 196px;
+  }
+  .web-panel.is-stage:not(.is-sideways) .head.is-merv {
+    position: relative;
+  }
+  .web-panel.is-stage:not(.is-sideways) .head.is-merv > .head-start > .thread-head.is-plain {
+    position: absolute;
+    inset: 6px 0 auto 0;
+    min-height: 39px;
+    margin: 0;
+    padding: 0 max(var(--column-pad), var(--island-room)) 0 var(--column-pad);
+    pointer-events: none;
+  }
+}
+/* A narrow stage (a tablet held upright) has no room on the head's line beside the mode bar: the name keeps its own. */
+@media (max-width: 900px) {
+  .web-panel.is-stage:not(.is-sideways) .head.is-merv > .head-start > .thread-head.is-plain {
+    margin-left: 0;
+  }
+}
+/* The column's edge is its grip: a line only under the pointer or while it is dragged. */
+.web-panel .stage-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.web-panel .stage-grip::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--divider);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.web-panel .stage-grip:is(:hover, :focus-visible, .is-dragging)::after {
+  opacity: 1;
+}
+.web-panel .stage-grip:focus-visible {
+  outline: none;
+}
+.web-panel.is-stage .head-stage,
+.web-panel.is-stage .head-agents {
+  display: none;
+}
+.web-panel .stage-side {
+  position: absolute;
+  z-index: 2;
+  inset: 0 auto 0 0;
+  width: var(--stage-left);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--card-top) + var(--card-height)) 12px 8px;
+}
+.web-panel .stage-side > .folders {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.web-panel .stage-list .folder-rows > .row {
+  margin-left: 0;
+  width: 100%;
+}
+/* An away Mac: the project is how it last stood, said once and quietly after its name. */
+.folder-seen {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--tertiary);
+  white-space: nowrap;
+}
+/* Away, nothing moves: a spinner stands still in its place, since the card is how things last stood. */
+.web-panel .one-list.is-away .spin {
+  animation: none;
+}
+.web-panel.is-stage .chats > .connection-note {
+  padding-inline: var(--column-pad);
+}
+/* Beside Merv's thread's back, where a session's head has it. */
+.web-panel .web-stage-float {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  left: 52px;
+  display: flex;
+  align-items: center;
+  min-height: 39px;
+}
+/* Merv's head stands after the way back and "Chat first", on the same line. */
+.web-panel:not(.is-stage):has(.web-stage-float) .head-start > .thread-head.is-plain {
+  margin-left: 40px;
+}
+
+/* One group per project, led by its main thread, with room between projects. */
+:is(.web-panel, .phone) .project-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 12px;
+}
+:is(.web-panel, .phone) .project-list > * {
+  flex: none;
+}
+:is(.web-panel, .phone) .project-list .folder-head {
+  padding: 0 8px 4px var(--edge);
+}
+:is(.web-panel, .phone) .project-list .folder-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.web-panel, .phone) .project-list .folder-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+:is(.web-panel, .phone) .project-list .folder-rows > .row,
+:is(.web-panel, .phone) .project-list .main-row {
+  margin-left: 0;
+  width: 100%;
+}
+:is(.web-panel, .phone) .project-list .folders {
+  flex: none;
+  overflow: visible;
+  margin: 0;
+  padding: 0 8px;
+}
+:is(.web-panel, .phone) .project-list > .other-chats {
+  margin-inline: 8px;
+}
+/* With the window to itself the list is read in the same centred column a chat is. */
+.web-panel.is-stage .project-list,
+.web-panel.is-stage .chats > .body > .merv-row {
+  padding-inline: calc(var(--column-pad) - 16px);
+}
+
+/* Touch, on a phone or a tablet: everything a finger presses is finger-sized, nothing waits for a hover, and Now keeps
+   to what matters. A narrow window gets the same sizes, as it always has. */
+@media (max-width: 730px), (pointer: coarse) {
+  :is(.web-panel, .phone) {
+    .composer .attach,
+    .composer .send,
+    .composer .merv-voice,
+    .icon,
+    .actions button,
+    .head-agent,
+    summary {
+      min-width: 44px;
+      min-height: 44px;
+    }
+    .composer textarea,
+    .actions input {
+      font-size: 16px;
+    }
+    /* Now: the whole line is the press, so its "show …" word gives its room to the name and a chevron says it opens. */
+    .thread-now .agent-head {
+      min-height: 44px;
+    }
+    .thread-now .agent-toggle {
+      font-size: 0;
+      width: 10px;
+      height: 10px;
+      margin-left: auto;
+      flex: none;
+      background: currentColor;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 1.5 6.5 5 3 8.5' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3 1.5 6.5 5 3 8.5' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    }
+    .thread-now .agent-card.is-open > .agent-head .agent-toggle {
+      transform: rotate(90deg);
+    }
+    .running-toggle {
+      min-height: 44px;
+    }
+    /* A choice sends at once: each is a whole finger wide, with room between, its word where it was. */
+    .one-options.is-choices {
+      gap: 4px 8px;
+      margin-left: -8px;
+    }
+    .one-option {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0 8px;
+    }
+    /* Under the projects, what the connection says stands apart from the last row. */
+    .chats > .connection-note {
+      margin-top: 12px;
+    }
+    .one-earlier {
+      min-height: 44px;
+    }
+    /* Answering on the phone: each choice and each way out is a whole press. */
+    .approval .actions button,
+    .approval .actions .quiet,
+    .approval button.quiet-word,
+    .approval label {
+      min-height: 44px;
+    }
+    .approval .actions button.quiet {
+      min-width: 44px;
+    }
+    .approval :is(input, textarea) {
+      min-height: 44px;
+      font-size: 16px;
+    }
+    /* A question asked in its session, as in Merv's thread: its choices are words, each a finger's press, its free
+       answer a line to write on; Send is the one filled button. */
+    .approval.is-plain .question-options {
+      gap: 4px 6px;
+      margin-left: -10px;
+    }
+    .approval.is-plain .question-options button {
+      min-width: 44px;
+      padding: 0 10px;
+      border-radius: 0;
+      background: none;
+      color: var(--text);
+      text-decoration: underline;
+      text-decoration-color: var(--tertiary);
+      text-underline-offset: 3px;
+    }
+    .approval.is-plain .question-options button[aria-pressed='true'] {
+      color: var(--approval);
+      text-decoration-color: currentColor;
+    }
+    .approval.is-plain .question-answer input {
+      border: 0;
+      border-bottom: 1px solid var(--divider);
+      border-radius: 0;
+      background: none;
+      padding-inline: 0;
+    }
+    /* Every button in a conversation and in Now is a whole press, its own: as tall as a finger, and an icon as wide;
+       the words keep their look, the line gives them room. No hit area reaches over another's. */
+    :is(.lines, .thread-now) button {
+      min-height: 44px;
+    }
+    :is(.lines, .thread-now)
+      button:is(
+        .agent-by,
+        .agent-rest,
+        .work-act,
+        .agent-file,
+        .agent-changes,
+        .agent-open,
+        .one-earlier,
+        .quiet-word
+      ) {
+      display: inline-flex;
+      align-items: center;
+    }
+    :is(.lines, .thread-now) button:is(.btn-icon, .prose-copy, .icon) {
+      min-width: 44px;
+    }
+    .agent-body .actions :is(.agent-open, button),
+    .approval .actions button {
+      min-height: 44px;
+    }
+    /* The reply box's field is a whole press too, not just the line of words in it. */
+    .composer textarea {
+      min-height: 44px;
+      padding-block: 11px;
+    }
+    /* The profile: its picture scrolls away with it, and every pencil, switch and slider is a whole press. */
+    .persona-stage {
+      position: relative;
+      top: 0;
+      margin-top: 0;
+      background: none;
+    }
+    .persona-head > button {
+      width: 44px;
+      height: 44px;
+      margin: -10px -10px -10px -6px;
+    }
+    .persona-tools > button {
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-grid;
+      place-items: center;
+    }
+    .persona-dial input {
+      height: 44px;
+    }
+    .persona-dial input::-webkit-slider-thumb {
+      width: 20px;
+      height: 20px;
+      margin-top: -9px;
+    }
+    .persona-dial input::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+    }
+    .persona-tiles > button {
+      min-height: 44px;
+    }
+  }
+  :is(.web-panel, .phone) .project-list .folder-rows > .row,
+  :is(.web-panel, .phone) .project-list .main-row,
+  .web-panel .stage-side .main-row {
+    min-height: 48px;
+  }
+  .web-panel .merv-row {
+    min-height: 52px;
+    margin-bottom: 4px;
+  }
+  .web-panel .folder:has(.folder-back) {
+    --edge: 44px;
+  }
+  .web-panel .folder .folder-back {
+    left: -44px;
+    min-width: 44px;
+    min-height: 44px;
+    margin-block: -12px;
+  }
+  /* Two lines a row: the name has the row's width, how it stands is said under it, and its controls stand at its end. */
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) .col-row {
+    grid-template-columns: var(--col-mark) minmax(0, 1fr);
+    grid-template-areas: 'mark title' 'mark state';
+    padding-block: 6px;
+  }
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) .col-row > .col-mark {
+    grid-area: mark;
+  }
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) .col-row > .col-title {
+    grid-area: title;
+  }
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) .col-row > .col-state {
+    grid-area: state;
+    height: auto;
+  }
+  :is(.web-panel, .phone)
+    :is(.project-list, .stage-side)
+    .col-row
+    > .col-state:not(:has(.col-words:not(:empty))) {
+    display: none;
+  }
+  :is(.web-panel, .phone)
+    :is(.project-list, .stage-side)
+    .col-item:is(:hover, :focus-within)
+    .col-words {
+    visibility: visible;
+  }
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) .col-time {
+    display: none;
+  }
+  :is(.web-panel, .phone) :is(.project-list, .stage-side) {
+    .col-row {
+      height: auto;
+      min-height: 44px;
+    }
+    .col-fold {
+      min-height: 44px;
+    }
+    /* Later's Cancel and Start stand in the row, not under a hover a finger never makes. */
+    .col-item {
+      display: flex;
+      align-items: center;
+    }
+    .col-item > .col-row {
+      flex: 1;
+      min-width: 0;
+    }
+    .col-item > .col-controls {
+      position: static;
+      opacity: 1;
+      pointer-events: auto;
+      height: 44px;
+      gap: 12px;
+      padding-right: 8px;
+    }
+    .col-control {
+      min-width: 44px;
+      height: 44px;
+    }
+    .col-error {
+      margin-top: 10px;
+    }
+    /* Todos stay one line, mark, title and meta, as on the Mac; a long press, not a lasting row of buttons, shows the actions. */
+    .todo-list .col-row {
+      grid-template-columns: var(--col-mark) minmax(0, 1fr) auto;
+      grid-template-areas: 'mark title state';
+      padding-block: 0;
+    }
+    .todo-list .col-row[aria-expanded='true'] {
+      padding-block: 12px;
+    }
+    .todo-list .col-item > .col-controls {
+      position: absolute;
+      top: 0;
+      right: 0;
+      height: 100%;
+      gap: 4px;
+      opacity: 0;
+      pointer-events: none;
+      background: var(--panel, var(--bg));
+    }
+    .todo-list .col-item > .todo-row.is-held ~ .col-controls {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .todo-act {
+      min-height: 44px;
+    }
+  }
+}
+/* A tablet's mode bar keeps finger-sized buttons. */
+@media (pointer: coarse) and (min-width: 731px) and (min-height: 501px) {
+  .web-panel > .island button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .web-panel.is-stage:not(.is-sideways) {
+    --island-room: 236px;
+  }
+  .web-panel.is-stage .head {
+    min-height: 56px;
+  }
+}
+/* A phone: its list has the screen's width, so nothing a person may act on is cut short. */
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  /* Nothing the person may act on is cut short on a phone: each name and how it stands wrap in full; the note, as everywhere, to three lines. */
+  :is(.web-panel, .phone) .project-list :is(.col-title, .col-text, .col-state, .col-words) {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  :is(.web-panel, .phone) .project-list .col-state {
+    align-items: flex-start;
+  }
+  /* Except a todo: one line, its title cut with an ellipsis, read whole when it is opened. */
+  :is(.web-panel, .phone)
+    .project-list
+    .todo-row:not([aria-expanded='true'])
+    :is(.col-title, .col-text, .col-words) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+  }
+  :is(.web-panel, .phone) .project-list .todo-row > .col-state {
+    align-items: center;
+  }
+  :is(.web-panel, .phone) .project-list .folder-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  /* A conversation's lines wrap in full; Now's rows never do (panel.css): one line each, the name giving way first. */
+  .web-panel .lines :is(.agent-head, .agent-by) {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .web-panel .lines .agent-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+}
+/* A phone on its side (web-panel.tsx `is-sideways`): the project stands in a column at the left and the chat beside
+   it, as on a desk, without the board: there is no height for it, and it is one press away. The column's own way back
+   ("‹ project") is the way to every project, so an open session has no second row of its own for it. */
+.web-panel.is-stage.is-sideways {
+  --stage-left: clamp(248px, 34vw, 320px);
+  --card-top: 0px;
+  --card-height: 0px;
+  --column-pad: 16px;
+  --box-pad: 12px;
+  padding-left: calc(var(--stage-left) + env(safe-area-inset-left, 0px));
+}
+.web-panel.is-sideways .stage-side {
+  left: env(safe-area-inset-left, 0px);
+  padding: max(6px, env(safe-area-inset-top)) 8px max(6px, env(safe-area-inset-bottom));
+}
+.web-panel.is-sideways .chats:has(> .body > .thread) > .head {
+  display: none;
+}
+.web-panel.is-sideways .thread-head {
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+/* A finger leaves no hover behind: a pressed head button does not stay filled. */
+@media (hover: none) {
+  :is(.web-panel, .phone) :is(.icon, .head-agent):hover:not(:focus-visible) {
+    background: none;
+  }
+}
+
+/* A phone on its side has little height: the head and the thread's name give back what they can. */
+@media (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) .head {
+    min-height: 44px;
+    padding-top: 0;
+    padding-bottom: max(2px, env(safe-area-inset-bottom));
+  }
+  :is(.web-panel, .phone) .thread-head {
+    padding-block: 4px;
+  }
+  :is(.web-panel, .phone) .lines {
+    padding-bottom: 6px;
+  }
+  :is(.web-panel, .phone) .thread-now > .agent-cards {
+    padding-top: 4px;
+  }
+  :is(.web-panel, .phone) .composer {
+    margin-bottom: 4px;
+  }
+  :is(.web-panel, .phone) .thread > .composer,
+  :is(.web-panel, .phone) .thread > .composer.has-choices,
+  :is(.web-panel, .phone) .head.is-merv + .thread.is-one > .composer {
+    margin-bottom: max(4px, env(safe-area-inset-bottom));
+  }
+  .web-panel {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+/* Typing on a phone on its side, the keyboard leaves a strip: the head, the conversation's last lines and the reply box. */
+@media (max-height: 500px) and (pointer: coarse) {
+  .web-panel:has(.composer textarea:focus) .connection-note {
+    display: none;
+  }
+}
+/* A finger leaves no hover behind: a row it pressed is not left filled, as if chosen. */
+@media (hover: none) {
+  .web-panel .col-item:hover > .col-row:not(:focus-visible),
+  .web-panel :is(.row, .agent-head):hover:not(:focus-visible),
+  .web-panel .persona button:hover:not(:focus-visible) {
+    background: none;
+  }
+}
+
+/* In the phone toolbar Search takes the remaining space directly after New and Settings. */
+@media (max-width: 730px), (max-height: 500px) and (pointer: coarse) {
+  :is(.web-panel, .phone) .head.is-list {
+    gap: 8px;
+  }
+  :is(.web-panel, .phone) .head.is-list > .list-search {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 0;
+    min-height: 44px;
+  }
+  :is(.web-panel, .phone) .col-row,
+  :is(.web-panel, .phone) .col-fold {
+    min-height: 44px;
+    height: auto;
+  }
+}

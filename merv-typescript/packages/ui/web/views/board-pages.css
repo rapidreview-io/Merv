@@ -1,0 +1,208 @@
+/* Pages on the canvas: an iframe over its rectangle, scaled with the board. */
+.canvas-pages {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.canvas-page {
+  position: fixed;
+  transform-origin: 0 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px #ffffff1f,
+    0 14px 36px #0008;
+  pointer-events: auto;
+}
+.canvas-page.is-holding .canvas-page-frame {
+  pointer-events: none;
+}
+.canvas-page-bar {
+  touch-action: none;
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  background: #232329;
+  color: #b4b6c0;
+  cursor: grab;
+  user-select: none;
+}
+.canvas-page.is-holding .canvas-page-bar {
+  cursor: grabbing;
+}
+.canvas-page-bar button {
+  all: unset;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.canvas-page-bar button:hover:not(:disabled) {
+  background: #2e2e36;
+  color: #fff;
+}
+.canvas-page-bar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.canvas-page-bar input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  margin: 0 4px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font:
+    12px/28px system-ui,
+    sans-serif;
+  color: #c9ccd6;
+  cursor: text;
+}
+.canvas-page-bar input:focus {
+  background: #1a1b20;
+  color: #fff;
+}
+.canvas-page-frame {
+  flex: none;
+  transform-origin: 0 0;
+  border: 0;
+  background: #fff;
+}
+.canvas-page-corner {
+  touch-action: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    #0000002e 50% 60%,
+    transparent 60% 70%,
+    #0000002e 70% 80%,
+    transparent 80%
+  );
+}
+/* Full screen: the same page, enlarged over the whole window; the sessions panel floats above it. */
+.canvas-pages:has(.is-full) {
+  z-index: 100;
+}
+.canvas-page.is-full {
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+.canvas-page.is-full .canvas-page-bar {
+  cursor: default;
+}
+/* In Merv.app the full-screen bar shares one row with the floating island: centred on it, clear of it. */
+html.in-app .canvas-page.is-full .canvas-page-bar {
+  height: 67px;
+  padding-left: 78px;
+  padding-right: max(170px, calc(var(--desk-panel-width, 0px) + 16px));
+}
+.canvas-page.is-full .canvas-page-frame {
+  width: 100%;
+  flex: 1;
+}
+
+/* A resting page is a picture to the canvas: drags, wheel and pinch pass through it. */
+.canvas-page.is-resting {
+  pointer-events: none;
+}
+.canvas-page.is-resting .canvas-page-frame {
+  pointer-events: none;
+}
+.canvas-page.is-live {
+  box-shadow:
+    0 0 0 2px #8ba7bd88,
+    0 14px 36px #0008;
+}
+.canvas-page-waiting {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: #71717a;
+  font: 14px system-ui;
+  background: #fafafa;
+}
+
+/* A finger: each control in the bar takes a finger-sized press around its mark, without the bar growing on the
+   board; full screen, where nothing scales it, the bar itself is finger-sized and clear of the notch. */
+@media (pointer: coarse) {
+  .canvas-page.is-full .canvas-page-bar {
+    height: calc(52px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(6px, env(safe-area-inset-right)) 0
+      max(6px, env(safe-area-inset-left));
+  }
+  .canvas-page.is-full .canvas-page-bar button {
+    width: 44px;
+    height: 44px;
+  }
+  .canvas-page.is-full .canvas-page-bar input {
+    height: 40px;
+    font-size: 16px;
+    line-height: 40px;
+  }
+  .canvas-page.is-full {
+    height: 100dvh;
+  }
+}
+/* A woken page under a finger: its two controls at the screen's own size, apart, never overlapping, at any zoom. */
+.canvas-page-touch {
+  position: fixed;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.canvas-page-touch.is-on-bar button {
+  background: none;
+}
+.canvas-page-touch button {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background: #232329e6;
+  color: #e4e5ea;
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  /* The scaled bar keeps its address; its buttons give way to the strip above (in full screen they are the bar's own). */
+  .canvas-page:not(.is-full) .canvas-page-bar button {
+    display: none;
+  }
+}
+
+.canvas-page-fallback {
+  flex: none;
+  box-sizing: border-box;
+  height: 30px;
+  margin: 0;
+  padding: 6px 10px;
+  white-space: nowrap;
+  background: #232329;
+  color: #b4b6c0;
+  font: 12px/18px system-ui;
+}
+.canvas-page-fallback a {
+  color: inherit;
+  text-decoration: underline;
+}

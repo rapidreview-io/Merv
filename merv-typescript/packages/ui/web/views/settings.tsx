@@ -1,5 +1,5 @@
 import { personName } from '@merv/contracts/text';
-import { startTour } from '../tour';
+import { showWelcome } from '../board-app/first-run';
 import { permits } from '@merv/scope/rules';
 import type { UiRowDescription } from '@merv/ui/rows';
 import { useState, type ReactNode } from 'react';
@@ -318,8 +318,8 @@ function SessionSection() {
       />
       {account.kind === 'user' && <HuggingFaceSettings />}
       <div className="cluster">
-        <button type="button" className="btn" onClick={startTour}>
-          Take the tour
+        <button type="button" className="btn" onClick={showWelcome}>
+          Show the welcome
         </button>
         <button type="button" className="btn" onClick={signOut}>
           Sign out

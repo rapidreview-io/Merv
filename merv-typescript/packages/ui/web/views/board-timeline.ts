@@ -37,8 +37,26 @@ export interface Chunk {
   first: number;
   end: number;
 }
+/** A line of the conversation on the clock: said on its own, or with what an agent drew. */
+export interface Line {
+  words: string;
+  by: 'person' | 'agent';
+  /** Which agent, as it was recorded: Merv, Claude, Codex. */
+  name?: string;
+  actorId: string;
+  step: number;
+  start: number;
+  /** Up to here it is being read; from here it is the line before. */
+  end: number;
+  /** The unit it was said with, when it came with a drawing. */
+  unit?: number;
+}
 export interface Timeline {
   units: Unit[];
+  /** Everything said, in the order it was said. */
+  lines: Line[];
+  /** Whether a long board was squeezed into a quick overview. */
+  quick: boolean;
   chunks: Chunk[];
   hands: Hand[];
   cuts: Cut[];
@@ -64,8 +82,17 @@ const NEW_HAND_REST = 300;
 const AGENT_REST = 900;
 /** Past this a silence is cut, and takes this long. */
 const [CUT_AFTER_MS, CUT_REST] = [20 * 60_000, 500];
-/** How long a board plays at the least and most, whatever it holds: long ones play faster. */
-const [LEAST_LENGTH, MOST_LENGTH] = [3_000, 60_000];
+/** How long a board plays at the least, whatever it holds, and at the most as a quick overview. */
+const LEAST_LENGTH = 3_000;
+export const QUICK_LENGTH = 60_000;
+/** A line stays this long to be found, and then as long as reading it takes at this many words a minute. */
+const [LEAST_READ, FIND_MS, WORDS_A_MINUTE] = [2_500, 750, 180];
+/** How long a line stays up to be read, on the clock at 1×. */
+const readingMs = (words: string) =>
+  Math.max(
+    LEAST_READ,
+    FIND_MS + (words.trim().split(/\s+/u).filter(Boolean).length * 60_000) / WORDS_A_MINUTE,
+  );
 /** The beat before the first mark and after the last, so the waveform has its whole first hill. */
 const EDGE_REST = 250;
 /** A change to what stands is drawn at this share of its ink, and has at least this much. */
@@ -100,6 +127,12 @@ const inkOf = (shape: BoardElement) => {
   return strokeOf(shape) || 2 * (num(shape.width) + num(shape.height));
 };
 
+/** The line an agent said with a shape as it drew it. */
+const sayOf = (shape: BoardElement) => {
+  const say = (shape.customData as { say?: unknown } | undefined)?.say;
+  return typeof say === 'string' ? say.trim() : '';
+};
+
 /** Reaches taken together. */
 export const widened = (a: Reach | undefined, b: Reach): Reach =>
   a ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : b;
@@ -124,7 +157,11 @@ const reachOf = (shape: BoardElement): Reach => {
   return [cx - wide, cy - tall, cx + wide, cy + tall];
 };
 
-export function timelineOf(changes: readonly BoardChange[]): Timeline {
+/**
+ * The words set the pace: a line stays until it is read, what was drawn with it is drawn in that
+ * time, and the next line waits for it. `quick` squeezes a long board into a minute, words and all.
+ */
+export function timelineOf(changes: readonly BoardChange[], quick = false): Timeline {
   const hands: Hand[] = [];
   const handOf = ({ actorId, kind }: BoardChange) => {
     const person = kind === 'save';
@@ -136,14 +173,37 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
   const chunks: Chunk[] = [];
   const cuts: Cut[] = [];
   const steps: number[] = [];
+  const lines: Line[] = [];
+  /** What each shape last said: a line is said once, however often its shape changes after. */
+  const spoken = new Map<string, string>();
   let clock = EDGE_REST;
+  /** The last line is being read until here. */
+  let read = 0;
   let before = 0;
   let last: number | undefined;
   let working: number | undefined;
+  let drawn: BoardChange | undefined;
+  const say = (line: Omit<Line, 'start' | 'end'>) => {
+    clock = Math.max(clock, read);
+    read = clock + readingMs(line.words);
+    lines.push({ ...line, start: clock, end: read });
+  };
   const reachOver = (shapes: BoardElement[]) =>
     shapes.reduce<Reach | undefined>((all, shape) => widened(all, reachOf(shape)), undefined) ??
     ([0, 0, 0, 0] as const);
   for (const [step, change] of changes.entries()) {
+    // Words said aloud are steps of the board's story with no ink: they take their time on the clock.
+    if (change.kind === 'said') {
+      const words = change.said?.words.trim();
+      const heard = lines.at(-1);
+      // The pen said it already with what it drew.
+      const twice = change.said?.by === 'agent' && heard?.by === 'agent' && heard.words === words;
+      if (!change.said || !words || twice) continue;
+      const { by, name } = change.said;
+      say({ words, by, ...(name && { name }), actorId: change.actorId, step });
+      steps.push(clock);
+      continue;
+    }
     const at = Date.parse(change.at);
     if (change.kind === 'before') {
       for (const shape of change.shapes) standing.add(shape.id);
@@ -159,8 +219,8 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
     working = hand;
     if (last !== undefined) {
       const silence = Math.max(0, at - last);
-      const same =
-        change.actorId === changes[step - 1]?.actorId && change.kind === changes[step - 1]?.kind;
+      // Against the drawing before it: words between two answers are no change of hand.
+      const same = change.actorId === drawn?.actorId && change.kind === drawn.kind;
       const rest =
         silence > CUT_AFTER_MS
           ? CUT_REST
@@ -170,20 +230,34 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
                 MOST_REST,
                 Math.max(same ? LEAST_REST : NEW_HAND_REST, silence * REST_SHARE),
               );
-      if (silence > CUT_AFTER_MS) cuts.push({ from: clock, to: clock + rest, ms: silence });
+      if (silence > CUT_AFTER_MS) {
+        clock = Math.max(clock, read);
+        cuts.push({ from: clock, to: clock + rest, ms: silence });
+      }
       clock += rest;
     }
     last = at;
-    steps.push(clock);
+    drawn = change;
+    const began = steps.push(clock) - 1;
+    const first = units.length;
     for (const unit of penUnits(change.shapes, (id) => standing.has(id))) {
-      const { shapes, steps } = unit;
-      const fresh = new Set(steps.map(({ shape }) => shape));
+      const { shapes, steps: strokes } = unit;
+      const fresh = new Set(strokes.map(({ shape }) => shape));
       const ink = shapes.reduce(
         (sum, shape) =>
           sum + (fresh.has(shape) ? inkOf(shape) : Math.max(LEAST_INK, inkOf(shape) * EDIT_INK)),
         0,
       );
       const ms = penMs([unit]);
+      const said = shapes.find((shape) => sayOf(shape));
+      const words = said && sayOf(said);
+      if (words && change.kind === 'draw' && spoken.get(said.id) !== words) {
+        say({ words, by: 'agent', actorId: change.actorId, step, unit: units.length });
+        // Its drawing is part of reading it: the line stays at least until that has landed.
+        lines.at(-1)!.end = read = Math.max(read, clock + ms);
+        if (units.length === first) steps[began] = clock;
+      }
+      for (const shape of shapes) spoken.set(shape.id, sayOf(shape));
       units.push({ shapes, step, hand, ink, start: clock, ms, reach: reachOver(shapes) });
       clock += ms;
       chunks.at(-1)!.end = units.length;
@@ -192,13 +266,12 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
         else standing.add(shape.id);
     }
   }
-  clock += EDGE_REST;
+  clock = Math.max(clock + EDGE_REST, read);
   // Scaled as a whole, so what is long stays long beside what is short.
-  const scale = !units.length
-    ? 1
-    : clock > MOST_LENGTH
-      ? MOST_LENGTH / clock
-      : clock < LEAST_LENGTH
+  const scale =
+    quick && clock > QUICK_LENGTH
+      ? QUICK_LENGTH / clock
+      : units.length && clock < LEAST_LENGTH
         ? LEAST_LENGTH / clock
         : 1;
   for (const unit of units) {
@@ -206,8 +279,11 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
     unit.ms *= scale;
   }
   for (const cut of cuts) [cut.from, cut.to] = [cut.from * scale, cut.to * scale];
+  for (const line of lines) [line.start, line.end] = [line.start * scale, line.end * scale];
   return {
     units,
+    lines,
+    quick: scale < 1,
     chunks: chunks.filter(({ first, end }) => end > first),
     hands,
     cuts,
@@ -222,7 +298,7 @@ export function timelineOf(changes: readonly BoardChange[]): Timeline {
  * Where a replay opens: the last chunk of an agent's work, or with no agent's the last of a person's,
  * since either way what is asked is what just happened. Too short to read, it takes in what led to it.
  */
-export const openingOf = ({ chunks, units, hands }: Timeline) => {
+export const openingOf = ({ chunks, units, hands, lines }: Timeline) => {
   const agents = chunks.filter(({ first }) => !hands[units[first]!.hand]?.person);
   const last = agents.at(-1) ?? chunks.at(-1);
   if (!last) return 0;
@@ -230,7 +306,11 @@ export const openingOf = ({ chunks, units, hands }: Timeline) => {
   const ends = lastUnit.start + lastUnit.ms;
   let at = chunks.indexOf(last);
   while (at > 0 && ends - units[chunks[at]!.first]!.start < LEAST_CHUNK_MS) at--;
-  return units[chunks[at]!.first]!.start;
+  const { first } = chunks[at]!;
+  // With what was said since the work before it: the question comes with its answer.
+  const since = units[first - 1]?.step ?? -1;
+  const led = lines.find(({ step }) => step > since);
+  return Math.min(units[first]!.start, led?.start ?? Infinity);
 };
 
 /** How many units have landed by this moment: one lands as the playhead reaches it. */
@@ -329,14 +409,29 @@ export function profileOf({ units, hands, length }: Timeline, count: number, spr
   return { heights, hands: drew };
 }
 
-/** The most recent spoken line, held through its unit and for a short reading pause. */
-export const captionAt = (line: Timeline, at: number): string => {
-  for (let i = landedBy(line, at) - 1; i >= 0; i--) {
-    const unit = line.units[i]!;
-    const say = unit.shapes
-      .map((shape) => (shape.customData as { say?: unknown } | undefined)?.say)
-      .find((value): value is string => typeof value === 'string' && !!value);
-    if (say) return at <= Math.max(unit.start + unit.ms, unit.start + 6000) ? say : '';
+/**
+ * What is being read at a moment, and the line before it; between lines, only the line before. The
+ * one rule for words wherever a replay shows them: on the page, and burned into a clip.
+ */
+export const linesAt = ({ lines }: Timeline, at: number): { now?: Line; before?: Line } => {
+  let [low, high] = [0, lines.length];
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (lines[middle]!.start <= at) low = middle + 1;
+    else high = middle;
   }
-  return '';
+  const last = lines[low - 1];
+  if (!last) return {};
+  return at <= last.end
+    ? { now: last, ...(low > 1 && { before: lines[low - 2] }) }
+    : { before: last };
+};
+
+/** Whose voice a line is in, and what to call them: You, Merv, Claude Code, Codex. */
+export type Voice = 'you' | 'merv' | 'claude' | 'codex';
+export const speakerOf = ({ by, name }: Line, person = 'You'): { voice: Voice; name: string } => {
+  if (by === 'person') return { voice: 'you', name: person };
+  if (/claude/i.test(name ?? '')) return { voice: 'claude', name: 'Claude Code' };
+  if (/codex/i.test(name ?? '')) return { voice: 'codex', name: 'Codex' };
+  return { voice: 'merv', name: name?.trim() || 'Merv' };
 };

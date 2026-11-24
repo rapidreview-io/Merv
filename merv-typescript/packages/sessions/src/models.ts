@@ -338,7 +338,14 @@ export interface ProjectThread extends ThreadView {
    *  still read. */
   attention?: true;
   /** The question its agent asked that is still open, for a reader of its work. */
-  question?: { id: string; question: string; askedAt: string; response?: QuestionResponse };
+  question?: {
+    id: string;
+    question: string;
+    /** Worded answers its agent offered, pressed as buttons. */
+    options?: string[];
+    askedAt: string;
+    response?: QuestionResponse;
+  };
   /**
    * The newest message to it, and whether its agent has read it yet, for a reader of its work;
    * a question to its agent (an inquiry) with where that inquiry stands.
@@ -469,6 +476,8 @@ export interface ThreadQuestion {
   /** The revision it asked at. */
   revision: number;
   question: string;
+  /** The worded answers it offers its owner, pressed as buttons; any other answer is a message. */
+  options?: string[];
   askedAt: string;
   answeredAt: string | null;
   answerMessageId: string | null;

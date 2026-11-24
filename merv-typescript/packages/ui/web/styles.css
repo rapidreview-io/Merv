@@ -1,4 +1,8 @@
 @import './views/work.css';
+/* merv-desktop's chat panel and its first-run card (board-app/, panel/). */
+@import './board-app/web-panel.css';
+@import './panel/handoff.css';
+@import './board-app/welcome.css';
 
 /* ======================================================================
    Merv design system — records on a light ground, and no chrome around
@@ -356,8 +360,7 @@ time,
 }
 /* Every quiet control in the rail lights the same way under the pointer. */
 .sidebar-hide:hover,
-.account-menu-item:hover,
-.pi-menu-item:hover {
+.account-menu-item:hover {
   color: var(--text);
   background: var(--bg-soft);
 }
@@ -400,76 +403,6 @@ time,
   flex: none;
   margin-left: -4px;
   color: var(--active);
-}
-/* The first-run tour: the page dimmed, the rows it names lit, one short card beside them. */
-.tour {
-  position: fixed;
-  inset: 0;
-  z-index: 1100;
-}
-.tour-scrim {
-  position: absolute;
-  inset: 0;
-}
-.tour-veil {
-  fill: var(--scrim);
-}
-.tour-ring {
-  fill: none;
-  stroke: var(--active);
-  stroke-width: 2;
-}
-.tour-card {
-  position: absolute;
-  width: 280px;
-  display: grid;
-  gap: var(--space-2);
-  padding: 14px 16px 12px;
-  border-radius: 12px;
-  background: var(--bg-elev);
-  box-shadow: var(--shadow-md);
-}
-.tour-card--center {
-  left: 50%;
-  top: 50%;
-  width: 320px;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  padding: 22px 22px 16px;
-}
-.tour-card h2 {
-  margin: 0;
-  font-size: var(--text-md);
-  font-weight: 600;
-}
-.tour-card p {
-  margin: 0;
-  color: var(--muted);
-}
-.tour-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-.tour-card--center .tour-foot {
-  justify-content: center;
-}
-.tour-count {
-  margin-right: auto;
-  color: var(--faint);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-}
-@media (max-width: 760px) {
-  .tour-card:not(.tour-card--center) {
-    left: 12px !important;
-    right: 12px;
-    top: auto !important;
-    bottom: 12px;
-    width: auto;
-  }
 }
 .rail-row-label,
 .rail-project-name,
@@ -626,8 +559,7 @@ time,
 .account-row[aria-expanded='true'] .account-caret {
   color: var(--text);
 }
-.account-menu,
-.pi-menu {
+.account-menu {
   position: absolute;
   inset: auto 0 calc(100% + 6px);
   z-index: 10;
@@ -640,8 +572,7 @@ time,
   flex-direction: column;
   gap: 2px;
 }
-.account-menu-item,
-.pi-menu-item {
+.account-menu-item {
   border: 0;
   background: none;
   text-align: left;
@@ -1389,9 +1320,6 @@ select.input,
 }
 .picker-chip-name,
 .picker-option-name > span:last-child,
-.pi-switch-button span,
-.pi-menu-item span,
-.pi-dock-shown > span,
 .agent-step-summary,
 .unit-row-name,
 .thread-doc > span,
@@ -2314,8 +2242,7 @@ pre.code-body > code {
 }
 .code-block--wrap .code-body,
 .crit-says dd > span:last-child,
-.record-prose,
-.pi-message-text {
+.record-prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -4175,14 +4102,11 @@ pre.math--source {
   .btn,
   .input,
   select,
-  /* A form's bare field, as the form names it — but not a record picker's cursor,
-     which stands inside a field that is already that tall. */
   :is(.entry-form, .identity-form)
     input:not([type='checkbox']):not([type='radio']):not([role='combobox']),
   .rail-row,
   .account-row,
   .account-menu-item,
-  .pi-menu-item,
   .topbar-menu,
   .fold > summary {
     min-height: var(--hit);
@@ -5709,65 +5633,24 @@ a.states-clause {
 /* Agent: the conversation has the window. One slim bar says which conversation it is, how its
    turn stands and the machine it runs on; the transcript scrolls between that bar and the
    composer. The three are one column at a reading width, centred in the page. */
-.main:has(> .pi-page) {
-  display: flex;
-  flex-direction: column;
-  height: 100dvh;
-}
 /* The Agent page is the window: the document never scrolls under it, so the conversation
    is the one thing that moves, and reaching its end does not drag the page along. */
-html:has(.pi-page),
-html:has(.pi-page) body {
-  overflow: hidden;
-  overscroll-behavior: none;
-}
-.shell:has(.pi-page) {
-  height: 100dvh;
-  min-height: 0;
-}
 /* One reading column of 880px, centred; the conversation's scroller spans the whole page
    around it, as a chat's does, so the wheel moves it wherever the pointer is. */
-.pi-page.page-stage {
-  --pi-column: min(880px, 100% - 2 * var(--page-pad-x));
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  padding-inline: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-block: var(--space-3) var(--space-4);
-}
-.pi-bar,
 .pi-compose-actions,
 .pi-state {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
-.pi-bar > .pi-state {
-  margin-left: auto;
-}
 /* On a phone the conversation's name keeps its line, shared only with the model, which changes
    only when picked: so it never moves with the words of the turn and the machine under it. The
    machine's note drops its figures there. */
 @media (max-width: 720px) {
-  .pi-bar {
-    flex-wrap: wrap;
-  }
-  .pi-bar > .pi-switch:first-child {
-    flex-basis: 100%;
-  }
-  .pi-bar:has(> .pi-model) > .pi-switch:first-child {
-    flex-basis: calc(100% - 9rem - var(--space-2));
-  }
   /* At the edge, a long label ending in an ellipsis. */
   .pi-model {
     max-width: 9rem;
     margin-left: auto;
-  }
-  .pi-bar > .pi-state {
-    margin-left: 0;
   }
   .pi-machine {
     margin-left: auto;
@@ -5779,31 +5662,6 @@ html:has(.pi-page) body {
   .pi-machine .pi-machine-button span {
     white-space: normal;
   }
-}
-.pi-switch {
-  position: relative;
-  display: flex;
-  min-width: 0;
-}
-.pi-switch-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: var(--hit);
-  padding: 4px 8px;
-  margin-left: -8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.pi-switch-button:hover,
-.pi-switch-button[aria-expanded='true'] {
-  background: var(--bg-soft);
 }
 .pi-model-button,
 .pi-machine-button {
@@ -5822,58 +5680,16 @@ html:has(.pi-page) body {
   margin: 0 -8px 0 0;
   text-align: left;
 }
-.pi-switch-button svg {
-  flex: none;
-  color: var(--faint);
-}
-.pi-menu {
-  inset: calc(100% + 4px) auto auto -8px;
-  width: min(360px, calc(100vw - 32px));
-  max-height: min(60vh, 420px);
-  overflow: auto;
-}
 /* The model's and the machine's menus open leftward from their button's right edge, so neither
    runs past the page. */
-.pi-machine .pi-menu,
-.pi-model .pi-menu {
-  inset: calc(100% + 4px) -8px auto auto;
-}
 /* A model menu is as wide as its longest label. */
-.pi-model .pi-menu {
-  width: max-content;
-  min-width: calc(100% + 16px);
-}
 .pi-menu-note {
   margin: 0;
   padding: 6px 8px;
   font-size: var(--text-sm);
   color: var(--muted);
 }
-.pi-menu-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-3);
-}
-.pi-menu-item:is([aria-current='true'], [aria-checked='true']) {
-  color: var(--text);
-  font-weight: 600;
-}
-.pi-menu-item :is(time, small) {
-  flex: none;
-  font-size: var(--text-xs);
-  font-weight: 400;
-  color: var(--faint);
-}
 /* A machine this person may not choose here says why in place of its figures. */
-.pi-menu-item[aria-disabled='true'] {
-  color: var(--faint);
-  background: none;
-  cursor: default;
-}
-.pi-menu-item.pi-menu-item--danger {
-  color: var(--refutes);
-}
 .pi-state {
   flex: none;
   color: var(--muted);
@@ -5894,13 +5710,6 @@ html:has(.pi-page) body {
 .pi-state-dot--active {
   background: var(--qualifies);
   animation: map-breathe 1.8s ease-in-out infinite;
-}
-.pi-context-button {
-  flex: none;
-  margin-left: 0;
-  font-size: var(--text-sm);
-  font-weight: 400;
-  color: var(--muted);
 }
 /* What the agent is given: under the bar, scrolling on its own so the transcript keeps its place. */
 .pi-context {
@@ -5927,20 +5736,6 @@ html:has(.pi-page) body {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--muted);
-}
-.pi-page > :not(.pi-messages) {
-  width: var(--pi-column);
-  margin-inline: auto;
-}
-.pi-messages {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  display: flex;
-  padding-inline: calc((100% - var(--pi-column)) / 2);
-  flex-direction: column;
-  gap: var(--space-3);
 }
 /* Where the machine changed between two turns: one quiet line across the transcript. */
 .pi-divider {
@@ -5972,13 +5767,6 @@ html:has(.pi-page) body {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--bg-soft);
-}
-.pi-speaker {
-  display: block;
-  margin-bottom: var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--muted);
 }
 .pi-compose {
   display: grid;
@@ -6161,25 +5949,7 @@ html:has(.pi-page) body {
   white-space: nowrap;
   font-weight: 600;
 }
-.pi-dock .pi-messages {
-  padding: var(--space-3);
-}
 /* What the agent just opened, under the head for a few seconds, with the way back. */
-.pi-dock-shown {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin: 0;
-  padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.pi-dock-shown strong {
-  color: var(--text);
-  font-weight: 600;
-}
 .pi-dock > :is(.pi-error, .muted) {
   padding: 0 var(--space-3) var(--space-2);
   font-size: var(--text-sm);
@@ -7602,30 +7372,11 @@ html:has(.board-page) body {
   flex: 1;
   min-height: 0;
 }
-.board-outcome-word {
-  color: var(--muted);
-  white-space: nowrap;
-}
-.board-outcome-word:is(.is-lit, [aria-pressed='true']) {
-  color: var(--text);
-  font-weight: 600;
-}
 /* The pane: beside the canvas where both fit, otherwise the page, the canvas waiting mounted. */
 .board-page {
   container: board / inline-size;
 }
-.board-outcome {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-elev);
-  --doc-pad: 40px;
-  --doc-measure: 620px;
-}
-.board-plane[data-full] .board-main,
-.board-outcome-back {
+.board-plane[data-full] .board-main {
   display: none;
 }
 @container board (min-width: 900px) {
@@ -7639,26 +7390,6 @@ html:has(.board-page) body {
   .board-plane[data-outcome]:not([data-full]) {
     background: var(--bg);
   }
-  .board-plane:not([data-full]) .board-outcome {
-    margin: 8px;
-    border-radius: 12px;
-    box-shadow:
-      0 0 0 1px var(--line),
-      0 1px 2px rgba(16, 24, 40, 0.04),
-      0 12px 32px rgba(16, 24, 40, 0.06);
-  }
-  :root[data-theme='dark'] .board-plane:not([data-full]) .board-outcome {
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.06),
-      0 12px 32px rgba(0, 0, 0, 0.45);
-  }
-  .board-plane:not([data-full]) .board-outcome-doc {
-    overflow: clip;
-    border-radius: 0 0 12px 12px;
-  }
-  .board-outcome[data-arriving] {
-    animation: board-outcome-sets 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
 }
 @keyframes board-outcome-sets {
   from {
@@ -7666,607 +7397,31 @@ html:has(.board-page) body {
     transform: translateX(16px);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .board-outcome[data-arriving],
-  .board-send,
-  .board-outcome-work {
-    animation: none !important;
-  }
-}
 @container board (max-width: 899.98px) {
-  .board-plane[data-outcome] .board-main,
-  .board-outcome-size,
-  .board-outcome-grip {
+  .board-plane[data-outcome] .board-main {
     display: none;
-  }
-  .board-outcome-back {
-    display: inline;
-    white-space: nowrap;
   }
 }
 /* The Agent's window stands to the side of the pane, where what it writes can be seen. */
 .pi-dock:not([style]) {
   right: calc(var(--space-4) + var(--outcome-pane, 0px));
 }
-.board-outcome-grip {
-  position: absolute;
-  z-index: 3;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  width: 6px;
-  cursor: col-resize;
-  touch-action: none;
-}
-.board-outcome-grip:hover,
-.board-outcome-grip:active {
-  background: var(--line-strong);
-}
-.board-outcome-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 44px;
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--motion-fast);
-}
 /* Words pass under the head only once there are words to pass under it. */
-.board-outcome[data-scrolled] .board-outcome-head {
-  border-bottom-color: var(--line-soft);
-}
-.board-outcome-tabs.tabs--strip {
-  box-shadow: none;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.board-outcome-tabs button {
-  white-space: nowrap;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.board-outcome-ends {
-  flex: none;
-  align-items: center;
-}
-.board-send {
-  position: relative;
-  display: flex;
-  gap: 1px;
-  margin-right: var(--space-2);
-  animation: board-outcome-arrive 180ms ease-out;
-}
-.board-send > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: var(--text);
-  color: var(--bg-elev);
-  font: 500 13px/1 var(--font-body);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--motion-fast);
-}
-.board-send > button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text) 82%, var(--bg-elev));
-}
-.board-send > button:disabled {
-  opacity: 0.7;
-  cursor: default;
-}
-.board-send svg {
-  width: 13px;
-  height: 13px;
-  transform: rotate(90deg);
-}
-.board-send > button:has(+ .board-send-more) {
-  border-radius: 6px 0 0 6px;
-}
-.board-send > .board-send-more {
-  padding: 0 6px;
-  border-radius: 0 6px 6px 0;
-}
-.board-send[data-quiet] > button {
-  background: none;
-  color: var(--muted);
-}
-.board-send[data-quiet] > button:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-.board-send .file-menu-panel {
-  width: 240px;
-}
-.board-send .file-menu-item small {
-  display: block;
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
 @keyframes board-outcome-arrive {
   from {
     opacity: 0;
   }
 }
-.board-outcome-problem {
-  flex: none;
-  margin: 0 var(--space-4) var(--space-2);
-  font-size: var(--text-sm);
-}
-.board-outcome-ask {
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-soft);
-  border-radius: var(--radius-md);
-}
-.board-outcome-doc {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  --ink: var(--text);
-  --li: 1.5em;
-}
-.board-outcome-doc .cm-editor {
-  height: 100%;
-  background: transparent;
-  color: var(--ink);
-}
-.board-outcome-doc .cm-editor.cm-focused {
-  outline: 0;
-}
 /* The scroller holds the page's top above the words, and scrolls them both. */
-.board-outcome-doc .cm-scroller {
-  display: block !important;
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  font: 400 16px/1.65 var(--font-body);
-}
-.board-outcome-doc .cm-content,
-.board-outcome-lead {
-  margin-inline: max(var(--doc-pad), calc((100% - var(--doc-measure)) / 2));
-}
-.board-outcome-doc .cm-content {
-  padding-block: 0 45vh;
-  caret-color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.board-outcome-doc .cm-line {
-  padding: 0;
-}
-.board-outcome-doc .cm-cursor,
-.board-outcome-doc .cm-dropCursor {
-  border-left: 2px solid var(--text);
-}
-.board-outcome-doc .cm-selectionBackground,
-.board-outcome-doc
-  .cm-editor.cm-focused
-  > .cm-scroller
-  > .cm-selectionLayer
-  .cm-selectionBackground,
-.board-outcome-doc .cm-content ::selection {
-  background: var(--select);
-}
-.board-outcome-doc
-  .cm-editor.cm-focused
-  > .cm-scroller
-  > .cm-selectionLayer
-  .cm-selectionBackground {
-  background: rgba(var(--active-rgb), 0.2);
-}
 /* The page's top: how it was last sent, its title, and the first thing to say on an empty one. */
-.board-outcome-lead {
-  position: relative;
-  padding-block: var(--space-5) 0;
-}
-.board-outcome-work {
-  margin-bottom: 20px;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--faint);
-  animation: board-outcome-arrive 180ms ease-out;
-}
-.board-outcome-work :is(a, button) {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-.board-outcome-work :is(a, button):hover:not(:disabled) {
-  color: var(--text);
-}
-.board-outcome-work :is(a, button:not(.board-work-open)) {
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 2px;
-}
-.board-outcome-work b {
-  font-weight: 500;
-  color: var(--muted);
-}
-.board-outcome-work i {
-  font-style: normal;
-  color: var(--ghost);
-}
-.board-outcome-work p {
-  margin: var(--space-1) 0 0;
-  color: var(--muted);
-}
-.board-outcome-work .board-work-open {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 7px;
-  text-align: left;
-}
-.board-work-dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-top: 6.5px;
-  background: var(--ghost);
-}
-.board-outcome-work[data-state='working'] .board-work-dot {
-  background: var(--supports);
-  animation: cm-hand-breathe 1.6s ease-in-out infinite;
-}
-.board-outcome-work[data-state='asks'] .board-work-dot {
-  background: var(--refutes);
-}
-.board-outcome-work[data-state='asks'] b {
-  color: var(--text);
-}
-.board-outcome-work .thread-compose {
-  margin-top: var(--space-2);
-  align-items: center;
-}
-.board-outcome-work .thread-compose .textarea {
-  resize: none;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 20px;
-}
-.board-outcome-title {
-  display: block;
-  width: 100%;
-  margin: 0 0 var(--space-2);
-  padding: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: 600 28px/1.2 var(--font-body);
-  letter-spacing: -0.015em;
-  color: var(--text);
-  text-overflow: ellipsis;
-}
-.board-outcome-title::placeholder {
-  color: var(--ghost);
-}
-.board-outcome-start {
-  position: absolute;
-  z-index: 1;
-  inset-inline: 0;
-  margin: 2px 0 0;
-  color: var(--faint);
-  pointer-events: none;
-}
-.board-outcome-start button {
-  pointer-events: auto;
-  font: inherit;
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
-}
-.board-outcome-start button:hover {
-  text-decoration-color: currentColor;
-}
 /* The document as it reads. */
-.board-outcome-doc .cm-h {
-  font-weight: 620;
-  letter-spacing: -0.01em;
-}
-.board-outcome-doc .cm-h1 {
-  font-size: 26px;
-  line-height: 1.3;
-  padding-top: 0.5em;
-}
-.board-outcome-doc .cm-title {
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
-  padding-top: 0;
-}
-.board-outcome-doc .cm-h2 {
-  font-size: 21px;
-  line-height: 1.35;
-  padding-top: 0.6em;
-}
-.board-outcome-doc .cm-h3 {
-  font-size: 17px;
-  line-height: 1.4;
-  padding-top: 0.4em;
-}
-.board-outcome-doc :is(.cm-h4, .cm-h5, .cm-h6) {
-  font-size: 15px;
-  color: var(--muted);
-}
-.board-outcome-doc .cm-blank {
-  font-size: 16px;
-  line-height: 0.85;
-}
-.board-outcome-doc .cm-gone {
-  font-size: 0;
-  white-space: nowrap;
-}
-.board-outcome-doc .cm-mark,
-.board-outcome-doc .cm-hang {
-  color: var(--ghost);
-  font-weight: 400;
-}
 /* A heading's hashes hang in the margin, so its words do not move when the caret comes. */
-.board-outcome-doc .cm-hang {
-  display: inline-block;
-  box-sizing: border-box;
-  width: calc(var(--hang) * 1ch);
-  margin-left: calc(var(--hang) * -1ch);
-  font: 400 13px/1 var(--font-mono);
-  letter-spacing: 0;
-  white-space: pre;
-}
-.board-outcome-doc .cm-strong {
-  font-weight: 650;
-}
-.board-outcome-doc .cm-em {
-  font-style: italic;
-}
-.board-outcome-doc .cm-del {
-  text-decoration: line-through;
-  color: var(--muted);
-}
-.board-outcome-doc .cm-inline-code {
-  padding: 1px 4px;
-  font: 0.88em var(--font-mono);
-  background: var(--bg-soft);
-  border-radius: var(--radius-sm);
-}
-.board-outcome-doc .cm-link {
-  color: var(--active);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--active) 40%, transparent);
-  text-underline-offset: 2px;
-}
-.board-outcome-doc .cm-quote {
-  padding-left: 1em;
-  color: var(--muted);
-  border-left: 2px solid var(--line-strong);
-}
-.board-outcome-doc .cm-li-slot {
-  display: inline-block;
-  width: var(--li);
-  text-indent: 0;
-  white-space: pre;
-}
-.board-outcome-doc .cm-li-num {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.board-outcome-doc .cm-li-dot {
-  position: relative;
-  height: 1em;
-  vertical-align: -0.1em;
-}
-.board-outcome-doc .cm-li-dot::before {
-  content: '';
-  position: absolute;
-  top: 0.42em;
-  left: 0.4em;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-.board-outcome-doc .cm-check {
-  margin: 0;
-  width: 14px;
-  height: 14px;
-  vertical-align: -0.1em;
-  accent-color: var(--active);
-}
-.board-outcome-doc .cm-done {
-  color: var(--faint);
-}
-.board-outcome-doc .cm-code {
-  padding-inline: 12px;
-  font: 13.5px/1.55 var(--font-mono);
-  background: var(--bg-soft);
-}
-.board-outcome-doc .cm-code-top {
-  padding-top: 10px;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-}
-.board-outcome-doc .cm-code-bottom {
-  padding-bottom: 10px;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-}
-.board-outcome-doc .cm-code-top.cm-code-bottom {
-  border-radius: var(--radius-md);
-}
-.board-outcome-doc .cm-fence-off {
-  height: 10px;
-  padding-block: 0;
-  overflow: hidden;
-  color: transparent;
-  line-height: 0;
-  font-size: 0;
-}
-.board-outcome-doc .cm-hr {
-  position: relative;
-  color: transparent;
-}
-.board-outcome-doc .cm-hr::after {
-  content: '';
-  position: absolute;
-  inset: 50% 0 auto;
-  border-top: 1px solid var(--line-strong);
-}
-.board-outcome-doc .cm-table-source {
-  font: 13.5px/1.6 var(--font-mono);
-  color: var(--muted);
-}
-.board-outcome-doc .cm-table-box {
-  overflow-x: auto;
-  padding-block: 2px;
-  scrollbar-width: thin;
-}
-.board-outcome-doc .cm-table-box table {
-  border-collapse: collapse;
-  font-size: 15px;
-  line-height: 1.45;
-}
-.board-outcome-doc .cm-table-box :is(th, td) {
-  padding: 6px 16px 6px 0;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-  text-align: left;
-}
-.board-outcome-doc .cm-table-box th {
-  font-weight: 600;
-  border-bottom-color: var(--line-strong);
-}
-.board-outcome-doc .cm-table-box code {
-  font: 0.88em var(--font-mono);
-}
 /* A selection's few tools, on demand. */
-.board-outcome-doc .cm-bubble {
-  display: flex;
-  align-items: center;
-  padding: 2px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  font: 13px/1 var(--font-body);
-}
-.cm-bubble button {
-  min-width: 28px;
-  height: 28px;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.cm-bubble button:hover {
-  background: var(--hover);
-}
-.cm-bubble .is-strong {
-  font-weight: 700;
-}
-.cm-bubble .is-em {
-  font-style: italic;
-}
-.cm-bubble .is-ask {
-  margin-left: var(--space-1);
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--line);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  font-weight: 550;
-}
 /* Another hand on the page. */
-.board-outcome-doc .cm-unwritten {
-  color: transparent;
-  text-decoration-color: transparent;
-}
-.board-outcome-doc .cm-unwritten * {
-  color: transparent;
-  background: transparent;
-  visibility: hidden;
-}
-.board-outcome-doc .cm-drying {
-  opacity: 0.55;
-}
-.board-outcome-doc .cm-hands {
-  z-index: 2;
-  pointer-events: none;
-}
-.board-outcome-doc .cm-hand {
-  position: absolute;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--active);
-  border-radius: 1px;
-}
 /* Its name goes along just past the caret, where the words it has yet to write are still unseen. */
-.board-outcome-doc .cm-hand-name {
-  position: absolute;
-  top: 50%;
-  left: 5px;
-  transform: translateY(-50%);
-  padding: 0 5px;
-  font: 500 11px/16px var(--font-body);
-  letter-spacing: 0;
-  color: #fff;
-  background: var(--active-fill);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-.board-outcome-doc .cm-hand.is-flipped .cm-hand-name {
-  top: auto;
-  right: -1px;
-  bottom: 100%;
-  left: auto;
-  transform: none;
-}
-.board-outcome-doc .cm-hand.is-resting {
-  animation: cm-hand-breathe 1.6s ease-in-out infinite;
-}
 @keyframes cm-hand-breathe {
   50% {
     opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .board-outcome-doc .cm-hand.is-resting {
-    animation: none;
-  }
-}
-.board-outcome-away {
-  position: absolute;
-  z-index: 3;
-  left: 50%;
-  bottom: var(--space-4);
-  transform: translateX(-50%);
-  padding: 4px var(--space-3);
-  font: 13px/1.5 var(--font-body);
-  color: var(--text);
-  white-space: nowrap;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-md);
-  cursor: pointer;
-}
-@container board (max-width: 639.98px) {
-  .board-outcome {
-    --doc-pad: var(--space-4);
-  }
-  /* No margin to hang in: the marks stand in the line. */
-  .board-outcome-doc .cm-hang {
-    width: auto;
-    margin-left: 0;
   }
 }
 .board-loading {

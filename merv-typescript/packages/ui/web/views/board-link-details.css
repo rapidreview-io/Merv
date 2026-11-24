@@ -108,12 +108,75 @@
 .board-link-details button:focus-visible {
   outline: 2px solid currentColor;
 }
+/* A picture and a diagram are pressed to see them whole, not icon buttons: they take the
+   column's width and keep their own shape. */
+.board-link-details :is(.file-image, .mermaid-fit) {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 4px 0;
+  border-radius: 0;
+  cursor: zoom-in;
+}
+/* The card is narrow: a diagram fits it whole, however small, and a press shows it at its size. */
+.board-link-details .mermaid-fit {
+  max-width: 100% !important;
+}
+.board-link-details :is(.file-image, .mermaid-fit):hover {
+  background: transparent;
+}
+.board-link-details .md-figure > a {
+  color: var(--text-secondary-color, #707078);
+}
+/* A diagram stands on the page as a picture does: no box, no bar; its two controls show on hover. */
+.board-link-details .code-block.mermaid {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.board-link-details .code-block.mermaid {
+  position: relative;
+}
+.board-link-details .mermaid .code-head {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.board-link-details .mermaid .code-lang {
+  display: none;
+}
+.board-link-details .mermaid:not(:hover, :focus-within) .code-tools {
+  opacity: 0;
+}
+.board-link-details .mermaid .mermaid-view {
+  padding: 0;
+  scrollbar-width: thin;
+  background: transparent;
+}
+.board-link-details .mermaid .code-body {
+  margin: 0;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+}
+.board-link-details .mermaid .mermaid-error {
+  padding: 2px 0 0;
+  border: 0;
+}
 .board-link-details-body {
   padding: 10px 24px 22px;
   max-height: 440px;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .board-reference-notes .md {
   font-size: inherit;
@@ -270,13 +333,13 @@
 }
 .board-reference-overlay.board-reference-dark,
 .board-link-details.board-reference-dark {
-  --color-surface-lowest: #232329;
+  --color-surface-lowest: #111110;
   --text-primary-color: #e8e8ec;
   --text-secondary-color: #a9a9b3;
   --color-gray-10: #313139;
   --color-gray-20: #3d3d47;
-  --bg-elev: #232329;
-  --bg-soft: #313139;
+  --bg-elev: #111110;
+  --bg-soft: #222221;
   --text: #f0f0f2;
   color-scheme: dark;
 }
@@ -307,9 +370,35 @@
   flex: 1;
   max-height: none;
 }
-
-/* Keep styling controls hidden while a reference remains selected. */
-.board-reading-reference .selected-shape-actions,
-.excalidraw:has(.merv-rich-hyperlink .board-link-details) .selected-shape-actions {
-  display: none;
+/* A finger: each of the reader's small buttons is a finger-sized square of its own, side by side, its mark in the
+   middle: no press reaches over another's. On a phone the reader keeps clear of the toolbar and the voice's chip. */
+@media (pointer: coarse) {
+  .board-link-details button:not(.file-image, .mermaid-fit),
+  .board-reference-overlay button {
+    display: inline-grid;
+    place-items: center;
+    min-width: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+  /* A diagram's two controls have no hover to show them: they stand in a row of their own over it, always seen, and
+     a press on the diagram itself only ever opens it full size. */
+  .board-link-details .mermaid .code-head {
+    position: static;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 44px;
+  }
+  .board-link-details .mermaid .code-tools {
+    display: flex;
+    gap: 4px;
+  }
+  .board-link-details .mermaid:not(:hover, :focus-within) .code-tools {
+    opacity: 1;
+  }
+}
+html:not(.in-app) .excalidraw--mobile .merv-rich-hyperlink {
+  --reader-foot: calc(var(--phone-reach, 52px) + var(--phone-foot, 14px) + 60px);
+  max-height: calc(100% - var(--phone-reach, 52px) - var(--phone-foot, 14px) - 76px);
 }

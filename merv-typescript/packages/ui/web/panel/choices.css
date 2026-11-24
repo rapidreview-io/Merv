@@ -1,0 +1,177 @@
+/* The quiet line under a reply box and the sheet it opens: model, effort, speed, mode and access. Shared by Merv.app
+ * and the web, so the menu looks and behaves the same in both. Where it sits beside a composer is in panel.css. */
+.session-choices {
+  position: relative;
+  flex: none;
+  margin-bottom: 12px;
+  max-width: calc(100% - 8px);
+}
+.choice-summary {
+  display: block;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--secondary);
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.choice-summary:hover,
+.choice-summary[aria-expanded='true'] {
+  opacity: 1;
+}
+/* Where the line is a row (a phone's box), its words still give way first, ending in an ellipsis. */
+.choice-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One quiet sheet: the newest models, then each setting on its own line, the chosen word in dark blue. */
+.choice-menu {
+  position: absolute;
+  bottom: 28px;
+  left: 0;
+  z-index: 5;
+  width: min(320px, calc(100vw - 32px));
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--raised);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px var(--shadow-strong);
+  white-space: nowrap;
+}
+.choice-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+}
+.choice-search input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+.choice-search .spin {
+  flex: none;
+  color: var(--secondary);
+}
+.choice-models {
+  max-height: 240px;
+  overflow: auto;
+  padding-bottom: 4px;
+}
+.choice-models button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--secondary);
+  font-size: 13px;
+  text-align: left;
+}
+.choice-models button > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.choice-models button[aria-selected='true'] {
+  color: var(--text);
+}
+.choice-models button[data-active='true'] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.choice-models .choice-more {
+  height: 28px;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+.choice-menu .soft {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 10px;
+}
+.choice-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.choice-row > span:first-child {
+  flex: 1;
+  color: var(--secondary);
+}
+.segment {
+  display: flex;
+  gap: 2px;
+}
+.segment button {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.segment button:hover:not(:disabled) {
+  color: var(--text);
+}
+.segment button[aria-pressed='true'] {
+  background: var(--accent-fill);
+  color: #eef2fb;
+}
+/* Effort as a short stepped dial: one dot a level, lit up to the chosen one, its name beside. */
+.dial {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dial button {
+  width: 14px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+}
+.dial button::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--divider);
+  transition:
+    background var(--hover),
+    transform var(--hover);
+}
+.dial button:hover::before {
+  background: var(--secondary);
+}
+.dial button[data-lit='true']::before {
+  background: var(--accent-fill);
+}
+.dial button[aria-checked='true']::before {
+  background: var(--accent);
+  transform: scale(1.3);
+}
+.dial-name {
+  min-width: 64px;
+  margin-left: 6px;
+  color: var(--text);
+}

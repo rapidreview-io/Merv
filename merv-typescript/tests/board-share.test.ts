@@ -42,7 +42,7 @@ test('a share reads only its board, is owner-controlled, revocable, and grants n
   };
   const scene = await read('scene');
   assert.equal(scene.status, 200);
-  assert.deepEqual(Object.keys(scene.body).sort(), ['elements', 'revision', 'title']);
+  assert.deepEqual(Object.keys(scene.body).sort(), ['elements', 'paper', 'revision', 'title']);
   assert.deepEqual((await read(`scene?id=${hidden.id}`)).body, scene.body);
   const history = await read('history');
   assert.equal(history.status, 200);

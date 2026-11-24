@@ -18,6 +18,7 @@ import { readsAgents } from '@merv/sessions/rules';
 import {
   ApiError,
   accountRequest,
+  captureProjectOwner,
   hasToken,
   identityVersion,
   onAccessLost,
@@ -33,6 +34,7 @@ import {
   type Project,
   type Account,
   type AccountSession,
+  type ProjectOwner,
 } from './api';
 import { Failure, Field, SearchField, relativeTime } from './components';
 import { Icon } from './icons';
@@ -43,6 +45,8 @@ interface Session {
   actor: Actor;
   project: Project;
   account: Account;
+  /** The rendered project, pinned: deferred work (a queued board save) keeps its own project. */
+  owner: ProjectOwner | null;
   chooseProject(): void;
   signOut(): void;
 }
@@ -723,6 +727,7 @@ export function SessionProvider({
     actor: state.actor,
     project: state.project,
     account: state.account,
+    owner: captureProjectOwner(state.project.id, state.epoch),
     signOut,
     chooseProject: () => {
       setProject(null);

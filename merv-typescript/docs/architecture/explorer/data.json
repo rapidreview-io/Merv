@@ -58,7 +58,6 @@
           "paper",
           "reports",
           "board",
-          "merv-board-links",
           "reviews",
           "codeWork",
           "pi"
@@ -201,18 +200,13 @@
     "upward": [],
     "peers": [
       {
-        "from": "merv-board-links",
-        "to": "board",
-        "optional": false
-      },
-      {
         "from": "codeWork",
         "to": "reviews",
         "optional": false
       }
     ]
   },
-  "snapshot": "2026-10-31",
+  "snapshot": "2026-11-24",
   "groups": [
     {
       "id": "front",
@@ -322,7 +316,6 @@
       "caption": "Discovered in source",
       "members": [
         "merv-admin",
-        "merv-board-links",
         "codeWork",
         "customerExperiments",
         "fleet",
@@ -493,13 +486,8 @@
           "readOnly": true
         },
         {
-          "name": "board.outcome.delete",
-          "description": "Delete an outcome of a board; the files sent from it stay.",
-          "readOnly": false
-        },
-        {
-          "name": "board.outcome.sent",
-          "description": "Note the file frozen from an outcome as the person sent it on.",
+          "name": "board.said",
+          "description": "A line said aloud in a live voice session on a board, the person's or the agent's: kept as a step of its history.",
           "readOnly": false
         },
         {
@@ -514,34 +502,20 @@
         },
         {
           "name": "board.set",
-          "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
+          "description": "",
           "readOnly": false
         },
         {
           "name": "board.share",
           "description": "Make or revoke a read-only link to this board and its history.",
           "readOnly": false
+        },
+        {
+          "name": "board.wait",
+          "description": "Answers when a board changes past a revision, or after a while (the page waits here, so new ink reaches it as it lands).",
+          "readOnly": true
         }
       ]
-    },
-    {
-      "plugin": "merv-board-links",
-      "source": "packages/board/src/links.ts",
-      "provides": [],
-      "requires": [
-        "board",
-        "domainEvents"
-      ],
-      "optional": [],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": false,
-      "id": "merv-board-links",
-      "group": "other",
-      "owner": "merv-board-links",
-      "label": "merv-board-links",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
-      "exposedTools": []
     },
     {
       "plugin": "merv-board-tools",
@@ -549,7 +523,8 @@
       "provides": [],
       "requires": [
         "board",
-        "tools"
+        "tools",
+        "state"
       ],
       "optional": [
         "api"
@@ -574,13 +549,8 @@
           "readOnly": true
         },
         {
-          "name": "board.outcome.delete",
-          "description": "Delete an outcome of a board; the files sent from it stay.",
-          "readOnly": false
-        },
-        {
-          "name": "board.outcome.sent",
-          "description": "Note the file frozen from an outcome as the person sent it on.",
+          "name": "board.said",
+          "description": "A line said aloud in a live voice session on a board, the person's or the agent's: kept as a step of its history.",
           "readOnly": false
         },
         {
@@ -595,13 +565,18 @@
         },
         {
           "name": "board.set",
-          "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
+          "description": "",
           "readOnly": false
         },
         {
           "name": "board.share",
           "description": "Make or revoke a read-only link to this board and its history.",
           "readOnly": false
+        },
+        {
+          "name": "board.wait",
+          "description": "Answers when a board changes past a revision, or after a while (the page waits here, so new ink reaches it as it lands).",
+          "readOnly": true
         }
       ]
     },
@@ -2303,7 +2278,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; where the answer is one of a few, give them as options (2–4 short worded answers, such as \"Use the larger GPU\"), which the owner presses as buttons. A visit that keeps no conversation cannot ask.",
           "readOnly": false
         },
         {
@@ -2367,7 +2342,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; where the answer is one of a few, give them as options (2–4 short worded answers, such as \"Use the larger GPU\"), which the owner presses as buttons. A visit that keeps no conversation cannot ask.",
           "readOnly": false
         },
         {
@@ -2820,16 +2795,6 @@
       "optional": false
     },
     {
-      "from": "merv-board-links",
-      "to": "board",
-      "optional": false
-    },
-    {
-      "from": "merv-board-links",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
       "from": "merv-board-tools",
       "to": "board",
       "optional": false
@@ -2837,6 +2802,11 @@
     {
       "from": "merv-board-tools",
       "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-board-tools",
+      "to": "state",
       "optional": false
     },
     {
@@ -4166,10 +4136,10 @@
     }
   ],
   "counts": {
-    "plugins": 89,
+    "plugins": 88,
     "providers": 40,
-    "adapters": 49,
-    "dependencies": 285
+    "adapters": 48,
+    "dependencies": 284
   },
   "network": [
     {

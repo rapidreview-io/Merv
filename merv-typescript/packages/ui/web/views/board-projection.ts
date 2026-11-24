@@ -15,8 +15,9 @@ import type {
 } from '@excalidraw/excalidraw/types';
 import type { BoardChange, BoardElement } from '@merv/board/models';
 import type { BoardFilm } from './board-film';
-import { framing, zoomToFit, type Rect } from './board-place';
-import { clearView, dissolve, imageBringer, Player, restored, type Stage } from './board-player';
+
+import { boardScale, framing, zoomToFit, type Rect } from './board-place';
+import { dissolve, imageBringer, Player, restored, seenView, type Stage } from './board-player';
 import {
   landedBy,
   openingOf,
@@ -37,9 +38,14 @@ const SETTLE_MS = 350;
  * view this wide or wider. A phone holds as much of the board, or it would change view every few
  * seconds and swing in on each small stroke.
  */
-const [LEAST_ZOOM, WIDE_VIEW, NEAREST_NARROW] = [0.3, 1000, 0.4];
+const [LEAST_ZOOM, WIDE_VIEW] = [0.3, 1000];
+/** On a phone in an app that is nothing but a board: it moves on before words get too small to read. */
+const [LEAST_BOARD_APP, NEAREST_BOARD_APP] = [0.45, 0.7];
+const ORB_WIDTH = 56;
 /** Past this many shapes standing, what is drawn is only scaled while a hand moves the camera. */
 const SCALED_ABOVE = 200;
+/** How far out a demo goes for one view: it goes on to the next part of the board rather than shrink. */
+const DEMO_LEAST_ZOOM = 0.7;
 /** How many of what it told the board's camera it remembers, while that takes them up. */
 const TOLD_KEPT = 8;
 /** A unit too short to trace at this speed just lands, and how many may be in the pen at once. */
@@ -59,7 +65,7 @@ const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export type Shape = ReturnType<typeof restoreElements>[number];
-interface Camera {
+export interface Camera {
   scrollX: number;
   scrollY: number;
   zoom: number;
@@ -97,8 +103,10 @@ interface Hooks {
   /** The clock reached now. */
   ended(): void;
   nameOf(hand: number): string;
-  /** The pen reached a line said with what it drew. */
+  /** The pen reached a line said with what it drew: for a voice to say, not for the words shown. */
   say(line: string): void;
+  /** Where the camera stands this frame, for what is laid over the board. */
+  view(camera: Camera): void;
   /** What else has been drawn since this began, if anything. */
   more(): Promise<BoardChange[] | null>;
   /** How many pixels the scrubber takes off the bottom of the view. */
@@ -111,6 +119,8 @@ export class Projection {
   at: number;
   playing = false;
   speed = 1;
+  /** Whether a long board is asked for as a quick overview, however it grows. */
+  quick = false;
   private rewinding = 0;
   /** The frames left before it starts back, for the moment it took over to be on screen untouched. */
   private waiting = 0;
@@ -129,6 +139,8 @@ export class Projection {
   private told: Camera[];
   private moved = false;
   private background = '';
+  /** How far out it may go to keep work in one view. */
+  private least = LEAST_ZOOM;
   /** Whether the person moved the camera themselves, which it then leaves to them. */
   private touched = false;
   /** Whether the board is itself again, whose camera this now only follows. */
@@ -220,6 +232,10 @@ export class Projection {
   get moving() {
     return this.playing || this.waiting > 0 || this.rewinding > 0;
   }
+  /** Whether the tape is running back to where it opens: nothing is being read then. */
+  get back() {
+    return this.starting || this.waiting > 0 || this.rewinding > 0;
+  }
   run() {
     if (this.frame) return;
     this.last = performance.now();
@@ -273,6 +289,7 @@ export class Projection {
     this.playing = false;
     this.rewinding = this.waiting = 0;
     this.starting = false;
+    this.hooks.place(this.at);
     this.hooks.changed();
   }
   setSpeed(speed: number) {
@@ -306,16 +323,20 @@ export class Projection {
   }
   /** Steps through history by its own steps: its changes as they came. */
   step(by: number) {
-    const { steps, length, units } = this.line;
-    // From what the board shows, and not a stroke still in the pen.
-    const shown = units[this.film.at - 1]?.start ?? -1;
+    const { steps, length, units, lines } = this.line;
+    // From what the board shows, and not a stroke still in the pen; words are shown once reached.
+    const heard = lines.findLast(({ start, unit }) => unit === undefined && start <= this.at);
+    const shown = Math.max(units[this.film.at - 1]?.start ?? -1, heard?.start ?? -1);
     const to = steps.filter((start) => start <= shown).length - 1 + by;
     this.pause();
     this.seek(to < 0 ? 0 : to >= steps.length ? length : steps[to]! + 0.5);
     this.settle();
   }
-  /** It is over: the board is itself again under this as it fades, its camera as it was unless moved. */
-  rest() {
+  /**
+   * It is over: the board is itself again under this as it fades, its camera as it was unless moved
+   * or told to stay.
+   */
+  rest(stay = false) {
     this.playing = false;
     this.rewinding = this.waiting = 0;
     this.starting = false;
@@ -324,8 +345,14 @@ export class Projection {
     this.player.stop();
     this.tag = undefined;
     this.showTag();
-    if (!this.touched) this.setCamera(this.entered);
+    if (!this.touched && !stay) this.setCamera(this.entered);
     this.hooks.changed();
+  }
+  /** Starts at full size, whatever the finished board was fitted to, and stays near it as it goes. */
+  closeIn() {
+    this.least = DEMO_LEAST_ZOOM;
+    this.setCamera({ ...cameraOf(this.live), zoom: boardScale() });
+    this.steer();
   }
   /** The person's hand went to the camera: nothing of this may be told over it. */
   handOn() {
@@ -340,16 +367,29 @@ export class Projection {
   }
   /** Others drew more: it goes on the end, and the playhead stays with what it was showing. */
   private longer(changes: BoardChange[]) {
-    const line = timelineOf(changes);
+    this.retime(timelineOf(changes, this.quick));
+    this.images(picturesOf(changes));
+  }
+  /** The same history on another clock, longer or paced another way: the playhead stays with what it showed. */
+  retime(line: Timeline) {
+    const ended = this.at >= this.line.length;
     const [had, has] = [this.line.units[this.next - 1], line.units[this.next - 1]];
-    this.at =
-      had && has && this.at < this.line.length
+    this.at = ended
+      ? line.length
+      : had && has
         ? has.start + (this.at - had.start) * (has.ms / (had.ms || 1))
         : this.at * (line.length / (this.line.length || 1));
     this.line = line;
     this.player.rate = this.speed * line.rate;
     this.film = this.film.longer(line);
-    this.images(picturesOf(changes));
+    // Stopped at the end, it stays at the end: what was added stands at once.
+    if (ended && !this.moving) {
+      this.player.stop();
+      this.landing = 0;
+      this.film.seek(line.units.length);
+      this.next = this.film.at;
+      this.paint();
+    }
     this.hooks.place(this.at);
     this.hooks.changed();
   }
@@ -378,6 +418,7 @@ export class Projection {
       this.landing = 0;
       this.film.seek(units.length);
       this.paint();
+      this.at = length;
       this.playing = false;
       this.hooks.ended();
     } else if (painting) this.paint();
@@ -422,7 +463,7 @@ export class Projection {
     this.screen.updateScene({ collaborators: who, captureUpdate: CaptureUpdateAction.NEVER });
   }
   private tick = (now: number) => {
-    const played = Math.min(100, now - this.last);
+    const played = Math.max(0, Math.min(100, now - this.last));
     this.last = now;
     this.frame = requestAnimationFrame(this.tick);
     if (this.waiting && --this.waiting) return;
@@ -449,6 +490,7 @@ export class Projection {
       this.hooks.place(this.at);
     }
     this.showTag(now);
+    this.hooks.view(this.shown);
     if (now - this.lookedAt > LOOK_MS && !this.looking && !this.resting) {
       this.lookedAt = now;
       this.looking = true;
@@ -481,11 +523,13 @@ export class Projection {
     const { units, chunks } = this.line;
     const first = units[from];
     if (!first || this.touched || this.resting || this.dragged) return false;
-    const clear = clearView(this.live);
+    const clear = seenView(this.live);
     clear.height -= this.hooks.below();
+    // On a phone in the board app the orb stands over the canvas's right edge.
+    if (clear.width < 640) clear.width -= ORB_WIDTH;
     const end = chunks.find((chunk) => from >= chunk.first && from < chunk.end)?.end ?? from + 1;
-    const wide = Math.min(1, clear.width / WIDE_VIEW);
-    const least = Math.max(0.1, LEAST_ZOOM * wide);
+    const wide = Math.min(1, clear.width / WIDE_VIEW) * boardScale();
+    const least = Math.max(LEAST_BOARD_APP, this.least * wide);
     let reach = first.reach;
     let to = from + 1;
     for (; to < end; to++) {
@@ -495,7 +539,7 @@ export class Projection {
     }
     this.framedTo = to;
     const now = cameraOf(this.live);
-    const camera = framing(rectOf(reach), clear, now, Math.max(NEAREST_NARROW, wide));
+    const camera = framing(rectOf(reach), clear, now, Math.max(NEAREST_BOARD_APP, wide));
     if (sameCamera(camera, now)) return false;
     this.player.finish();
     this.landing = 0;

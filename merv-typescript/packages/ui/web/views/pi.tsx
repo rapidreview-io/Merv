@@ -2,7 +2,6 @@ import {
   createContext,
   memo,
   useContext,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,20 +9,19 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { currentToken, projectSelection, readOnly, useScopeVersion } from '../api';
-import { Ago, relativeTime } from '../components';
-import { Icon } from '../icons';
-import { MarkdownPieces, useRecordNames } from '../markdown';
-import type { PiConversation, PiInterruption } from '@merv/pi/models';
-import type { ViewProps } from './index';
-import { changed, Context, Machine, Model, Seconds } from './pi-cards';
-import { useMenu } from '../record-picker';
+import { useScopeVersion } from '../api';
+import type { PiInterruption } from '@merv/pi/models';
+import { Seconds } from './pi-cards';
 import { useConversation, type Conversation } from './pi-conversation';
-import { useVoice, VoicePanel, type Voice } from './pi-voice';
+import { useVoice, type Voice } from './pi-voice';
 import { useScreenAnswer } from './pi-screen';
 import { toolTransport } from './pi-transport';
-import { Floating } from './pi-dock';
+import { speech } from '../speech';
+import { AssistantSaid } from '../panel/chat-entry';
+import { StateMark } from '../panel/marks';
+import { oneThread } from '../panel/one-thread';
+import { ThreadRows } from '../panel/one-thread-view';
+import { localLines, mervTurns } from '../board-app/thread-data';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -40,42 +38,6 @@ const STOPPED: Record<PiInterruption, string> = {
   checkpoint_unavailable: 'The answer could not be saved. Ask again.',
 };
 const UNAVAILABLE = 'Agent isn’t available right now.';
-/** How long after its words arrive an answer shows them all. */
-const REVEAL_MS = 250;
-/**
- * The answer as it streams, drawn at the pace its words arrive rather than in bursts: whatever
- * arrived is spread over the next REVEAL_MS, so a steady stream reads at its own rate and nothing
- * shows later than that. A reader who asks for less motion gets each burst at once, and the saved
- * answer replaces this one, whole, the moment the turn ends.
- */
-function LiveAnswer({ text, follow }: { text: string; follow(): void }) {
-  const names = useRecordNames(text);
-  const [shown, setShown] = useState(0);
-  // Reveals run linearly from `from` at `start` to the whole of `text` REVEAL_MS later.
-  const reveal = useRef({ text: '', from: 0, start: 0 });
-  useEffect(() => {
-    const now = performance.now();
-    const at = (time: number) => {
-      const { text, from, start } = reveal.current;
-      return Math.min(text.length, from + ((text.length - from) * (time - start)) / REVEAL_MS);
-    };
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const grew = text.startsWith(reveal.current.text);
-    reveal.current = { text, from: grew && !still ? at(now) : text.length, start: now };
-    let frame = 0;
-    const step = () => {
-      const next = at(performance.now());
-      // Never half a character.
-      setShown(Math.floor(next) - (/[\uD800-\uDBFF]/.test(text[Math.floor(next) - 1]) ? 1 : 0));
-      if (next < text.length) frame = requestAnimationFrame(step);
-    };
-    step();
-    return () => cancelAnimationFrame(frame);
-  }, [text]);
-  useLayoutEffect(follow);
-  return <MarkdownPieces source={text.slice(0, shown)} names={names} />;
-}
-
 interface Agent {
   /** The open conversation; null until it is first drawn, and once it has ended. */
   pi: Conversation | null;
@@ -99,37 +61,8 @@ interface Agent {
   /** What the agent last put on the screen, and when. */
   shown: { title: string; at: number } | null;
 }
-const AgentContext = createContext<Agent | null>(null);
+export const AgentContext = createContext<Agent | null>(null);
 export const useAgent = () => useContext(AgentContext);
-
-/**
- * Saying a sentence to Pi from any page, as the person would: the conversation begins if it has
- * not, and the words go once it is listed. `say` answers whether they reached Pi; `asking` while
- * they are on their way. `quiet` begins the conversation without opening the dock, for a page that
- * is itself where the answer comes. Nothing without an agent, as on a page without one.
- */
-export function useSay(quiet = false) {
-  const agent = useAgent();
-  const [asking, setAsking] = useState<{ words: string; done(sent: boolean): void } | null>(null);
-  const pi = agent?.pi;
-  const listed = !!pi?.listed;
-  useEffect(() => {
-    if (!asking || !pi || !listed) return;
-    setAsking(null);
-    void pi.send(asking.words).then(asking.done);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asking, listed]);
-  const say = useCallback(
-    (words: string) =>
-      new Promise<boolean>((done) => {
-        setAsking({ words, done });
-        if (quiet) agent!.wake();
-        else agent!.start();
-      }),
-    [agent, quiet],
-  );
-  return agent ? { say, asking: !!asking } : null;
-}
 
 /**
  * Holds the Agent's conversation above the routes, so it outlives its page. Nothing is read,
@@ -170,11 +103,10 @@ export function PiProvider({ children }: { children: ReactNode }) {
   // Signing in to a project starts the person's agent machine there, before Pi is opened; unused,
   // it stops after the idle timeout like any warmed machine.
   useEffect(() => {
-    if (!readOnly())
-      void toolTransport.warm?.(
-        null,
-        globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      );
+    void toolTransport.warm?.(
+      null,
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    );
   }, []);
   const voice = useVoice(open.live ? pi : null);
   // What the agent asks of the screen is answered by whatever page the person is on.
@@ -232,12 +164,19 @@ export function Standing({ pi, dot }: { pi: Conversation; dot?: boolean }) {
   );
 }
 
-/** The conversation's turns, drawn alike on the page and in the dock. */
+/**
+ * The conversation's turns, drawn with merv-desktop's chat parts (the same rows as Merv's panel):
+ * what was said, and the Agent's tool calls as one quiet step trail per turn.
+ */
 export function Transcript({ pi }: { pi: Conversation }) {
-  const { snapshot, host, active, visible } = pi;
+  const { snapshot, active, visible } = pi;
   const voiceOff = (useAgent()?.voice.state ?? 'off') === 'off';
   const { unavailable, selected, blocked, following, follow } = pi;
-  // Drawn afresh, on the page or in the dock, it opens at its latest words.
+  const thread = useMemo(() => oneThread([], [], localLines(snapshot)), [snapshot]);
+  const turns = useMemo(() => mervTurns(snapshot), [snapshot]);
+  const ended =
+    snapshot?.commands.at(-1)?.status === 'interrupted' ? snapshot.commands.at(-1) : undefined;
+  // Drawn afresh it opens at its latest words.
   useLayoutEffect(() => {
     following.current = true;
   }, [following]);
@@ -261,64 +200,50 @@ export function Transcript({ pi }: { pi: Conversation }) {
     };
   }, [pi.transcript, follow]);
   return (
-    <div
-      className="pi-messages"
-      ref={pi.transcript}
-      aria-label="Conversation messages"
-      aria-live="polite"
-      onScroll={(event) => {
-        const list = event.currentTarget;
-        // The transcript's own scroll lands where it put it, though the words grew since.
-        if (pi.pinnedAt.current !== null && Math.abs(list.scrollTop - pi.pinnedAt.current) < 2)
-          return;
-        pi.pinnedAt.current = null;
-        following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
-      }}
-    >
-      {snapshot?.commands.flatMap((item, at, all) => [
-        changed(all, at, host, snapshot.models),
-        ...item.messages.map((message, index) => (
-          <article className={`pi-message pi-message--${message.role}`} key={`${item.id}-${index}`}>
-            <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
-            {message.role === 'user' ? (
-              <div className="pi-message-text">{message.text}</div>
-            ) : (
-              <MarkdownPieces source={message.text} />
-            )}
-          </article>
-        )),
-        item.status === 'interrupted' && (
-          <p className="pi-ended" key={`${item.id}-ended`}>
-            {(item.error && STOPPED[item.error]) ?? 'The agent stopped. Ask again.'}
-          </p>
-        ),
-      ])}
-      {visible && (visible.text || visible.progress) && (
-        <article className="pi-message pi-message--assistant pi-message--transient">
-          <span className="pi-speaker">Agent · live</span>
-          {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
-          {visible.progress && <p className="muted">{visible.progress}</p>}
-        </article>
-      )}
-      {/* With the voice on, the voice's own caption says it. */}
-      {active && snapshot?.stage.saying && voiceOff && (
-        <p className="muted">{snapshot.stage.saying}</p>
-      )}
-      {active && !unavailable && (
-        // Where the eye waits; the bar above already says it aloud.
-        <p className="pi-state" aria-hidden="true">
-          <Standing pi={pi} />
-        </p>
-      )}
-      {selected && !snapshot ? (
-        <p className="muted">Loading conversation…</p>
-      ) : blocked ? (
-        <p className="muted" role="status">
-          {UNAVAILABLE}
-        </p>
-      ) : (
-        !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
-      )}
+    <div className="web-panel is-inline">
+      <section className="thread is-main is-one" aria-label="Conversation">
+        <div
+          className="lines"
+          ref={pi.transcript}
+          aria-label="Conversation messages"
+          aria-live="polite"
+          onScroll={(event) => {
+            const list = event.currentTarget;
+            // The transcript's own scroll lands where it put it, though the words grew since.
+            if (pi.pinnedAt.current !== null && Math.abs(list.scrollTop - pi.pinnedAt.current) < 2)
+              return;
+            pi.pinnedAt.current = null;
+            following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+          }}
+        >
+          <ThreadRows
+            thread={thread}
+            turns={turns}
+            active={active ? (snapshot?.conversation.activeCommandId ?? undefined) : undefined}
+          />
+          {ended && (
+            <p className="pi-ended">
+              {(ended.error && STOPPED[ended.error]) ?? 'The agent stopped. Ask again.'}
+            </p>
+          )}
+          {visible?.text && <AssistantSaid id="live" text={visible.text} />}
+          {visible?.progress && <p className="muted">{visible.progress}</p>}
+          {/* With the voice on, the voice's own caption says it. */}
+          {active && snapshot?.stage.saying && voiceOff && (
+            <p className="muted">{snapshot.stage.saying}</p>
+          )}
+          {active && !unavailable && !visible?.text && <StateMark state="running" />}
+          {selected && !snapshot ? (
+            <p className="muted">Loading conversation…</p>
+          ) : (
+            blocked && (
+              <p className="muted" role="status">
+                {UNAVAILABLE}
+              </p>
+            )
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -346,7 +271,7 @@ export function Composer({
       }}
     >
       <label htmlFor="pi-draft" className="sr-only">
-        Message Agent
+        Message {speech.agent}
       </label>
       <textarea
         id="pi-draft"
@@ -417,164 +342,7 @@ export function Composer({
   );
 }
 
-function PiConversationPage() {
-  const { pi, start, voice } = useAgent()!;
-  const [params] = useSearchParams();
-  const requested = params.get('conversation');
-  const opened = useRef<string | null>(null);
-  useEffect(() => {
-    if (requested && pi?.listed && opened.current !== requested) {
-      opened.current = requested;
-      pi.switchTo(requested);
-    }
-  }, [requested, pi]);
-  // Opening the page begins the conversation, or finds it as it was left.
-  useEffect(start, [start]);
-  // The conversations as the menu opened: an answer streaming meanwhile moves none of them.
-  const [menu, setMenu] = useState<PiConversation[] | null>(null);
-  const [context, setContext] = useState(false);
-  const switcher = useRef<HTMLDivElement>(null);
-  useMenu(switcher, menu, () => setMenu(null));
-  if (!pi) return <Notice>Opening conversations…</Notice>;
-  const { listed, error, streamError, unavailable, busy, blocked, snapshot, host, title } = pi;
-  const { conversations, selected } = pi;
-  if (voice.compact && voice.state !== 'off')
-    return (
-      <Floating
-        pi={pi}
-        voice={voice}
-        expand={() => voice.setCompact(false)}
-        hide={() => voice.setCompact(false)}
-      />
-    );
-  return (
-    <div className="page-stage pi-page">
-      {!listed && !error && <p role="status">Opening conversations…</p>}
-      {listed && (
-        <div className="pi-bar">
-          <div className="pi-switch" ref={switcher}>
-            <button
-              type="button"
-              className="pi-switch-button"
-              aria-haspopup="menu"
-              aria-expanded={!!menu}
-              title={title}
-              disabled={busy}
-              onClick={() =>
-                setMenu((value) =>
-                  value
-                    ? null
-                    : [...conversations].sort((left, right) =>
-                        right.updatedAt.localeCompare(left.updatedAt),
-                      ),
-                )
-              }
-            >
-              <span>{title}</span>
-              <Icon name="chevrons" />
-            </button>
-            {menu && (
-              <div className="pi-menu" role="menu" aria-label="Conversations">
-                <button
-                  type="button"
-                  role="menuitem"
-                  tabIndex={-1}
-                  className="pi-menu-item"
-                  onClick={() => {
-                    setMenu(null);
-                    pi.create();
-                  }}
-                >
-                  New conversation
-                </button>
-                {menu.map((item) => {
-                  const name = item.id === selected ? title : item.title;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      role="menuitem"
-                      tabIndex={-1}
-                      className="pi-menu-item"
-                      aria-label={`${name}, ${relativeTime(item.updatedAt)}`}
-                      aria-current={item.id === selected || undefined}
-                      onClick={() => {
-                        setMenu(null);
-                        switcher.current?.querySelector('button')?.focus();
-                        if (item.id !== selected) pi.switchTo(item.id);
-                      }}
-                    >
-                      <span>{name}</span>
-                      <Ago at={item.updatedAt} />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          {!blocked && !unavailable && snapshot && snapshot.models.length > 1 && (
-            <Model
-              models={snapshot.models}
-              model={snapshot.conversation.model}
-              busy={busy}
-              pick={pi.pickModel}
-            />
-          )}
-          {!blocked && snapshot && (
-            <div className="pi-state" role="status">
-              <Standing pi={pi} dot />
-            </div>
-          )}
-          {snapshot && (
-            <button
-              type="button"
-              className="pi-switch-button pi-context-button"
-              aria-expanded={context}
-              onClick={() => setContext((open) => !open)}
-            >
-              Context
-            </button>
-          )}
-          {!blocked && !unavailable && host && (
-            <Machine
-              host={host}
-              skew={pi.skew.current}
-              choose={(key) => void pi.machine('pi.machine.set', { machine: key })}
-              stop={() => void pi.machine('pi.machine.stop', {})}
-            />
-          )}
-        </div>
-      )}
-      {listed && context && snapshot && (
-        <Context id={snapshot.conversation.id} turns={snapshot.commands.length} />
-      )}
-      {listed && <Transcript pi={pi} />}
-      {error && (
-        <p className="pi-error" role="alert">
-          {error}
-        </p>
-      )}
-      {streamError && (
-        <p className="muted" role="status">
-          {streamError}
-        </p>
-      )}
-      {unavailable && (
-        <button className="btn" type="button" onClick={pi.retryStream}>
-          Retry connection
-        </button>
-      )}
-      {!listed && error && (
-        <button className="btn" type="button" onClick={pi.retryList}>
-          Retry opening Agent
-        </button>
-      )}
-      {listed && <Speak pi={pi} />}
-    </div>
-  );
-}
-
-/** The page's composer, or, while voice is on, the voice panel in its place. */
+/** The customer page's composer: what is typed to the Agent, with its voice where it has one. */
 export function Speak({
   pi,
   rows = 3,
@@ -588,40 +356,14 @@ export function Speak({
 }) {
   const agent = useAgent();
   const voice = supplied ?? agent?.voice;
-  const hint = placeholder ? { placeholder } : {};
-  if (!voice) return <Composer pi={pi} rows={rows} {...hint} />;
-  return voice.state === 'off' ? (
+  return (
     <>
-      {voice.problem && (
+      {voice?.problem && (
         <p className="pi-error" role="alert">
           {voice.problem}
         </p>
       )}
-      <Composer pi={pi} rows={rows} voice={voice} {...hint} />
+      <Composer pi={pi} rows={rows} voice={voice} {...(placeholder ? { placeholder } : {})} />
     </>
-  ) : (
-    <VoicePanel voice={voice} progress={pi.visible?.progress || pi.standing[0]} />
-  );
-}
-
-/** The page while all it has to say is how it stands. */
-const Notice = ({ children }: { children: ReactNode }) => (
-  <div className="page-stage pi-page">
-    <p role="status">{children}</p>
-  </div>
-);
-
-export function PiView({ row }: ViewProps) {
-  const scope = useScopeVersion();
-  const agent = useAgent();
-  if (!projectSelection() || !currentToken())
-    return <Notice>Agent unavailable. Select a project and sign in to continue.</Notice>;
-  // A page drawn where nothing holds the conversation above it holds its own.
-  return agent ? (
-    <PiConversationPage />
-  ) : (
-    <PiProvider key={`${scope}:${row.id}`}>
-      <PiConversationPage />
-    </PiProvider>
   );
 }

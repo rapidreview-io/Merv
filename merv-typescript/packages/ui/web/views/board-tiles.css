@@ -1,0 +1,57 @@
+/* A board's card shows that board: its picture, a stack behind it, its title on a bar beneath. */
+.canvas-tiles {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.canvas-tile {
+  position: fixed;
+  transform-origin: 0 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--tile-bg, #1b1c20);
+  box-shadow:
+    0 0 0 1px #ffffff26,
+    4px 4px 0 -1px #2a2c33,
+    4px 4px 0 0 #ffffff1a,
+    8px 8px 0 -1px #222329,
+    8px 8px 0 0 #ffffff12;
+}
+.canvas-tile img {
+  position: absolute;
+  inset: 0 0 22px;
+  width: 100%;
+  height: calc(100% - 22px);
+  object-fit: cover;
+  object-position: center;
+}
+.canvas-tile-empty {
+  position: absolute;
+  inset: 0 0 22px;
+  background-image: radial-gradient(#ffffff1f 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+.canvas-tile-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 22px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font:
+    500 11px/1 Inter,
+    system-ui,
+    sans-serif;
+  color: #e9ecef;
+  background: #000a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-theme='light'] .canvas-tile {
+  --tile-bg: #f8f9fa;
+}

@@ -1,0 +1,358 @@
+/* The welcome: three short cards over a new person's first board, in the sign-in panel's own tones. */
+.board-welcome {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(3px);
+  font-family: Geist, var(--font-body);
+  animation: board-welcome-in 240ms ease-out;
+}
+@keyframes board-welcome-in {
+  from {
+    opacity: 0;
+  }
+}
+.board-welcome-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 36px 36px 24px;
+  text-align: center;
+  color: #dfe2e6;
+  background: #111110;
+  border-radius: 18px;
+  box-shadow:
+    0 12px 40px #0008,
+    0 0 0 1px #ffffff0f;
+}
+.board-welcome-orb {
+  width: 52px;
+  height: 52px;
+}
+.board-welcome-orb.is-big {
+  width: 84px;
+  height: 84px;
+  margin: 8px 0;
+}
+.board-welcome-orb canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.board-welcome-orb:not(.is-hearing) {
+  animation: board-orb-breathe 3s ease-in-out infinite;
+}
+.board-welcome-card h1 {
+  margin: 0;
+  font:
+    30px/1.2 Excalifont,
+    var(--font-body);
+  letter-spacing: 0;
+}
+.board-welcome-lead {
+  margin: 0 0 6px;
+  max-width: 30em;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #9aa0a8;
+}
+.board-welcome-field {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+.board-welcome-field > span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #dfe2e6;
+}
+.board-welcome-field input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #222221;
+  box-shadow: inset 0 0 0 1px #33383f;
+  color: #dfe2e6;
+  font:
+    15px Geist,
+    var(--font-body);
+}
+.board-welcome-field input::placeholder {
+  color: #6c737c;
+}
+.board-welcome-field input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px #8aa6e6;
+}
+.board-welcome-looks {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.board-welcome-looks button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+  padding: 5px 5px 7px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px #33383f;
+  text-align: center;
+  font-size: 11px;
+  color: #9aa0a8;
+  transition:
+    box-shadow 120ms ease-out,
+    color 120ms ease-out;
+}
+.board-welcome-looks .paper-board {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;
+  border-radius: 5px;
+}
+.board-welcome-looks button:hover {
+  color: #dfe2e6;
+}
+.board-welcome-looks button[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 2px #8aa6e6;
+  color: #dfe2e6;
+  background: #222221;
+}
+.board-welcome-asks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+.board-welcome-asks button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  align-content: start;
+  padding: 14px;
+  border-radius: 14px;
+  background: #222221;
+  box-shadow: inset 0 0 0 1px #33383f;
+  text-align: left;
+  transition:
+    box-shadow 120ms ease-out,
+    transform 120ms ease-out;
+}
+.board-welcome-asks button:hover {
+  box-shadow: inset 0 0 0 1.5px #8aa6e6;
+  transform: translateY(-1px);
+}
+.board-welcome-asks svg {
+  width: 22px;
+  height: 22px;
+  color: #8aa6e6;
+}
+.board-welcome-asks small {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #858c95;
+}
+.board-welcome-asks span {
+  grid-column: 1 / -1;
+  font:
+    17px/1.3 Excalifont,
+    var(--font-body);
+  color: #dfe2e6;
+}
+.board-welcome-mac {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #3456a433;
+  box-shadow: inset 0 0 0 1px #8aa6e655;
+  text-align: left;
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #b9c0c9;
+}
+.board-welcome-mac svg {
+  width: 24px;
+  height: 24px;
+  color: #8aa6e6;
+}
+.board-welcome-mac span {
+  color: #b9c0c9;
+}
+.board-welcome-mac b {
+  display: block;
+  font-weight: 500;
+  color: #dfe2e6;
+}
+.board-welcome-mac em {
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+  color: #a9bff0;
+}
+.board-welcome-mac:hover em {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.board-welcome-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+}
+.board-welcome-dots {
+  display: flex;
+  gap: 6px;
+  margin-right: auto;
+}
+.board-welcome-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #43484e;
+}
+.board-welcome-dots i.is-on {
+  background: #8aa6e6;
+}
+.board-welcome-foot button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font:
+    500 14px Geist,
+    var(--font-body);
+}
+.board-welcome-foot .board-welcome-skip {
+  color: #858c95;
+}
+.board-welcome-foot .board-welcome-skip:hover {
+  color: #dfe2e6;
+}
+.board-welcome-foot .board-welcome-next {
+  background: #3456a4;
+  color: #fff;
+}
+.board-welcome-foot .board-welcome-next:hover:not(:disabled) {
+  background: #3e63b8;
+}
+.board-welcome-foot .board-welcome-next:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.board-welcome :is(button, a, input):focus-visible {
+  outline: 2px solid #8aa6e6;
+  outline-offset: 2px;
+}
+html[data-theme='light'] .board-welcome-card {
+  color: #1f2125;
+  background: #ffffff;
+  box-shadow:
+    0 12px 40px #00000026,
+    0 0 0 1px #00000014;
+}
+html[data-theme='light'] .board-welcome-lead {
+  color: #5f6670;
+}
+html[data-theme='light'] .board-welcome-field > span,
+html[data-theme='light'] .board-welcome-asks span,
+html[data-theme='light'] .board-welcome-mac b {
+  color: #1f2125;
+}
+html[data-theme='light'] .board-welcome-field input {
+  background: #f4f5f7;
+  box-shadow: inset 0 0 0 1px #d6d9de;
+  color: #1f2125;
+}
+html[data-theme='light'] .board-welcome-looks button {
+  box-shadow: inset 0 0 0 1px #d6d9de;
+  color: #5f6670;
+}
+html[data-theme='light'] .board-welcome-looks button[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 2px #3456a4;
+  color: #1f2125;
+  background: #f4f5f7;
+}
+html[data-theme='light'] .board-welcome-asks button {
+  background: #f4f5f7;
+  box-shadow: inset 0 0 0 1px #d6d9de;
+}
+html[data-theme='light'] .board-welcome-asks svg,
+html[data-theme='light'] .board-welcome-mac svg {
+  color: #3456a4;
+}
+html[data-theme='light'] .board-welcome-mac {
+  background: #3456a414;
+  box-shadow: inset 0 0 0 1px #3456a440;
+}
+html[data-theme='light'] .board-welcome-mac span {
+  color: #4b5563;
+}
+html[data-theme='light'] .board-welcome-foot .board-welcome-skip {
+  color: #5f6670;
+}
+html[data-theme='light'] .board-welcome-foot .board-welcome-skip:hover {
+  color: #1f2125;
+}
+html[data-theme='light'] .board-welcome-mac em {
+  color: #3456a4;
+}
+html[data-theme='light'] .board-welcome-dots i {
+  background: #d6d9de;
+}
+html[data-theme='light'] .board-welcome-dots i.is-on {
+  background: #3456a4;
+}
+@media (max-width: 560px) {
+  .board-welcome-card {
+    padding: 28px 20px 18px;
+  }
+  .board-welcome-asks {
+    grid-template-columns: 1fr;
+  }
+  .board-welcome-looks {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .board-welcome-mac {
+    grid-template-columns: 24px 1fr;
+  }
+  .board-welcome-mac em {
+    grid-column: 2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-welcome,
+  .board-welcome-orb {
+    animation: none;
+  }
+}

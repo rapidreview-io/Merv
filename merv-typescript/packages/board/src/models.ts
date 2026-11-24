@@ -1,3 +1,4 @@
+import type { LookName } from '@merv/protocol/looks';
 import type { Json } from '@merv/contracts/data';
 
 /** The most bytes one image holds. */
@@ -8,6 +9,10 @@ export interface BoardSummary {
   id: string;
   projectId: string;
   title: string;
+  /** The person's preferred drawing guidance, not a rendering style. */
+  look?: LookName;
+  /** Authored canvas paper. Stored with this board, independent of preferences. */
+  paper?: string;
   /** Counts every save that changed a shape; a page asks for what changed after the one it has. */
   revision: number;
   archived: boolean;
@@ -34,41 +39,8 @@ export interface BoardElement {
   [field: string]: Json | undefined;
 }
 
-/** One way an outcome left the board: the file frozen from it at a revision of it. */
-export interface OutcomeSent {
-  at: string;
-  how: 'claude' | 'copy' | 'fleet';
-  artifactId: string;
-  revision: number;
-  /** The task a send to Fleet became, once one names the file (`@merv/board/links`). */
-  taskId?: string;
-}
-
-/** An outcome without its text: what the page polls and what board.read lists. */
-export interface OutcomeLine {
-  id: string;
-  title: string;
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
-  sent: OutcomeSent[];
-}
-
-/**
- * What a board led to: a titled Markdown draft that a person and their agent edit side by side.
- * Saving is implicit, so it has no history of its own; each send freezes a file, and those are it.
- */
-export interface Outcome extends OutcomeLine {
-  text: string;
-  createdBy: string;
-  updatedBy: string;
-  /** The agent that last wrote it, as a page names it; none when a person did. */
-  writer?: string;
-}
-
 export interface BoardScene {
   board: BoardSummary;
-  outcomes: OutcomeLine[];
   /** Every live shape, or with `since` every shape changed after that revision, deleted ones too. */
   elements: BoardElement[];
   /** A shape deleted after `since` was purged (30 days on): `elements` is every live shape. */
@@ -85,6 +57,8 @@ export interface BoardLooking {
   at: number;
   /** It drew there, so a stroke being traced there is its own. */
   drew?: true;
+  /** Its opening look at a hand-off: the board shows the picture being taken. */
+  snapshot?: true;
 }
 
 /**
@@ -97,8 +71,18 @@ export interface BoardChange {
   revision: number;
   actorId: string;
   at: string;
-  kind: 'before' | 'draw' | 'save';
+  kind: 'before' | 'draw' | 'save' | 'said';
   shapes: BoardElement[];
+  /** A line said aloud in a live session: a step of its own, on the same line as the drawing. */
+  said?: BoardSaid;
+}
+
+/** Words said aloud on a board: the person's, or an agent's voice speaking to them. */
+export interface BoardSaid {
+  by: 'person' | 'agent';
+  /** Which agent spoke: Merv, Claude, Codex. */
+  name?: string;
+  words: string;
 }
 
 export interface BoardHistory {
@@ -118,11 +102,15 @@ export interface BoardHistory {
  */
 export const stacked = <T extends object>(elements: readonly T[]): T[] =>
   [...elements].sort((a, b) => {
-    const [x, y] = [a, b]
-      .map((el) => (el as { index?: unknown }).index)
-      .map((i) => (typeof i === 'string' ? i : '\uffff'));
-    const [p, q] = [a, b].map((el) => String((el as { id?: unknown }).id));
-    return x! < y! ? -1 : x! > y! ? 1 : p! < q! ? -1 : p! > q! ? 1 : 0;
+    const left = a as { index?: unknown; id?: unknown };
+    const right = b as { index?: unknown; id?: unknown };
+    const leftIndex = left.index,
+      rightIndex = right.index;
+    const x = typeof leftIndex === 'string' ? leftIndex : '\uffff';
+    const y = typeof rightIndex === 'string' ? rightIndex : '\uffff';
+    const p = String(left.id),
+      q = String(right.id);
+    return x < y ? -1 : x > y ? 1 : p < q ? -1 : p > q ? 1 : 0;
   });
 
 type Points = { x: number; y: number; width: number; height: number; points?: unknown };

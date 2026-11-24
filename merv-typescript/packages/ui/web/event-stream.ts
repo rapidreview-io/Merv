@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { sameOriginPath } from '@merv/contracts/running';
-import { currentToken, renewed, scopeHeaders } from './api';
+import { currentToken, renewed, scopeHeaders, useScopeVersion } from './api';
 
 type Frame = { event: string; data: string };
 
@@ -91,6 +91,7 @@ export async function readEventStream(
   signal: AbortSignal,
   accept: (event: string, value: object) => void,
   headers: Record<string, string> = accountHeaders(),
+  opened?: () => void,
 ): Promise<boolean> {
   // The credential goes to this app's own host and nowhere else, whatever path it is handed.
   if (!sameOriginPath(path)) throw new StreamError(403);
@@ -100,6 +101,7 @@ export async function readEventStream(
     headers: { accept: 'text/event-stream', ...headers },
   });
   if (!response.ok || !response.body) throw new StreamError(response.status);
+  opened?.();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let rotated = false;
@@ -157,7 +159,7 @@ export const STALL_MS = 10_000;
 export function useEventStream(
   source: string | StreamSource | null,
   onEvent: (event: string, value: object) => void,
-  after?: () => number,
+  after?: () => number | string,
 ): { state: EventStreamState; retry(): void } {
   const [state, setState] = useState<EventStreamState>('connecting');
   const [attempt, setAttempt] = useState(0);
@@ -166,6 +168,8 @@ export function useEventStream(
   const own = typeof source === 'string' ? undefined : (source ?? undefined);
   const latest = useRef({ onEvent, after, own });
   latest.current = { onEvent, after, own };
+  // Another project or account is another stream: what this one held is not theirs.
+  const scope = useScopeVersion();
   useEffect(() => {
     if (!visible || !url) return;
     // A new stream (another url, or the tab shown again) owes nothing to the last one's state.
@@ -195,7 +199,9 @@ export function useEventStream(
       let [ended, busy] = [false, false];
       try {
         const rotated = await readEventStream(
-          from ? `${url}${url.includes('?') ? '&' : '?'}after=${from}` : url,
+          typeof from === 'number' && from
+            ? `${url}${url.includes('?') ? '&' : '?'}after=${from}`
+            : url,
           controller.signal,
           (event, value) => {
             if (event === 'end') ended = true;
@@ -205,7 +211,16 @@ export function useEventStream(
             setState('open');
             latest.current.onEvent(event, value);
           },
-          own?.headers(),
+          {
+            ...(own?.headers() ?? accountHeaders()),
+            // A string cursor resumes as the standard says, by the last event id held.
+            ...(typeof from === 'string' && from ? { 'last-event-id': from } : {}),
+          },
+          () => {
+            if (stopped) return;
+            [failures, renewing] = [0, false];
+            setState('open');
+          },
         );
         if (stopped) return;
         if (ended) {
@@ -215,13 +230,22 @@ export function useEventStream(
         if (rotated && Date.now() - since > 5000) return void connect();
       } catch (cause) {
         if (stopped) return;
-        const status = cause instanceof StreamError ? cause.status : 0;
+        let status = cause instanceof StreamError ? cause.status : 0;
         // A credential that expired while the tab was hidden is renewed once, as a request's is.
         if (status === 401 && !renewing) {
           renewing = true;
-          const fresh = own ? await (own.renew?.() ?? false) : await renewed(bearer);
-          if (stopped) return;
-          if (fresh) return void connect();
+          try {
+            const fresh = own
+              ? await (own.renew?.() ?? false)
+              : await renewed(bearer, { throwOnError: true });
+            if (stopped) return;
+            if (fresh) return void connect();
+          } catch {
+            // The renewal itself did not answer: retried as an outage, not refused.
+            if (stopped) return;
+            renewing = false;
+            status = 0;
+          }
         }
         if ([401, 403, 404, 410].includes(status)) {
           waiting = null;
@@ -242,6 +266,6 @@ export function useEventStream(
       clearTimeout(timer);
       clearInterval(watch);
     };
-  }, [url, visible, attempt]);
+  }, [url, visible, attempt, scope]);
   return { state, retry: () => setAttempt((count) => count + 1) };
 }

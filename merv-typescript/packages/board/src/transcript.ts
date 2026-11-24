@@ -1,12 +1,15 @@
+import { redact } from '@merv/protocol/redact';
+export { redact } from '@merv/protocol/redact';
+
 /**
  * An agent's session as one list of steps, whichever agent wrote it. Pure and browser-safe: the page
  * turns a person's file into this before anything leaves their machine, and board.read answers from
  * it. A format is known by what its lines hold, never by where the file lay, and one not known is
  * refused by what was seen, never guessed at. Every number here is computed; the story is the agent's.
  */
-export const FORMAT = 'merv.transcript/1';
+const FORMAT = 'merv.transcript/1';
 
-export interface Step {
+interface Step {
   id: number;
   /** The line of the source file this came from, which is the evidence. */
   line: number;
@@ -55,50 +58,6 @@ const typeName = (type: unknown) =>
   typeof type === 'string' && /^[a-z][\w.:-]{0,39}$/i.test(type) && !/\d{4}|[A-Z].*\d/.test(type)
     ? type
     : '(other)';
-
-// Secret-shaped values. Order matters: named blocks and prefixes before the general shapes.
-const SECRETS: [string, RegExp][] = [
-  [
-    'private-key',
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-  ],
-  ['url-password', /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"'\\]+:[^\s/@"'\\]+@/gi],
-  ['jwt', /\beyJ[\w-]{8,}\.[\w-]{8,}(\.[\w-]+)?/g],
-  [
-    'api-key',
-    /\b(sk|pk|rk)[-_](?:ant-|live-|test-|proj-|live_|test_)?[\w-]{16,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_\w{20,}|\bgithub_pat_\w{20,}|\bglpat-[\w-]{16,}|\bxox[abeoprs]-[\w-]{10,}|\bAIza[\w-]{30,}|\bya29\.[\w-]{20,}|\bnpm_\w{20,}|\bhf_\w{20,}|\bwhsec_\w{16,}|\bSG\.[\w-]{16,}\.[\w-]{16,}|\bmk_\w{16,}|\bcfut_\w{16,}|\bdop_v1_\w{16,}|\bre_[A-Za-z0-9]{16,}\w*/g,
-  ],
-  ['authorization', /\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{16,}/gi],
-  [
-    'named-secret',
-    /((?:pass(?:word|wd|phrase)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|credentials?|authorization|cookie|session[-_]?key)[\w-]*\\*["']?\s*(?:[:=]|=>)\s*(\\*["']))(?!\[redacted)(?:(?!\2)[^\n]){1,300}?(?=\2)/gi,
-  ],
-  [
-    'named-secret',
-    /((?:pass(?:word|wd|phrase)?|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|credentials?|authorization|cookie|session[-_]?key)[\w-]*\\*["']?\s*(?:[:=]|=>)\s*(?:\\*["'])?)(?!\[redacted|\$\{?|<|process\.|env\.|true\b|false\b|null\b|undefined\b)[^\s"'\\,;)}\]]{6,}/gi,
-  ],
-  ['email', /\b[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/g],
-];
-/** A long run that reads like a key: git's 40-character hashes and plain words are spared. */
-const LONG = /(?<![\w/+-])(?:[A-Fa-f0-9]{48,}|[A-Za-z0-9_+=-]{40,})(?![\w/+-])/g;
-const keyLike = (run: string) =>
-  (/^[A-Fa-f0-9]+$/.test(run) && run.length >= 48) ||
-  (/\d/.test(run) && /[a-z]/.test(run) && /[A-Z]/.test(run));
-
-/** The text with its secret-shaped values replaced, each counted by its kind. */
-export const redact = (text: string, tally: Record<string, number> = {}): string => {
-  let out = text;
-  for (const [kind, pattern] of SECRETS)
-    out = out.replace(pattern, (match, keep) => {
-      count(tally, kind);
-      return `${kind === 'named-secret' ? keep : ''}[redacted:${kind}]`;
-    });
-  return out.replace(LONG, (run) => {
-    if (!keyLike(run)) return run;
-    count(tally, 'long-token');
-    return '[redacted:long-token]';
-  });
-};
 
 const joined = (content: unknown): string =>
   typeof content === 'string'

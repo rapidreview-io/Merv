@@ -1,0 +1,96 @@
+/* One list of the panel's colours and measures, for every surface that wears them: Merv.app's own
+   page (html.desk) and, on the web, the sidebar and the phone view (their page's :root is the board's).
+   Cool, soft neutrals (text 12:1, secondary 5.9:1, tertiary 4.6:1 on the panel); Merv's blue as a fill
+   (the orb's body) and, for text and thin marks on dark, its lighter ink. Dark here, light below. */
+:where(html.desk, .web-panel, .phone) {
+  /* Radix Sand 1 and 3: the sidebar's near-black is every surface's in dark, the board's too. */
+  --panel: #111110;
+  --raised: #222221;
+  --divider: #33383f;
+  --text: #dfe2e6;
+  --secondary: #9aa0a8;
+  --tertiary: #858c95;
+  /* The quietest ink a word may have: the tertiary where that reads (5.6:1 on the dark panel), the secondary where it does not (5.8:1 on the light one). */
+  --quiet-word: var(--tertiary);
+  --accent: #8aa6e6;
+  --accent-fill: #3456a4;
+  --approval: #e6bf4a;
+  --error: #f08484;
+  --run: #8aa6e6;
+  /* Each agent's own colour, for its mark and its spinner: drawn, never read. Claude's orange; Codex's is the ink's. */
+  --claude: #d97757;
+  --codex: var(--text);
+  --diff-add-bg: #6fcf9714;
+  --diff-del-bg: #ff808014;
+  --diff-add-word: #6fcf9740;
+  --diff-del-word: #ff808040;
+  /* Drawn, not read: an off switch, a hairline edge, shadows, a gain, a logo's edge. */
+  --control-off: #43484e;
+  --hairline: #ffffff0a;
+  --positive: #6fcf97;
+  --icon-edge: rgb(255 255 255 / 75%);
+  --shadow-faint: #0004;
+  --shadow: #0006;
+  --shadow-strong: #0009;
+  --surface-hover: #2e3135;
+  --error-bg: #3a2224;
+  --diff-add: #b8ecca;
+  --diff-del: #f3b5b5;
+  --diff-hunk: #696e77;
+  --syntax-comment: #9299a5;
+  --syntax-string: #a8c9ad;
+  --syntax-number: #dbbb8e;
+  --syntax-title: #b4bce8;
+  --syntax-meta: #c3cbd9;
+  --syntax-deletion: #dfaaaa;
+  /* A chat's reading column: room on both sides, at most 720px of text; the box to write in sits on it. */
+  --pad: 16px;
+  --column-pad: max(32px, calc((100% - 720px) / 2));
+  --box-pad: max(24px, calc((100% - 736px) / 2));
+  --gap: 8px;
+  --row: 40px;
+  --radius: 10px;
+  --hover: 120ms ease-out;
+}
+html:not([data-theme='light']) :is(.diff, .command-output, .approval-preview) {
+  --code-bg: #18191b;
+}
+html[data-theme='light'],
+html[data-theme='light'] :is(.web-panel, .phone) {
+  --panel: #ffffff;
+  --raised: #f4f5f7;
+  --divider: #e3e6ea;
+  --text: #1f2125;
+  --secondary: #5f6670;
+  --tertiary: #8a9099;
+  --quiet-word: var(--secondary);
+  --accent: #2f5bd3;
+  --accent-fill: #3456a4;
+  --approval: #856600;
+  --error: #b42336;
+  --run: #2f5bd3;
+  --surface-hover: #e9ecf1;
+  --error-bg: #fbeaec;
+  --code-bg: #f4f5f7;
+  --syntax-comment: #5f6670;
+  --syntax-string: #24633b;
+  --syntax-number: #805300;
+  --syntax-title: #5342a0;
+  --syntax-meta: #475569;
+  --syntax-deletion: #9b2937;
+  --diff-add-bg: #6fcf9714;
+  --diff-del-bg: #ff808014;
+  --diff-add-word: #6fcf9740;
+  --diff-del-word: #ff808040;
+  --diff-add: #205c35;
+  --diff-del: #9b2937;
+  --diff-hunk: #5f6670;
+  --control-off: #8a9099;
+  --hairline: #00000014;
+  --positive: #1f7a3a;
+  --icon-edge: transparent;
+  --shadow-faint: #0000001a;
+  --shadow: #00000024;
+  --shadow-strong: #0000002e;
+  color-scheme: light;
+}

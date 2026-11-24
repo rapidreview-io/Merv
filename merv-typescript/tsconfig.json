@@ -17,10 +17,22 @@
   "exclude": [
     "tests/ui-render.ts",
     "tests/ui-work.test.ts",
-    "tests/ui-board-lifecycle.test.ts",
     "tests/ui-oauth-consent.test.ts",
     "tests/ui-artifact-upload.test.ts",
     "tests/ui-markdown.test.ts",
-    "tests/ui-shell.test.ts"
+    "tests/ui-shell.test.ts",
+    "tests/ui-board-pdf-card.test.ts",
+    "tests/ui-board-pen-size.test.ts",
+    "tests/ui-board-shared.test.ts",
+    "tests/ui-merv-panel.test.ts",
+    "tests/ui-page-card-media.test.ts",
+    "tests/ui-project-owner-lifecycle.test.ts",
+    "tests/ui-voice-lines.test.ts",
+    "tests/ui-voice-replay.test.ts",
+    "tests/ui-board-input.test.ts",
+    "tests/ui-board-touch.test.ts",
+    "tests/ui-board-pages.test.ts",
+    "tests/ui-board-replay-words.test.ts",
+    "tests/ui-voice-backends.test.ts"
   ]
 }

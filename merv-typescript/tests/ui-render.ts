@@ -15,7 +15,7 @@
  * a dynamic import.
  */
 import { readFileSync } from 'node:fs';
-import { after } from 'node:test';
+import { after, beforeEach } from 'node:test';
 import { JSDOM } from 'jsdom';
 import type { ReactElement } from 'react';
 
@@ -32,10 +32,10 @@ const define = (key: string, value: unknown) => {
   }
 };
 /** What every width query answers — a wide window — until `resize` says otherwise. */
-const media = { wide: true, listeners: new Set<() => void>() };
+const media = { wide: true, only: new Map<string, boolean>(), listeners: new Set<() => void>() };
 win.matchMedia = ((query: string) => ({
   get matches() {
-    return media.wide;
+    return media.only.get(query) ?? media.wide;
   },
   media: query,
   onchange: null,
@@ -182,8 +182,10 @@ export const settle = async (ms = 0) => {
   });
 };
 /** Carry the window across every width breakpoint at once, and let the page follow. */
-export const resize = async (wide: boolean) => {
+/** `only`: queries that answer for themselves (a phone on its side is narrow to one query and roomy to another). */
+export const resize = async (wide: boolean, only: Record<string, boolean> = {}) => {
   media.wide = wide;
+  media.only = new Map(Object.entries(only));
   await act(async () => {
     for (const listener of media.listeners) listener();
   });
@@ -227,6 +229,8 @@ export async function unmount(): Promise<void> {
     aborted.length = 0;
   }
 }
+// A new test starts on a fresh route; remounts within that test retain their navigation.
+beforeEach(() => win.history.replaceState(null, '', '/'));
 // A test that fails before its own unmount leaves no view polling once the file's tests end.
 after(unmount);
 /** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
