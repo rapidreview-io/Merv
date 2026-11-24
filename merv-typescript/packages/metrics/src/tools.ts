@@ -7,7 +7,23 @@ import type {} from './service.js';
 import { MetricsRenderer } from './renderer.js';
 import { sheet } from './chart.js';
 const name = z.string().min(1).max(256);
-const experiment = z.object({ experimentId: name }).strict();
+/** A running experiment or a task in progress, by its id: exactly one of the two. */
+const item = z
+  .object({
+    experimentId: name.optional(),
+    taskId: name.optional(),
+    machine: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+function itemOf(input: z.infer<typeof item>) {
+  check(
+    !!input.experimentId !== !!input.taskId,
+    'invalid_input',
+    'Name the experimentId or the taskId, one of them',
+    400,
+  );
+  return input.taskId ? { taskId: input.taskId } : { experimentId: input.experimentId! };
+}
 const run = { run: name, id: name.optional() };
 const range = { from: z.number().finite().optional(), to: z.number().finite().optional() };
 const chartInput = z.object({
@@ -34,7 +50,13 @@ export const metricsToolsPlugin = {
     ctx.effect(() => () => renderer.close());
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        'Training code logs curves to Trackio after metrics.write connect, with the returned environment on the job. metrics.read look shows the charts as a picture. Ask anything else about runs as metrics.read query (SQL over Trackio tables) or by composing metrics.read series in script.run.',
+        [
+          "Log every training or evaluation run to Trackio, so its curves show live on the item's card and its figure is kept with its results.",
+          'How: call metrics.write connect with the experimentId (or taskId) you are producing and, if you know it, machine (e.g. "1x A100, lab-gpu-01"); put the returned env on the job; in Python `import trackio; trackio.init(project=<the returned project>, name="<arm>-seed<k>", config={...}); trackio.log({"val/acc": a, "train/loss": l}, step=s); trackio.finish()`, or report_to="trackio" in Hugging Face Trainer.',
+          "Name runs by arm and seed (baseline-seed1, ablation-seed1); log the plan's primary measure under a name that says it (val/acc, eval/loss); log cost_usd (dollars so far) if you know it.",
+          'Before you submit, call metrics.write export: it keeps every series and draws the key figure (all runs overlaid). An experiment gets both attached to its results; a task gets their ids to include in its delivery. Embed the figure in the report as ![caption](art_ID).',
+          'metrics.read look shows the charts as a picture. Ask anything else about runs as metrics.read query (SQL over Trackio tables) or by composing metrics.read series in script.run.',
+        ].join(' '),
       ),
     );
     const actions: Record<string, NounAction> = {
@@ -118,6 +140,26 @@ export const metricsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'metrics.items',
+        tier: 'ui',
+        readOnly: true,
+        description:
+          "Items' key curves for cards and the board: each task or experiment that logged runs, by id.",
+        inputSchema: z
+          .object({
+            ids: z.array(name).min(1).max(100),
+            hints: z.record(name, z.string().max(300)).optional(),
+            points: z.number().int().min(2).max(300).optional(),
+          })
+          .strict(),
+        handler: (
+          caller: Caller,
+          input: { ids: string[]; hints?: Record<string, string>; points?: number },
+        ) => metrics.items(caller, input).then(bounded),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'metrics.chart',
         tier: 'ui',
         readOnly: true,
@@ -130,22 +172,26 @@ export const metricsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.noun('metrics.write', {
         tier: 'deferred',
-        summary: "Connect training code to Trackio or retain an attempt's metrics.",
+        summary: "Connect training code to Trackio or keep an item's metrics and figure.",
         description:
-          "Connect a running producer or retain its current attempt's metrics as one JSON artifact; attach that artifact as a qualitative result (small results must be declared JSON).",
+          'Connect the experiment or task you are producing to Trackio, or keep its runs: every series as one JSON artifact and its key figure as a picture.',
         actions: {
           connect: {
-            description: 'Get the Trackio environment for a running experiment.',
-            input: experiment,
+            description:
+              'Get the Trackio environment for the running experiment or in-progress task you produce; machine, where given, is stamped on each run.',
+            input: item,
             was: ['metrics.connect'],
-            handler: (c, i) => metrics.connect(c, i.experimentId),
+            handler: (c, i) => metrics.connect(c, itemOf(i), i.machine),
           },
           export: {
             description:
-              'Retain all current attempt runs and metric series; attach the returned artifact with experiment.write attach.',
-            input: experiment,
+              "Keep the item's runs: all metric series as JSON and the key figure (every run overlaid) as a PNG. An experiment's are attached to its current attempt as qualitative results; a task's ids go in its delivery. Embed the figure in the report.",
+            input: item,
             was: ['metrics.export'],
-            handler: (c, i) => metrics.export(c, i.experimentId),
+            handler: (c, i) =>
+              metrics.export(c, itemOf(i), (svg, width, height) =>
+                renderer.render(svg, width, height, 'png'),
+              ),
           },
         },
       }),

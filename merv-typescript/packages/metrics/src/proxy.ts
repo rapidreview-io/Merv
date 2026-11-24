@@ -87,8 +87,8 @@ export function metricsProxy(
     for (const run of runs) names.set(run.name, [...(names.get(run.name) ?? []), run.id]);
     const tags = new Map<string, { e: unknown; a: unknown }>();
     for (const [id, tagged] of Object.entries(configs))
-      if (tagged && '_merv_experiment' in tagged)
-        tags.set(id, { e: tagged._merv_experiment, a: tagged._merv_attempt });
+      if (tagged && ('_merv_experiment' in tagged || '_merv_task' in tagged))
+        tags.set(id, { e: tagged._merv_experiment ?? tagged._merv_task, a: tagged._merv_attempt });
     return { names, tags };
   };
   return async (req, res) => {
@@ -205,7 +205,7 @@ export function metricsProxy(
             check(
               !owner || (owner.e === writer.e && owner.a === writer.a),
               'forbidden',
-              'The run belongs to another experiment attempt',
+              'The run belongs to another experiment attempt or task',
               403,
             );
           }
@@ -232,9 +232,13 @@ export function metricsProxy(
             entry.config = {};
           if (api === 'bulk_log' && entry.config != null) {
             check(object(entry.config), 'invalid_input', 'Config must be an object', 400);
-            entry.config._merv_experiment = writer.e;
+            // The item that logged it, by kind: a task's runs are never read as an experiment's.
+            delete entry.config._merv_experiment;
+            delete entry.config._merv_task;
+            entry.config[writer.i === 'task' ? '_merv_task' : '_merv_experiment'] = writer.e;
             entry.config._merv_attempt = writer.a;
             entry.config._Group = writer.g;
+            if (writer.m) entry.config._merv_machine = writer.m;
             stamped.add(run);
           }
         }

@@ -10,8 +10,8 @@ export class MetricsRenderer {
     this.closed = true;
     await (await this.browser?.catch(() => undefined))?.close();
   }
-  render(svg: string, width: number, height: number) {
-    const run = this.queue.then(() => this.draw(svg, width, height));
+  render(svg: string, width: number, height: number, type: 'jpeg' | 'png' = 'jpeg') {
+    const run = this.queue.then(() => this.draw(svg, width, height, type));
     this.queue = run.catch(() => {});
     return run;
   }
@@ -19,7 +19,8 @@ export class MetricsRenderer {
     svg: string,
     width: number,
     height: number,
-  ): Promise<{ data: string; mimeType: 'image/jpeg' }> {
+    type: 'jpeg' | 'png' = 'jpeg',
+  ): Promise<{ data: string; mimeType: 'image/jpeg' | 'image/png' }> {
     check(!this.closed, 'metrics_unavailable', 'Metrics renderer is stopping', 503);
     this.browser ??= chromium
       .launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] })
@@ -30,21 +31,31 @@ export class MetricsRenderer {
     const browser = await this.browser;
     if (!browser.isConnected()) {
       this.browser = undefined;
-      return this.draw(svg, width, height);
+      return this.draw(svg, width, height, type);
     }
-    const page = await browser.newPage({ viewport: { width, height } });
+    // A figure kept for reports and the board is drawn at twice its size, so it stays sharp.
+    const page = await browser.newPage({
+      viewport: { width, height },
+      deviceScaleFactor: type === 'png' ? 2 : 1,
+    });
     try {
       page.setDefaultTimeout(30000);
       await page.route('**/*', (route) => route.abort());
       await page.setContent(`<!doctype html><body style="margin:0">${svg}</body>`);
-      const bytes = await page.screenshot({ type: 'jpeg', quality: 85 });
+      const bytes =
+        type === 'png'
+          ? await page.screenshot({ type: 'png' })
+          : await page.screenshot({ type: 'jpeg', quality: 85 });
       check(
-        bytes.length <= 700000,
+        type === 'png' || bytes.length <= 700000,
         'metrics_too_large',
         'Use a metric filter for this picture',
         422,
       );
-      return { data: bytes.toString('base64'), mimeType: 'image/jpeg' };
+      return {
+        data: bytes.toString('base64'),
+        mimeType: type === 'png' ? 'image/png' : 'image/jpeg',
+      };
     } finally {
       await page.close();
     }

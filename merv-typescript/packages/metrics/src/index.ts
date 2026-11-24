@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import { MetricsService, type MetricsConfig } from './service.js';
+import { MetricsService, type MetricsConfig, type MetricsTasks } from './service.js';
 import { metricsProxy } from './proxy.js';
 export { MetricsService } from './service.js';
 const origin = z
@@ -32,6 +32,8 @@ export const metricsPlugin = {
       ctx.sessions,
       ctx.artifacts,
       () => ctx.api.publicOrigin,
+      // Looked up at each read: Tasks may load after Metrics.
+      () => ctx.get('tasks') as MetricsTasks | undefined,
     );
     ctx.effect(() => ctx.provide('metrics', metrics));
     ctx.effect(() =>

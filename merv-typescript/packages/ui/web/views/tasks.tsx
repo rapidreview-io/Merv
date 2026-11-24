@@ -14,6 +14,7 @@ import type { RunningUnitEntry } from '@merv/contracts/running';
 import type { Task } from '@merv/tasks/models';
 import type { CodeUnit } from '@merv/code-work/models';
 import { BackLink } from '../trail';
+import { TaskSummary } from './item-views';
 
 /**
  * The page's one section. A check is stated once, in its row, with everything said
@@ -92,8 +93,14 @@ function TaskDetail({ row, shell }: ViewProps) {
       back={<BackLink home={back.to} label={back.label} />}
       kind={row.view.kind}
       name={t.title}
-      standing={t.goal}
       state={<StageMark graph={process} workflow={t.workflow} />}
+      card={
+        <TaskSummary
+          task={t}
+          codeUnit={record.data?.codeUnit ?? null}
+          history={record.data?.history ?? []}
+        />
+      }
       act={process && <Gate graph={process} />}
       title="Checks"
       content={<TaskChecks task={t} reviews={reviews} />}

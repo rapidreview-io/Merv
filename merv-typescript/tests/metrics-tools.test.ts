@@ -123,7 +123,12 @@ async function fixture(t: TestContext) {
         403,
       ),
   } as unknown as Scope;
+  const attached: Record<string, unknown>[] = [];
   const experiments = {
+    attach: async (_caller: Caller, input: Record<string, unknown>) => {
+      attached.push(input);
+      return input;
+    },
     get: async (_caller: Caller, id: string) => ({
       id,
       name: 'decay-sweep',
@@ -169,7 +174,7 @@ async function fixture(t: TestContext) {
     uploadComplete: async () => ({ id: 'large-artifact' }),
     create: async (_caller: Caller, input: (typeof stored)[number]) => {
       stored.push(input);
-      return { id: 'artifact' };
+      return { id: stored.length === 1 ? 'artifact' : `artifact-${stored.length}` };
     },
   } as unknown as Artifacts;
   const metrics = new MetricsService(
@@ -180,7 +185,18 @@ async function fixture(t: TestContext) {
     artifacts,
     () => 'https://merv.example',
   );
-  return { metrics, state, stored, calls, scope, experiments, sessions, artifacts, records };
+  return {
+    metrics,
+    state,
+    stored,
+    calls,
+    scope,
+    experiments,
+    sessions,
+    artifacts,
+    records,
+    attached,
+  };
 }
 test('connect requires a running experiment and write authority or its live producing session', async (t) => {
   const { metrics, state } = await fixture(t);
@@ -301,12 +317,40 @@ test("run reports each metric's last logged point; query answers only rows", asy
   assert.deepEqual(Object.keys(query), ['columns', 'rows', 'truncated']);
   assert.equal(query.rows.length, 200);
 });
-test('export retains every current-attempt series and enforces connect authority', async (t) => {
-  const { metrics, stored, state } = await fixture(t);
+test('export retains every current-attempt series and its figure, attached as results, and enforces connect authority', async (t) => {
+  const { metrics, stored, state, attached } = await fixture(t);
   assert.deepEqual(await metrics.export(caller, 'experiment'), {
     artifactId: 'artifact',
     path: 'metrics/trackio-attempt-2.json',
+    // Without a renderer the key figure is kept as the chart's own SVG.
+    figure: { artifactId: 'artifact-2', path: 'metrics/trackio-attempt-2.svg', metric: 'acc' },
+    attached: ['metrics/trackio-attempt-2.json', 'metrics/trackio-attempt-2.svg'],
   });
+  assert.equal(stored[1]!.mediaType, 'image/svg+xml');
+  assert.match(stored[1]!.content, /^<svg[^>]*>.*decay-sweep: acc/);
+  assert.deepEqual(
+    attached.map(({ role, path, resultFormat, attemptIndex }) => ({
+      role,
+      path,
+      resultFormat,
+      attemptIndex,
+    })),
+    [
+      {
+        role: 'result',
+        path: 'metrics/trackio-attempt-2.json',
+        resultFormat: 'qualitative',
+        attemptIndex: 2,
+      },
+      {
+        role: 'result',
+        path: 'metrics/trackio-attempt-2.svg',
+        resultFormat: 'qualitative',
+        attemptIndex: 2,
+      },
+    ],
+  );
+  stored.length = 1;
   const retained = JSON.parse(stored[0]!.content);
   assert.equal(stored[0]!.mediaType, 'application/json');
   assert.equal(retained.runs.length, 1);
@@ -324,11 +368,13 @@ test('export retains every current-attempt series and enforces connect authority
 test('large exports use Artifacts uploads; changed attempts cannot retain mixed data', async (t) => {
   const { metrics, stored, state } = await fixture(t);
   state.count = 100000;
-  assert.deepEqual(await metrics.export(caller, 'experiment'), {
-    artifactId: 'large-artifact',
-    path: 'metrics/trackio-attempt-2.json',
-  });
+  const large = await metrics.export(caller, 'experiment');
+  assert.deepEqual(
+    { artifactId: large.artifactId, path: large.path },
+    { artifactId: 'large-artifact', path: 'metrics/trackio-attempt-2.json' },
+  );
   assert.equal(JSON.parse(stored[0]!.content).runs[0].metrics.loss.length, 100000);
+  stored.length = 1;
   state.count = 501;
   state.changeAttempt = true;
   await assert.rejects(metrics.export(caller, 'experiment'), { status: 409 });

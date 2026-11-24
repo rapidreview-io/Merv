@@ -58,6 +58,7 @@ import { BoardPointing, markOn } from './board-pointing';
 import { BoardPresence } from './board-presence';
 import { BoardSelection } from './board-selection';
 import { BoardTiles } from './board-tiles';
+import { BoardItems } from './board-items';
 import { BoardReplay } from './board-replay';
 import { BoardTalk } from './board-talk';
 import { setBoardLoaded, unstick } from './board-ready';
@@ -1219,6 +1220,7 @@ function BoardCanvasScene({ id, onSummary, menu, overlays, toolbar }: CanvasProp
       <canvas ref={reveal} className={`board-reveal is-${canvasAppearance.theme}`} />
       {api && <BoardSelection api={api} />}
       {api && <BoardTiles api={api} dark={theme === 'dark'} />}
+      {api && <BoardItems api={api} />}
       {api && overlays?.(api, first.board)}
       <BoardTalk
         doing={() => {

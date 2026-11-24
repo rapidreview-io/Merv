@@ -356,3 +356,26 @@
     margin: 10px 0;
   }
 }
+/* Each unit of work as its card: the row keeps its hooks, the card its look. */
+.work-row.work-row--card {
+  display: block;
+  min-height: 0;
+  border-bottom: 0;
+}
+.work-group > ul.item-cards {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+.item-card .work-row-title {
+  padding: 0;
+  font-size: var(--text-md);
+  font-weight: 560;
+}
+.item-card .work-row-owner {
+  margin-left: auto;
+  flex: none;
+}
+.item-card .work-row-attention {
+  flex: none;
+}

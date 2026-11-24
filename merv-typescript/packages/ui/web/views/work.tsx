@@ -14,6 +14,8 @@ import { OPEN } from '../states';
 import type { ShellData, WorkflowShape } from '../shell-types';
 import { Dependency, StageMark, ended } from '../process';
 import { Icon } from '../icons';
+import { ItemCard, useItemMetrics } from '../item-card';
+import { itemState, oneLine, stageWord } from '../item-model';
 import { calling } from '../navigation';
 import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { useActorNames } from './people';
@@ -370,6 +372,11 @@ function WorkList({ shell }: { shell: ShellData }) {
       .filter((item) => item.group === group)
       .sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '')),
   }));
+  // Each visible item's key curve, one read for the whole list; running ones move every 10 s.
+  const shownIds = groups.flatMap(({ rows }) => rows.slice(0, 40).map((item) => item.id));
+  const curves = useItemMetrics(shownIds, {
+    live: groups.some(({ group, rows }) => group !== 'ended' && rows.length > 0),
+  });
   const narrowed =
     !!kind ||
     !!cycleFilter ||
@@ -555,62 +562,75 @@ function WorkList({ shell }: { shell: ShellData }) {
                     />
                     {GROUPS[group]} <span>{rows.length}</span>
                   </h2>
-                  <ul>
+                  <ul className="item-cards">
                     {rows.map((item) => {
                       const attention = attentionOf(item);
                       const reason =
                         attention?.attention?.says && steadyText(attention.attention.says, reading);
+                      const end = item.end as
+                        | {
+                            settled: boolean;
+                            failed: boolean;
+                            conclusion?: string | null;
+                            failure?: { reason: string } | null;
+                          }
+                        | undefined;
+                      const state = itemState({ ...end, attention: !!attention });
+                      const ended = state === 'done' || state === 'failed';
                       return (
-                        <li className="work-row" key={item.key}>
-                          <span
-                            className="work-kind"
-                            role="img"
-                            aria-label={kindName(item)}
-                            title={kindName(item)}
-                          >
-                            <Icon
-                              name={
-                                item.kind === 'tasks'
-                                  ? 'work'
-                                  : item.kind === 'experiments'
-                                    ? 'file-data'
-                                    : 'fallback'
-                              }
-                              size={16}
-                            />
-                          </span>
-                          <button
-                            className="work-row-title"
-                            data-key={item.key}
-                            aria-controls="running-panel"
-                            title={item.name}
-                            onClick={() => reading.open(item.key, item.to)}
-                          >
-                            {item.name}
-                          </button>
-                          {attention && (
-                            <button
-                              className="work-row-attention"
-                              data-key={attention.key}
-                              aria-controls="running-panel"
-                              aria-label={reason || 'Needs attention'}
-                              title={reason || 'Needs attention'}
-                              onClick={() => reading.open(attention.key, item.to)}
-                            >
-                              <Icon name="alert" size={15} />
-                            </button>
-                          )}
-                          <div className="work-row-stage">
-                            {item.flow && (
-                              <StageMark shapes={shell.workflows} workflow={item.flow} />
-                            )}
-                          </div>
-                          <span className="work-row-owner" title={item.owner && nameOf(item.owner)}>
-                            {item.owner ? (nameOf(item.owner) ?? 'Owner') : ''}
-                          </span>
-                          <span className="work-row-updated">
-                            {item.at && <Ago at={item.at} />}
-                          </span>
+                        <li className="work-row work-row--card" key={item.key}>
+                          <ItemCard
+                            name={item.name}
+                            kind={item.kind === 'tasks' ? 'task' : 'experiment'}
+                            state={state}
+                            question={item.purpose ? oneLine(item.purpose, 200) : undefined}
+                            finding={
+                              ended
+                                ? oneLine(
+                                    end?.conclusion ?? end?.failure?.reason ?? item.purpose,
+                                    200,
+                                  ) || undefined
+                                : undefined
+                            }
+                            verdict={ended ? (state === 'done' ? 'pass' : 'fail') : undefined}
+                            metrics={curves[item.id]}
+                            at={item.at}
+                            stage={
+                              item.flow
+                                ? stageWord(
+                                    item.kind === 'tasks' ? 'task' : 'experiment',
+                                    item.flow.state,
+                                  )
+                                : kindName(item)
+                            }
+                            onOpen={() => reading.open(item.key, item.to)}
+                            titleProps={{
+                              className: 'work-row-title',
+                              'data-key': item.key,
+                              'aria-controls': 'running-panel',
+                            }}
+                            aside={
+                              <>
+                                {attention && (
+                                  <button
+                                    className="work-row-attention"
+                                    data-key={attention.key}
+                                    aria-controls="running-panel"
+                                    aria-label={reason || 'Needs attention'}
+                                    title={reason || 'Needs attention'}
+                                    onClick={() => reading.open(attention.key, item.to)}
+                                  >
+                                    <Icon name="alert" size={15} />
+                                  </button>
+                                )}
+                                {item.owner && (
+                                  <span className="work-row-owner" title={nameOf(item.owner)}>
+                                    {nameOf(item.owner) ?? 'Owner'}
+                                  </span>
+                                )}
+                              </>
+                            }
+                          />
                         </li>
                       );
                     })}

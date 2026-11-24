@@ -31,20 +31,63 @@ export interface Chart {
   /** An experiment shown is running, so the page reads again. */
   live: boolean;
 }
+/** One item's key metric, as a card's sparkline and live curve draw it. */
+export interface ItemMetrics {
+  /** The metric the item is read by (`keyMetric`). */
+  metric: string;
+  /** Every scalar its runs logged, by name. */
+  metrics: string[];
+  runs: {
+    id: string;
+    run: string;
+    attempt?: number;
+    color: string;
+    muted?: true;
+    points: [number, number][];
+  }[];
+  /** The newest current run's last value of the key metric. */
+  last?: number;
+  /** Where the runs say they ran (`machine` in their config, or the one connect was told). */
+  machine?: string;
+  /** What the runs say they cost so far, in US dollars (their `cost_usd` metric's last values). */
+  costUsd?: number;
+}
+
 export interface Frame {
   x: [number, number];
   y: [number, number];
 }
 
+/**
+ * Each run's colour, by the order it first logged (never by rank, so a filter repaints nothing).
+ * Eight categorical slots validated for colour-vision deficiency on light and dark surfaces;
+ * pages swap in the dark steps through `--mc-<slot>`, a picture keeps the light ones.
+ */
 export const PALETTE = [
-  '#2563eb',
-  '#0f766e',
-  '#c81e1e',
-  '#b45309',
-  '#475569',
-  '#0e7490',
-  '#4d7c0f',
+  '#2a78d6',
+  '#eb6834',
+  '#1baf7a',
+  '#eda100',
+  '#e87ba4',
+  '#008300',
+  '#6250d6',
+  '#e34948',
 ];
+export const PALETTE_DARK = [
+  '#3987e5',
+  '#d95926',
+  '#199e70',
+  '#c98500',
+  '#d55181',
+  '#008300',
+  '#9085e9',
+  '#e66767',
+];
+/** A run's stroke: the page's themed slot where it defines one, else the light step. */
+export const ink = (color: string) => {
+  const slot = PALETTE.indexOf(color);
+  return slot < 0 ? color : `var(--mc-${slot + 1}, ${color})`;
+};
 export const MUTED = '#a3a9b3';
 export const PANEL = { width: 480, height: 260 };
 const M = { left: 52, right: 14, top: 26, bottom: 24 };
@@ -136,7 +179,7 @@ export function panel(
   for (const run of [...chart.runs].sort((a, b) => Number(!a.muted) - Number(!b.muted))) {
     const points = pointsOf(run, metric);
     if (!points?.length) continue;
-    const color = run.muted ? MUTED : run.color;
+    const color = run.muted ? MUTED : ink(run.color);
     if (points.length === 1)
       parts.push(
         `<circle cx="${r(s.x(points[0][0]))}" cy="${r(s.y(points[0][1]))}" r="2.5" fill="${color}"/>`,
@@ -155,7 +198,7 @@ export function panel(
       continue;
     const x = r(s.x(mark.step));
     parts.push(
-      `<g><title>${esc(`${mark.label} (${run.run}, step ${mark.step})`)}</title><line class="mc-when" x1="${x}" x2="${x}" y1="${M.top}" y2="${foot}"/><path d="M${x},${foot - 7}l-4.5,7h9z" fill="${run.muted ? MUTED : run.color}"/></g>`,
+      `<g><title>${esc(`${mark.label} (${run.run}, step ${mark.step})`)}</title><line class="mc-when" x1="${x}" x2="${x}" y1="${M.top}" y2="${foot}"/><path d="M${x},${foot - 7}l-4.5,7h9z" fill="${run.muted ? MUTED : ink(run.color)}"/></g>`,
     );
   }
   return `${head}${parts.join('')}</svg>`;
@@ -194,6 +237,126 @@ export function sheet(chart: Chart, { smoothing = 0, limit = 12 } = {}) {
   return {
     svg: `<svg xmlns="http://www.w3.org/2000/svg" class="mc" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><style>${STYLE}</style><rect width="100%" height="100%" fill="#fff"/>${legend.join('')}${panels.join('')}</svg>`,
     shown,
+    width,
+    height,
+  };
+}
+
+/** What a run logs about its own cost or bookkeeping, never what it measures. */
+const BOOKKEEPING =
+  /(^|[/_.-])(cost|usd|lr|learning[_-]?rate|epoch|step|steps|time|seconds|throughput|tokens?[_/-]?per|samples?[_/-]?per|grad[_-]?norm|memory|gpu|cpu)([/_.-]|$)|^_|^system/i;
+/** The metric a run reports its cost in, US dollars so far, read as its last value. */
+export const COST_METRIC = /^(cost[/_.-]?usd|usd[/_.-]?cost|cost)$/i;
+const words = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 1);
+
+/**
+ * The one metric an item is read by: the plan's primary measure where a metric's name says it
+ * (`Primary measure: validation accuracy` picks `val/acc`), else a held-out accuracy or loss,
+ * else any accuracy or loss, else the first measured metric by name. Bookkeeping (cost, the
+ * learning rate, steps, timings) is never the key unless it is all a run logged.
+ */
+export function keyMetric(metrics: readonly string[], hint?: string): string | undefined {
+  const measured = metrics.filter((metric) => !BOOKKEEPING.test(metric));
+  const pool = measured.length ? measured : metrics.filter((m) => !COST_METRIC.test(m));
+  if (!pool.length) return undefined;
+  const sorted = [...pool].sort();
+  if (hint) {
+    const said = new Set(
+      words(hint).flatMap((word) =>
+        word === 'validation'
+          ? [word, 'val', 'valid']
+          : word === 'accuracy'
+            ? [word, 'acc']
+            : [word],
+      ),
+    );
+    let best: string | undefined;
+    let score = 0;
+    for (const metric of sorted) {
+      const got = words(metric).filter((word) => said.has(word)).length;
+      if (got > score) [best, score] = [metric, got];
+    }
+    if (best) return best;
+  }
+  for (const pattern of [
+    /(^|[/_.-])(val|valid|validation|eval|test|heldout)[/_.-]?.*(acc|accuracy|loss|f1|bleu|score)/i,
+    /(^|[/_.-])(val|valid|validation|eval|test|heldout)([/_.-]|$)/i,
+    /acc|accuracy|f1|score/i,
+    /loss/i,
+  ]) {
+    const found = sorted.find((metric) => pattern.test(metric));
+    if (found) return found;
+  }
+  return sorted[0];
+}
+
+/** Whether a metric's better values are lower: losses, errors and perplexities. */
+export const lowerIsBetter = (metric: string) =>
+  /loss|err|perplex|ppl|mse|mae|rmse|wer|cer/i.test(metric);
+
+/**
+ * A sparkline's paths: every run's line of one metric on one shared frame, in a box of this
+ * size, with no axes. Returns nothing where no run logged two points.
+ */
+export function sparkPaths(
+  runs: readonly { id: string; color: string; muted?: boolean; points: [number, number][] }[],
+  { width = 96, height = 24, pad = 2 } = {},
+) {
+  let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const run of runs)
+    for (const [x, y] of run.points)
+      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
+  if (!(x1 > x0)) return [];
+  const span = y1 - y0 || 1;
+  const X = (x: number) => r(pad + ((x - x0) / (x1 - x0)) * (width - 2 * pad));
+  const Y = (y: number) => r(pad + (1 - (y - y0) / span) * (height - 2 * pad));
+  return [...runs]
+    .sort((a, b) => Number(!a.muted) - Number(!b.muted))
+    .filter((run) => run.points.length > 1)
+    .map((run) => ({
+      id: run.id,
+      color: run.muted ? MUTED : ink(run.color),
+      muted: !!run.muted,
+      d: 'M' + run.points.map(([x, y]) => `${X(x)},${Y(y)}`).join('L'),
+      end: [X(run.points.at(-1)![0]), Y(run.points.at(-1)![1])] as [number, number],
+    }));
+}
+
+/**
+ * The figure an item keeps when it ends: its key metric with every run overlaid on one frame
+ * (seeds, arms, attempts), a legend that names each run in its colour, white paper, so it reads
+ * the same in a report, the paper and on a board. A second metric, when the item logged one
+ * worth reading beside the key (its loss beside an accuracy), stands to its right.
+ */
+export function figure(
+  chart: Chart,
+  { title, metrics }: { title: string; metrics: string[] },
+): { svg: string; width: number; height: number } {
+  const shown = metrics.filter((metric) => chart.metrics.includes(metric)).slice(0, 2);
+  const [w, h, pad, gap] = [560, 300, 20, 16];
+  const legendRows = Math.ceil(chart.runs.length / 3);
+  const top = pad + 26 + legendRows * 20 + 6;
+  const width = pad * 2 + shown.length * w + (shown.length - 1) * gap;
+  const height = top + h + pad;
+  const legend = chart.runs.map((run, i) => {
+    const x = pad + (i % 3) * Math.floor((width - 2 * pad) / 3);
+    const y = pad + 26 + Math.floor(i / 3) * 20;
+    return `<rect x="${x}" y="${y + 2}" width="14" height="4" rx="2" fill="${run.muted ? MUTED : run.color}"/><text class="mc-legend" x="${x + 20}" y="${y + 8}">${esc(legendOf({ ...run, state: undefined, experiment: undefined }))}</text>`;
+  });
+  // The picture keeps the light steps: its paper is white wherever it is shown.
+  const flat: Chart = { ...chart, marks: [], runs: chart.runs.map((run) => ({ ...run })) };
+  const panels = shown.map((metric, i) =>
+    panel(flat, metric, { width: w, height: h, at: [pad + i * (w + gap), top] }).replace(
+      /var\(--mc-\d+, (#[0-9a-f]{6})\)/g,
+      '$1',
+    ),
+  );
+  return {
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" class="mc" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><style>${STYLE}.mc-head{font-size:15px;font-weight:600;fill:#111827}</style><rect width="100%" height="100%" fill="#fff"/><text class="mc-head" x="${pad}" y="${pad + 12}">${esc(title)}</text>${legend.join('')}${panels.join('')}</svg>`,
     width,
     height,
   };

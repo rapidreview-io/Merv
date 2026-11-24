@@ -29,6 +29,8 @@ import { useActorNames } from './people';
 import type { ViewProps } from './index';
 import type { CodeUnit } from '@merv/code-work/models';
 import { BackLink } from '../trail';
+import { ArtifactBody } from './artifacts';
+import { ExperimentSummary } from './item-views';
 
 const STAGE = { design: 'Design review', results: 'Results review' };
 
@@ -137,6 +139,7 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   const figures =
     e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
   const shown = exhibit.data?.attemptIndex === e.attempt.index ? exhibit.data : undefined;
+  const report = currentEvidence.find((item) => item.role === 'report')?.artifactId;
   const thread = historyEntries(record.data.history ?? [], nameOf);
   return (
     <RecordPage
@@ -146,17 +149,26 @@ function ExperimentDetail({ row, shell }: ViewProps) {
       state={<StageMark graph={process} workflow={e.workflow} />}
       // The question it was opened to answer, as a task's goal stands under its title, and
       // what it came to directly under that, with the verdict that accepted it.
-      standing={
-        <>
-          <span>
-            <RecordText text={e.intent} />
-          </span>
-          {said && <ThreeStates review={said} meta={stage ? STAGE[stage] : 'Review'} />}
-          {e.failed && e.conclusion && <span className="ev-role">Why this experiment ended</span>}
-          {e.conclusion && <Markdown source={e.conclusion} />}
-        </>
+      standing={said && <ThreeStates review={said} meta={stage ? STAGE[stage] : 'Review'} />}
+      card={
+        <ExperimentSummary experiment={e} codeUnit={unit} history={record.data.history ?? []} />
       }
       act={process && <Gate graph={process} />}
+      report={
+        report || e.conclusion ? (
+          <div className="stack">
+            {e.conclusion && (
+              <>
+                <span className="ev-role">
+                  {e.failed ? 'Why this experiment ended' : 'Conclusion'}
+                </span>
+                <Markdown source={e.conclusion} />
+              </>
+            )}
+            {report && <ArtifactBody artifactId={report} named="cited" />}
+          </div>
+        ) : undefined
+      }
       title="Evidence"
       content={
         currentEvidence.length || figures.length || shown ? (
@@ -186,7 +198,12 @@ function ExperimentDetail({ row, shell }: ViewProps) {
         ) : undefined
       }
       history={thread.length ? <Thread entries={thread} /> : undefined}
-      description={e.details ? <Markdown source={e.details} /> : undefined}
+      description={
+        <>
+          <RecordText text={e.intent} />
+          {e.details && <Markdown source={e.details} />}
+        </>
+      }
       code={unit && <RecordCode unit={unit} named={nameOf} />}
       details={
         <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />

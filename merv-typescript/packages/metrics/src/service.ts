@@ -8,13 +8,39 @@ import {
 } from '@merv/contracts';
 import type { Experiment, Experiments } from '@merv/experiments/types';
 import type { Sessions } from '@merv/sessions/types';
+import type { Task } from '@merv/tasks/models';
 import { Tokens } from './tokens.js';
-import { PALETTE, type Chart, type ChartMark } from './chart.js';
+import {
+  COST_METRIC,
+  PALETTE,
+  figure,
+  keyMetric,
+  type Chart,
+  type ChartMark,
+  type ItemMetrics,
+} from './chart.js';
+export type { ItemMetrics } from './chart.js';
 
+/** The part of Tasks Metrics reads: a task, to check it is the caller's and still worked on. */
+export interface MetricsTasks {
+  get(caller: Caller, taskId: string): Promise<Task>;
+}
+/** A task or an experiment, the two kinds of item whose runs Merv links. */
+export type MetricsItem = { experimentId: string } | { taskId: string };
+/** Draws a picture of a chart: the tools plugin's offline browser, where it has one. */
+export type MetricsRender = (
+  svg: string,
+  width: number,
+  height: number,
+) => Promise<{ data: string; mimeType: string }>;
 export interface Run {
   run: string;
   id: string;
   experimentId?: string;
+  /** The task whose producer logged the run; a run is a task's or an experiment's, never both. */
+  taskId?: string;
+  /** Where the run says it ran. */
+  machine?: string;
   /** The experiment's name, as the proxy grouped the run. */
   experiment?: string;
   attempt?: number;
@@ -62,6 +88,8 @@ export class MetricsService {
     private sessions: Sessions,
     private artifacts: Artifacts,
     private origin: () => string | undefined,
+    /** Tasks, where it is loaded: without it, only experiments connect. */
+    private tasks: () => MetricsTasks | undefined = () => undefined,
   ) {
     this.tokens = new Tokens(config.secret);
   }
@@ -100,9 +128,23 @@ export class MetricsService {
   async read(caller: Caller) {
     await this.scope.require(caller, 'read');
   }
+  /** Whether this id names one of the project's tasks, read where Tasks is loaded. */
+  private async taskOf(caller: Caller, id: string): Promise<Task | undefined> {
+    const tasks = this.tasks();
+    return tasks
+      ? await tasks.get(caller, id).catch((error) => {
+          if (error?.status === 404 || error?.code === 'not_found') return undefined;
+          throw error;
+        })
+      : undefined;
+  }
+  /** Every run of the project, or of one item: an experiment's or a task's, by its id. */
   async allRuns(caller: Caller, experimentId?: string): Promise<Run[]> {
     await this.read(caller);
-    if (experimentId) await this.experiments.get(caller, experimentId);
+    if (experimentId)
+      await this.experiments.get(caller, experimentId).catch(async (error) => {
+        if (!(await this.taskOf(caller, experimentId))) throw error;
+      });
     const args = { project: caller.projectId };
     const [records, configs] = await Promise.all([
       this.request<{ id: string; name: string; created_at: string }[]>(
@@ -115,10 +157,15 @@ export class MetricsService {
     return records
       .map((record) => {
         const config = configs[record.id] ?? {};
+        const machine = [config._merv_machine, config.machine, config.hostname].find(
+          (value): value is string => typeof value === 'string' && !!value.trim(),
+        );
         return {
           run: record.name,
           id: record.id,
           createdAt: record.created_at,
+          ...(typeof config._merv_task === 'string' && { taskId: config._merv_task }),
+          ...(machine && { machine: machine.trim().slice(0, 120) }),
           ...(typeof config._merv_experiment === 'string'
             ? {
                 experimentId: config._merv_experiment,
@@ -130,7 +177,7 @@ export class MetricsService {
             : {}),
         };
       })
-      .filter((run) => !experimentId || run.experimentId === experimentId)
+      .filter((run) => !experimentId || (run.experimentId ?? run.taskId) === experimentId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
   }
   async runs(caller: Caller, experimentId?: string) {
@@ -382,8 +429,52 @@ export class MetricsService {
       ...(result.rows.length > 200 && { truncated: true }),
     };
   }
-  private async producer(caller: Caller, experimentId: string) {
+  /**
+   * The item the caller is producing now: a running experiment's current producing session, or
+   * a task in progress and its producer's. Returns what a write token names it by.
+   */
+  private async producer(
+    caller: Caller,
+    given: MetricsItem | string,
+  ): Promise<{
+    id: string;
+    name: string;
+    attempt: number;
+    kind: 'experiment' | 'task';
+    experiment?: Experiment;
+  }> {
     await this.scope.require(caller, 'write');
+    const item = typeof given === 'string' ? { experimentId: given } : given;
+    if ('taskId' in item) {
+      const task = await this.taskOf(caller, item.taskId);
+      check(task, 'not_found', 'Task not found', 404);
+      check(task.workflow.state === 'in_progress', 'forbidden', 'Task must be in progress', 403);
+      if (caller.session) {
+        const session = await this.sessions.session(caller);
+        check(
+          session.kind === 'work' &&
+            session.role === 'producer' &&
+            session.instanceId === task.id &&
+            session.actorId === caller.actorId &&
+            session.projectId === caller.projectId &&
+            session.status === 'active' &&
+            session.execution.state === 'running' &&
+            session.execution.workflow === 'task' &&
+            Date.parse(session.expiresAt) > Date.now(),
+          'forbidden',
+          'Current producing session required',
+          403,
+        );
+      } else check(task.producerId === caller.actorId, 'forbidden', 'Task producer required', 403);
+      // A task returned for rework is worked again: each start logs its own runs.
+      return {
+        id: task.id,
+        name: task.title.slice(0, 200),
+        attempt: Math.max(1, task.workStarts.length),
+        kind: 'task',
+      };
+    }
+    const experimentId = item.experimentId;
     const experiment = await this.experiments.get(caller, experimentId);
     check(experiment.workflow.state === 'running', 'forbidden', 'Experiment must be running', 403);
     if (caller.session) {
@@ -404,10 +495,20 @@ export class MetricsService {
         403,
       );
     }
-    return experiment;
+    return {
+      id: experiment.id,
+      name: experiment.name,
+      attempt: experiment.attempt.index,
+      kind: 'experiment',
+      experiment,
+    };
   }
-  async connect(caller: Caller, experimentId: string) {
-    const experiment = await this.producer(caller, experimentId);
+  /**
+   * The Trackio environment for the item's training code. `machine`, where given, is stamped
+   * on every run it logs, so the item's receipt says where it ran.
+   */
+  async connect(caller: Caller, item: MetricsItem | string, machine?: string) {
+    const producing = await this.producer(caller, item);
     const origin = this.config.publicOrigin ?? this.origin();
     check(origin, 'metrics_unavailable', 'Public API origin unavailable', 503);
     const expires = Math.floor(Date.now() / 1000) + 12 * 3600;
@@ -417,21 +518,30 @@ export class MetricsService {
         TRACKIO_WRITE_TOKEN: this.tokens.sign({
           k: 'w',
           p: caller.projectId,
-          e: experiment.id,
-          g: experiment.name,
-          a: experiment.attempt.index,
+          e: producing.id,
+          g: producing.name,
+          a: producing.attempt,
           x: expires,
+          ...(producing.kind === 'task' && { i: 'task' as const }),
+          ...(machine?.trim() && { m: machine.trim().slice(0, 120) }),
         }),
       },
       project: caller.projectId,
       expiresAt: new Date(expires * 1000).toISOString(),
     };
   }
-  async export(caller: Caller, experimentId: string) {
-    const experiment = await this.producer(caller, experimentId);
-    const records = (await this.allRuns(caller, experimentId)).filter(
-      (r) => r.attempt === experiment.attempt.index,
+  /**
+   * Retains the item's runs: every metric series as one JSON artifact, and its key figure as a
+   * picture (every run of the key metric overlaid on one chart). An experiment's are attached
+   * to its current attempt as qualitative results, so its exhibit pins them, its reviewers
+   * judge them and its report can show the figure; a task's are returned for its delivery.
+   */
+  async export(caller: Caller, item: MetricsItem | string, render?: MetricsRender) {
+    const producing = await this.producer(caller, item);
+    const records = (await this.allRuns(caller, producing.id)).filter(
+      (r) => producing.kind === 'task' || r.attempt === producing.attempt,
     );
+    check(records.length, 'not_found', 'No runs logged for this item yet', 404);
     const runs = [];
     for (const record of records) {
       const summary = await this.request<Summary>('get_run_summary', {
@@ -444,32 +554,115 @@ export class MetricsService {
         metrics[metric] = await this.metricValues(caller, record.run, metric, record.id);
       runs.push({ ...record, config: summary.config, metrics });
     }
-    const current = await this.producer(caller, experimentId);
-    check(
-      current.attempt.index === experiment.attempt.index,
-      'conflict',
-      'Attempt changed during export',
-      409,
-    );
-    const path = `metrics/trackio-attempt-${experiment.attempt.index}.json`;
+    const still = async () => {
+      const current = await this.producer(caller, item);
+      check(
+        current.attempt === producing.attempt,
+        'conflict',
+        'Attempt changed during export',
+        409,
+      );
+      return current;
+    };
+    await still();
+    const base = `metrics/trackio-${producing.kind === 'task' ? 'runs' : `attempt-${producing.attempt}`}`;
     const content = JSON.stringify({
       project: caller.projectId,
-      experimentId,
-      attempt: experiment.attempt.index,
+      ...(producing.kind === 'task' ? { taskId: producing.id } : { experimentId: producing.id }),
+      attempt: producing.attempt,
       runs,
     });
-    const bytes = Buffer.from(content);
+    const data = await this.retain(
+      caller,
+      `${base}.json`,
+      'application/json',
+      Buffer.from(content),
+      still,
+    );
+    const picture = await this.picture(caller, producing, records, render).catch(() => undefined);
+    const shown = picture
+      ? await this.retain(
+          caller,
+          `${base}.${picture.mimeType === 'image/svg+xml' ? 'svg' : 'png'}`,
+          picture.mimeType,
+          Buffer.from(picture.data, picture.mimeType === 'image/svg+xml' ? 'utf8' : 'base64'),
+          still,
+        )
+      : undefined;
+    const attached: string[] = [];
+    if (producing.kind === 'experiment')
+      for (const kept of [data, ...(shown ? [shown] : [])]) {
+        const current = await this.experiments.get(caller, producing.id);
+        await this.experiments.attach(caller, {
+          experimentId: producing.id,
+          artifactId: kept.artifactId,
+          role: 'result',
+          path: kept.path,
+          attemptIndex: producing.attempt,
+          expectedRevision: current.workflow.revision,
+          resultFormat: 'qualitative',
+          requestId: `metrics.export:${producing.id}:${producing.attempt}:${kept.artifactId}`,
+        });
+        attached.push(kept.path);
+      }
+    return {
+      artifactId: data.artifactId,
+      path: data.path,
+      ...(shown && {
+        figure: { artifactId: shown.artifactId, path: shown.path, metric: picture!.metric },
+      }),
+      ...(attached.length && { attached }),
+    };
+  }
+  /** The key figure of these runs, drawn by the renderer where there is one, else as SVG. */
+  private async picture(
+    caller: Caller,
+    item: { id: string; name: string },
+    records: Run[],
+    render?: MetricsRender,
+  ) {
+    const chart = await this.chart(caller, {
+      experimentId: item.id,
+      runs: records.slice(0, 20).map((run) => run.id),
+    });
+    const metric = keyMetric(chart.metrics);
+    if (!metric) return undefined;
+    const second = chart.metrics.find(
+      (m) => m !== metric && /loss/i.test(m) !== /loss/i.test(metric) && keyMetric([m]) === m,
+    );
+    const drawn = figure(
+      {
+        ...chart,
+        runs: chart.runs.filter((run) => !run.muted || chart.runs.every((r) => r.muted)),
+      },
+      { title: `${item.name}: ${metric}`, metrics: [metric, ...(second ? [second] : [])] },
+    );
+    const image = render
+      ? await render(drawn.svg, drawn.width, drawn.height).catch(() => undefined)
+      : undefined;
+    return { ...(image ?? { data: drawn.svg, mimeType: 'image/svg+xml' }), metric };
+  }
+  /** One retained file, inline when it fits, else uploaded in parts. */
+  private async retain(
+    caller: Caller,
+    path: string,
+    mediaType: string,
+    bytes: Buffer,
+    still: () => Promise<unknown>,
+  ) {
     if (bytes.length <= MAX_ARTIFACT_BYTES) {
+      const binary = !/^(application\/json|image\/svg\+xml|text\/)/.test(mediaType);
       const artifact = await this.artifacts.create(caller, {
         title: path,
-        mediaType: 'application/json',
-        content,
+        mediaType,
+        content: binary ? bytes.toString('base64') : bytes.toString('utf8'),
+        ...(binary && { encoding: 'base64' as const }),
       });
       return { artifactId: artifact.id, path };
     }
     const upload = await this.artifacts.uploadBegin(caller, {
       title: path,
-      mediaType: 'application/json',
+      mediaType,
       size: bytes.length,
       sha256: sha256Hex(bytes),
     });
@@ -478,22 +671,104 @@ export class MetricsService {
       const response = await fetch(part.url, {
         method: 'PUT',
         headers: part.headers,
-        body: bytes.subarray(start, start + part.size),
+        body: new Uint8Array(bytes.subarray(start, start + part.size)),
         redirect: 'error',
         signal: AbortSignal.timeout(60000),
       });
       check(response.ok, 'metrics_export_failed', 'Metrics upload failed', 502);
       await response.body?.cancel();
     }
-    const latest = await this.producer(caller, experimentId);
-    check(
-      latest.attempt.index === experiment.attempt.index,
-      'conflict',
-      'Attempt changed during export',
-      409,
-    );
+    await still();
     const artifact = await this.artifacts.uploadComplete(caller, upload.uploadId);
     return { artifactId: artifact.id, path };
+  }
+  /**
+   * Many items' key curves in one read, for cards, lists and the board: each item that logged
+   * runs, by its id, with its key metric's thinned series per run; an item that logged nothing
+   * is absent. `hints` are the plans' primary measures, which pick the key metric by name.
+   */
+  async items(
+    caller: Caller,
+    input: { ids: string[]; hints?: Record<string, string>; points?: number },
+  ): Promise<Record<string, ItemMetrics>> {
+    const wanted = new Set(input.ids);
+    const pool = await this.allRuns(caller);
+    const byItem = new Map<string, Run[]>();
+    for (const run of pool) {
+      const id = run.experimentId ?? run.taskId;
+      if (id && wanted.has(id)) byItem.set(id, [...(byItem.get(id) ?? []), run]);
+    }
+    if (!byItem.size) return {};
+    // Each item's newest 20 runs, at most 200 read at once.
+    const runs = [...byItem.values()].flatMap((list) => list.slice(0, 20)).slice(0, 200);
+    const names = await this.rows(
+      caller,
+      `SELECT m.run_id AS run_id, j.key AS metric FROM metrics m, json_each(m.metrics) j
+       WHERE m.run_id IN (${runs.map((run) => literal(run.id)).join(', ')}) AND j.type IN ('integer', 'real')
+       GROUP BY m.run_id, j.key`,
+    );
+    const logged = new Map<string, Set<string>>();
+    for (const row of names)
+      logged.set(
+        row.run_id as string,
+        (logged.get(row.run_id as string) ?? new Set()).add(row.metric as string),
+      );
+    const keys = new Map<string, { metric: string; metrics: string[]; cost?: string }>();
+    for (const [id, list] of byItem) {
+      const metrics = [...new Set(list.flatMap((run) => [...(logged.get(run.id) ?? [])]))].sort();
+      const metric = keyMetric(metrics, input.hints?.[id]);
+      if (metric) keys.set(id, { metric, metrics, cost: metrics.find((m) => COST_METRIC.test(m)) });
+    }
+    if (!keys.size) return {};
+    const read = runs.filter((run) => keys.has((run.experimentId ?? run.taskId)!));
+    const { runs: series } = await this.seriesOf(caller, read, {
+      metrics: [
+        ...new Set([...keys.values()].flatMap((k) => [k.metric, ...(k.cost ? [k.cost] : [])])),
+      ],
+      points: input.points ?? 40,
+    });
+    const attempts = new Map<string, number>();
+    await Promise.all(
+      [...keys.keys()].map(async (id) => {
+        const record = await this.experiments.get(caller, id).catch(() => undefined);
+        if (record) attempts.set(id, record.attempt.index);
+      }),
+    );
+    const oldest = pool.map((run) => run.id).reverse();
+    const answer: Record<string, ItemMetrics> = Object.create(null);
+    for (const [id, key] of keys) {
+      const mine = series.filter((run) => (run.experimentId ?? run.taskId) === id);
+      const current = attempts.get(id);
+      const lines = mine
+        .filter((run) => run.metrics[key.metric]?.length)
+        .map((run) => ({
+          id: run.id,
+          run: run.run,
+          ...(run.attempt !== undefined && { attempt: run.attempt }),
+          color: PALETTE[oldest.indexOf(run.id) % PALETTE.length],
+          ...(current !== undefined &&
+            (run.attempt ?? Infinity) < current && { muted: true as const }),
+          points: run.metrics[key.metric],
+        }));
+      if (!lines.length) continue;
+      const newest = lines.find((line) => !line.muted) ?? lines[0];
+      const costs = key.cost
+        ? mine.flatMap((run) =>
+            run.metrics[key.cost!]?.length ? [run.metrics[key.cost!].at(-1)![1]] : [],
+          )
+        : [];
+      const machine = mine.find((run) => run.machine)?.machine;
+      answer[id] = {
+        metric: key.metric,
+        metrics: key.metrics,
+        runs: lines,
+        last: newest.points.at(-1)![1],
+        ...(machine && { machine }),
+        ...(costs.length && { costUsd: Math.round(costs.reduce((a, b) => a + b, 0) * 100) / 100 }),
+      };
+    }
+    await this.read(caller);
+    return answer;
   }
   /** The 30-minute view cookie the proxy reads: a member's browser, or Merv drawing for one. */
   view(caller: Caller) {

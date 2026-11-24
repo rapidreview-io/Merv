@@ -6,6 +6,12 @@ import { KV, LoadState, PageHeader, Part, StatusPill } from '../components';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
+import type { AutoresearchLine, AutoresearchRun } from '@merv/autoresearch/models';
+import { Link } from 'react-router-dom';
+import { ItemMark } from '../item-card';
+import { itemState } from '../item-model';
+import { useRows } from '../navigation';
+import { Ago } from '../components';
 
 const usd = (value: number | null) => (value === null ? 'unknown' : `$${value.toFixed(2)}`);
 const PAUSED: Record<string, string> = {
@@ -101,26 +107,8 @@ export function AutoresearchView({ row }: ViewProps) {
         ]}
       />
       {data.lines.length > 0 && (
-        <Part title="Decisions">
-          <ol className="stack">
-            {data.lines.map((line) => (
-              <li key={line.id}>
-                <span className="muted tabular">{new Date(line.at).toLocaleString()}</span>{' '}
-                {line.text}
-              </li>
-            ))}
-          </ol>
-        </Part>
-      )}
-      {data.runs.length > 0 && (
-        <Part title="Runs">
-          <ul className="stack">
-            {data.runs.map((run) => (
-              <li key={run.id}>
-                {run.workflow} “{run.name}” <StatusPill value={run.finalState ?? 'running'} />
-              </li>
-            ))}
-          </ul>
+        <Part title="Timeline">
+          <Timeline status={data} />
         </Part>
       )}
       {admin && <Settings status={data} onSaved={() => status.reload()} />}
@@ -216,5 +204,73 @@ function Settings({ status, onSaved }: { status: AutoresearchStatus; onSaved: ()
         </div>
       </form>
     </Part>
+  );
+}
+
+/** What the loop itself did, said in a word where the line is not the manager's own. */
+const KIND: Partial<Record<AutoresearchLine['kind'], string>> = {
+  end: 'Round ended',
+  pause: 'Paused',
+  resume: 'Resumed',
+  start: 'Round started',
+  configure: 'Settings changed',
+  cap: 'At the spend cap',
+};
+/** A run's mark: open is working; it ended done, or any other way, failed. */
+const runState = (run: AutoresearchRun) =>
+  itemState({
+    settled: run.endedAt !== null,
+    failed: run.endedAt !== null && !['complete', 'done'].includes(run.finalState ?? ''),
+  });
+
+/**
+ * The manager's wakes as a timeline, newest first, one line each: what it decided, and under it
+ * the cards of the work it scheduled at that wake, each with its own mark, opening its page.
+ * A run belongs to the wake whose decision followed its start.
+ */
+export function Timeline({ status }: { status: Pick<AutoresearchStatus, 'lines' | 'runs'> }) {
+  const rows = useRows();
+  const pathOf = (workflow: AutoresearchRun['workflow']) =>
+    rows.find((row) => row.id === (workflow === 'task' ? 'tasks' : 'experiments'))?.path ??
+    `/${workflow}s`;
+  const lines = [...status.lines].sort((a, b) => a.at.localeCompare(b.at));
+  const runs = [...status.runs].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const scheduled = new Map<string, AutoresearchRun[]>();
+  let from = '';
+  for (const line of lines) {
+    if (line.kind !== 'decide') continue;
+    scheduled.set(
+      line.id,
+      runs.filter((run) => run.startedAt > from && run.startedAt <= line.at),
+    );
+    from = line.at;
+  }
+  return (
+    <ol className="autoresearch-timeline">
+      {lines.reverse().map((line) => (
+        <li key={line.id} className={`wake is-${line.kind}`}>
+          <Ago at={line.at} className="wake-at" />
+          <span className="wake-dot" aria-hidden="true" />
+          <div className="wake-body">
+            <p className="wake-text">
+              {KIND[line.kind] && line.kind !== 'decide' ? `${KIND[line.kind]}: ` : ''}
+              {line.text}
+            </p>
+            {(scheduled.get(line.id)?.length ?? 0) > 0 && (
+              <ul className="wake-runs" aria-label="Scheduled">
+                {scheduled.get(line.id)!.map((run) => (
+                  <li key={run.id}>
+                    <Link className="wake-run" to={`${pathOf(run.workflow)}/${run.id}`}>
+                      <ItemMark state={runState(run)} size={13} />
+                      <span>{run.name}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

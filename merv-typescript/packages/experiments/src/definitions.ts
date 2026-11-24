@@ -292,7 +292,7 @@ export const metricsInstruction = (state: ActiveState, version: number) =>
   version < 46
     ? ''
     : state === 'running'
-      ? ' When metrics tools are available, log training curves with Trackio: call metrics.write connect, put the returned env on the job and use trackio.init(project=<the project it returns>) or report_to="trackio"; before submitting results, call metrics.write export and attach its artifact as a qualitative result.'
+      ? ' When metrics tools are available, log every run to Trackio so its curves show live on this experiment: call metrics.write connect (with machine where you know it), put the returned env on the job and use trackio.init(project=<the project it returns>, name=<arm and seed>) or report_to="trackio", logging the primary measure under a name that says it; before submitting results, call metrics.write export: it attaches the runs\' series and the key figure (every run overlaid) as qualitative results, and the report embeds that figure.'
       : state === 'experiment_review'
         ? " When metrics tools are available, use metrics.read look on this attempt's runs and ask metrics.read query (SQL) whatever the report's claims depend on."
         : // A planner once asked its owner whether Trackio existed: connect is granted only to the running producer.

@@ -388,11 +388,21 @@ export function RecordPage({
   title?: string;
 } & Partial<
   Record<
-    'act' | 'description' | 'content' | 'metrics' | 'history' | 'code' | 'related' | 'details',
+    | 'card'
+    | 'act'
+    | 'report'
+    | 'description'
+    | 'content'
+    | 'metrics'
+    | 'history'
+    | 'code'
+    | 'related'
+    | 'details',
     ReactNode
   >
 >) {
   const order: [string, ReactNode][] = [
+    ['Report', slots.report],
     ['Description', slots.description],
     [title, slots.content],
     ['Metrics', slots.metrics],
@@ -405,6 +415,8 @@ export function RecordPage({
   return (
     <div className="page-stage record-page stack stack--lg">
       <PageHeader eyebrow={back} kind={kind} title={name} summary={standing} actions={state} />
+      {/* The item's own card: the question, its plan, its live curve or its result. */}
+      {slots.card}
       {slots.act}
       {order.map(([label, body]) =>
         label && body ? (

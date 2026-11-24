@@ -13,6 +13,10 @@ const schema = z.discriminatedUnion('k', [
       g: z.string().min(1).max(200),
       a: z.number().int().nonnegative(),
       x: expiry,
+      /** The item is a task (its runs are tagged `_merv_task`); absent, an experiment. */
+      i: z.literal('task').optional(),
+      /** Where the producer said its training code runs, stamped on every run it logs. */
+      m: z.string().min(1).max(120).optional(),
     })
     .strict(),
   z.object({ k: z.literal('v'), p: project, u: z.string().min(1), x: expiry }).strict(),
