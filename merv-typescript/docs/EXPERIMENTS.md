@@ -329,9 +329,8 @@ and tools available.
 This is a real Experiment program, but it does not complete the wider Python
 research system. Knowledge now provides current metadata inventory, scoped
 reference resolution and immutable terminal corpus snapshots; see
-[research inputs](RESEARCH_INPUTS.md). Remaining work includes reflection-wave
-scheduling and its seven-slot reservation/threshold policy, five-lens reflection,
-and production code consolidation and central publication.
+[research inputs](RESEARCH_INPUTS.md). Remaining work includes production code
+consolidation and central publication.
 
 ## Git execution
 
@@ -363,8 +362,7 @@ Every current contract (40, 41 and 42) runs the same graph; Sandboxes attaches
 native compute to each leased assignment
 ([compute as an assignment capability](COMPUTE_CAPABILITY.md)).
 Experiments does not publish code; Sessions/Runner still own process and checkout
-lifecycle. The seven-experiment cap does not implement the future reflection
-scheduler's reserved slots. Exact capture and compatibility details are in
+lifecycle. Exact capture and compatibility details are in
 [research inputs](RESEARCH_INPUTS.md).
 
 `workspace` remains in the create schema only so historical requests replay: a

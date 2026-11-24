@@ -1,6 +1,5 @@
-import { createService, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
-import type { ChangeSpec, Reflection } from '@merv/reflections/types';
-import type { ResearchCreate } from '@merv/research/types';
+import { createService, MervError, type Caller } from '@merv/contracts';
+import type { ResearchCreate, ResearchDigest } from '@merv/research/types';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,86 +17,28 @@ import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
 import { currentTask } from './fixtures/current-work.js';
 import { hostedCode, providersOf } from './fixtures/research.js';
 
-const stop: ChangeSpec = {
-  version: 3,
-  changes: 'Retain the failure and what remains untested.',
-  next: {
-    decision: 'stop',
-    reason: 'no_worthwhile_next_step',
-    rationale: 'Available inputs cannot answer the question.',
-  },
-  items: [],
-  carriedOver: [],
-  rejected: [],
-};
-const next = (name: string): ChangeSpec => ({
-  version: 3,
-  changes: 'Try a smaller, independently verified input first.',
-  next: { decision: 'continue', name, rationale: 'The earlier failure was an input limitation.' },
-  items: [
-    {
-      key: 'input',
-      kind: 'task',
-      title: 'Verify smaller input',
-      goal: 'Prepare a usable input.',
-      checks: ['The input is available and verified'],
-      dependsOn: [],
-      rationale: 'Training needs usable data.',
-    },
-    {
-      key: 'trial',
-      kind: 'experiment',
-      name: `${name}-trial`,
-      question: 'Does the smaller input suffice?',
-      details: 'Run after input verification.',
-      dependsOn: ['input'],
-      rationale: 'Test the surviving hypothesis.',
-    },
-  ],
-  carriedOver: [],
-  rejected: [],
-});
-
-async function fixture(
-  t: TestContext,
-  plugin = false,
-  retry: { afterMs?: number; forMs?: number } = {},
-) {
+async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-automatic-research-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   );
   config.plugins = config.plugins.filter(
     ({ id }: { id: string }) =>
-      ![
-        'api',
-        'identity',
-        'ui',
-        ...(!plugin ? ['research', 'research-tools', 'research-ui'] : []),
-      ].includes(id) &&
+      !['api', 'identity', 'ui', 'research', 'research-tools', 'research-ui'].includes(id) &&
       !id.endsWith('-api') &&
       !id.endsWith('-ui'),
   );
   let app = await createApp({ directory, config });
   const service = async () =>
-    plugin
-      ? (app.ctx.research as ResearchService)
-      : await createService(
-          new ResearchService(
-            app.ctx.state,
-            app.ctx.scope,
-            app.ctx.workflows,
-            providersOf(app.ctx),
-            retry.afterMs,
-            retry.forMs,
-          ),
-        );
+    await createService(
+      new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows, providersOf(app.ctx)),
+    );
   let research = await service();
   let release: (() => void | Promise<void>) | undefined;
   let sequence = 0;
-  const id = () => `automatic-test-${++sequence}`;
+  const id = () => `research-test-${++sequence}`;
   const boot = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Continuous research',
+    projectName: 'Research without reflections',
     actorName: 'Owner',
   });
   const owner: Caller = {
@@ -113,7 +54,6 @@ async function fixture(
       credentialId: actor.credential.id,
     };
   };
-  const reviewer = await issue('reviewer');
   const taskReviewer = await issue('operator');
   const define = async () =>
     await app.ctx.paper.patch(owner, {
@@ -149,22 +89,20 @@ async function fixture(
       reason: 'The required data does not exist.',
       requestId: id(),
     });
-  const failExperiment = async (
-    experimentId: string,
-    transition: 'abandon' | 'mark_failed' = 'mark_failed',
-  ) =>
+  const failExperiment = async (experimentId: string) =>
     await app.ctx.experiments.transition(owner, {
       experimentId,
       expectedRevision: (await app.ctx.experiments.get(owner, experimentId)).workflow.revision,
-      transition,
+      transition: 'mark_failed',
       evidence: { reason: 'The available resources cannot execute the design.' },
       requestId: id(),
     });
   const create = async (dependsOn: string[], extra: Partial<ResearchCreate> = {}, caller = owner) =>
-    await research.create(caller, {
-      name: id(),
-      dependsOn,
-      automatic: true,
+    await research.create(caller, { name: id(), dependsOn, requestId: id(), ...extra });
+  const advance = async (researchId: string, extra: { retryIntegration?: boolean } = {}) =>
+    await research.advance(owner, {
+      researchId,
+      expectedRevision: (await research.get(owner, researchId)).workflow.revision,
       requestId: id(),
       ...extra,
     });
@@ -175,77 +113,17 @@ async function fixture(
     );
     assert.equal(status?.error ?? null, null, JSON.stringify(status));
   };
-  const artifact = async (caller: Caller, content: string, mediaType = 'text/markdown') =>
-    await app.ctx.artifacts.create(caller, { title: id(), content, mediaType });
-  const review = async (
-    reviewId: string,
-    expectedRevision: number,
-    verdict: 'pass' | 'needs_changes' = 'pass',
-  ) => {
-    const claim = await app.ctx.reviews.start(reviewer, reviewId);
-    const input: ReviewApplication = {
-      reviewId,
-      claimId: claim.claimId!,
-      expectedRevision,
-      verdict,
-      notes: 'Checked the retained inputs and the actual failure records.',
-      synopsis: 'The report accurately describes the available evidence.',
-      findings: claim.criteria.map((_, index) => ({
-        criterionNumber: index + 1,
-        status: verdict === 'pass' ? ('met' as const) : ('not_met' as const),
-        evidenceIds: claim.artifactIds,
-        notes: 'Verified against the retained records.',
-      })),
-      ...(verdict === 'needs_changes' ? { returnTo: 'synthesizing' } : {}),
-      requestId: id(),
-    };
-    return await app.ctx.reviews.apply(reviewer, input);
-  };
-  const finishTask = async (taskId: string) => {
+  const finishTask = async (taskId: string) =>
     await deliverCurrentTask(app.ctx, directory, owner, taskId, taskReviewer);
-  };
-  const lenses = async (researchId: string) => {
+  const digestOf = async (researchId: string) => {
     const record = await research.get(owner, researchId);
-    let wave = await app.ctx.reflections.get(owner, record.reflectionId!);
-    for (const lens of wave.lenses) {
-      const author = await issue('producer');
-      await app.ctx.reflections.submitLens(author, {
-        lensId: lens.id,
-        expectedRevision: lens.workflow.revision,
-        artifactId: (
-          await artifact(author, '# Summary\nThe failed input leaves the hypothesis untested.')
-        ).id,
-        requestId: id(),
-      });
-    }
-    return await app.ctx.reflections.get(owner, wave.id);
-  };
-  const submit = async (wave: Reflection, plan: ChangeSpec | string) =>
-    await app.ctx.reflections.submit(owner, {
-      reflectionId: wave.id,
-      expectedRevision: wave.workflow.revision,
-      reportArtifactId: (
-        await artifact(
-          owner,
-          '# Summary\nThe failed work is retained. The hypothesis remains untested.',
-        )
-      ).id,
-      changeSpecArtifactId: (
-        await artifact(
-          owner,
-          typeof plan === 'string' ? plan : JSON.stringify(plan),
-          typeof plan === 'string' ? 'text/markdown' : 'application/json',
-        )
-      ).id,
-      requestId: id(),
-    });
-  const approve = async (researchId: string, plan = stop) => {
-    const wave = await submit(await lenses(researchId), plan);
-    await review(wave.review!.id, wave.workflow.revision);
-    await pump();
+    assert.ok(record.digest);
+    return JSON.parse(
+      (await app.ctx.artifacts.read(owner, record.digest.id)).content,
+    ) as ResearchDigest;
   };
   const enable = async () => {
-    if (!plugin && !release) release = await bindAutomatic(research, app.ctx.domainEvents);
+    if (!release) release = await bindAutomatic(research, app.ctx.domainEvents);
   };
   const disable = async () => {
     await release?.();
@@ -253,7 +131,7 @@ async function fixture(
   };
   t.after(async () => {
     await disable();
-    if (!plugin) research.close();
+    research.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -265,7 +143,6 @@ async function fixture(
       return research;
     },
     owner,
-    reviewer,
     id,
     issue,
     define,
@@ -274,18 +151,15 @@ async function fixture(
     failTask,
     failExperiment,
     create,
+    advance,
     pump,
-    artifact,
-    review,
     finishTask,
-    lenses,
-    submit,
-    approve,
+    digestOf,
     enable,
     disable,
     async restart() {
       await disable();
-      if (!plugin) research.close();
+      research.close();
       await app.stop();
       app = await createApp({ directory, config });
       research = await service();
@@ -294,71 +168,89 @@ async function fixture(
   };
 }
 
-test('two automatic waves preserve dependencies and lineage, then stop at the configured cycle limit', async (t) => {
+test('a cycle completes once its tasks and experiments end, with no reflection step', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const input = await f.task();
+  const trial = await f.experiment([input.id]);
+  const cycle = await f.create([input.id, trial.id]);
+  assert.equal(cycle.workflow.workflow, 'research');
+  assert.equal(cycle.workflow.version, 7);
+  assert.equal(cycle.workflow.state, 'defining');
+  assert.equal('reflectionId' in cycle, false);
+  assert.equal((await f.advance(cycle.id)).workflow.state, 'researching');
+  // The cycle waits on its own work, and on nothing else.
+  await assert.rejects(f.advance(cycle.id), { code: 'dependencies_pending' });
+  await f.finishTask(input.id);
+  await assert.rejects(f.advance(cycle.id), { code: 'dependencies_pending' });
+  // A failed experiment is an outcome of the cycle, not a reason it cannot end.
+  await f.failExperiment(trial.id);
+  // This test starts from an already integrated main; the hosted case has its own test.
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  const done = await f.advance(cycle.id);
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual(done.integrations, []);
+  assert.deepEqual(done.progress, { settled: 1, total: 2 });
+  const digest = await f.digestOf(cycle.id);
+  assert.equal(digest.formatVersion, 2);
+  assert.equal(digest.cycle.outcome, 'complete');
+  assert.deepEqual(
+    digest.tasks.map((item) => item.id),
+    [input.id],
+  );
+  assert.deepEqual(
+    digest.experiments.map((item) => item.id),
+    [trial.id],
+  );
+  assert.deepEqual(digest.dropped, [trial.id]);
+  assert.equal('reflection' in digest, false);
+  // The project goes on: new work and a cycle that follows this one start at once.
+  const more = await f.task();
+  const next = await f.create([more.id], { previousCycleId: cycle.id });
+  assert.equal(next.previousCycleId, cycle.id);
+  assert.equal((await f.research.get(f.owner, cycle.id)).successorId, next.id);
+  const lineage = await f.research.lineage(f.owner, next.id);
+  assert.deepEqual(
+    lineage.cycles.map((item) => item.id),
+    [cycle.id, next.id],
+  );
+  assert.equal(lineage.cycles[0]!.digest!.id, done.digest!.id);
+});
+
+test('an automatic cycle advances to complete on its work ending, and a restart does not repeat it', async (t) => {
   const f = await fixture(t);
   await f.define();
   await f.enable();
   const input = await f.task();
-  const first = await f.create([input.id], { maxCycles: 2 });
-  await f.finishTask(input.id);
-  // This orchestration test starts from an already integrated main.
-  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  const trial = await f.experiment();
+  const cycle = await f.create([input.id, trial.id], { automatic: true });
   await f.pump();
-  await f.approve(first.id, next('second'));
-  const done = await f.research.get(f.owner, first.id);
-  assert.equal(done.workflow.state, 'complete');
-  assert.ok(done.successorId);
-  let second = await f.research.get(f.owner, done.successorId);
-  assert.equal(second.workflow.state, 'researching');
-  assert.equal(second.automation!.cycle, 2);
-  assert.equal(second.automation!.rootId, first.id);
-  assert.equal(second.previousCycleId, first.id);
-  const work = Object.fromEntries(second.origin!.items.map((item) => [item.key, item.id]));
-  assert.deepEqual(
-    (await f.app.ctx.workflows.prerequisites(f.owner, [work.trial]))
-      .get(work.trial)!
-      .map((item) => item.id),
-    [work.input],
-  );
-  await f.failTask(work.input);
+  const researching = await f.research.get(f.owner, cycle.id);
+  assert.equal(researching.workflow.state, 'researching');
+  // What it waits on is said, as Research publishes it.
+  assert.equal(researching.automation!.blocker!.code, 'dependencies_pending');
+  await f.failExperiment(trial.id);
   await f.pump();
-  await f.approve(second.id, next('third'));
-  second = await f.research.get(f.owner, second.id);
-  assert.equal(second.workflow.state, 'complete');
-  assert.equal(second.successorId, null);
-  assert.equal(second.automation!.blocker!.code, 'research_cycle_limit');
-  assert.equal((await f.research.list(f.owner)).length, 2);
-  assert.equal((await f.app.ctx.experiments.list(f.owner)).length, 1);
-  await f.restart();
-  await f.pump();
-  assert.equal((await f.research.list(f.owner)).length, 2);
-});
-
-test('restart and repeated wakeups recover a missed completion without duplicate reflections', async (t) => {
-  const f = await fixture(t);
-  await f.define();
-  await f.enable();
-  const work = await f.experiment();
-  const cycle = await f.create([work.id]);
-  await f.pump();
-  const before = await f.research.get(f.owner, cycle.id);
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'researching');
+  // The last outcome lands while nothing listens; the restart's wake finds it.
   await f.disable();
-  await f.failExperiment(work.id);
+  await f.failTask(input.id);
   await f.restart();
   await f.pump();
-  const record = await f.research.get(f.owner, cycle.id);
-  assert.equal(record.workflow.state, 'reflecting');
+  const done = await f.research.get(f.owner, cycle.id);
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal(done.automation!.blocker, null);
   await wakeAutomatic(f.research);
   await wakeAutomatic(f.research);
   await f.pump();
-  assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
-  assert.equal((await f.research.get(f.owner, cycle.id)).reflectionId, record.reflectionId);
+  const again = await f.research.get(f.owner, cycle.id);
+  assert.equal(again.workflow.revision, done.workflow.revision);
+  assert.equal((await f.research.list(f.owner)).length, 1);
   // The completed advance's replay does not consult Git for the stage it moved into.
   const replay = {
     researchId: cycle.id,
-    expectedRevision: before.workflow.revision,
-    nextWave: 'create' as const,
-    requestId: automaticRequest(cycle.id, before.workflow.revision, 'advance'),
+    expectedRevision: researching.workflow.revision,
+    requestId: automaticRequest(cycle.id, researching.workflow.revision, 'advance'),
   };
   const committed = await f.research.advance(f.owner, replay);
   let gitCalls = 0;
@@ -371,10 +263,42 @@ test('restart and repeated wakeups recover a missed completion without duplicate
     },
   };
   assert.deepEqual(await f.research.advance(f.owner, replay), committed);
-  await assert.rejects(f.research.advance(f.owner, { ...replay, nextWave: 'skip' }), {
+  await assert.rejects(f.research.advance(f.owner, { ...replay, retryIntegration: true }), {
     code: 'request_conflict',
   });
   assert.equal(gitCalls, 0);
+});
+
+test('a hosted cycle consolidates accepted code that main lacks, then completes', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const input = await f.task();
+  const cycle = await f.create([input.id]);
+  await f.advance(cycle.id);
+  await f.finishTask(input.id);
+  const main: Parameters<typeof hostedCode>[3] = { unitIds: [input.id] };
+  const published = hostedCode(f.research, f.app.ctx, f.owner, main);
+  const consolidating = await f.advance(cycle.id);
+  assert.equal(consolidating.workflow.state, 'consolidating');
+  assert.equal(consolidating.integrations.length, 1);
+  const [integration] = consolidating.integrations;
+  assert.deepEqual(published, [integration]);
+  // The consolidation task is the cycle's own child, never part of its selection.
+  assert.deepEqual(consolidating.researchDependencies, [input.id]);
+  await assert.rejects(f.advance(cycle.id), { code: 'dependencies_pending' });
+  await f.failTask(integration!);
+  await assert.rejects(f.advance(cycle.id), { code: 'integration_failed' });
+  const retried = await f.advance(cycle.id, { retryIntegration: true });
+  assert.equal(retried.workflow.state, 'consolidating');
+  assert.equal(retried.integrations.length, 2);
+  await f.finishTask(retried.integrations[1]!);
+  main.publication = { state: 'published' } as typeof main.publication;
+  const done = await f.advance(cycle.id);
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual((await f.digestOf(cycle.id)).integration, {
+    taskId: retried.integrations[1],
+    publication: 'published',
+  });
 });
 
 test('a revoked source cannot advance, while another authorized cycle keeps moving', async (t) => {
@@ -383,17 +307,17 @@ test('a revoked source cannot advance, while another authorized cycle keeps movi
   await f.enable();
   const source = await f.issue('producer');
   const work = await f.task([], source);
-  const blocked = await f.create([work.id], {}, source);
+  const blocked = await f.create([work.id], { automatic: true }, source);
   await f.pump();
   await f.app.ctx.scope.credentials.revokeActor(f.owner, source.actorId);
   await f.failTask(work.id);
   const otherWork = await f.task();
-  const other = await f.create([otherWork.id]);
+  const other = await f.create([otherWork.id], { automatic: true });
   await f.failTask(otherWork.id);
   await f.pump();
   assert.equal((await f.research.get(f.owner, blocked.id)).workflow.state, 'researching');
   assert.ok((await f.research.get(f.owner, blocked.id)).automation!.blocker);
-  assert.equal((await f.research.get(f.owner, other.id)).workflow.state, 'reflecting');
+  assert.equal((await f.research.get(f.owner, other.id)).workflow.state, 'complete');
   assert.equal(
     JSON.stringify(await f.research.get(f.owner, blocked.id)).includes(source.credentialId),
     false,

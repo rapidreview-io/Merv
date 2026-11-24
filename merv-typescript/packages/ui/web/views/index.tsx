@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
 import type { ShellData } from '../shell-types';
 import { ArtifactsView } from './artifacts';
+import { AutoresearchView } from './autoresearch';
 import { MetricsView } from './metrics';
 import { BoardsView } from './board';
 import { CodeView } from './code';
@@ -14,7 +15,6 @@ import { PaperView } from './paper';
 import { AgentPage } from '../board-app/merv-panel';
 import { CollectionView } from './remote';
 import { ResearchView } from './research';
-import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
@@ -51,7 +51,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   paper: PaperView,
   pi: AgentPage,
   research: ResearchView,
-  reflections: ReflectionsView,
+  autoresearch: AutoresearchView,
   work: WorkView,
   'legacy-history': LegacyHistoryView,
   // The generic kind: a row a plugin describes through its manifest.

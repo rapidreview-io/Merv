@@ -32,7 +32,7 @@ export const patchSchema = z.strictObject({
     .min(1)
     .max(100),
 });
-/** The Methods and Results edits an experiment or reflection reviewer submits with a verdict. */
+/** The Methods and Results edits an experiment reviewer submits with a verdict. */
 export const changesSchema = z.strictObject({
   documents: z
     .array(patchSchema.omit({ requestId: true }).extend({ kind: z.enum(['methods', 'results']) }))
@@ -41,7 +41,7 @@ export const changesSchema = z.strictObject({
 });
 export const reviewSchema = changesSchema
   .extend({
-    source: z.object({ kind: z.enum(['experiment', 'reflection']), id, revision }).strict(),
+    source: z.object({ kind: z.enum(['experiment']), id, revision }).strict(),
     reviewId: id,
     verdict: z.enum(REVIEW_VERDICTS),
     evidenceIds: z.array(id).min(1).max(2000),

@@ -10,18 +10,19 @@
   "apiEntries": 47,
   "serverPlugins": 87,
   "machinePlugins": 1,
-  "directDependencyCount": 284,
+  "directDependencyCount": 280,
   "optionalDependencyCount": 23,
   "directConsumers": {
     "api": 15,
-    "artifacts": 15,
+    "artifacts": 14,
+    "autoresearch": 2,
     "blobs": 3,
     "board": 2,
     "code": 1,
     "codeWork": 8,
-    "contextBuilder": 3,
+    "contextBuilder": 2,
     "customerExperiments": 0,
-    "domainEvents": 6,
+    "domainEvents": 7,
     "experiments": 5,
     "feed": 2,
     "fleet": 4,
@@ -32,13 +33,12 @@
     "metrics": 2,
     "mounts": 1,
     "nisa": 1,
-    "paper": 6,
+    "paper": 5,
     "payments": 2,
     "pi": 4,
-    "reflections": 3,
     "reports": 3,
     "research": 2,
-    "reviews": 8,
+    "reviews": 7,
     "runner": 0,
     "sandboxEvidence": 3,
     "sandboxesPeople": 1,
@@ -140,6 +140,50 @@
       ],
       "optional": [],
       "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-autoresearch",
+      "source": "packages/autoresearch/src/index.ts",
+      "provides": [
+        "autoresearch"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "domainEvents",
+        "sessions"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-autoresearch-tools",
+      "source": "packages/autoresearch/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-autoresearch-ui",
+      "source": "packages/autoresearch/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },
@@ -820,53 +864,6 @@
       "defaultConfiguration": false
     },
     {
-      "plugin": "merv-reflection-tools",
-      "source": "packages/reflections/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "reflections",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
-      "plugin": "merv-reflection-ui",
-      "source": "packages/reflections/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "reflections",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
-      "plugin": "merv-reflections",
-      "source": "packages/reflections/src/index.ts",
-      "provides": [
-        "reflections"
-      ],
-      "requires": [
-        "state",
-        "scope",
-        "artifacts",
-        "paper",
-        "workflows",
-        "reviews",
-        "contextBuilder",
-        "sessions"
-      ],
-      "optional": [],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
       "plugin": "merv-reports",
       "source": "packages/reports/src/index.ts",
       "provides": [
@@ -907,7 +904,6 @@
         "workflows",
         "domainEvents",
         "paper",
-        "reflections",
         "tasks",
         "experiments",
         "artifacts",

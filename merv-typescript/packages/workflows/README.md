@@ -17,7 +17,6 @@ flowchart LR
   subgraph researchLayer["Research logic"]
     tasks["Tasks"]
     experiments["Experiments"]
-    reflections["Reflections"]
     research["Research"]
     knowledge["Knowledge"]
   end
@@ -36,7 +35,6 @@ flowchart LR
   workerAgent -- "calls workflow.begin (worker alias)" --> workflows
   tasks -- "injects; draws dependency-rows, lease-rows" --> workflows
   experiments -- "injects; draws dependency-rows, lease-rows" --> workflows
-  reflections -- "injects; draws lease-rows" --> workflows
   research -- "injects" --> workflows
   knowledge -- "injects" --> workflows
   sessions -- "injects; runs admitDispatch" --> workflows
@@ -52,7 +50,7 @@ flowchart LR
   class workflows self
 ```
 
-Programs such as Tasks, Experiments, Reflections and Research register on Workflows and keep their own commands; Sessions leases the work they offer, and agents reach an instance only through the `workflow.*` tools. Every committed move is recorded as `workflow.transition`, which Sandboxes, Code work and Research follow.
+Programs such as Tasks, Experiments and Research register on Workflows and keep their own commands; Sessions leases the work they offer, and agents reach an instance only through the `workflow.*` tools. Every committed move is recorded as `workflow.transition`, which Sandboxes, Code work and Research follow.
 
 Install `workflowsPlugin` after (or before) its providers. Cordis activates it when
 both services are available. Its tool adapter exposes `workflow.read` (status,
@@ -78,10 +76,7 @@ no status on any edge. A supplied policy must guard every graph edge.
 A policy may also declare `limits` on its loop edges: they are deployed policy rather than
 fingerprinted graph, are counted from history, refuse the capped edge at commit with
 `loop_limit_reached`, and are raised for one instance by `extendLimit`
-([loop limits](../../docs/BUDGETS_AND_LIMITS.md)). Its optional `children` callback names
-instances it fans out to without a dependency edge, which `dependencyClosure` and
-`sponsoringRoots` union in. It is asked for many instances of its version at once, as
-instance id to child ids, on behalf of no caller.
+([loop limits](../../docs/BUDGETS_AND_LIMITS.md)).
 The same checks run before a transition commits. See [the complete contract,
 task integration and lifecycle behavior](../../docs/WORKFLOW_GUIDANCE.md).
 
@@ -132,10 +127,6 @@ program must authorize its specific action (for example `write` or `review`).
   database refuses an UPDATE or DELETE of any of them. The service therefore loads them all
   at startup and keeps them. It reads a version it does not hold, such as one another service
   registered later, only once.
-- A definition's `blocksStarts` names workflows that may not start while any instance of that
-  version, loaded or not, is in one of its nonterminal states (`workflow_creation_paused`). The
-  check reads only instances in those states, through an index, so ended ones cost nothing, and
-  a version with no nonterminal state pauses nothing.
 - A start without a version starts the handle's own. Retrying a start returns the original
   response even if a newer version was installed since.
 - Start data, transition data and input, and preflight input are each a JSON object of
@@ -267,7 +258,9 @@ need `read`; a handle's commands need `read`, and the program authorizes the act
 `extendLimit` needs `admin`. The trusted provider seams (`replaceBlockers`,
 `systemPrerequisites(provider).replace`, `relations`, `sponsoringRoots`) take a
 `projectId` and the caller's `tx` and authorize no caller: only in-process code reaches
-them. `pinned` reads a version's frozen contract, which is no project's data, so it takes no
+them. `admitStarts(admission)` is another such seam: each admission is asked about every new
+instance inside the transaction that starts it (after its row and dependencies are written),
+and a refusal rolls the start back; Autoresearch holds the spend cap there. `pinned` reads a version's frozen contract, which is no project's data, so it takes no
 caller either. A lease step authorizes its worker at entry. No decision is repeated after the
 callbacks, so a callback that revokes its own caller goes unnoticed; only
 `dispatchCandidates` and `offerLease` authorize their source again once every callback has
@@ -323,8 +316,8 @@ and it is never deleted; only `released_at` is written. A release also returns t
 claim the lease took. Reviews releases every lease durably from one `session.closed`
 consumer, `reviews.lease-release.v1` (`leaseReleaseConsumer` here): a session's id is its
 lease's id, so the release needs neither the registration nor the receipt, and happens
-whether or not the owning program is loaded. Tasks, Experiments and Reflections moved their
-own lease tables into it (tasks@10, experiment_program@4, reflections@5).
+whether or not the owning program is loaded. Tasks, Experiments and the since-removed Reflections
+moved their own lease tables into it (tasks@10, experiment_program@4, reflections@5).
 
 **Dependencies.** A dependency's `failed` is a gating fact: a declared edge whose target
 ended outside its pinned success states fails its dependent. A system edge, which a
@@ -348,11 +341,9 @@ the provider replaces them; they are cleared when the instance reaches a termina
 A blocker's optional `cause` is the provider's machine word for which kind of its code it is;
 Workflows stores and returns it unread, so readers never parse the message.
 
-**`dependencyClosure`** walks level by level, with a fixed number of reads per level and
-one `children` call per declaring version and 1,000 of its instances, at most 5,000
-instances, and refuses a larger closure with `closure_too_large` 409 rather than return part
-of it. `sponsoringRoots` asks `children` only of the versions that declare it, in the same
-batches.
+**`dependencyClosure`** walks level by level, with a fixed number of reads per level, at
+most 5,000 instances, and refuses a larger closure with `closure_too_large` 409 rather than
+return part of it.
 
 **Read schema.** Other components may read these columns directly and nothing else:
 `wf_instances(id, project_id, workflow, version, state, revision, data_json, created_at,

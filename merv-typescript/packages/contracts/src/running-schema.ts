@@ -233,7 +233,7 @@ export const runningNode = z
   .object({
     key,
     lane: runningLane,
-    /** The small word above the title in the work lane ('Task', 'Experiment', 'Reflection'). */
+    /** The small word above the title in the work lane ('Task', 'Experiment', 'Cycle'). */
     kind: words(40).optional(),
     title: words(200),
     /** Accessible name and hover title, where the title is not the thing's name (a sandbox titled '8× H100' is named 'aurora-sweep'). */
@@ -259,8 +259,8 @@ export const runningNode = z
       .transform((links) => (links?.length ? links : undefined)),
     /**
      * Keys of other owners' nodes that this node absorbs. A session bound to a Fleet machine
-     * absorbs `fleet:<allocationId>`, a Code check absorbs its `sandbox:<id>`, and a reflection
-     * wave absorbs its lenses' `work:<lensId>`. The absorbed node leaves its lane, links to it
+     * absorbs `fleet:<allocationId>`, and a Code check absorbs its `sandbox:<id>`. The absorbed
+     * node leaves its lane, links to it
      * land here, and its owner's sections follow this node's in the sidebar, without their
      * controls. What an absorbed node absorbs comes along with it. On the board's answer this
      * is every key the node absorbed, so the shell can open this node for any of them.
@@ -492,7 +492,7 @@ const runningDocument = z.object({ id: z.string().min(1).max(200), title: words(
 /**
  * One entry of a unit's history, oldest first: a submission, a verdict, a return, a move, or
  * what is still open. `role` and `stage` name the thread that did it (Sessions' thread stands at
- * `stage`, a state of `instance`, the unit's own unless named), so its mark opens that thread.
+ * `stage`, a state of the unit), so its mark opens that thread.
  * `artifact` is the document the entry submitted, which opens in the reading area, and `files`
  * every other file it handed in.
  */
@@ -500,7 +500,6 @@ export const runningUnitEntry = z
   .object({
     role: z.enum(['producer', 'reviewer']).optional(),
     stage: words(64).optional(),
-    instance: z.string().min(1).max(200).optional(),
     actor: z.string().min(1).max(200).optional(),
     at: lenient(instant.optional()),
     said: words(200).optional(),
@@ -524,28 +523,9 @@ export const runningUnitEntry = z
     attention: flag,
   })
   .transform(lean);
-/** One lens, perspective or part of a unit, listed with one opened at a time. */
-const runningUnitPart = z
-  .object({
-    title: words(200),
-    state: words(64).optional(),
-    actor: z.string().min(1).max(200).optional(),
-    artifact: lenient(runningDocument.optional()),
-  })
-  .transform(lean);
-/** One item of a structured plan: what it is, its kind, its title, and what it waits on. */
-const runningUnitItem = z
-  .object({
-    key: words(80),
-    kind: words(40),
-    title: words(300),
-    dependsOn: z.array(words(80)).max(24).default([]),
-  })
-  .transform(lean);
 /**
  * The unit's key artifact, as its owner says it is now: what it is called ('Current plan',
- * 'Report'), its state's word, and exactly one body — a document, a short markdown text, a
- * list of parts with one opened at a time, or the items of a structured plan.
+ * 'Report'), its state's word, and exactly one body: a document or a short markdown text.
  */
 export const runningUnitKey = z
   .object({
@@ -553,14 +533,10 @@ export const runningUnitKey = z
     state: words(64).optional(),
     artifact: lenient(runningDocument.optional()),
     text: z.string().max(16_000).optional(),
-    parts: kept(runningUnitPart, 24).optional(),
-    items: kept(runningUnitItem, 40).optional(),
   })
   .transform(lean)
   .refine(
-    (body) =>
-      [body.artifact, body.text, body.parts, body.items].filter((part) => part !== undefined)
-        .length === 1,
+    (body) => [body.artifact, body.text].filter((part) => part !== undefined).length === 1,
     'A key artifact has exactly one body',
   );
 /**
@@ -593,9 +569,5 @@ export const runningUnit = z
     history: kept(runningUnitEntry, 80).default([]),
     /** Every file of the unit's, newest first. */
     artifacts: kept(runningUnitArtifact, 160).optional(),
-    /** The records inside the unit whose agents are its own too, as a wave's lenses are. */
-    instances: z.array(z.string().min(1).max(200)).max(24).optional(),
-    /** What the owner calls each of them, which names its agents' rows: 'Evidence lens'. */
-    names: lenient(z.record(z.string().min(1).max(200), words(80)).optional()),
   })
   .transform(lean);

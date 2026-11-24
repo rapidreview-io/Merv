@@ -30,8 +30,6 @@ export interface WorkflowDefinition {
   edges: { from: string; action: string; to: string }[];
   /** Every graph is managed: only its program's handle changes an instance. */
   managed?: true;
-  /** While an instance is nonterminal, pause creation of these workflow types in its project. */
-  blocksStarts?: string[];
 }
 /** A deployed definition as the catalog reads it: each edge with the tool that takes it, if any. */
 export interface WorkflowCatalogEntry extends Omit<WorkflowDefinition, 'edges'> {
@@ -129,18 +127,6 @@ export interface WorkflowPolicy {
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
-  /**
-   * The instances each of `instanceIds` fans work out to without a dependency edge, such as a
-   * reflection's lenses, by instance id; one left out has none. A usage rollup over a
-   * dependency closure unions them in, so the sessions they cost are not lost from the figure
-   * of the cycle that caused them. It is asked for up to 1,000 instances at once, never an
-   * empty list, on behalf of no caller, and only reads.
-   */
-  children?(context: {
-    projectId: string;
-    instanceIds: readonly string[];
-    tx: Transaction;
-  }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext): WorkflowDescription | Promise<WorkflowDescription>;
   /**
    * Before a read decides many instances of this version at once (guidance, an overview, a
@@ -310,6 +296,12 @@ export interface WorkflowRecord {
   dependencies: WorkflowDependency[];
   dependents: WorkflowDependency[];
 }
+/** What a start admission is told of one new instance (see `Workflows.admitStarts`). */
+export type WorkflowStartAdmission = (
+  caller: Caller,
+  snapshot: WorkflowSnapshot,
+  tx: Transaction,
+) => Promise<void>;
 export interface Workflows {
   /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
   dispatchCandidates(
@@ -354,6 +346,14 @@ export interface Workflows {
   assignment(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowAssignment>;
   begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment>;
   workStarts(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowWorkStart[]>;
+  /**
+   * Internal provider capability; never exposed through a tool or a lease. Every admission is
+   * asked about each new instance inside the transaction that starts it, after its row and
+   * dependencies are written and before the start is recorded: a refusal (a MervError) rolls
+   * the whole start back, and the caller sees it. A replayed start asks nothing. The returned
+   * function withdraws the admission.
+   */
+  admitStarts(admission: WorkflowStartAdmission): () => void;
   register(
     definition: WorkflowDefinition,
     policy?: WorkflowPolicy,

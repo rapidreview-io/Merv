@@ -73,9 +73,10 @@ The check exercises all default plugins, compiled UI assets, actual MCP artifact
 managed Git creation and leased delivery without GitHub, an independent leased review,
 fencing of a completed worker, a second real Git assignment offered to a fresh agent,
 that agent's two tool-call observations with numeric token estimates, a
-signed private file download, research advancing into a five-lens reflection wave,
-and persistence after a full application stop/restart. The managed admission task, second task and reflection
-wave intentionally remain unfinished in the isolated smoke project. Token counts are
+signed private file download, a research cycle advancing past its finished work (to
+complete, or to consolidating when main lacks accepted code), and persistence after a
+full application stop/restart. The managed admission task and second task intentionally
+remain unfinished in the isolated smoke project. Token counts are
 payload estimates, not model billing. Shared Supabase login and public HTTPS routing
 require their separate acceptance checks; this script uses synthetic actor/session
 credentials only.

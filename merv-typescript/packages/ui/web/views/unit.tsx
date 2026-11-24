@@ -55,133 +55,25 @@ import {
  * view once the stages have scrolled away, and the unit's name then stands at their end.
  */
 
-type Reference = Pick<RunningUnitEntry, 'role' | 'stage' | 'instance' | 'at'>;
-
-/**
- * A thread of another record than the unit's own (a lens of a wave): read when its disc is
- * pressed, and opened once it is found.
- */
-function ElsewhereDialog({
-  reference,
-  title,
-  onClose,
-}: {
-  reference: Reference & { instance: string };
-  title: string;
-  onClose(): void;
-}) {
-  const { threads, loadedAt, loaded } = useThreadList(reference.instance);
-  const thread = threadFor(threads, {
-    ...reference,
-    stage: reference.stage!,
-    role: reference.role!,
-  });
-  useEffect(() => {
-    if (loaded && !thread) onClose();
-  }, [loaded, thread, onClose]);
-  return thread ? (
-    <ThreadDialog
-      thread={thread}
-      group={groupOf(threads, thread)}
-      title={title}
-      loadedAt={loadedAt}
-      onClose={onClose}
-    />
-  ) : null;
-}
-
 /** Each entry's role disc, the way to the thread that did it. */
-function marker(
-  threads: readonly ThreadView[],
-  instance: string | undefined,
-  open: (reference: Reference, threadId?: string) => void,
-) {
+function marker(threads: readonly ThreadView[], open: (threadId: string) => void) {
   return (item: RunningUnitEntry): Mark | undefined => {
     if (!item.role) return undefined;
-    const elsewhere = !!item.instance && item.instance !== instance;
-    const thread =
-      item.stage && !elsewhere
-        ? threadFor(threads, { stage: item.stage, role: item.role, at: item.at })
-        : undefined;
+    const thread = item.stage
+      ? threadFor(threads, { stage: item.stage, role: item.role, at: item.at })
+      : undefined;
     return {
       letter: roleLetter(item.role),
       label: `${capital(item.role)} thread`,
-      ...(thread || (elsewhere && item.stage) ? { onOpen: () => open(item, thread?.id) } : {}),
+      ...(thread ? { onOpen: () => open(thread.id) } : {}),
     };
   };
-}
-
-/** Lenses, perspectives, parts: a line each, and the one pressed opened under the list. */
-function Parts({ parts }: { parts: NonNullable<RunningUnitKey['parts']> }) {
-  const { nameOf } = useContext(Reading);
-  // The newest report is open to begin with, so there is something to read at once.
-  const [opened, setOpened] = useState(
-    () => parts.filter((part) => part.artifact).at(-1)?.artifact?.id,
-  );
-  const shown = parts.find((part) => part.artifact?.id === opened);
-  return (
-    <div className="stack">
-      <ul className="unit-parts">
-        {parts.map((part, at) => {
-          const who = part.actor ? nameOf(part.actor) : undefined;
-          const line = (
-            <>
-              <span className="unit-part-name">{part.title}</span>
-              {who && <span className="faint">{who}</span>}
-              <StatusPill value={part.state} />
-            </>
-          );
-          return (
-            <li key={at}>
-              {part.artifact ? (
-                <button
-                  type="button"
-                  className="unit-part"
-                  aria-pressed={opened === part.artifact.id}
-                  onClick={() =>
-                    setOpened(opened === part.artifact!.id ? undefined : part.artifact!.id)
-                  }
-                >
-                  {line}
-                </button>
-              ) : (
-                <span className="unit-part">{line}</span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      {shown?.artifact && <ArtifactBody artifactId={shown.artifact.id} />}
-    </div>
-  );
-}
-
-/** A structured plan's items: each its key, its kind, its title and what it waits on. */
-function Items({ items }: { items: NonNullable<RunningUnitKey['items']> }) {
-  return (
-    <ol className="unit-items">
-      {items.map((item) => (
-        <li key={item.key}>
-          <span className="unit-item-head">
-            <span className="mono faint">{item.key}</span>
-            <span className="running-kind">{item.kind}</span>
-          </span>
-          <span className="unit-item-title">{item.title}</span>
-          {!!item.dependsOn?.length && (
-            <span className="faint">after {item.dependsOn.join(', ')}</span>
-          )}
-        </li>
-      ))}
-    </ol>
-  );
 }
 
 /** The key artifact's body, whichever one its owner sent. */
 function Body({ of }: { of: RunningUnitKey }) {
   if (of.artifact) return <ArtifactBody artifactId={of.artifact.id} />;
   if (of.text !== undefined) return <Markdown source={of.text} under={3} />;
-  if (of.parts) return <Parts parts={of.parts} />;
-  if (of.items) return <Items items={of.items} />;
   return null;
 }
 
@@ -424,16 +316,8 @@ export function UnitView({
     !!metricsPage && kind === 'Experiment' && !!graph,
     graph?.instanceId,
   );
-  // The records inside the unit have agents of their own, which its Agents tab lists too, in one
-  // read; a thread a later record took up (a lens's author on the next attempt's lens) is listed
-  // once. The unit's own stages draw the threads that are not theirs.
-  const inside = unit.instances ?? [];
-  const { threads: agents, loadedAt } = useThreadList(
-    graph ? [graph.instanceId, ...inside] : inside,
-  );
-  const threads = agents.filter((item) => !inside.includes(item.instanceId));
+  const { threads, loadedAt } = useThreadList(graph ? [graph.instanceId] : []);
   const [opened, setOpened] = useState<string>();
-  const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();
   // The choice made here, for this kind; another kind reads its own remembered tab.
   const [made, setMade] = useState<{ kind: string; tab: Tab }>();
@@ -450,15 +334,7 @@ export function UnitView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked]);
   const thread = threads.find((item) => item.id === opened);
-  const open = (reference: Reference, threadId?: string) => {
-    if (threadId) setOpened(threadId);
-    else if (reference.instance) setElsewhere({ ...reference, instance: reference.instance });
-  };
-  const entries = historyEntries(
-    unit.history ?? [],
-    nameOf,
-    marker(threads, graph?.instanceId, open),
-  );
+  const entries = historyEntries(unit.history ?? [], nameOf, marker(threads, setOpened));
   const key = unit.key;
   // A document from the history stands in the key artifact's place until the way back.
   const showing = document && document.id !== key?.artifact?.id ? document : undefined;
@@ -478,7 +354,7 @@ export function UnitView({
   };
   const counts: Record<Tab, number | undefined> = {
     document: undefined,
-    agents: agents.length,
+    agents: threads.length,
     metrics: undefined,
     artifacts: files?.length,
   };
@@ -552,7 +428,7 @@ export function UnitView({
         ) : tab === 'agents' ? (
           <Agents
             graph={graph!}
-            threads={agents}
+            threads={threads}
             loadedAt={loadedAt}
             opened={agent}
             onOpen={setAgent}
@@ -589,7 +465,7 @@ export function UnitView({
                 </>
               )
             )}
-            {!wide && onRead && (showing || key?.artifact || key?.parts || key?.items) && (
+            {!wide && onRead && (showing || key?.artifact) && (
               <button type="button" className="btn-text unit-read" onClick={onRead}>
                 Read in full
               </button>
@@ -606,13 +482,6 @@ export function UnitView({
           title={title}
           loadedAt={loadedAt}
           onClose={() => setOpened(undefined)}
-        />
-      )}
-      {elsewhere && (
-        <ElsewhereDialog
-          reference={elsewhere}
-          title={title}
-          onClose={() => setElsewhere(undefined)}
         />
       )}
     </>

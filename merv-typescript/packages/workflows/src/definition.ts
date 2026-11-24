@@ -45,13 +45,6 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     input.managed === undefined || input.managed === true,
     'Every workflow is managed by its program; managed may only be true',
   );
-  valid(
-    input.blocksStarts === undefined ||
-      (Array.isArray(input.blocksStarts) &&
-        input.blocksStarts.every((name) => typeof name === 'string' && identifier.test(name)) &&
-        new Set(input.blocksStarts).size === input.blocksStarts.length),
-    'Blocked workflow types must be unique identifiers',
-  );
   const edges = new Set<string>();
   for (const edge of input.edges) {
     valid(
@@ -109,6 +102,5 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     // Only a program's handle changes an instance. The flag stays in the stored form, and so
     // in every published digest.
     managed: true,
-    ...(input.blocksStarts === undefined ? {} : { blocksStarts: [...input.blocksStarts].sort() }),
   };
 }

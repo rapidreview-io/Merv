@@ -54,7 +54,6 @@ export const KIND: Record<string, { color: string; label: string }> = {
   experiments: { color: 'var(--kind-teal)', label: 'Experiment' },
   work: { color: 'var(--kind-teal)', label: 'Work' },
   reviews: { color: 'var(--kind-red)', label: 'Review' },
-  reflections: { color: 'var(--kind-red)', label: 'Reflection' },
   sessions: { color: 'var(--kind-slate)', label: 'Agent' },
   code: { color: 'var(--kind-slate)', label: 'Code' },
   connections: { color: 'var(--kind-slate)', label: 'Connection' },

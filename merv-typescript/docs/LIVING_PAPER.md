@@ -10,7 +10,7 @@ Paper stores four living documents: Problem, Literature, Methods and Results, pl
 
 The user's main agent or an authorized human can call `paper.write` (`patch`) to edit any document at any time. Problem retains its four fixed sections: problem, scope, goals and constraints. Literature, Methods and Results have ordered editable sections. Direct edits require project write permission, the current document revision and a stable request ID. Assigned worker sessions cannot call this direct editing path.
 
-Experiment design reviewers, experiment results reviewers and reflection reviewers own Methods/Results maintenance as part of their existing review. Read the current paper and the scientific evidence, then supply reviewer-authored `paperChanges` to `review.write` (`submit`):
+Experiment design reviewers and experiment results reviewers own Methods/Results maintenance as part of their existing review. Read the current paper and the scientific evidence, then supply reviewer-authored `paperChanges` to `review.write` (`submit`):
 
 ```json
 {
@@ -40,17 +40,16 @@ The example is the paper portion of the usual verdict payload, alongside reviewI
 - **Research cycle starts:** the cycle retains the current complete Problem definition. Later edits do not rewrite that captured definition.
 - **Plan review submitted:** the reviewer briefly describes the hypothesis, proposed approach and purpose, usually in one or two sentences, clearly distinguishing planned or rejected work from completed findings.
 - **Results review submitted:** the reviewer records what was done and learned, replaces outdated planned text, and retains negative findings, uncertainty and limitations. Comprehensive methods, results and interpretation are welcome when they help explain the project’s trajectory and inform what comes next.
-- **Reflection review submitted:** the reviewer integrates evidence across experiments, reconciles contradictions and revises the overall narrative rather than appending the synthesis report. Comprehensive detail is welcome when it explains the project’s trajectory, how understanding has changed and what comes next.
 
 Reviewer edits apply with any valid verdict, including needs_changes and fail. An edit accompanying rejection must describe that rejection accurately, not portray rejected evidence as an accepted result. If no change is warranted, reviewer instructions require an explanation in the review notes; the API does not force a cosmetic edit or separately validate that explanation.
 
-The producer supplies the plan, results and report; synthesis supplies its report and change specification. Producer submissions no longer accept paperChangesArtifactId. They do not prepare a paper proposal for another agent to approve. Existing reviewer grants suffice: paper changes travel with the already authorized review submission (workers keep the `review.submit` alias), without giving reviewers a general-purpose write tool.
+The producer supplies the plan, results and report. Producer submissions no longer accept paperChangesArtifactId. They do not prepare a paper proposal for another agent to approve. Existing reviewer grants suffice: paper changes travel with the already authorized review submission (workers keep the `review.submit` alias), without giving reviewers a general-purpose write tool.
 
 ## Atomicity, attribution and history
 
 The owning scientific workflow validates the live independent reviewer, claim, submission, verdict and state transition. Paper revisions, review publication records and the verdict save in one transaction. Invalid edits, conflicting paper edits or any failed review check roll everything back. An edit made against an earlier revision is applied to the current one when it does not touch what changed since: a section nobody else changed takes it as written, and a section somebody else changed takes it merged line by line (paragraph by paragraph) with theirs, as Git merges; two paragraphs inserted at the same place are both kept, the later writer's first. Edits apply to the section as it is now wherever each find still occurs once there. Changing the same or neighbouring lines, quoting in an edit's find text that changed since, or removing, moving or creating a section that changed since, is refused with `paper_revision_conflict`, which names each section to read again with `paper.read` and the current revision to resend at. The same applies to `paper.write` (`patch`). Retrying the same successful verdict returns its receipt without another paper revision.
 
-New revisions name the reviewer as author and retain the review ID, source experiment/reflection revision and verdict. Publication records retain the source evidence hashes and changed section IDs. Later main-agent edits retain the previous review revision and are attributed as direct edits, without inheriting its review attribution.
+New revisions name the reviewer as author and retain the review ID, source experiment revision and verdict; older revisions may name a reflection as their source. Publication records retain the source evidence hashes and changed section IDs. Later main-agent edits retain the previous review revision and are attributed as direct edits, without inheriting its review attribution.
 
 Old producer proposals stay stored in `paper_proposals` but nothing reads them: they do not overlay the current paper or apply when a review completes. Accepted publications and standalone-writing history remain readable. A publication from that time names no sections, so the UI shows it behind every section it still holds word for word.
 
@@ -68,5 +67,4 @@ These are ordinary document links, not a new relationship registry.
 
 Research claims are retired: each existing claim was converted into a Markdown
 text artifact titled `Claim: …`, which keeps its statement, status, confidence,
-scope, author and edit history. Experiments and reflection plans do not accept
-`testedClaimIds`. The reviewer `claimId` still identifies a review assignment lock.
+scope, author and edit history. Experiments do not accept `testedClaimIds`. The reviewer `claimId` still identifies a review assignment lock.

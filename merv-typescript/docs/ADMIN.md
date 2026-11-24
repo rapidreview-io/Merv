@@ -37,7 +37,7 @@ owner not loaded here leaves its facts out.
   machine, last activity, age, cost so far, and a standalone experiment's request. Joined from
   each owner's platform read: `workflows.platformWork`, `sessions.running.platform`,
   `fleet.platformAllocations`, `pi.platformTurns`, `tasks.platformTypes`,
-  `reflections.platformLenses`, `customerExperiments.customers` and `scope.directory`. An agent's
+  `customerExperiments.customers` and `scope.directory`. An agent's
   need is Sessions' own phrase; a machine is found by its allocation id or by the unit Fleet says
   it serves.
 - `GET /admin/issues` — `AdminIssues`: the open issues and those resolved in the last 7 days

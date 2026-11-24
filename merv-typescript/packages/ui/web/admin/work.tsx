@@ -14,8 +14,6 @@ const KINDS: Record<string, [kind: string, label: string, path?: string]> = {
   task: ['tasks', 'Task', 'tasks'],
   experiment: ['experiments', 'Experiment', 'experiments'],
   service_experiment: ['experiments', 'Standalone'],
-  reflection: ['reflections', 'Reflection', 'reflections'],
-  'reflection.lens': ['reflections', 'Lens', 'reflections'],
   research: ['research', 'Cycle', 'research'],
   pi: ['sessions', 'Agent'],
 };
@@ -62,12 +60,9 @@ const COLUMNS = [
     const code = !!first && !stated && !lower(says).startsWith(lower(named(first)));
     return (
       <>
-        {/* A part stands under the unit it is part of, by its own name alone. */}
-        {!row.parent && (
-          <span className="kind admin-kind" style={kindStyle(kind)} title={row.type}>
-            {label}
-          </span>
-        )}
+        <span className="kind admin-kind" style={kindStyle(kind)} title={row.type}>
+          {label}
+        </span>
         {/* A drill-in is an app of its own, loaded whole; a page of this one is routed. */}
         {to ? (
           <Link className="admin-name" to={to} reloadDocument={to.startsWith('/admin/p/')}>
@@ -160,24 +155,14 @@ export function WorkView() {
     ids: (row) => [row.id],
     also: (row) => shown(row) && (!kind || row.kind === kind),
   });
-  // Each part right under its unit, where that unit is listed too: the unit ranks by its most
-  // pressing part and sorts by the latest activity among them.
-  const listed = new Set(filter.rows.map((row) => row.id));
-  const part = (row: AdminWorkRow) => !!row.parent && listed.has(row.parent);
-  const family = (unit: AdminWorkRow) => [unit, ...filter.rows.filter((r) => r.parent === unit.id)];
-  const rankOf = (unit: AdminWorkRow) => Math.min(...family(unit).map(rank));
-  const latest = (unit: AdminWorkRow) =>
-    Math.max(...family(unit).map((row) => Date.parse(row.lastActivity)));
-  const rows = filter.rows
-    .filter((row) => !part(row))
-    .sort((a, b) => rankOf(a) - rankOf(b) || latest(b) - latest(a))
-    .flatMap(family);
+  // What is most pressing first, then the latest activity.
+  const rows = [...filter.rows].sort(
+    (a, b) => rank(a) - rank(b) || Date.parse(b.lastActivity) - Date.parse(a.lastActivity),
+  );
   const live = all.filter((row) => !row.terminal);
-  // Units, not their parts: those open, and those an agent works on, or on a part of (a live
-  // Agent conversation is its agent at work).
-  const open = live.filter((row) => !row.parent).length;
-  const active = live.filter((row) => row.kind === 'pi' || row.agent?.status === 'active');
-  const working = new Set(active.map((row) => row.parent ?? row.id)).size;
+  // Units open, and those an agent works on (a live Agent conversation is its agent at work).
+  const open = live.length;
+  const working = live.filter((row) => row.kind === 'pi' || row.agent?.status === 'active').length;
   const needs = live.filter((row) => row.attention.length).length;
   const kinds = [...new Set(all.map((row) => row.kind))].sort();
   const narrowed = filter.filtering || kind || ended;
@@ -248,7 +233,6 @@ export function WorkView() {
                 'admin-line',
                 opens(row) && 'admin-opens',
                 row.terminal && 'admin-ended',
-                part(row) && 'admin-part',
               ),
               onClick: (event) => openRow(event, 'a'),
             })}

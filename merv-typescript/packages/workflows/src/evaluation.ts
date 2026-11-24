@@ -141,7 +141,7 @@ export function validatePolicy(
     definition.edges.every((edge) => guarded.has(`${edge.from}:${edge.action}`)),
     'A registered policy must guard every graph transition',
   );
-  for (const hook of [policy.describe, policy.prepare, policy.children]) if (hook) callback(hook);
+  for (const hook of [policy.describe, policy.prepare]) if (hook) callback(hook);
   valid(
     policy.assignments === undefined || Array.isArray(policy.assignments),
     'Assignments must be an array',
@@ -211,7 +211,6 @@ export function validatePolicy(
     actions,
     describe: policy.describe,
     ...(policy.prepare ? { prepare: policy.prepare } : {}),
-    ...(policy.children === undefined ? {} : { children: policy.children }),
     ...(limits === undefined ? {} : { limits }),
     ...(assignments === undefined ? {} : { assignments }),
     ...(policy.successStates === undefined

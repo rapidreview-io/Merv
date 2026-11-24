@@ -395,8 +395,8 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
     if (events && req.method === 'GET')
       return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
-    // The threads of work items by instanceId, one or more (a wave and its lenses are read at
-    // once); else the project's, a page older than `before`.
+    // The threads of work items by instanceId, one or more; else the project's, a page older
+    // than `before`.
     if (path === '/sessions/threads' && req.method === 'GET') {
       const query = [...r.url.searchParams.keys()];
       check(

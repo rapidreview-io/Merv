@@ -23,9 +23,6 @@ export interface AutomaticRow {
   research_id: string;
   project_id: string;
   source_json: string;
-  root_id: string;
-  cycle_index: number;
-  max_cycles: number;
 }
 /**
  * Why automatic progress waits, as Research publishes it to Workflows; null when it does not.
@@ -130,7 +127,7 @@ export async function bindAutomatic(
         (cycle) => event.type !== 'paper.patched' || cycle.state === 'defining',
       );
       const rows = await tx.all<AutomaticRow>(
-        'SELECT * FROM research_automation WHERE project_id=? AND research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY cycle_index,research_id',
+        'SELECT * FROM research_automation WHERE project_id=? AND research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY research_id',
         event.projectId,
         JSON.stringify(cycles.map((cycle) => cycle.id)),
       );
@@ -233,7 +230,7 @@ export async function wakeAutomatic(ctx: ResearchContext): Promise<void> {
     // One resume per project: its consumer reconciles every open cycle there.
     const cycles = await ctx.workflows.open('research', null, tx);
     const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
-      'SELECT DISTINCT ON (project_id) project_id,source_json,research_id FROM research_automation WHERE research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY project_id,cycle_index,research_id',
+      'SELECT DISTINCT ON (project_id) project_id,source_json,research_id FROM research_automation WHERE research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY project_id,research_id',
       JSON.stringify(cycles.map((cycle) => cycle.id)),
     );
     for (const row of rows)
@@ -268,15 +265,10 @@ export async function reconcileAutomatic(
     );
   }
   if (record.workflow.state === 'researching') await closeBlockedWork(ctx, caller, record, tx);
-  const atLimit = automatic.cycle_index >= automatic.max_cycles;
-  const nextWave = atLimit ? 'skip' : 'create';
   const guidance = await ctx.workflows.evaluate(
     caller,
     record.id,
-    {
-      action: `advance_${record.workflow.state}`,
-      input: { nextWave },
-    },
+    { action: `advance_${record.workflow.state}` },
     tx,
   );
   const action = guidance.nextAction;
@@ -289,7 +281,6 @@ export async function reconcileAutomatic(
   const input: ResearchAdvance = {
     researchId: record.id,
     expectedRevision: record.workflow.revision,
-    nextWave,
     requestId: automaticRequest(record.id, record.workflow.revision, 'advance'),
   };
   let advanced: ResearchRecord;
@@ -309,38 +300,10 @@ export async function reconcileAutomatic(
       performedBy: 'system:research',
       from: record.workflow.state,
       to: advanced.workflow.state,
-      ...(advanced.successorId ? { successorId: advanced.successorId } : {}),
     },
     tx,
   );
-  return await needsOwner(ctx, caller, advanced, tx);
-}
-
-/**
- * A run whose approved plan stops for its owner ends with the owner's decision outstanding:
- * said on the completed cycle, with the plan's own reason, until a cycle follows it.
- */
-export async function needsOwner(
-  ctx: ResearchContext,
-  caller: Caller,
-  record: Pick<ResearchRecord, 'id' | 'reflectionId' | 'successorId'> & {
-    workflow: { state: string };
-  },
-  tx: Transaction,
-): Promise<AutomaticBlocker> {
-  if (record.workflow.state !== 'complete' || record.successorId || !record.reflectionId)
-    return null;
-  const next = (await ctx.providers.reflections.approved(caller, record.reflectionId, tx))?.plan
-    ?.next;
-  return next?.decision === 'stop' && next.reason === 'needs_owner'
-    ? {
-        code: 'research_needs_owner',
-        message: clip(`The approved plan stops for the owner: ${next.rationale}`, 2000),
-        status: 409,
-        next: 'Decide what comes next: start a research cycle that follows this one, or stop here with research.end',
-        whose: 'owner',
-      }
-    : null;
+  return null;
 }
 
 /**
@@ -384,7 +347,7 @@ export function soon(
 }
 
 /**
- * A permanently failed input cannot strand never-started work in this selected wave, or the
+ * A permanently failed input cannot strand never-started work in this selected cycle, or the
  * work between it and that input. Each owner judges what of its own was never started.
  */
 export async function closeBlockedWork(
@@ -407,9 +370,9 @@ export async function closeBlockedWork(
       const failed = prerequisites.get(id)!.filter((item) => item.failed);
       if (!failed.length) continue;
       remaining.delete(id);
-      // Work between the selection and the failed input is not the cycle's own to reflect on.
+      // Work between the selection and the failed input is not the cycle's own outcome.
       const after = record.researchDependencies.includes(id)
-        ? `Retained for reflection in ${record.name}.`
+        ? `Retained as an outcome of ${record.name}.`
         : `Closed because work selected by ${record.name} waits on it.`;
       const reason = clip(
         `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. ${after}`,

@@ -289,20 +289,21 @@ export async function exerciseRuntime(start) {
     assert.match(bytes.headers.get('cache-control') ?? '', /no-store/);
     assert.equal(await bytes.text(), 'Observed 2 + 3 = 5.');
 
-    checkpoint('research-reflection');
+    checkpoint('research-cycle');
     await app.ctx.paper.patch(owner, {
       kind: 'problem',
       expectedRevision: (await app.ctx.paper.read(owner)).documents.problem.current.revision,
       requestId: 'define-research',
       changes: [
-        { id: 'problem', content: 'Can synthetic retained evidence support a reflection wave?' },
+        { id: 'problem', content: 'Can synthetic retained evidence complete a research cycle?' },
         { id: 'scope', content: 'One isolated runtime acceptance project.' },
-        { id: 'goals', content: 'Create a persisted five-lens reflection from a research cycle.' },
+        { id: 'goals', content: 'Complete a persisted research cycle over finished work.' },
         { id: 'constraints', content: 'No external agents, dispatch, tools or empirical claims.' },
       ],
     });
     let research = await call(operator, 'research.create', {
       name: 'Synthetic research cycle',
+      dependsOn: [first.id],
       requestId: 'research-create',
     });
     assert.equal(research.workflow.state, 'defining');
@@ -312,22 +313,14 @@ export async function exerciseRuntime(start) {
       requestId: 'research-start',
     });
     assert.equal(research.workflow.state, 'researching');
+    // Its one task is done, so the cycle ends with no other step: it completes, or first
+    // consolidates the task's accepted code where Code hosts the project and main lacks it.
     research = await call(operator, 'research.advance', {
       researchId: research.id,
       expectedRevision: research.workflow.revision,
-      requestId: 'research-reflect',
+      requestId: 'research-end',
     });
-    assert.equal(research.workflow.state, 'reflecting');
-    const reflection = await app.ctx.reflections.get(owner, research.reflectionId);
-    assert.equal(reflection.lenses.length, 5);
-    await assert.rejects(
-      app.ctx.research.advance(owner, {
-        researchId: research.id,
-        expectedRevision: research.workflow.revision,
-        requestId: 'blocked-until-reflected',
-      }),
-      { code: 'reflection_not_approved' },
-    );
+    assert.ok(['complete', 'consolidating'].includes(research.workflow.state));
 
     checkpoint('restart-persistence');
     await work.close();
@@ -345,8 +338,10 @@ export async function exerciseRuntime(start) {
     const retained = await http(`/sessions/threads/${threadId}/calls`, boot.token);
     assert.deepEqual(retained, observation);
     assert.deepEqual((await http(`/sessions/${secondExecution.id}`, boot.token)).session, released);
-    assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
-    assert.equal((await app.ctx.reflections.get(owner, reflection.id)).lenses.length, 5);
+    assert.equal(
+      (await app.ctx.research.get(owner, research.id)).workflow.revision,
+      research.workflow.revision,
+    );
     const dispatch = (await app.ctx.sessions.dispatch.projectStatus(owner)).dispatch;
     assert.equal(dispatch.enabled, false, 'Synthetic project must never enable dispatch');
     return {
@@ -358,8 +353,7 @@ export async function exerciseRuntime(start) {
       toolCalls: retained.totals.calls,
       tokenAccounting: 'payload estimates, not model billing',
       tokenStats: retained.totals,
-      researchState: 'reflecting',
-      reflectionLenses: 5,
+      researchState: research.workflow.state,
       signedDownload: 'verified',
       restart: 'verified',
       compiledUiAssets: 'verified',

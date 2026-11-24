@@ -3,7 +3,6 @@ import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { useTool, type Actor, type Project } from '../api';
 import type { ReviewRequest } from '@merv/contracts/types';
-import type { ReflectionSummary } from '@merv/reflections/models';
 import type { Task } from '@merv/tasks/models';
 
 /**
@@ -41,7 +40,6 @@ export type MapCycle = Pick<
   | 'workflow'
   | 'researchDependencies'
   | 'progress'
-  | 'reflectionId'
   | 'automation'
   | 'writable'
   | 'successorId'
@@ -74,7 +72,6 @@ export interface HomeData {
   reviews: MapReview[] | null;
   research: MapCycle[] | null;
   workflows: { workflows: WorkflowDecision[] } | null;
-  reflections: ReflectionSummary[] | null;
   /** What the project's machines cost on each UTC day of this month, where Fleet runs. */
   fleet?: { day: string; usd: number; pricedHours: number; unpricedHours: number }[] | null;
 }

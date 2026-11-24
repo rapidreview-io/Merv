@@ -32,7 +32,7 @@ flowchart LR
     state["State"]
   end
   subgraph researchLayer["Research logic"]
-    researchLogic["Tasks, Experiments, Knowledge,<br/>Reflections, Research, Paper"]
+    researchLogic["Tasks, Experiments, Knowledge,<br/>Research, Paper"]
   end
   browser -- "HTTP /account, /projects" --> api
   api -- "injects" --> scope

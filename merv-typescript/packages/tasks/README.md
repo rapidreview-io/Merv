@@ -16,7 +16,6 @@ flowchart LR
   subgraph logic["Research logic"]
     tasks["Tasks<br/><small>reviewed units of work</small>"]
     research["Research<br/><small>cycle coordinator</small>"]
-    reflections["Reflections<br/><small>lens waves</small>"]
     paper["Paper<br/><small>living paper</small>"]
   end
   subgraph foundations["Foundations"]
@@ -33,8 +32,7 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   worker -- "calls task.* tools" --> tasks
-  research -- "creates plan, consolidation tasks" --> tasks
-  reflections -- "pauses new tasks" --> tasks
+  research -- "creates consolidation tasks" --> tasks
   tasks -- "registers task workflow; keeps its leases" --> workflows
   tasks -- "requests reviews" --> reviews
   tasks -- "registers recipes" --> contextBuilder
@@ -49,7 +47,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Tasks is the reviewed unit of work in the research cycle: it registers the `task` workflow with Workflows, routes every delivery through Reviews, and builds each assignment from its recipes in Context Builder. Research creates the tasks an approved reflection plan names, and the consolidation task that brings a cycle's accepted code to main; dotted arrows are optional bindings.
+Tasks is the reviewed unit of work in the research cycle: it registers the `task` workflow with Workflows, routes every delivery through Reviews, and builds each assignment from its recipes in Context Builder. Research creates the consolidation task that brings a cycle's accepted code to main; dotted arrows are optional bindings.
 
 Tasks registers its action checks and descriptions with Workflows. `task.read` (`get`) and
 `task.read` (`list`) include caller-specific `guidance`; `workflow.read` (`status`) returns
@@ -75,7 +73,7 @@ The optional `taskToolsPlugin` installs `task.write` (`create`), `task.read` (`g
 
 Disposal withdraws the review owner before suspending Tasks and draining its dependent tools, then releases workflow and context registrations after that drain. The generic review tool refuses missing ownership during unload. Durable tasks, verdicts and versioned workflow definitions remain available after restoration.
 
-Task types and context references are pinned at creation. Tasks registers its versioned recipes, `TASK_TYPES`, directly with Context Builder: a task created under a retired version is refused with `task_type_unavailable`, and every task is reviewed with `task.review@5`. Reflection is Reflections' lens waves; the `project.reflection` task type is retired. Reflections registers `ITEM_RECIPES` the same way; a reflection is a typed task assignment over explicitly supplied artifact inputs and the ordinary delivery/review workflow, with no automatic corpus search, multi-agent workflow or Runner of its own. `task.context` checks current ownership, revision and review claim before building an immutable package. `task.checkpoint` saves attributed, immutable progress for the current assignment. Both are replayable; stale or revoked claims are refused. Producer identity stays historical attribution. See [recipes, required inputs and recovery behavior](../../docs/RECOVERY_AND_CONTEXT.md).
+Task types and context references are pinned at creation. Tasks registers its versioned recipes, `TASK_TYPES`, directly with Context Builder: a task created under a retired version is refused with `task_type_unavailable`, and every task is reviewed with `task.review@5`. The `project.reflection` task type is retired. `task.context` checks current ownership, revision and review claim before building an immutable package. `task.checkpoint` saves attributed, immutable progress for the current assignment. Both are replayable; stale or revoked claims are refused. Producer identity stays historical attribution. See [recipes, required inputs and recovery behavior](../../docs/RECOVERY_AND_CONTEXT.md).
 
 Creation and type registration copy their inputs before asynchronous work. A type registration cannot publish after Tasks is disposed; a recipe acquired during disposal is released so a replacement owner can register it.
 

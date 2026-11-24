@@ -50,7 +50,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments, reflection waves and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references need neither Reflections nor Research. A request asks each owner once for every id it might hold (`find` on Workflows, Artifacts and Reviews, `captures` on Code Work), so its reads do not grow with the number of refs.
+Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references do not need Research; any other workflow's instance is unsupported. A request asks each owner once for every id it might hold (`find` on Workflows, Artifacts and Reviews, `captures` on Code Work), so its reads do not grow with the number of refs.
 
 | Entrypoint              | Requires                                                                   | Provides                                                  |
 | ----------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -70,11 +70,11 @@ artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
 `project.read` (`references`) resolves up to 200 input references in order. Supported
-explicit forms are `task:ID`, `experiment:ID`, `reflection:ID`, `research:ID`,
+explicit forms are `task:ID`, `experiment:ID`, `research:ID`,
 `artifact:ID`, `review:ID`, `code-commit:ID` and
 `session-final:ID`. A bare ID is whichever record holds it: Knowledge asks Workflows,
 Artifacts, Reviews and then Code Work in turn and never guesses a kind from the ID's
-prefix, and a work item names its task, experiment, reflection wave or research cycle.
+prefix, and a work item names its task, experiment or research cycle.
 Results distinguish resolved, missing and unsupported; a bare ID nothing holds is missing, and one that an owner shutting down might hold is unavailable. No lookup falls back to another project. A resolved code
 reference can describe a pending observation rather than ready Git evidence.
 
@@ -86,8 +86,8 @@ knowledge.read(caller, { ids? }, tx?); // the index, or the named records whole
 knowledge.resolve(caller, refs, tx?);
 ```
 
-The provider implements neither a Reflection workflow nor a published
-baseline, coverage/debt rules or literature maintenance. It does not assess
+The provider implements neither a published baseline, coverage/debt rules nor
+literature maintenance. It does not assess
 claims or grant central Git publication.
 
 ## Retired corpus snapshots

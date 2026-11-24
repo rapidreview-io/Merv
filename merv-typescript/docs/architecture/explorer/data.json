@@ -76,10 +76,9 @@
       {
         "id": "synthesis",
         "label": "Project knowledge & synthesis",
-        "purpose": "Read across work and turn completed evidence into reviewed reflection.",
+        "purpose": "Read across work and its history.",
         "members": [
           "knowledge",
-          "reflections",
           "legacyHistory"
         ]
       },
@@ -88,7 +87,8 @@
         "label": "Research coordination",
         "purpose": "Choose and advance the research cycle using the capabilities below.",
         "members": [
-          "research"
+          "research",
+          "autoresearch"
         ]
       }
     ],
@@ -142,6 +142,7 @@
         "purpose": "Expose a domain through the shared Tools registry, which lives in layer 2.",
         "members": [
           "merv-artifact-tools",
+          "merv-autoresearch-tools",
           "merv-board-tools",
           "merv-code-tools",
           "merv-experiments-tools",
@@ -153,7 +154,6 @@
           "merv-nisa-tools",
           "merv-paper-tools",
           "merv-pi-tools",
-          "merv-reflection-tools",
           "merv-reports-tools",
           "merv-research-tools",
           "merv-review-tools",
@@ -175,6 +175,7 @@
         "members": [
           "ui",
           "merv-artifact-ui",
+          "merv-autoresearch-ui",
           "merv-board-ui",
           "merv-code-ui",
           "merv-experiments-ui",
@@ -185,7 +186,6 @@
           "merv-mounts-ui",
           "merv-paper-ui",
           "merv-pi-ui",
-          "merv-reflection-ui",
           "merv-research-ui",
           "merv-review-ui",
           "merv-sessions-ui",
@@ -251,7 +251,6 @@
         "paper",
         "reports",
         "board",
-        "reflections",
         "research",
         "legacyHistory",
         "metrics"
@@ -316,6 +315,7 @@
       "caption": "Discovered in source",
       "members": [
         "merv-admin",
+        "autoresearch",
         "codeWork",
         "customerExperiments",
         "fleet",
@@ -435,6 +435,80 @@
       "owner": "artifacts",
       "label": "Artifacts",
       "purpose": "Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-autoresearch",
+      "source": "packages/autoresearch/src/index.ts",
+      "provides": [
+        "autoresearch"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "domainEvents",
+        "sessions"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "autoresearch",
+      "group": "other",
+      "owner": "autoresearch",
+      "label": "Autoresearch",
+      "purpose": "A manager agent per research project: a Sessions worker on the project's autoresearch workflow, woken when a task or experiment it started ends. It schedules the next work through the ordinary task and experiment tools within a spend cap (Sandboxes spend, admitted at each start through Workflows), asks the person only for real decisions, and pauses for them at the cap and after a run of automatic wakes.",
+      "exposedTools": [
+        {
+          "name": "autoresearch.decide",
+          "description": "Autoresearch manager only: end this visit with your decision. next \"wait\" waits for the work you started (you wake in this same conversation as soon as any of it ends); next \"end\" ends the round, with a summary of what it found. note is the one line the person reads about this decision, at most 200 characters. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-autoresearch-tools",
+      "source": "packages/autoresearch/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-autoresearch-tools",
+      "group": "front",
+      "owner": "autoresearch",
+      "label": "Autoresearch · tools adapter",
+      "purpose": "Connects Autoresearch to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "autoresearch.decide",
+          "description": "Autoresearch manager only: end this visit with your decision. next \"wait\" waits for the work you started (you wake in this same conversation as soon as any of it ends); next \"end\" ends the round, with a summary of what it found. note is the one line the person reads about this decision, at most 200 characters. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-autoresearch-ui",
+      "source": "packages/autoresearch/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-autoresearch-ui",
+      "group": "front",
+      "owner": "autoresearch",
+      "label": "Autoresearch · ui adapter",
+      "purpose": "Connects Autoresearch to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1393,7 +1467,7 @@
       "group": "research",
       "owner": "paper",
       "label": "Paper",
-      "purpose": "Stores the living research narrative, citations and revision history. Main agents edit all sections; experiment and reflection reviewers author Methods/Results updates with their verdicts. Experiment references display names and link to the underlying records; earlier proposals remain historical.",
+      "purpose": "Stores the living research narrative, citations and revision history. Main agents edit all sections; experiment reviewers author Methods/Results updates with their verdicts. Experiment references display names and link to the underlying records; earlier proposals remain historical.",
       "exposedTools": []
     },
     {
@@ -1660,93 +1734,6 @@
       "exposedTools": []
     },
     {
-      "plugin": "merv-reflection-tools",
-      "source": "packages/reflections/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "reflections",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-reflection-tools",
-      "group": "front",
-      "owner": "reflections",
-      "label": "Reflections · tools adapter",
-      "purpose": "Connects Reflections to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "reflection.submit",
-          "description": "",
-          "readOnly": false
-        },
-        {
-          "name": "reflection.submit_lens",
-          "description": "Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.",
-          "readOnly": false
-        }
-      ]
-    },
-    {
-      "plugin": "merv-reflection-ui",
-      "source": "packages/reflections/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "reflections",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-reflection-ui",
-      "group": "front",
-      "owner": "reflections",
-      "label": "Reflections · ui adapter",
-      "purpose": "Connects Reflections to the UI registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-reflections",
-      "source": "packages/reflections/src/index.ts",
-      "provides": [
-        "reflections"
-      ],
-      "requires": [
-        "state",
-        "scope",
-        "artifacts",
-        "paper",
-        "workflows",
-        "reviews",
-        "contextBuilder",
-        "sessions"
-      ],
-      "optional": [],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "reflections",
-      "group": "research",
-      "owner": "reflections",
-      "label": "Reflections",
-      "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required.",
-      "exposedTools": [
-        {
-          "name": "reflection.submit",
-          "description": "",
-          "readOnly": false
-        },
-        {
-          "name": "reflection.submit_lens",
-          "description": "Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.",
-          "readOnly": false
-        }
-      ]
-    },
-    {
       "plugin": "merv-reports",
       "source": "packages/reports/src/index.ts",
       "provides": [
@@ -1851,7 +1838,6 @@
         "workflows",
         "domainEvents",
         "paper",
-        "reflections",
         "tasks",
         "experiments",
         "artifacts",
@@ -1865,7 +1851,7 @@
       "group": "research",
       "owner": "research",
       "label": "Research",
-      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff.",
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. Once the selected work has ended, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff.",
       "exposedTools": []
     },
     {
@@ -2785,6 +2771,51 @@
       "optional": false
     },
     {
+      "from": "autoresearch",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-tools",
+      "to": "autoresearch",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-ui",
+      "to": "autoresearch",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "board",
       "to": "state",
       "optional": false
@@ -3525,66 +3556,6 @@
       "optional": false
     },
     {
-      "from": "merv-reflection-tools",
-      "to": "reflections",
-      "optional": false
-    },
-    {
-      "from": "merv-reflection-tools",
-      "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "merv-reflection-ui",
-      "to": "reflections",
-      "optional": false
-    },
-    {
-      "from": "merv-reflection-ui",
-      "to": "ui",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "artifacts",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "paper",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "workflows",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "reviews",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "contextBuilder",
-      "optional": false
-    },
-    {
-      "from": "reflections",
-      "to": "sessions",
-      "optional": false
-    },
-    {
       "from": "reports",
       "to": "state",
       "optional": false
@@ -3632,11 +3603,6 @@
     {
       "from": "research",
       "to": "paper",
-      "optional": false
-    },
-    {
-      "from": "research",
-      "to": "reflections",
       "optional": false
     },
     {
@@ -4139,7 +4105,7 @@
     "plugins": 88,
     "providers": 40,
     "adapters": 48,
-    "dependencies": 284
+    "dependencies": 280
   },
   "network": [
     {

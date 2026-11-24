@@ -54,16 +54,16 @@ export const researchToolsPlugin = {
         actions: {
           create: {
             summary:
-              'Start over existing workflow IDs: definition/research/reflection. No Git: completes after reflection approval; hosted: consolidation integrates accepted code until main holds it. Before long hosted cycles, inspect code.status for repository initialization or local integration blockers. previousCycleId must be complete/abandoned/failed; digest is supplied to reflection, one successor only. Paper edits get scientific review. automatic:true advances on events/creates approved waves; maxCycles default 10. Failed/abandoned work reaches reflection.',
+              'Start over existing workflow IDs: definition/research. No Git: completes once the work ends; hosted: consolidation integrates accepted code until main holds it. Before long hosted cycles, inspect code.status for repository initialization or local integration blockers. previousCycleId must be complete/abandoned/failed; one successor only. Paper edits get scientific review. automatic:true advances on events. Failed/abandoned work still counts as an outcome.',
             description:
-              "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Before a long hosted cycle, read code.read status for repository initialization or local integration blockers. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
+              'Start an outer research cycle around selected existing workflow IDs. It coordinates project definition and research; once the selected work has ended, a project without Git completes. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Before a long hosted cycle, read code.read status for repository initialization or local integration blockers. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what it did is composed if missing, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events without manual advances. Failed and abandoned work still counts as an outcome.',
             input: createSchema,
             was: ['research.create'],
             handler: (caller, input) => research.create(caller, input),
           },
           replan: {
             description:
-              'Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it to change the wave scope. New cycles retain failed and abandoned work for reflection.',
+              'Owner: reselect the existing work a research cycle waits on, while it is still defining or researching. dependsOn is the whole new selection: work missing from it is dropped, work new to it is added. Use it to change the cycle scope. Failed and abandoned work stays selected as an outcome unless dropped.',
             input: replanSchema,
             was: ['research.replan'],
             handler: (caller, input) => research.replan(caller, input),
@@ -71,16 +71,16 @@ export const researchToolsPlugin = {
           advance: {
             act: { title: 'Start next step' },
             summary:
-              'Advance after selected work ends (including failure/abandonment); scientific approvals required. Post-reflection: no Git completes; hosted waits for consolidation acceptance/publication until main holds code. Moved main injects successor; retryIntegration:true retries unaccepted task. Children are atomic/replay-safe. Continuing structured plan requires nextWave:create (tasks/experiments/cycle under you) or skip; text specs create nothing. Retry same requestId/expectedRevision.',
+              'Advance after selected work ends (including failure/abandonment); scientific approvals required. No Git completes; hosted waits for consolidation acceptance/publication until main holds code. Moved main injects successor; retryIntegration:true retries unaccepted task. Children are atomic/replay-safe. Retry same requestId/expectedRevision.',
             description:
-              'Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.',
+              'Advance the current outer gate. A cycle waits for its selected work to finish, including failure or abandonment; scientific review approvals remain required. A project without Git then completes. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. Reuse the same requestId and exact expectedRevision for an uncertain response.',
             input: advanceSchema,
             was: ['research.advance'],
             handler: (caller, input) => research.advance(caller, input),
           },
           end: {
             description:
-              'Owner: end a research cycle that cannot reach an answer, as abandoned when the question is no longer worth pursuing or failed when it was pursued and cannot be completed. Its reflection and consolidation keep their own records and are ended separately. Requires a specific reason and the current revision. This is terminal.',
+              'Owner: end a research cycle that cannot reach an answer, as abandoned when the question is no longer worth pursuing or failed when it was pursued and cannot be completed. Its consolidation tasks keep their own records and are ended separately. Requires a specific reason and the current revision. This is terminal.',
             input: endSchema,
             was: ['research.end'],
             handler: (caller, input) => research.end(caller, input),

@@ -8,8 +8,8 @@ import type * as schema from './running-schema.js';
  * plugin ships markup, so a task's sidebar and a sandbox's read the same way, and an owner
  * adds a node without touching the browser.
  *
- * A key is `<kind>:<id>` and names one thing on the board. Tasks, experiments and reflection
- * waves all use `work:<instanceId>`, because Sessions, Reviews, Code and Fleet know a record
+ * A key is `<kind>:<id>` and names one thing on the board. Tasks, experiments and research
+ * cycles all use `work:<instanceId>`, because Sessions, Reviews, Code and Fleet know a record
  * only by its instance id. The other kinds are `session:<sessionId>`, `fleet:<allocationId>`,
  * `sandbox:<sandboxId>`, `check:<baseKey>` and `compute:<digest>`. The id is used for
  * lookups, routes and tool input, and is never printed.

@@ -12,7 +12,6 @@ flowchart LR
   subgraph researchLayer["Research logic"]
     tasks["Tasks"]
     experiments["Experiments"]
-    reflections["Reflections"]
   end
   subgraph foundationsLayer["Foundations"]
     contextBuilder["Context Builder<br/><small>recipes to prompts</small>"]
@@ -29,7 +28,6 @@ flowchart LR
   workerAgent -- "calls task.context" --> tasks
   tasks -- "injects" --> contextBuilder
   experiments -- "injects" --> contextBuilder
-  reflections -- "injects" --> contextBuilder
   contextBuilder -- "injects" --> artifacts
   contextBuilder -- "injects" --> scope
   contextBuilder -- "injects" --> state
@@ -47,7 +45,7 @@ A type definition contains a name, immutable version, assignment kind (`work` or
 
 Build inputs identify the subject/revision/current review claim and give each named section a list of items. Unknown inputs fail. Budgets count JavaScript string characters, not model tokens. The source manifest lists every artifact the build resolved, embedded or not, by its ID, title, media type, hash and size; a package saved before the manifest was narrowed keeps the full artifact rows it recorded, and replay returns it as saved. No arbitrary filesystem paths, HTTP fetches or executable templates are evaluated, and document content is identified as source material.
 
-`@merv/context-builder/artifact-item` exports the pure `artifactItem`, an artifact as an item named by its title and read again with `artifact.read`, which Tasks, Experiments and Reflections build their artifact items with.
+`@merv/context-builder/artifact-item` exports the pure `artifactItem`, an artifact as an item named by its title and read again with `artifact.read`, which Tasks and Experiments build their artifact items with.
 
 Each item has an ID, a title, a text or artifact body, an `embed` rule, a priority and optional note and retrieval `refs`; its ID, title and note are folded to one line and clipped, and two IDs equal after that fail. A required section needs at least one item. Every item is either listed by one line, which gives its metadata, note and refs, or embedded as one block, headed by its metadata and note, in a tilde fence longer than any run of tildes in its body. `always` items are embedded or the build fails: bytes that are not UTF-8 fail `context_encoding`. Any read error (missing bytes, an outage) fails the build whenever a document's bytes are read; a missing or foreign artifact always fails. `never` items are only listed. `fit` items, the default, replace their lines with their bodies in rank order (priority, then section, then item) while they fit; an artifact is read only when its media type is `text/*` or `application/json` and its shortest text could fit, and one whose bytes are not UTF-8 keeps its line (one over Artifacts' inline limit can never fit). Among `always` and `fit` items, `always` first, a later item with the same sha256 as an earlier one says `same content as` that item instead of repeating the body. When the lines do not all fit, the lowest-ranked are cut, keeping `always` items and the top item of each required section, and each section with cuts says how many and which tools retrieve them. `omitted` lists, in declaration order, the items cut and the `fit` items whose bodies did not fit. A line depends only on metadata, so the layout is exact in characters and the prompt never exceeds `maxChars`.
 

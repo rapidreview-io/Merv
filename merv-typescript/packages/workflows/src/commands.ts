@@ -8,6 +8,7 @@ import type {
   WorkflowTransition,
   WorkflowAddDependencies,
   WorkflowExtendLimit,
+  WorkflowStartAdmission,
 } from '@merv/contracts';
 import type { WorkflowSnapshot, WorkflowLimitStatus } from './models.js';
 import { clearBlockers } from './blockers.js';
@@ -23,43 +24,18 @@ import {
 import { checkInstance, checkRevision, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowLeases } from './leases.js';
 
-/**
- * An open instance of any stored version whose definition pauses starts of `workflow`. Only
- * that version's nonterminal states are looked for, on the (project, workflow, version, state)
- * index, so the ended instances that make up most of a project are never read; a version with
- * no nonterminal state never pauses anything.
- */
-async function openBlocker(
-  tx: Transaction,
-  projectId: string,
-  workflow: string,
-): Promise<{ id: string; workflow: string } | undefined> {
-  const blocking = (
-    await tx.all<{ definition_json: string }>(
-      `SELECT definition_json FROM wf_definitions WHERE (definition_json::jsonb -> 'blocksStarts') @> jsonb_build_array(?::text)`,
-      workflow,
-    )
-  )
-    .map((row) => JSON.parse(row.definition_json) as WorkflowDefinition)
-    .map((definition) => ({
-      definition,
-      open: definition.states.filter((state) => !definition.terminal.includes(state)),
-    }))
-    .filter(({ open }) => open.length);
-  if (!blocking.length) return undefined;
-  return await tx.get<{ id: string; workflow: string }>(
-    `SELECT id,workflow FROM wf_instances WHERE project_id=? AND (${blocking
-      .map(
-        ({ open }) => `(workflow=? AND version=? AND state IN (${open.map(() => '?').join(',')}))`,
-      )
-      .join(' OR ')}) LIMIT 1`,
-    projectId,
-    ...blocking.flatMap(({ definition, open }) => [definition.name, definition.version, ...open]),
-  );
-}
-
 /** The commands that change an instance, with their receipts and history. */
 export class WorkflowCommands extends WorkflowLeases {
+  /** What other plugins ask of every new instance (`admitStarts`), in the order they came. */
+  private readonly admissions = new Set<WorkflowStartAdmission>();
+  admitStarts(admission: WorkflowStartAdmission): () => void {
+    this.assertOpen();
+    // Each registration is an entry of its own: withdrawing one leaves another of the same function.
+    const own = (caller: Caller, snapshot: WorkflowSnapshot, tx: Transaction) =>
+      admission(caller, snapshot, tx);
+    this.admissions.add(own);
+    return () => void this.admissions.delete(own);
+  }
   /**
    * An engine command rather than a program's, so it reaches managed workflows too. It writes
    * a grant without changing an active assignment's revision, so a pinned review stays valid.
@@ -215,13 +191,6 @@ export class WorkflowCommands extends WorkflowLeases {
       );
       this.requireActive(owner);
       if (replay) return replay;
-      const blocker = await openBlocker(transaction, caller.projectId, name);
-      check(
-        !blocker,
-        'workflow_creation_paused',
-        `New ${name} work is paused while ${blocker?.workflow} ${blocker?.id} is active. Existing work may continue.`,
-        409,
-      );
       const time = now();
       const snapshot: WorkflowSnapshot = {
         id: newId('wf'),
@@ -248,6 +217,9 @@ export class WorkflowCommands extends WorkflowLeases {
       );
       // The id was just minted, so no edge can lead back to it.
       await attachDependencies(transaction, this.contracts, snapshot, dependsOn, { fresh: true });
+      // A refusal rolls this start back whole; each admission reads its own copy.
+      for (const admission of [...this.admissions])
+        await admission(structuredClone(caller), structuredClone(snapshot), transaction);
       await this.record(
         transaction,
         caller,

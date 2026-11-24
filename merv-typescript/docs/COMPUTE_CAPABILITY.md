@@ -63,7 +63,6 @@ Applied to today's units, the default gives:
 | Task       | review                                    | check   |
 | Experiment | running                                   | execute |
 | Experiment | planned, design_review, experiment_review | check   |
-| Reflection | lens, synthesis, review                   | check   |
 
 Conflict-resolution service tasks declare `computeProfile: 'none'`.
 

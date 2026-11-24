@@ -5,6 +5,9 @@ flowchart BT
     merv_artifact_tools["merv-artifact-tools"]
     merv_artifact_ui["merv-artifact-ui"]
     artifacts["artifacts"]
+    autoresearch["autoresearch"]
+    merv_autoresearch_tools["merv-autoresearch-tools"]
+    merv_autoresearch_ui["merv-autoresearch-ui"]
     blobs["blobs"]
     board["board"]
     merv_board_tools["merv-board-tools"]
@@ -49,9 +52,6 @@ flowchart BT
     merv_pi_api["merv-pi-api"]
     merv_pi_tools["merv-pi-tools"]
     merv_pi_ui["merv-pi-ui"]
-    merv_reflection_tools["merv-reflection-tools"]
-    merv_reflection_ui["merv-reflection-ui"]
-    reflections["reflections"]
     reports["reports"]
     merv_reports_tools["merv-reports-tools"]
     research["research"]
@@ -105,6 +105,15 @@ flowchart BT
   artifacts --> state
   artifacts --> scope
   artifacts --> blobs
+  autoresearch --> state
+  autoresearch --> scope
+  autoresearch --> workflows
+  autoresearch --> domainEvents
+  autoresearch --> sessions
+  merv_autoresearch_tools --> autoresearch
+  merv_autoresearch_tools --> tools
+  merv_autoresearch_ui --> autoresearch
+  merv_autoresearch_ui --> ui
   board --> state
   board --> scope
   merv_board_tools --> board
@@ -253,18 +262,6 @@ flowchart BT
   merv_pi_tools --> tools
   merv_pi_ui --> pi
   merv_pi_ui --> ui
-  merv_reflection_tools --> reflections
-  merv_reflection_tools --> tools
-  merv_reflection_ui --> reflections
-  merv_reflection_ui --> ui
-  reflections --> state
-  reflections --> scope
-  reflections --> artifacts
-  reflections --> paper
-  reflections --> workflows
-  reflections --> reviews
-  reflections --> contextBuilder
-  reflections --> sessions
   reports --> state
   reports --> scope
   reports --> artifacts
@@ -275,7 +272,6 @@ flowchart BT
   research --> workflows
   research --> domainEvents
   research --> paper
-  research --> reflections
   research --> tasks
   research --> experiments
   research --> artifacts

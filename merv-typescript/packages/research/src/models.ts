@@ -8,14 +8,12 @@ export interface ResearchCreate {
   /** Existing project work selected by the coordinator, not automatically invented. */
   dependsOn?: string[];
   /**
-   * A finished or ended cycle this one follows. Its digest is composed now if it has none, and
-   * this cycle's reflection receives it. A cycle is followed by at most one other.
+   * A finished or ended cycle this one follows. Its digest is composed now if it has none. A
+   * cycle is followed by at most one other.
    */
   previousCycleId?: string;
-  /** Run the cycle and its approved successors without manual advances. Opt-in. */
+  /** Advance the cycle without manual advances as its work ends. Opt-in. */
   automatic?: boolean;
-  /** Maximum cycles in this automatic run, including this one; defaults to 10. */
-  maxCycles?: number;
   requestId: string;
 }
 /** What every command on an existing cycle names: the cycle, the revision it read, the request. */
@@ -25,12 +23,6 @@ export interface ResearchCommandBase {
   requestId: string;
 }
 export interface ResearchAdvance extends ResearchCommandBase {
-  /**
-   * The owner's answer to an approved plan that continues, on the advance that completes the
-   * cycle: create its work and the next cycle, or complete without them. Required then, so
-   * no caller creates agent-planned work without saying so; ignored everywhere else.
-   */
-  nextWave?: 'create' | 'skip';
   /** Inject a fresh consolidation task after the current one ended without acceptance. */
   retryIntegration?: boolean;
 }
@@ -43,21 +35,7 @@ export interface ResearchEnd extends ResearchCommandBase {
 export interface ResearchReplan extends ResearchCommandBase {
   dependsOn: string[];
 }
-/** Where a cycle opened from an approved reflection plan came from, pinned when it was created. */
-export interface ResearchOrigin {
-  /** The cycle whose completion created this one. */
-  researchId: string;
-  reflectionId: string;
-  reviewId: string;
-  changeSpec: { id: string; hash: string };
-  /** The plan's items as the records they became. */
-  items: { key: string; kind: 'task' | 'experiment'; id: string }[];
-  carriedOver: string[];
-}
 export interface ResearchAutomation {
-  rootId: string;
-  cycle: number;
-  maxCycles: number;
   /** Why automatic progress is waiting or has stopped; no source credentials are exposed. */
   blocker: { code: string; message: string } | null;
 }
@@ -74,16 +52,13 @@ export interface ResearchRecord {
   workflow: WorkflowSnapshot;
   /** Exact definition accepted on leaving the defining stage. */
   problem: PaperRevision | null;
-  reflectionId: string | null;
   /** The consolidation tasks this cycle injected, oldest first; a stale publication appends a successor. */
   integrations: string[];
-  /** Null for a cycle somebody created by hand. */
-  origin: ResearchOrigin | null;
-  /** The cycle this one's approved plan opened, if it did. */
+  /** The cycle that follows this one, if somebody named it so. */
   successorId: string | null;
-  /** The cycle this one follows, whether a plan opened it or somebody named it; null for a first cycle. */
+  /** The cycle this one follows; null for a first cycle. */
   previousCycleId: string | null;
-  /** The immutable artifact that records what this cycle decided; null until it has been composed. */
+  /** The immutable artifact that records what this cycle did; null until it has been composed. */
   digest: Artifact | null;
   /** Whether this reader may move the cycle (advance, end, replan), as Research decides it. */
   writable?: boolean;
@@ -95,13 +70,13 @@ export interface ResearchArtifactRef {
   hash: string;
 }
 /**
- * What a cycle decided, composed by the server from records when the cycle finished or was
- * ended, and kept as one immutable application/json artifact. It names no actor, so handing it
- * to a later worker or reviewer says nothing about who did the earlier work. Reports and change
- * specifications are named by ID and hash, never inlined: the records stay authoritative.
+ * What a cycle did, composed by the server from records when the cycle finished or was ended,
+ * and kept as one immutable application/json artifact. It names no actor, so handing it to a
+ * later worker or reviewer says nothing about who did the earlier work. Format 1 also named the
+ * cycle's reflection and the alternatives its plan rejected.
  */
 export interface ResearchDigest {
-  formatVersion: 1;
+  formatVersion: 2;
   cycle: {
     id: string;
     name: string;
@@ -114,20 +89,6 @@ export interface ResearchDigest {
     late: boolean;
   };
   previousCycleId: string | null;
-  reflection: {
-    id: string;
-    reviewId: string;
-    approvedAt: string;
-    report: ResearchArtifactRef;
-    changeSpec: ResearchArtifactRef;
-    /** What a structured change specification decided comes next; null for a text one. */
-    next: {
-      decision: 'continue' | 'stop';
-      /** The stop reason; null when the plan continues. */
-      reason: string | null;
-      rationale: string;
-    } | null;
-  } | null;
   /** The consolidation task that took the cycle's accepted code to main, and where its publication stood. */
   integration: { taskId: string; publication: CodeUnitPublication['state'] | null } | null;
   experiments: {
@@ -143,8 +104,6 @@ export interface ResearchDigest {
   dropped: string[];
   /** Selected work still unfinished. */
   carriedOver: string[];
-  /** Alternatives the approved structured plan weighed and turned down, so they are not proposed again unknowingly. */
-  rejected: { title: string; reason: string }[];
   /** Entries left out to keep the digest within its bound. */
   omitted: number;
 }
@@ -154,7 +113,6 @@ export interface ResearchLineageEntry {
   state: string;
   createdAt: string;
   previousCycleId: string | null;
-  reflectionId: string | null;
   digest: Artifact | null;
 }
 export interface ResearchLineage {
@@ -167,26 +125,25 @@ export interface ResearchLineage {
 }
 /**
  * A choice a cycle's gate asks of its owner, as Research names it on its Cycles row
- * (`view.answers`): where research.advance `asks` for the input `name`, is `refused` with the
- * code `name`, or an automatic run `stopped` on the code `name`, the page offers these moves in
- * place of the plain one. The first that applies, and whose moves the page can all make, is the
- * one drawn. While a run is automatic only its `stopped` answers and ways elsewhere are drawn:
- * any other move would race the run.
+ * (`view.answers`): where research.advance is `refused` with the code `name`, or an automatic run
+ * `stopped` on the code `name`, the page offers these moves in place of the plain one. The first
+ * that applies, and whose moves the page can all make, is the one drawn. While a run is
+ * automatic only its `stopped` answers and ways elsewhere are drawn: any other move would race
+ * the run.
  */
 export type ResearchAnswer = {
-  when: 'asks' | 'refused' | 'stopped';
+  when: 'refused' | 'stopped';
   name: string;
   moves: ResearchMove[];
 };
 /**
  * One move of an answer: a call of `tool` (research.write advance where unnamed, and otherwise only
  * where the gate offers it) sending `input`, or the way to the page of the row whose view is
- * `row`. A move that answers the failed dependencies of a `failed` workflow stands under them.
+ * `row`.
  */
 export type ResearchMove = {
   label: string;
   tool?: 'research.write:end';
   input?: { [field: string]: string | boolean };
   row?: string;
-  failed?: string;
 };

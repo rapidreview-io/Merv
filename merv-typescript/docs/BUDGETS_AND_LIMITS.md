@@ -55,11 +55,10 @@ that are already over it**, retroactively, the moment the new server starts.
   | task                 | Every review round is used | An operator allows another round, or an independent reviewer fails it by hand   |
   | experiment (design)  | Out of review rounds       | An independent reviewer reviews it by hand, or an operator allows another round |
   | experiment (results) | Out of review rounds       | The same                                                                        |
-  | reflection           | Review returns used up     | An independent reviewer reviews it by hand, or its owner or an operator ends it |
 
   The disagreement is in the reviews: each returning verdict keeps its notes and findings,
-  and the next reviewer reads them as previous reviews. A task's and a reflection's card
-  links its open review.
+  and the next reviewer reads them as previous reviews. A task's card links its open
+  review.
 
 So a default of three review rounds means **three returns, after which the fourth
 delivery waits for a human**. That person either reviews it by hand, or grants one more
@@ -85,15 +84,13 @@ raises a cap, so a grant racing a transition is benign.
 Each is a constant the plugin passes to its service's constructor; no deployment config sets
 it. A test that needs a smaller cap constructs the service with its own.
 
-| Plugin      | Constant                          | Value | Limit            | Capped edges                                            |
-| ----------- | --------------------------------- | ----- | ---------------- | ------------------------------------------------------- |
-| tasks       | `TASK_LIMITS.reviewRounds`        | 3     | `review_rounds`  | `in_review` → `revise`                                  |
-| experiments | `EXPERIMENT_LIMITS.designRounds`  | 4     | `design_rounds`  | `design_review` → `revise_design`                       |
-| experiments | `EXPERIMENT_LIMITS.resultRounds`  | 3     | `result_rounds`  | `experiment_review` → `revise_plan`, `revise_execution` |
-| reflections | `REFLECTION_LIMITS.reviewReturns` | 2     | `review_returns` | `in_review` → `revise_synthesis`, `restart_lenses`      |
+| Plugin      | Constant                         | Value | Limit           | Capped edges                                            |
+| ----------- | -------------------------------- | ----- | --------------- | ------------------------------------------------------- |
+| tasks       | `TASK_LIMITS.reviewRounds`       | 3     | `review_rounds` | `in_review` → `revise`                                  |
+| experiments | `EXPERIMENT_LIMITS.designRounds` | 4     | `design_rounds` | `design_review` → `revise_design`                       |
+| experiments | `EXPERIMENT_LIMITS.resultRounds` | 3     | `result_rounds` | `experiment_review` → `revise_plan`, `revise_execution` |
 
-Only a reflection's parent workflow is capped; a lens has one way forward. The research
-cycle has no loop and no limit. The experiment `retry_running` self-edge is not capped:
+The research cycle has no loop and no limit. The experiment `retry_running` self-edge is not capped:
 blocking it would stop a permitted retry.
 
 ## Usage
@@ -137,11 +134,9 @@ then. A missing or malformed file sends nothing but what the profile read.
 ### Reading it
 
 `project.read` (`usage`) is read-only and open to any project reader, **including a leased worker**,
-because a reflection lens has to be able to say what a cycle cost. With no input it rolls
-up the project. With `instanceId` it rolls up that instance, everything it transitively
-depends on, and the children their policies declare: a reflection names its lenses of
-every attempt, which no dependency edge does. A research cycle's id therefore gives the
-cycle. `includeDependencies: false` reads the one instance alone. `scope.instanceCount`
+so a worker can say what a cycle cost. With no input it rolls up the project. With
+`instanceId` it rolls up that instance and everything it transitively depends on. A
+research cycle's id therefore gives the cycle. `includeDependencies: false` reads the one instance alone. `scope.instanceCount`
 says how many instances were covered; a closure of more than 5,000 is refused with
 `closure_too_large` rather than counted in part.
 
@@ -205,6 +200,15 @@ Trust boundary: **wall-clock is the dimension Merv measures itself.** Tokens are
 wrote the usage file, which may be the agent process; they can be wrong in either
 direction, so a forged report can pause dispatch early or never trip a token budget. The
 pause is visible (`budgets[]`, the runner's last decision) and an admin reverses it.
+
+## Autoresearch
+
+[Autoresearch](AUTORESEARCH.md) has two bounds of its own. Its **spend cap** is in US dollars per
+round, measured from Sandboxes' accrued and reserved money for the project's linked namespace,
+with an estimate held for each run still open. It is checked when the manager starts a task or
+experiment, and refuses that start with `autoresearch_cap_reached`. Its **wake limit** (20 by
+default) counts the manager's automatic wakes in a row, and starts again whenever the person
+speaks. Either one pauses the loop and puts it in Needs you; nothing running is stopped.
 
 ## Launch retry cap
 

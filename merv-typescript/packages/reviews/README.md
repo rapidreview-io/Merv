@@ -17,7 +17,6 @@ flowchart LR
   subgraph researchLayer["Research logic"]
     tasks["Tasks"]
     experiments["Experiments"]
-    reflections["Reflections"]
     knowledge["Knowledge"]
   end
   subgraph foundationsLayer["Foundations"]
@@ -35,7 +34,6 @@ flowchart LR
   reviews -- "injects" --> ui
   tasks -- "injects" --> reviews
   experiments -- "injects" --> reviews
-  reflections -- "injects" --> reviews
   knowledge -- "injects" --> reviews
   codeWork -- "injects" --> reviews
   reviews -- "injects" --> artifacts
@@ -48,7 +46,7 @@ flowchart LR
   class reviews self
 ```
 
-Reviews is a foundation the research plugins build on, never the reverse: Tasks, Experiments and Reflections inject it and own how a verdict applies, while a reviewer's `review.write` (`submit`) lands here first. Scope's `actor.revoked` releases a revoked reviewer's unfinished claims.
+Reviews is a foundation the research plugins build on, never the reverse: Tasks and Experiments inject it and own how a verdict applies, while a reviewer's `review.write` (`submit`) lands here first. Scope's `actor.revoked` releases a revoked reviewer's unfinished claims.
 
 A request captures an opaque subject ID/revision, assessment criteria, producer identity, and the exact artifact manifest. `snapshotHash` commits to that snapshot. Artifact IDs resolve to immutable content; the stored manifest preserves the metadata assessed at request time. Output artifacts must belong to the producer; the integrating program explicitly identifies any pinned inputs authored by others. A request also preserves its administrative owner so the authenticated source can administer a worker's submission without replacing its actual author.
 
@@ -65,7 +63,7 @@ request replay and immutable verdict storage. An owner whose routes are fixed
 rejects it. Reads omit the field when absent, preserving old responses.
 See [explicit review return paths](../../docs/REVIEW_RETURN_PATHS.md).
 
-An owner names the verdicts that return its work (`returning`; Tasks `needs_changes`, Experiments and Reflections both rejecting verdicts). Once the limit leaving the subject's gate is used up, Reviews rules those out itself, and `review.read` (`get`) says so (`limit`) and offers no return route if no rejecting verdict is left; an owner's own `verdicts` hook only narrows further (a Git task's leased reviewer). The Running cards of every owner say how their review stands in Reviews' words: `reviewCard` (an agent on it, the claimant, or unclaimed since when) and `reviewAttention` (no independent reviewer left, an operator provides one), beside `reviewSections`.
+An owner names the verdicts that return its work (`returning`; Tasks `needs_changes`, Experiments both rejecting verdicts). Once the limit leaving the subject's gate is used up, Reviews rules those out itself, and `review.read` (`get`) says so (`limit`) and offers no return route if no rejecting verdict is left; an owner's own `verdicts` hook only narrows further (a Git task's leased reviewer). The Running cards of every owner say how their review stands in Reviews' words: `reviewCard` (an agent on it, the claimant, or unclaimed since when) and `reviewAttention` (no independent reviewer left, an operator provides one), beside `reviewSections`.
 
 The durable `reviews.actor-revoked.v1` consumer releases revoked actors’ unfinished claims. It preserves the review/evidence snapshot, retains claim history, and emits a causal `review.claim_released` event. Unloaded consumers catch up on reactivation. Submitted verdicts remain immutable. `start` returns a fresh `claimId` and generation; `submit` requires that claim ID. Existing started reviews migrate to stable legacy claim IDs. The row keeps the open claim's `review.started` event id, time and whether a leased agent took it (reviews@14 copied them for claims already open), and a submission asks Scope's `permissionLost` whether the reviewer lost review permission after that event, so Reviews never reads State's event log itself. See [the full recovery contract](../../docs/RECOVERY_AND_CONTEXT.md).
 

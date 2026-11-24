@@ -17,46 +17,11 @@ const answers = [
     name: 'research_definition_changed',
     moves: [{ label: 'Accept changed definition' }],
   },
-  // A completed run whose plan stopped for its owner: they may decide to stop here.
-  {
-    when: 'stopped',
-    name: 'research_needs_owner',
-    moves: [
-      {
-        label: 'Stop here',
-        tool: 'research.write:end',
-        input: { outcome: 'abandoned', reason: 'The owner decided to stop here.' },
-      },
-    ],
-  },
-  // An approved plan that continues: open its work and the next cycle, or complete without them.
-  {
-    when: 'asks',
-    name: 'nextWave',
-    moves: [
-      { label: 'Create next wave', input: { nextWave: 'create' } },
-      { label: 'Skip next wave', input: { nextWave: 'skip' } },
-    ],
-  },
   // A consolidation task that ended without acceptance: inject a fresh one.
   {
     when: 'refused',
     name: 'integration_failed',
     moves: [{ label: 'Retry consolidation', input: { retryIntegration: true } }],
-  },
-  // A wave that ended unapproved stops its cycle, though work it reflects on may fail and still
-  // be read: the wave where it stands, and the end the gate offers instead.
-  {
-    when: 'refused',
-    name: 'dependency_failed',
-    moves: [
-      {
-        label: 'End cycle',
-        tool: 'research.write:end',
-        failed: 'reflection',
-        input: { outcome: 'abandoned', reason: 'The wave this cycle reflected on was abandoned.' },
-      },
-    ],
   },
 ] satisfies ResearchAnswer[];
 export const researchUiPlugin = {
@@ -64,7 +29,7 @@ export const researchUiPlugin = {
   inject: ['research', 'ui'],
   apply(ctx: Context) {
     const research = ctx.research;
-    // The wave of work, framed by its cycle: it stands under Home at the head of the rail.
+    // The work, framed by its cycle: it stands under Home at the head of the rail.
     ctx.effect(() =>
       ctx.ui.register({
         id: 'work',
@@ -94,19 +59,18 @@ export const researchUiPlugin = {
             'workflow',
             'researchDependencies',
             'progress',
-            'reflectionId',
             'automation',
             'writable',
             // An ended cycle nothing follows yet is the one a new cycle started beside it follows.
             'successorId',
           ],
         },
-        // A cycle stops on its own wave or consolidation, declared after the work it reflects
-        // on, which may fail and stop nothing.
+        // A cycle stops on its own consolidation, declared after the work it waits on, which
+        // may fail and stop nothing.
         needs: {
           name: 'name',
           owner: 'ownerId',
-          stops: ['dependency_failed', 'integration_failed'],
+          stops: ['integration_failed'],
         },
         // One cycle and the stage it stands at, read without running an action's check: its
         // page polls this and draws no action (its move reads its own gate).

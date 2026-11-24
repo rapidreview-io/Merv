@@ -7,7 +7,6 @@ import type { CodeUnit, CodeUnitPublication } from '@merv/code-work/models';
 /** The providers the research plugin hands its service, from a running app's context. */
 export const providersOf = (ctx: Context): Providers => ({
   paper: ctx.paper,
-  reflections: ctx.reflections,
   tasks: ctx.tasks,
   experiments: ctx.experiments,
   artifacts: ctx.artifacts,

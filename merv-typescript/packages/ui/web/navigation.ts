@@ -10,7 +10,7 @@ import type { WorkflowActionStatus as Step } from '@merv/workflows/models';
  * does not list it.
  */
 const RAIL = [
-  { label: '', ids: ['work', 'pi', 'boards'] },
+  { label: '', ids: ['work', 'autoresearch', 'pi', 'boards'] },
   { label: 'Fleet', ids: ['sessions', 'sandboxes'] },
   { label: 'Ops', ids: ['code', 'artifacts', 'settings'] },
 ];
@@ -27,11 +27,11 @@ export const homeOf = (rows: UiRowDescription[]) => {
 export const pathOf = (rows: readonly Pick<UiRowDescription, 'path' | 'view'>[], kind: string) =>
   rows.find((row) => row.view.kind === kind)?.path;
 
-/** The row whose page opens a record of this workflow: the row listing it, or one holding it. */
-export const rowOf = <R extends Pick<UiRowDescription, 'workflow' | 'holds'>>(
+/** The row whose page opens a record of this workflow: the row listing it. */
+export const rowOf = <R extends Pick<UiRowDescription, 'workflow'>>(
   rows: readonly R[],
   workflow: string,
-) => rows.find((row) => row.workflow === workflow || row.holds?.includes(workflow));
+) => rows.find((row) => row.workflow === workflow);
 
 /**
  * Places this app retired, and where their work is now. The shell answers each address itself,

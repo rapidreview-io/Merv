@@ -34,7 +34,7 @@ import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
 
 /** The work programs a reference names; any other workflow's instance is unsupported. */
-const WORK = new Set(['task', 'experiment', 'reflection', 'research']);
+const WORK = new Set(['task', 'experiment', 'research']);
 /** A reference as its source reads it: everything but what the caller asked. */
 type Found = Omit<KnowledgeReference, 'ref' | 'id'>;
 /**
@@ -154,7 +154,7 @@ export class KnowledgeService implements Knowledge {
       const colon = ref.indexOf(':');
       const id = colon >= 0 ? ref.slice(colon + 1) : ref;
       const kind = colon >= 0 ? ref.slice(0, colon) : null;
-      // A task, experiment, wave or cycle is a work item running the program it names.
+      // A task, experiment or cycle is a work item running the program it names.
       const source =
         kind === null
           ? null
