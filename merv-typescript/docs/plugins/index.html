@@ -39,7 +39,7 @@
             "kind": "research",
             "dir": "both",
             "says": "runs the research cycle",
-            "detail": "Moves a project through rounds of work, reflection and planning."
+            "detail": "Moves a project through rounds of selected work."
           },
           {
             "id": "tasks",
@@ -56,14 +56,6 @@
             "dir": "both",
             "says": "planned tests of ideas",
             "detail": "A research question tested in planned attempts, each reviewed independently."
-          },
-          {
-            "id": "reflections",
-            "name": "Reflections",
-            "kind": "research",
-            "dir": "both",
-            "says": "steps back and judges",
-            "detail": "A panel of independent agents looks at the whole project and proposes changes."
           },
           {
             "id": "paper",
@@ -106,7 +98,7 @@
             {
               "from": "research",
               "to": "tasks",
-              "text": "Research turns the plan into **tasks** and **experiments**, each with clear checks."
+              "text": "The cycle waits on **tasks** and **experiments**, each with clear checks."
             },
             {
               "from": "tasks",
@@ -130,13 +122,8 @@
             },
             {
               "from": "paper",
-              "to": "reflections",
-              "text": "**Reflections** steps back, judges the whole project, and proposes what to change."
-            },
-            {
-              "from": "reflections",
               "to": "research",
-              "text": "Research starts the next round with that advice. Meanwhile you can ask **Pi** about any of it."
+              "text": "When the work has ended, Research completes the cycle and saves a digest for the next round. Meanwhile you can ask **Pi** about any of it."
             }
           ]
         },
@@ -162,14 +149,9 @@
                 "tagline": "The project's living paper: Problem, Literature, Methods and Results, with full history."
               },
               {
-                "id": "reflections",
-                "name": "Reflections",
-                "tagline": "A panel of five independent agents that judges the project's research and proposes changes."
-              },
-              {
                 "id": "research",
                 "name": "Research",
-                "tagline": "The coordinator that moves a project through cycles of work, reflection and planning."
+                "tagline": "The coordinator that moves a project through cycles of selected work."
               },
               {
                 "id": "tasks",

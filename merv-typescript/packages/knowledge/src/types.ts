@@ -54,7 +54,7 @@ export interface KnowledgeSelection extends KnowledgeRecords {
   missing: string[];
 }
 export type KnowledgeReferenceKind =
-  'task' | 'experiment' | 'artifact' | 'review' | 'code-capture' | 'reflection' | 'research';
+  'task' | 'experiment' | 'artifact' | 'review' | 'code-capture' | 'research';
 export interface KnowledgeReference {
   ref: string;
   status: 'resolved' | 'missing' | 'unsupported' | 'unavailable';

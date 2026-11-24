@@ -52,19 +52,6 @@
       "name": "@merv/board"
     },
     {
-      "id": "reflections-tools",
-      "name": "@merv/reflections/tools"
-    },
-    {
-      "id": "reflections-ui",
-      "name": "@merv/reflections/ui",
-      "required": false
-    },
-    {
-      "id": "reflections",
-      "name": "@merv/reflections"
-    },
-    {
       "id": "knowledge-tools",
       "name": "@merv/knowledge/tools"
     },

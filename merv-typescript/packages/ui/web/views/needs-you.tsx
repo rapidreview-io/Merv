@@ -93,35 +93,25 @@ const said = ({ instruction, blockers }: WorkflowDecision) =>
 /** An open record of a row that says how Home reads it, before its gate is read. */
 interface Open {
   id: string;
-  /** The record whose page and card it stands on: itself, or the record it is a part of. */
-  page: string;
   name: string;
   owner: string;
   workflow: Flow;
   row: UiRowDescription;
   needs: UiRowNeeds;
 }
-/**
- * The records of every row that declares how Home reads them, from the row's own home part, and
- * the records inside each that the row names (`parts`), such as a wave's lenses, under its name.
- */
+/** The records of every row that declares how Home reads them, from the row's own home part. */
 const openWork = (rows: UiRowDescription[], home: HomeData | undefined): Open[] =>
   rows.flatMap(({ needs, ...row }) => {
     const items = (home as Record<string, unknown> | undefined)?.[row.id];
     if (!needs || !Array.isArray(items)) return [];
-    return (items as Record<string, unknown>[]).flatMap((item) => {
-      const record = {
-        page: item.id as string,
-        name: item[needs.name] as string,
-        owner: item[needs.owner] as string,
-        row,
-        needs,
-      };
-      const parts = needs.parts ? item[needs.parts] : undefined;
-      return [item, ...(Array.isArray(parts) ? (parts as Record<string, unknown>[]) : [])].map(
-        (each) => ({ ...record, id: each.id as string, workflow: each.workflow as Flow }),
-      );
-    });
+    return (items as Record<string, unknown>[]).map((item) => ({
+      id: item.id as string,
+      workflow: item.workflow as Flow,
+      name: item[needs.name] as string,
+      owner: item[needs.owner] as string,
+      row,
+      needs,
+    }));
   });
 
 /**
@@ -185,8 +175,8 @@ export function needsYou(
         kind,
         name: item.name,
         to: work
-          ? `${work}?key=work:${item.page}${thread ? `&thread=${encodeURIComponent(thread.id)}` : ''}`
-          : `${row.path}/${item.page}`,
+          ? `${work}?key=work:${item.id}${thread ? `&thread=${encodeURIComponent(thread.id)}` : ''}`
+          : `${row.path}/${item.id}`,
         at: blocker.since,
         sentence,
         ...(move ? { who: move.who } : {}),
@@ -201,7 +191,7 @@ export function needsYou(
       });
       continue;
     }
-    // A record that stops on its own child (a cycle on its wave or its consolidation) is
+    // A record that stops on its own child (a cycle on its consolidation) is
     // stopped only when its gate refuses on one of the codes its row names, and then by
     // the child declared last; any other prerequisite of it may fail and stop nothing.
     const stop =
@@ -223,14 +213,14 @@ export function needsYou(
       id: item.id,
       kind,
       name: item.name,
-      to: `${row.path}/${item.page}`,
+      to: `${row.path}/${item.id}`,
       at: item.workflow.updatedAt,
       sentence,
       ...(work
         ? {
             desk: {
               label: limit === 'exhausted' ? 'Allow another round' : 'Resume',
-              to: `${work}?key=work:${item.page}`,
+              to: `${work}?key=work:${item.id}`,
             },
           }
         : {}),

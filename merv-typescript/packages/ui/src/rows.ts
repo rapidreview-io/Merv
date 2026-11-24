@@ -28,11 +28,6 @@ export interface UiRowFields {
   path: string;
   /** The workflow whose records this row lists: each opens at `${path}/${id}`, on every page. */
   workflow?: string;
-  /**
-   * Workflows whose records live inside this row's records, as a lens lives in its wave: each
-   * opens at `${path}/${id}` too, and the page finds the record that holds it.
-   */
-  holds?: readonly string[];
   /** Ids beginning with this prefix are this row's records, opening at `${path}/${id}`. */
   opens?: string;
   /** Deeper addresses are rooms of this one page, not records, so the shell still titles them. */
@@ -70,11 +65,6 @@ export interface UiRowNeeds {
   stops?: string[];
   /** The records only name the reviews of them, and are never a move of their own. */
   subjectOnly?: true;
-  /**
-   * The field of a record listing records inside it, each with its `id` and `workflow`, such as
-   * a wave's lenses: their gates may name the reader's move too, which stands under the record.
-   */
-  parts?: string;
 }
 
 /** A row as ui.shell describes it to the browser. */

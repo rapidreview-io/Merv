@@ -532,49 +532,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     );
   }
 
-  /**
-   * The children each loaded policy names for the instances given, as parent to children: one
-   * call per version that declares them and batch of its instances, keeping each answer bounded.
-   */
-  private async children(
-    tx: Transaction,
-    projectId: string,
-    rows: readonly { id: string; workflow: string; version: number }[],
-  ): Promise<Map<string, string[]>> {
-    const declaring = new Map<Registration, string[]>();
-    for (const row of rows) {
-      const registration = this.registrations.get(`${row.workflow}@${row.version}`);
-      if (registration?.policy?.children)
-        declaring.get(registration)?.push(row.id) ?? declaring.set(registration, [row.id]);
-    }
-    const found = new Map<string, string[]>();
-    for (const [registration, all] of declaring)
-      for (const ids of batches(all)) {
-        const named = await registration.policy!.children!({
-          projectId,
-          instanceIds: Object.freeze(ids),
-          tx,
-        });
-        check(
-          typeof named === 'object' && named !== null && !Array.isArray(named),
-          'invalid_workflow_policy',
-          'Workflow children must be a record of instance id to child ids',
-          500,
-        );
-        for (const id of ids) {
-          const children = Object.hasOwn(named, id) ? named[id] : [];
-          check(
-            Array.isArray(children) && children.every((child) => typeof child === 'string'),
-            'invalid_workflow_policy',
-            'Workflow children must be lists of instance ids',
-            500,
-          );
-          found.set(id, children);
-        }
-      }
-    return found;
-  }
-
   /** The provider freezes these roots before later dependencies can move a shared charge. */
   async sponsoringRoots(
     projectId: string,
@@ -591,21 +548,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       projectId,
     ))
       link(row.target_id, row.source_id);
-    // Only an instance of a version whose policy names children can be a parent without an edge.
-    const declaring = [...this.registrations.values()].filter(
-      (registration) => registration.policy?.children,
-    );
-    if (declaring.length)
-      for (const [parent, children] of await this.children(
-        tx,
-        projectId,
-        await tx.all<{ id: string; workflow: string; version: number }>(
-          `SELECT id,workflow,version FROM wf_instances WHERE project_id=? AND (${declaring.map(() => '(workflow=? AND version=?)').join(' OR ')})`,
-          projectId,
-          ...declaring.flatMap(({ definition }) => [definition.name, definition.version]),
-        ),
-      ))
-        for (const child of children) link(child, parent);
     const seen = new Set<string>(),
       roots = new Set<string>(),
       queue = [...instanceIds];
@@ -617,15 +559,12 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       if (!above?.size) roots.add(id);
       else queue.push(...above);
     }
-    // Policy children can form a cycle even though declared dependencies cannot.
     return [...(roots.size ? roots : new Set(instanceIds))].sort();
   }
 
   /**
    * Walked level by level: each level's instances are read at once, then their edges in one
-   * read and their children in one call per version that declares them, so a policy can name
-   * the children no dependency edge does. The bound keeps a pathological graph from holding a
-   * read open. A closure past it is refused rather than cut short: every caller would act on
+   * read. The bound keeps a pathological graph from holding a read open. A closure past it is refused rather than cut short: every caller would act on
    * the part it was given as if it were the whole.
    */
   async dependencyClosure(
@@ -639,11 +578,11 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       let frontier = roots;
       while (frontier.length) {
         // A name with no instance here, gone or another project's, is no part of the closure.
-        const level: { id: string; workflow: string; version: number }[] = [];
+        const level: { id: string }[] = [];
         for (const part of batches(frontier)) {
           level.push(
-            ...(await tx.all<{ id: string; workflow: string; version: number }>(
-              `SELECT id,workflow,version FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
+            ...(await tx.all<{ id: string }>(
+              `SELECT id FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
               caller.projectId,
               ...part,
             )),
@@ -667,8 +606,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
             ...level.map((row) => row.id),
           )
         ).map((item) => item.target_id);
-        for (const children of (await this.children(tx, caller.projectId, level)).values())
-          next.push(...children);
         frontier = [...new Set(next)].filter((id) => !seen.has(id));
       }
       return [...seen];

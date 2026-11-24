@@ -8,19 +8,9 @@ export const createSchema = z.strictObject({
   previousCycleId: id
     .optional()
     .describe(
-      "A complete, abandoned or failed cycle this one follows; its digest is carried into this cycle's reflection",
+      'A complete, abandoned or failed cycle this one follows; its digest records what that cycle did',
     ),
-  automatic: z
-    .boolean()
-    .optional()
-    .describe('Automatically advance this cycle and its approved next waves'),
-  maxCycles: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .optional()
-    .describe('Automatic run limit, including this cycle; default 10'),
+  automatic: z.boolean().optional().describe('Automatically advance this cycle as its work ends'),
   requestId: id,
 });
 const commandSchema = z.object({
@@ -28,27 +18,23 @@ const commandSchema = z.object({
   expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   requestId: id,
 });
-const nextWave = z
-  .enum(['create', 'skip'])
-  .describe(
-    'Required when the approved reflection carries a plan that continues: create opens its tasks, experiments and the next cycle; skip completes this cycle without them',
-  );
 const retryIntegration = z
   .boolean()
   .describe(
     'Inject a fresh consolidation task after the current one ended without acceptance; ignored otherwise',
   );
-// Both optional with no default, so the stored input of a request made before they existed still replays.
-const choices = { nextWave: nextWave.optional(), retryIntegration: retryIntegration.optional() };
-export const advanceSchema = commandSchema.extend(choices).strict();
+// Optional with no default, so the stored input of a request made before it existed still replays.
+export const advanceSchema = commandSchema
+  .extend({ retryIntegration: retryIntegration.optional() })
+  .strict();
 /**
- * The owner's choices as a guard reads them, with the move the advance computed after asking
- * Git, which no client input carries. Not strict, for the reason endChoiceSchema is not: a
- * preflight carries the bound fields alongside them.
+ * The owner's choice as a guard reads it, with the move the advance computed after asking Git,
+ * which no client input carries. Not strict, for the reason endChoiceSchema is not: a preflight
+ * carries the bound fields alongside it.
  */
-export const nextWaveChoiceSchema = z.object({
-  ...choices,
-  move: z.enum(['advance', 'complete', 'inject', 'reinject']).optional(),
+export const choiceSchema = z.object({
+  retryIntegration: retryIntegration.optional(),
+  move: z.enum(['complete', 'inject', 'reinject', 'advance']).optional(),
 });
 export const replanSchema = commandSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
 const ending = {

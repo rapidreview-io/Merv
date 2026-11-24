@@ -7218,52 +7218,6 @@ button.role-mark--disc {
 .unit-check--met .unit-check-mark {
   color: var(--supports);
 }
-.unit-parts {
-  list-style: none;
-}
-.unit-part {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-height: var(--hit);
-  padding: var(--space-1) 0;
-  border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--text);
-  text-align: left;
-}
-button.unit-part {
-  cursor: pointer;
-}
-button.unit-part:hover .unit-part-name,
-.unit-part[aria-pressed='true'] .unit-part-name {
-  color: var(--active);
-}
-.unit-part-name {
-  margin-right: auto;
-}
-.unit-items {
-  display: flex;
-  flex-direction: column;
-  list-style: none;
-}
-.unit-items li {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: var(--text-sm);
-}
-.unit-item-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
 /* The reading's three tabs, and what each lists: rows on hairlines, one fact a column. */
 .unit-tabs {
   margin-bottom: var(--space-2);
@@ -9261,13 +9215,6 @@ html.modal-open {
 .admin-unfolded {
   background: var(--hover);
 }
-.admin-part > [role='cell']:first-child {
-  padding-left: 24px;
-}
-/* A part's project and person are its unit's, which stands right above it. */
-.admin-part > [role='cell']:is(:nth-child(2), :nth-child(3)) {
-  visibility: hidden;
-}
 .admin-ended {
   color: var(--faint);
 }
@@ -9291,11 +9238,6 @@ html.modal-open {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-}
-@media (max-width: 720px) {
-  .admin-part > [role='cell']:is(:nth-child(2), :nth-child(3)) {
-    display: none;
   }
 }
 /* A unit's state is the row's fact, in its tone at the row's own size: no label's small caps. */

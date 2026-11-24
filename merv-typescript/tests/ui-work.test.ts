@@ -16,20 +16,18 @@ const other = { ...actor, id: 'actor_other', name: 'Grace' };
 const project = { id: 'project_work', name: 'Transfer research' };
 const shell: ShellData = {
   plugins: [],
-  rows: ['tasks', 'experiments', 'research', 'reflections', 'reviews', 'sessions', 'paper'].map(
-    (kind, order) => ({
-      id: kind,
-      label: kind,
-      path: '/' + kind,
-      group: 'hidden',
-      order,
-      workflow: kind === 'tasks' ? 'task' : kind === 'experiments' ? 'experiment' : kind,
-      view: { kind },
-      status: {},
-      readable: true,
-      ...(kind === 'tasks' ? { states: { queued: { idle: true as const } } } : {}),
-    }),
-  ),
+  rows: ['tasks', 'experiments', 'research', 'reviews', 'sessions', 'paper'].map((kind, order) => ({
+    id: kind,
+    label: kind,
+    path: '/' + kind,
+    group: 'hidden',
+    order,
+    workflow: kind === 'tasks' ? 'task' : kind === 'experiments' ? 'experiment' : kind,
+    view: { kind },
+    status: {},
+    readable: true,
+    ...(kind === 'tasks' ? { states: { queued: { idle: true as const } } } : {}),
+  })),
   workflows: ['task', 'experiment', 'research'].map((name) => ({
     name,
     version: 1,
@@ -80,7 +78,6 @@ function fixture(t: TestContext) {
   const home = {
     project,
     actors: [actor, other],
-    reflections: [],
     workflows: { workflows: [] },
     research: [
       {
@@ -90,7 +87,6 @@ function fixture(t: TestContext) {
         workflow: flow('research', 'working'),
         researchDependencies: ['task_ready', 'experiment_running'],
         progress: { total: 2, settled: 1 },
-        reflectionId: null,
         automation: null,
         writable: false,
         successorId: null,

@@ -41,14 +41,6 @@
             "detail": "A reviewer who passes an experiment's results saves edits to Methods and Results with the verdict."
           },
           {
-            "id": "reflections",
-            "name": "Reflections",
-            "kind": "research",
-            "dir": "in",
-            "says": "adds reviewed findings",
-            "detail": "The reviewer of a reflection wave updates Methods and Results across experiments."
-          },
-          {
             "id": "tasks",
             "name": "Tasks",
             "kind": "research",
@@ -118,11 +110,6 @@
               "from": "self",
               "to": "artifacts",
               "text": "Citations in the paper point at stored evidence, and Paper checks each one exists."
-            },
-            {
-              "from": "reflections",
-              "to": "self",
-              "text": "After a reflection wave, its reviewer updates Methods and Results across all the experiments."
             }
           ]
         },
@@ -142,8 +129,8 @@
           }
         ],
         "not": [
-          "It doesn't hand out work. **Tasks**, **Experiments** and **Reflections** run their own workflows.",
-          "It doesn't decide whether a finding is true. Reviewers in **Experiments** and **Reflections** do that first.",
+          "It doesn't hand out work. **Tasks** and **Experiments** run their own workflows.",
+          "It doesn't decide whether a finding is true. Reviewers in **Experiments** do that first.",
           "It doesn't hold other people's papers. Searching published literature is **Nisa**'s job."
         ],
         "readme": "../../packages/paper/README.md"

@@ -28,29 +28,13 @@ import { permits } from '@merv/scope/rules';
 import type { Experiments } from '@merv/experiments/types';
 import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
-import type { Reflections } from '@merv/reflections/types';
 import type { Context } from 'cordis';
-import {
-  AUTOMATIC_PROVIDER,
-  bindAutomatic,
-  needsOwner,
-  publishBlocker,
-  type AutomaticRow,
-} from './automatic.js';
+import { AUTOMATIC_PROVIDER, bindAutomatic, publishBlocker } from './automatic.js';
 import { digested } from './compose.js';
 import { postgresMigrations } from './index.postgres.js';
 import { advanceSchema, createSchema, endSchema, getSchema, parse, replanSchema } from './input.js';
-import {
-  begin,
-  continuing,
-  follow,
-  inject,
-  materialise,
-  ready,
-  selectable,
-  type Choice,
-} from './integration.js';
-import { definition, policy, type Stage } from './policy.js';
+import { begin, follow, inject, ready, selectable, type Choice } from './integration.js';
+import { definition, policy } from './policy.js';
 import type {
   Research,
   ResearchAdvance,
@@ -58,7 +42,6 @@ import type {
   ResearchCreate,
   ResearchEnd,
   ResearchLineage,
-  ResearchOrigin,
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
@@ -68,7 +51,6 @@ type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance
 /** The plugins whose work a cycle coordinates; every one is required. */
 export interface Providers {
   paper: Paper;
-  reflections: Reflections;
   tasks: Tasks;
   experiments: Experiments;
   artifacts: Artifacts;
@@ -81,7 +63,6 @@ interface Row {
   id: string;
   record: string;
   problem: string | null;
-  reflection_id: string | null;
   predecessor_id: string | null;
   digest: string | null;
   integrations: string | null;
@@ -90,7 +71,7 @@ interface Row {
 export type StoredRecord = Pick<
   ResearchRecord,
   'id' | 'projectId' | 'ownerId' | 'name' | 'createdAt' | 'researchDependencies'
-> & { origin?: Omit<ResearchOrigin, 'researchId'> };
+>;
 
 /**
  * What the modules read of the service: the gate's policy (policy.ts), how a cycle moves
@@ -101,7 +82,6 @@ export type ResearchContext = Pick<
   | 'advance'
   | 'authorize'
   | 'checked'
-  | 'children'
   | 'closed'
   | 'definition'
   | 'detached'
@@ -165,44 +145,16 @@ export class ResearchService implements Research {
       return await this.record(caller, await this.row(caller, id, tx), tx, actor);
     });
   }
-  /**
-   * Where an automatic run stands: the blocker Research published for the cycle (on an ended
-   * one, what its plan asks of the owner), or the run finished its authorized cycles here while
-   * its plan wanted another (a reflection that chose to stop ended the run itself).
-   */
+  /** Where an automatic cycle stands: the blocker Research published for it, if any. */
   private async automation(
     caller: Caller,
-    row: AutomaticRow,
-    record: Pick<ResearchRecord, 'workflow' | 'reflectionId'>,
-    successorId: string | null,
+    id: string,
     tx: Transaction,
   ): Promise<ResearchAutomation> {
-    const { workflow } = record;
-    const status = { rootId: row.root_id, cycle: row.cycle_index, maxCycles: row.max_cycles };
-    const published = (await this.workflows.blockers(caller, row.research_id, tx)).find(
+    const published = (await this.workflows.blockers(caller, id, tx)).find(
       (item) => item.provider === AUTOMATIC_PROVIDER,
     );
-    // An ended cycle keeps only what it asks of its owner.
-    if (published)
-      return { ...status, blocker: { code: published.code, message: published.message } };
-    if (definition.terminal.includes(workflow.state))
-      return {
-        ...status,
-        blocker:
-          workflow.state === 'complete' &&
-          !successorId &&
-          row.cycle_index >= row.max_cycles &&
-          // A reflection that cannot be read leaves the limit as what it may have been.
-          !!(await continuing(this, caller, record as ResearchRecord, tx, 'complete').catch(
-            () => true,
-          ))
-            ? {
-                code: 'research_cycle_limit',
-                message: `Finished the authorized ${row.max_cycles} research cycles; no further wave was created`,
-              }
-            : null,
-      };
-    return { ...status, blocker: null };
+    return { blocker: published ? { code: published.code, message: published.message } : null };
   }
   /** The cycle a row describes, for a caller already authorized to read it. */
   private async record(
@@ -212,35 +164,27 @@ export class ResearchService implements Research {
     actor: Actor,
   ): Promise<ResearchRecord> {
     const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
-    // The selection is what the cycle waits on now, not what it was created with.
-    const children = [row.reflection_id, ...integrations];
-    const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
+    // The selection is what the cycle waits on now, not what it was created with. A research@6
+    // cycle a reflection's plan opened also stored that plan's origin, which nothing reads now.
+    const { origin: _origin, ...record } = JSON.parse(row.record) as StoredRecord & {
+      origin?: unknown;
+    };
     const successor = await tx.get<{ id: string }>(
       'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
       row.id,
       caller.projectId,
     );
-    const automatic = await tx.get<AutomaticRow>(
-      'SELECT * FROM research_automation WHERE research_id=?',
+    const automatic = await tx.get<{ research_id: string }>(
+      'SELECT research_id FROM research_automation WHERE research_id=?',
       row.id,
     );
     const workflow = await this.workflows.get(caller, row.id, tx);
     const selected = (await this.workflows.prerequisites(caller, [row.id], tx))
       .get(row.id)!
-      .filter((item) => !children.includes(item.id));
+      .filter((item) => !integrations.includes(item.id));
     return {
       ...record,
-      automation: automatic
-        ? await this.automation(
-            caller,
-            automatic,
-            { workflow, reflectionId: row.reflection_id },
-            successor?.id ?? null,
-            tx,
-          )
-        : null,
-      // The column is the one statement of which cycle this follows; the record pins the rest.
-      origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
+      automation: automatic ? await this.automation(caller, row.id, tx) : null,
       successorId: successor?.id ?? null,
       previousCycleId: row.predecessor_id,
       digest: row.digest ? (JSON.parse(row.digest) as Artifact) : null,
@@ -251,7 +195,6 @@ export class ResearchService implements Research {
       },
       workflow,
       problem: row.problem ? JSON.parse(row.problem) : null,
-      reflectionId: row.reflection_id,
       integrations,
       // What authorize asks, as the reader's role answers it: a page offers this reader the
       // cycle's moves only where Research would take them.
@@ -333,32 +276,8 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'create', input, tx, async () => {
-        // What an ended cycle asked of its owner is answered by the cycle that follows it. One its
-        // owner starts by hand without naming one answers the latest run that stopped for that
-        // owner all the same; anyone else's cycle leaves the decision theirs.
-        let answered = input.previousCycleId;
-        if (answered) await follow(this, caller, answered, tx);
-        else if (!caller.session) {
-          const asked = (await this.workflows.blockers(caller, undefined, tx))
-            .filter((item) => item.provider === AUTOMATIC_PROVIDER)
-            .filter((item) => item.code === 'research_needs_owner')
-            .at(-1);
-          const ended = asked && (await this.get(caller, asked.instanceId, tx));
-          if (
-            ended &&
-            (caller.actorId === ended.ownerId ||
-              (await this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)))
-          )
-            answered = ended.id;
-        }
-        if (answered)
-          await publishBlocker(
-            this.workflows,
-            { project_id: caller.projectId, research_id: answered },
-            null,
-            tx,
-          );
-        return await begin(this, caller, input, 'create', null, tx);
+        if (input.previousCycleId) await follow(this, caller, input.previousCycleId, tx);
+        return await begin(this, caller, input, tx);
       });
     });
   }
@@ -399,7 +318,6 @@ export class ResearchService implements Research {
           state: cycle.workflow.state,
           createdAt: cycle.createdAt,
           previousCycleId: cycle.previousCycleId,
-          reflectionId: cycle.reflectionId,
           digest: cycle.digest,
         })),
         truncated: !!cycles[0].previousCycleId,
@@ -415,7 +333,7 @@ export class ResearchService implements Research {
   /**
    * The owner reselects the work a cycle waits on while it is still defining or researching;
    * unsuccessful work stays selected as an outcome unless the owner drops it. The cycle's own
-   * children (its reflection, its consolidation tasks) are never part of the selection.
+   * consolidation tasks are never part of the selection.
    */
   async replan(
     caller: Caller,
@@ -431,7 +349,7 @@ export class ResearchService implements Research {
         check(
           ['defining', 'researching'].includes(record.workflow.state),
           'invalid_transition',
-          'A cycle is replanned before it reflects',
+          'A cycle is replanned while it is still defining or researching',
           409,
         );
         if (record.automation) await selectable(this, caller, { ...input, automatic: true }, tx);
@@ -476,17 +394,6 @@ export class ResearchService implements Research {
             null,
             tx,
           );
-        // A completed run whose plan stopped for its owner ends with their decision to stop.
-        if (record.automation?.blocker?.code === 'research_needs_owner') {
-          await this.event(
-            caller,
-            'stopped',
-            record.id,
-            { decision: 'stop', reason: clip(input.reason, ENDING_REASON_CHARS) },
-            tx,
-          );
-          return await this.get(caller, record.id, tx);
-        }
         const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
         const moved = await this.checked.take(
           tx,
@@ -544,7 +451,7 @@ export class ResearchService implements Research {
         ? { previous: JSON.parse(previous.result) as ResearchRecord }
         : {
             hosted:
-              ['reflecting', 'consolidating'].includes(record.workflow.state) &&
+              ['researching', 'consolidating'].includes(record.workflow.state) &&
               (await this.providers.code.hosted(caller, tx)),
           };
     });
@@ -566,63 +473,20 @@ export class ResearchService implements Research {
           409,
         );
         const handle = this.handle!;
-        const { move, continuing, abandoned } = await ready(this, caller, record, tx, input, since);
+        const { move, abandoned } = await ready(this, caller, record, tx, input, since);
         const injecting = move === 'inject' || move === 'reinject';
-        check(
-          !continuing || input.nextWave,
-          'next_wave_choice_required',
-          'The approved reflection carries a plan that continues. Call research.advance with nextWave: "create" to open its tasks, experiments and the next research cycle, or nextWave: "skip" to complete this cycle without them',
-          400,
-        );
         const childIds: string[] = [];
         if (injecting)
           childIds.push(await inject(this, caller, record, since!, input.requestId, tx));
-        switch (record.workflow.state as Stage) {
-          case 'defining': {
-            const problem = await this.definition(caller, tx);
-            await tx.run(
-              'UPDATE research_cycles SET problem=? WHERE id=?',
-              JSON.stringify(problem),
-              record.id,
-            );
-            break;
-          }
-          case 'researching': {
-            // A predecessor a plan opened this cycle from may have no digest yet; it is
-            // composed now, late.
-            const carried = record.previousCycleId
-              ? await digested(
-                  this,
-                  caller,
-                  await this.get(caller, record.previousCycleId, tx),
-                  tx,
-                  true,
-                )
-              : null;
-            const wave = await this.providers.reflections.create(
-              caller,
-              {
-                title: `${clip(record.name, 288)}: reflection`,
-                ...(record.automation ? { requirePlan: true } : {}),
-                // Absent rather than null, so a cycle that follows nothing replays as before.
-                ...(carried ? { previousCycleDigestId: carried.id } : {}),
-                requestId: childRequest(caller, 'research', 'reflection', input.requestId),
-              },
-              tx,
-            );
-            await tx.run(
-              'UPDATE research_cycles SET reflection_id=? WHERE id=?',
-              wave.id,
-              record.id,
-            );
-            childIds.push(wave.id);
-            break;
-          }
-        }
+        if (record.workflow.state === 'defining')
+          await tx.run(
+            'UPDATE research_cycles SET problem=? WHERE id=?',
+            JSON.stringify(await this.definition(caller, tx)),
+            record.id,
+          );
         // The guard inside the transition judges the same choices the preflight did, and the
         // move Git's answer decided, which it cannot ask for itself.
         const choice: Choice = {
-          ...(input.nextWave ? { nextWave: input.nextWave } : {}),
           ...(input.retryIntegration ? { retryIntegration: true } : {}),
           move,
         };
@@ -643,11 +507,6 @@ export class ResearchService implements Research {
               tx,
             ),
         );
-        // After the move, so every guard judged the project as it was before the plan's work
-        // existed: seven planned experiments would otherwise refuse themselves.
-        const successor = continuing
-          ? await materialise(this, caller, record, continuing, input.requestId, tx)
-          : undefined;
         if (injecting)
           await tx.run(
             'UPDATE research_cycles SET integrations=? WHERE id=?',
@@ -665,23 +524,12 @@ export class ResearchService implements Research {
             },
             tx,
           );
-        // A cycle that moved is no longer held by what its automation said before, though
-        // one that ended asks its owner what its plan stopped for.
+        // A cycle that moved is no longer held by what its automation said before.
         if (record.automation)
           await publishBlocker(
             this.workflows,
             { project_id: caller.projectId, research_id: record.id },
-            await needsOwner(
-              this,
-              caller,
-              {
-                id: record.id,
-                workflow: { state: moved.state },
-                successorId: successor?.id ?? null,
-                reflectionId: record.reflectionId,
-              },
-              tx,
-            ),
+            null,
             tx,
           );
         await this.event(
@@ -694,11 +542,7 @@ export class ResearchService implements Research {
             children: childIds,
             // Quarantined acceptances are unpublished code the task may not build on.
             ...(injecting && since?.quarantined.length ? { quarantined: since.quarantined } : {}),
-            ...(successor ? { successorId: successor.id } : {}),
             ...(abandoned ? { integration: 'abandoned' } : {}),
-            ...(moved.state === 'complete' && input.nextWave === 'skip'
-              ? { nextWave: 'skipped' }
-              : {}),
           },
           tx,
         );
@@ -708,9 +552,6 @@ export class ResearchService implements Research {
         return advanced;
       });
     });
-  }
-  children(record: ResearchRecord): string[] {
-    return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
   }
   private async command<T>(
     caller: Caller,
@@ -738,7 +579,6 @@ export const researchPlugin = {
     'workflows',
     'domainEvents',
     'paper',
-    'reflections',
     'tasks',
     'experiments',
     'artifacts',
@@ -749,7 +589,6 @@ export const researchPlugin = {
       const service = await createService(
         new ResearchService(ctx.state, ctx.scope, ctx.workflows, {
           paper: ctx.paper,
-          reflections: ctx.reflections,
           tasks: ctx.tasks,
           experiments: ctx.experiments,
           artifacts: ctx.artifacts,

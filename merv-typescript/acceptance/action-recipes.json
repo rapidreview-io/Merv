@@ -138,7 +138,7 @@
   },
   "review.read": {
     "group": "14-review-observe",
-    "fixture": "Actual queued/submitted design/result/task/reflection review with pinned evidence.",
+    "fixture": "Actual queued/submitted design/result/task review with pinned evidence.",
     "verify": "Compare pinned snapshot/revision/artifact IDs and final workflow transition; inspect evidence content independently.",
     "steps": {
       "list": "List reviews for fixture subject; compare claimable under producer and independent reviewer, without switching attribution through a new key.",
@@ -213,41 +213,22 @@
   "research.read": {
     "group": "22-research-observe",
     "fixture": "Tiny manual cycle with selected terminal fixture work and eventually completed predecessor/successor.",
-    "verify": "Fresh observer compares selected IDs, child reflection/consolidation and retained digest artifact contents.",
+    "verify": "Fresh observer compares selected IDs, child consolidation tasks and retained digest artifact contents.",
     "steps": {
       "list": "List fixture cycles and child references.",
-      "get": "Read definition/research/reflection/consolidation gates and exact selections.",
+      "get": "Read definition/research/consolidation gates and exact selections.",
       "lineage": "Read one successor chain and verify predecessor digest artifact, no duplicate successor."
     }
   },
   "research.write": {
     "group": "20-research",
-    "fixture": "Completed fixture task/experiment plus separate disposable cycle; five independent lens agents and independent reviewers available before advancing reflection. automatic:false, maxCycles:1.",
-    "verify": "research.read get/lineage, reflection.read get, workflow.read status and immutable digest/acceptance receipts from independent observer.",
+    "fixture": "Completed fixture task/experiment plus separate disposable cycle. automatic:false.",
+    "verify": "research.read get/lineage, workflow.read status and immutable digest/acceptance receipts from independent observer.",
     "steps": {
-      "create": "Create one bounded manual research cycle selecting existing fixture work, no automatic next-wave creation.",
+      "create": "Create one bounded manual research cycle selecting existing fixture work.",
       "replan": "While defining/researching, replace selection with explicit same-project fixture work and verify removed dependency no longer awaited.",
-      "advance": "Advance only when workflow allows; reflection requires real five-lens work/review and hosted consolidation where applicable. Choose nextWave:skip to prevent extra workloads; preserve every gate receipt.",
-      "end": "Abandon only separate disposable cycle with specific reason; inspect child reflection/consolidation and close separately if necessary."
-    }
-  },
-  "reflection.read": {
-    "group": "22-research-observe",
-    "fixture": "Actual synthetic reflection wave and independent lens IDs.",
-    "verify": "Second observer compares exact five lens outputs, synthesis artifacts and review snapshot; lens privacy stays enforced.",
-    "steps": {
-      "list": "List waves and current stage.",
-      "get": "Read exact wave/lens submissions/synthesis review.",
-      "lens": "Read authorized lens output and verify it does not expose other lens outputs to that lens worker."
-    }
-  },
-  "reflection.write": {
-    "group": "21-reflection",
-    "fixture": "No unfinished wave; small finished fixture corpus, five independent assigned lens authors and independent synthesis reviewer; separate abandoned wave after first completes.",
-    "verify": "reflection.read get and workflow.read status; independently inspect each pinned report, identity and review. No forced owner acceptance.",
-    "steps": {
-      "create": "Create one five-lens wave with stable requestId; verify new task/experiment creation pauses until approval, execute real lens/synthesis/consolidation workflow.",
-      "end": "End only separate disposable wave with documented inability-to-complete reason; verify open review withdrawn and child lenses ended, then research owner closes waiting cycle separately."
+      "advance": "Advance only when workflow allows: once the selected work has ended, and through hosted consolidation where applicable; preserve every gate receipt.",
+      "end": "Abandon only separate disposable cycle with specific reason; inspect child consolidation tasks and close separately if necessary."
     }
   },
   "report.read": {
@@ -446,22 +427,6 @@
     "verify": "task.read get, review.read get and exact frozen Git tree",
     "steps": {
       "call": "Actually run fixture, retain output/README and submit evidence for each numbered check; frozen Git tree must be from stopped assigned producer."
-    }
-  },
-  "reflection.submit_lens": {
-    "group": "21-reflection",
-    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
-    "verify": "reflection.read lens/get and contributor provenance",
-    "steps": {
-      "call": "Each of five independently assigned lens workers reads the real tiny corpus and submits its own immutable report with Summary at current revision."
-    }
-  },
-  "reflection.submit": {
-    "group": "21-reflection",
-    "fixture": "Actual authorized worker/conversation profile and assigned lease; separate independent observer. Owner terminal cannot impersonate lease by injected key.",
-    "verify": "reflection.read get plus exact artifacts and review snapshot",
-    "steps": {
-      "call": "Assigned synthesizer reconciles five actual lens reports, submits immutable synthesis and structured change spec, then waits for independent review."
     }
   },
   "report.open": {

@@ -31,7 +31,7 @@ const GROUPS = {
   ended: 'Ended',
 } as const;
 type WorkGroup = keyof typeof GROUPS;
-type WorkKind = 'tasks' | 'experiments' | 'reflections' | 'other';
+type WorkKind = 'tasks' | 'experiments' | 'other';
 interface Item {
   id: string;
   key: string;
@@ -174,7 +174,6 @@ export function CreateResearch({
   const [name, setName] = useState('');
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [automatic, setAutomatic] = useState(false);
-  const [maxCycles, setMaxCycles] = useState('10');
   // What a cycle may wait on is the work this page lists, chosen by name.
   const work = useWorkPicks();
   const command = useCommand<ResearchRecord>({
@@ -198,7 +197,7 @@ export function CreateResearch({
           name,
           dependsOn: dependencies,
           ...(follows ? { previousCycleId: follows.id } : {}),
-          ...(automatic ? { automatic: true, maxCycles: Number(maxCycles) } : {}),
+          ...(automatic ? { automatic: true } : {}),
         });
       }}
     >
@@ -207,7 +206,7 @@ export function CreateResearch({
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <RecordPicker
-          label="Work in this wave"
+          label="Work in this cycle"
           {...work}
           value={dependencies}
           onChange={setDependencies}
@@ -218,21 +217,8 @@ export function CreateResearch({
             checked={automatic}
             onChange={(event) => setAutomatic(event.target.checked)}
           />
-          Continue automatically through reviewed research waves
+          Advance automatically as its work ends
         </label>
-        {automatic && (
-          <label>
-            Maximum cycles
-            <input
-              type="number"
-              min="1"
-              max="100"
-              required
-              value={maxCycles}
-              onChange={(event) => setMaxCycles(event.target.value)}
-            />
-          </label>
-        )}
       </fieldset>
       <Failure message={command.error} />
       <div>
@@ -243,7 +229,7 @@ export function CreateResearch({
 }
 
 /** The project catalog and its live work share one row per record, at every screen size. */
-function WaveList({ shell }: { shell: ShellData }) {
+function WorkList({ shell }: { shell: ShellData }) {
   const { actor } = useSession();
   const nameOf = useActorNames();
   const live = useBoard();
@@ -251,7 +237,7 @@ function WaveList({ shell }: { shell: ShellData }) {
   const [kind, setKind] = useState('');
   const [cycleFilter, setCycleFilter] = useState('');
   const home = useHome(8000);
-  const { tasks, experiments, research: cycles, reflections } = home.data ?? {};
+  const { tasks, experiments, research: cycles } = home.data ?? {};
   const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
   const cycle = currentCycle(cycles ?? undefined, shell.workflows);
   const allCycles = newest(cycles ?? [], (item) => item.workflow.updatedAt);
@@ -266,9 +252,7 @@ function WaveList({ shell }: { shell: ShellData }) {
     owner,
     at: flow.updatedAt,
     to: `${rowOf(kind)?.path ?? `/${kind}`}/${id}`,
-    cycles: allCycles.filter(
-      (item) => item.researchDependencies.includes(id) || item.reflectionId === id,
-    ),
+    cycles: allCycles.filter((item) => item.researchDependencies.includes(id)),
     node: nodeOf(runningKey('work', id)),
     group: 'other_open' as WorkGroup,
   });
@@ -286,11 +270,6 @@ function WaveList({ shell }: { shell: ShellData }) {
         purpose: item.intent,
         end: item,
       })),
-      ...(reflections ?? []).map((item) => ({
-        ...unit('reflections', item.id, item.workflow, item.ownerId),
-        name: item.title,
-        purpose: `${item.lenses.filter((lens) => lens.written).length} of ${item.lenses.length} reflection lenses written`,
-      })),
     ],
     tasks ?? [],
   );
@@ -301,13 +280,7 @@ function WaveList({ shell }: { shell: ShellData }) {
     if (known.has(node.key) || node.aliases?.some((key) => known.has(key))) continue;
     known.add(node.key);
     const kind: WorkKind =
-      node.kind === 'Task'
-        ? 'tasks'
-        : node.kind === 'Experiment'
-          ? 'experiments'
-          : node.kind === 'Reflection'
-            ? 'reflections'
-            : 'other';
+      node.kind === 'Task' ? 'tasks' : node.kind === 'Experiment' ? 'experiments' : 'other';
     records.push({
       id: keyId(node.key),
       key: node.key,
@@ -315,11 +288,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       kind,
       node,
       waits: [],
-      cycles: allCycles.filter(
-        (item) =>
-          item.researchDependencies.includes(keyId(node.key)) ||
-          item.reflectionId === keyId(node.key),
-      ),
+      cycles: allCycles.filter((item) => item.researchDependencies.includes(keyId(node.key))),
       group: 'other_open',
     });
   }
@@ -372,7 +341,7 @@ function WaveList({ shell }: { shell: ShellData }) {
     setCycleFilter('');
     filter.reset();
   };
-  const unread = ['tasks', 'experiments', 'research', 'reflections'].filter(
+  const unread = ['tasks', 'experiments', 'research'].filter(
     (kind) => rowOf(kind) && home.data?.[kind as keyof typeof home.data] === null,
   );
   const load = {
@@ -393,7 +362,6 @@ function WaveList({ shell }: { shell: ShellData }) {
     ({
       tasks: 'Task',
       experiments: 'Experiment',
-      reflections: 'Reflection',
       other: item.node?.kind ?? 'Work',
     })[item.kind];
   const groups = (Object.keys(GROUPS) as WorkGroup[]).map((group) => ({
@@ -514,7 +482,6 @@ function WaveList({ shell }: { shell: ShellData }) {
                       <option value="">All types</option>
                       <option value="tasks">Tasks</option>
                       <option value="experiments">Experiments</option>
-                      <option value="reflections">Reflections</option>
                       <option value="other">Other</option>
                     </select>
                   </label>
@@ -607,9 +574,7 @@ function WaveList({ shell }: { shell: ShellData }) {
                                   ? 'work'
                                   : item.kind === 'experiments'
                                     ? 'file-data'
-                                    : item.kind === 'reflections'
-                                      ? 'reflections'
-                                      : 'fallback'
+                                    : 'fallback'
                               }
                               size={16}
                             />
@@ -668,10 +633,9 @@ const ADVANCE = 'research.write:advance';
 /**
  * A cycle's one move, here and on its own page, as the cycle's own gate has it. A move the
  * gate refuses is not offered as a button that can only fail: it stands disabled over the
- * records it waits on — unless the page already `listed` them. Where the gate asks for an
- * answer, refuses for a reason or stops an automatic run, the page draws the moves Research
- * names for it on its Cycles row (`ResearchAnswer`). An ended cycle has only those it still
- * stops on.
+ * records it waits on — unless the page already `listed` them. Where the gate refuses for a
+ * reason or stops an automatic run, the page draws the moves Research names for it on its
+ * Cycles row (`ResearchAnswer`). An ended cycle has only those it still stops on.
  */
 export function CycleMove({
   cycle,
@@ -727,9 +691,7 @@ export function CycleMove({
   const applies = ({ when, name, moves }: ResearchAnswer) =>
     (when === 'stopped'
       ? automatic?.blocker?.code === name
-      : open &&
-        (when === 'asks' ? advance?.requiredInput.includes(name) : refused(name)) &&
-        (!automatic || moves.every((item) => item.row))) &&
+      : open && refused(name) && (!automatic || moves.every((item) => item.row))) &&
     moves.every((item) => (item.row ? row(item.row) : !item.tool || !open || offered(item.tool)));
   const answer = (row('research')?.view.answers as ResearchAnswer[] | undefined)?.find(applies);
   const move = (
@@ -766,24 +728,11 @@ export function CycleMove({
         {moves}
       </div>
     ) : null;
-  // A move that answers failed work stands under it.
-  const failed = answer?.moves.find((item) => item.failed)?.failed;
-  if (answer && answer.when !== 'stopped')
-    return (
-      <div className={failed ? 'stack' : 'cluster'}>
-        {!listed &&
-          gate?.dependencies
-            .filter((item) => item.failed && item.workflow === failed)
-            .map((item) => <Dependency key={item.id} item={item} />)}
-        {moves}
-      </div>
-    );
+  if (answer && answer.when !== 'stopped') return <div className="cluster">{moves}</div>;
   if (automatic)
     return (
       <div className="stack">
-        <span>
-          Automatic · cycle {automatic.cycle} of {automatic.maxCycles}
-        </span>
+        <span>Automatic</span>
         {automatic.blocker && <span>{automatic.blocker.message}</span>}
         {moves}
         {move(
@@ -813,6 +762,6 @@ export function CycleMove({
 /** The same live inspector serves a conventional work list and its connected agents. */
 export const WorkView = ({ shell }: { shell: ShellData }) => (
   <WorkPlane nameOf={useActorNames()}>
-    <WaveList shell={shell} />
+    <WorkList shell={shell} />
   </WorkPlane>
 );

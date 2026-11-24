@@ -80,16 +80,8 @@
             "name": "Research",
             "kind": "research",
             "dir": "in",
-            "says": "creates planned experiments",
-            "detail": "When a research plan is approved, Research creates the experiments it names."
-          },
-          {
-            "id": "reflections",
-            "name": "Reflections",
-            "kind": "research",
-            "dir": "in",
-            "says": "pauses new experiments",
-            "detail": "While a reflection wave is open, new experiments wait to start. Ones already running carry on."
+            "says": "waits on experiments",
+            "detail": "A research cycle selects existing experiments and waits for them to end."
           }
         ],
         "story": {
@@ -98,7 +90,7 @@
             {
               "from": "research",
               "to": "self",
-              "text": "Research creates an experiment from an approved plan. It starts as **planned**."
+              "text": "An experiment is created for a research question, and a research cycle may wait on it. It starts as **planned**."
             },
             {
               "from": "self",
@@ -154,7 +146,7 @@
         ],
         "not": [
           "It doesn't own computers. **Sandboxes** attaches the compute.",
-          "It doesn't choose which experiments to run next. **Research** and **Reflections** do.",
+          "It doesn't choose which experiments to run next. The owner does, and **Research** waits on the ones a cycle selects.",
           "It doesn't publish code. Accepted code reaches main through a task that **Research** creates."
         ],
         "readme": "../../packages/experiments/README.md"

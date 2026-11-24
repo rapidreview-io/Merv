@@ -110,7 +110,7 @@ Personal display preferences (theme, sidebar) stay in the browser. Plugin compos
 
 `npm run test:ui` covers the registry, the static mount including traversal attempts, same-origin acceptance, row listing per actor, feed removal and restoration, UI removal leaving HTTP and MCP working, the unbuilt-bundle response, and the Connections row against one live and one dead mount. `tests/boundaries.test.ts` enforces the adapter rules. Browser states were checked by hand against the seeded demo; the execution log records the checkpoints.
 
-A record page (task, experiment, cycle, reflection) draws its gate from the `process` its row's `page` read serves (`workflow.process`): its stages, where it stands, and its unsettled prerequisites. A blocker is an instruction to the agent holding the tool, so the page prints none.
+A record page (task, experiment, cycle) draws its gate from the `process` its row's `page` read serves (`workflow.process`): its stages, where it stands, and its unsettled prerequisites. A blocker is an instruction to the agent holding the tool, so the page prints none.
 
 The [Sessions page](RUNNER_CONTROL_PLANE.md) shows authoritative live totals independently of its bounded history display. Browser verification covered enabling dispatch, pausing without closing a lease, and halting with the unfinished assignment returning to the queue. The development proxy forwards `/sessions` to the API alongside existing tool/account routes.
 

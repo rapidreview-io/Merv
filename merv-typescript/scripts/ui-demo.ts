@@ -21,7 +21,7 @@ import { seedTrajectory } from './ui-demo-trajectory.js';
  * Type `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) or `quit` on stdin.
  *
  * The Running page gets its own work last (scripts/ui-demo-running.ts): tasks waiting, worked
- * on and in review, a running and a planned experiment, an open reflection wave, and agents on
+ * on and in review, a running and a planned experiment, and agents on
  * two machines, mac-studio and lab-gpu-01 (and build-01 with `--git`), whose runners and
  * leases the demo keeps alive and whose agents keep calling Merv, one read every 20 s in turn.
  *
@@ -321,7 +321,6 @@ async function main() {
   });
   // `--trajectory`: one experiment walked through every stage by four sessions, each with a
   // whole conversation, for the record page's Agents tab (scripts/ui-demo-trajectory.ts).
-  // It goes before the Running seed, whose open reflection wave pauses new experiments.
   if (process.argv.includes('--trajectory'))
     await seedTrajectory(app, { url, token: boot.token, work, producerCaller, reviewerCaller });
   const git = seedsGit ? await seedGit(app, owner, work) : undefined;

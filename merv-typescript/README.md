@@ -22,7 +22,6 @@ is part of that operation (for example, `status.action` preflights a workflow mo
 | Tasks       | `task.read`: list, get                                                               | `task.write`: create, mark_failed                                                                                                                                                    |
 | Reviews     | `review.read`: list, get                                                             | `review.write`: start, submit, release                                                                                                                                               |
 | Research    | `research.read`: list, get, lineage                                                  | `research.write`: create, replan, advance, end                                                                                                                                       |
-| Reflections | `reflection.read`: list, get, lens                                                   | `reflection.write`: create, end                                                                                                                                                      |
 | Reports     | `report.read`: check, review_visual                                                  | Worker-only report editing tools, including `report.write` (flat input)                                                                                                              |
 | Sessions    | `session.read`: find, threads, messages, calls, stuck                                | `session.write`: message, ask, dispatch, halt, release_hold, budget                                                                                                                  |
 | Workflows   | `workflow.read`: status, assignment, process, catalog                                | `workflow.write`: begin, extend_limit                                                                                                                                                |
@@ -90,15 +89,14 @@ The living paper holds the project’s hypotheses and conclusions, citing experi
 
 [Living paper](docs/LIVING_PAPER.md) stores structured problem/scope/goals/constraints,
 literature, citations and versioned Methods/Results. The main agent can edit every
-document directly. Experiment plan/results and [reflection](docs/REFLECTIONS.md)
-reviewers author Methods/Results changes with their verdicts, saved atomically with
-review decisions. Producers supply evidence and reports. Paper creates no assignments
+document directly. Experiment plan/results reviewers author Methods/Results changes
+with their verdicts, saved atomically with review decisions. Producers supply evidence and reports. Paper creates no assignments
 or context recipes. [Consolidation](docs/CONSOLIDATION.md)
-consumes retained artifacts and explicit work prerequisites without depending on
-Reflections. A [Research cycle](docs/RESEARCH.md) coordinates research, reflection and
-consolidation; [automatic mode](docs/CONTINUOUS_RESEARCH.md) advances on finished work, including failures, and creates reviewed successor waves within a cycle limit. It creates no separate paper-writing workflows.
+consumes retained artifacts and explicit work prerequisites. A
+[Research cycle](docs/RESEARCH.md) coordinates research and consolidation;
+[automatic mode](docs/CONTINUOUS_RESEARCH.md) advances it on finished work, including failures. It creates no separate paper-writing workflows.
 
-Domain Events and Context Builder are implemented as two independent services. Task types own their versioned recipes directly, with no context-adapter plugins. `task.context` builds a persisted starting package; `task.checkpoint` saves attributed progress. Built-in recipes cover ordinary work, experiment planning, project reflection and independent review. See [the contract and examples](docs/RECOVERY_AND_CONTEXT.md), [Domain Events](packages/domain-events/README.md), and [Context Builder](packages/context-builder/README.md). Server-side scheduling, native execution and Git workspace capture are integrated. Experiments owns its production planning, execution and independent review recipes. Reflections and Consolidation own their workflow recipes; Paper is a document store. Reviewed central publication remains open.
+Domain Events and Context Builder are implemented as two independent services. Task types own their versioned recipes directly, with no context-adapter plugins. `task.context` builds a persisted starting package; `task.checkpoint` saves attributed progress. Built-in recipes cover ordinary work, experiment planning and independent review. See [the contract and examples](docs/RECOVERY_AND_CONTEXT.md), [Domain Events](packages/domain-events/README.md), and [Context Builder](packages/context-builder/README.md). Server-side scheduling, native execution and Git workspace capture are integrated. Experiments owns its production planning, execution and independent review recipes. Consolidation owns its workflow recipes; Paper is a document store. Reviewed central publication remains open.
 
 ## Run locally
 
@@ -451,7 +449,7 @@ The runtime is pinned to **`cordis@4.0.0-rc.10`**. It is upstream Cordis, not th
 The current stack includes an optional plugin UI, shared-identity verification and
 generic mounts for external Nisa and sandbox capabilities. Automatic assignment,
 native execution, native Git transport and verified shutdown capture are integrated;
-Tasks, Experiments, Reflections and reviewed integration work use these foundations.
+Tasks, Experiments and reviewed integration work use these foundations.
 Coding agents invoke the tools; Merv is the durable authority for the task/review loop. The Python database
 is not automatically migrated into this implementation.
 
@@ -592,5 +590,3 @@ existing authority. [Sessions](docs/SESSION_LEASES.md) now enforces the fixed po
 ## Agents
 
 [Sessions](docs/AGENT_CONTINUITY.md) owns agent instances separately from assignment executions. Every agent is created by an offer, and one that returns to the same work continues its conversation. Assignment leases, context snapshots, tool permissions and Code/Runner references remain execution-specific. The self-registering continuing agents were removed on 2026-10-06.
-
-Reflection waves now read live research using existing tools. New task/experiment creation pauses until approval, while existing work continues. Assignments contain compact instructions and output references, without copying the research corpus. See [Reflections](docs/REFLECTIONS.md).

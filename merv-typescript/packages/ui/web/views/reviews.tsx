@@ -263,7 +263,7 @@ function ReviewRecord({ id }: { id: string }) {
   const [values, setValues] = useState<Record<number, Draft>>({});
   const subjectId = review.data?.subjectId;
   // What it judges is named, and opened, as every list the home read holds names it: a task,
-  // an experiment, a cycle or a reflection alike.
+  // an experiment or a cycle alike.
   const home = useTool<HomeData>('ui.home').data;
   const rows = useRows();
   const subject = subjectId ? recordNames(null, home, rows).get(subjectId) : undefined;

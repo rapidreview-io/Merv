@@ -164,17 +164,14 @@
       "reference",
       "nisa",
       "web",
-      "project",
-      "reflection"
+      "project"
     ],
-    "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise the supported research/reflection cycle with five independent lens contributions, independent reflection review and code consolidation review if exposed. Stop when authorized workers are unavailable.",
+    "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise a supported research cycle over the fixture tasks and experiments, with code consolidation review if exposed. Stop when authorized workers are unavailable.",
     "checks": [
       "paper_context",
       "claim_evidence",
       "real_reference",
       "research_cycle",
-      "five_lenses",
-      "reflection_review",
       "consolidation_review"
     ],
     "initialStatus": "not_run"

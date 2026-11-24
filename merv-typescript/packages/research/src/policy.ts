@@ -5,29 +5,30 @@ import type {
   WorkflowPolicy,
 } from '@merv/contracts';
 import type { ResearchContext } from './index.js';
-import { endChoiceSchema, nextWaveChoiceSchema, parse } from './input.js';
-import { continuing, ready } from './integration.js';
+import { endChoiceSchema, choiceSchema, parse } from './input.js';
+import { ready } from './integration.js';
 
-// The research workflow and the policy its gate judges by. The policy is Lean-sensitive and
-// moved here verbatim; it runs on ResearchService (index.ts) as its ResearchContext.
-const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
+// The research workflow and the policy its gate judges by; it runs on ResearchService
+// (index.ts) as its ResearchContext.
+const stages = ['defining', 'researching', 'consolidating', 'complete'] as const;
 export type Stage = (typeof stages)[number];
-const nextWaveGuidance =
-  'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. When Code hosts the project, the cycle also waits for accepted code to reach main before the next wave starts. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
 const instructions: Record<Stage, string> = {
   defining:
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
   researching:
-    'Reflect once all selected work has finished. Failed and abandoned work are outcomes to examine.',
-  reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start its consolidation: accepted code that main does not hold yet is integrated by one task and published to main. ${nextWaveGuidance}`,
-  consolidating: `Wait for the consolidation task to be accepted and its publication to reach main, then complete the research cycle. A publication main overtook injects a successor task. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
+    'Advance once all selected work has finished; failed and abandoned work are outcomes too. A project without Git completes; when Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main.',
+  consolidating:
+    'Wait for the consolidation task to be accepted and its publication to reach main, then complete the research cycle. A publication main overtook injects a successor task. Paper changes are reviewed within the task and experiment workflows.',
   complete:
-    'The selected research, reflection and any required code integration are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here.',
+    'The selected research and any required code integration are complete. Paper changes were handled by their scientific reviews.',
 };
-/** The one research version: array order is part of its published fingerprint. */
+/**
+ * The one research version: array order is part of its published fingerprint. Version 6 also
+ * reflected; its cycles are history, read through their pinned definition.
+ */
 export const definition: WorkflowDefinition = {
   name: 'research',
-  version: 6,
+  version: 7,
   initial: 'defining',
   states: [...stages, 'abandoned', 'failed'],
   terminal: ['complete', 'abandoned', 'failed'],
@@ -35,7 +36,7 @@ export const definition: WorkflowDefinition = {
     ...stages
       .slice(0, -1)
       .map((from, index) => ({ from, action: 'advance', to: stages[index + 1] })),
-    { from: 'reflecting', action: 'complete', to: 'complete' },
+    { from: 'researching', action: 'complete', to: 'complete' },
     ...stages.slice(0, -1).flatMap((from) => [
       { from, action: 'abandon', to: 'abandoned' },
       { from, action: 'mark_failed', to: 'failed' },
@@ -59,13 +60,13 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
         gate: context.snapshot.state,
         waiting:
           context.snapshot.state === 'researching'
-            ? 'Wait for the selected work to finish, including failed and abandoned work, then open reflection.'
+            ? 'Wait for the selected work to finish, including failed and abandoned work, then advance.'
             : instructions[context.snapshot.state as Stage],
         references: [
-          ...ctx.children(record).map((id) => ({
+          ...record.integrations.map((id) => ({
             kind: 'workflow',
             id,
-            label: 'Child workflow',
+            label: 'Consolidation task',
           })),
           ...(record.successorId
             ? [{ kind: 'workflow', id: record.successorId, label: 'Next research cycle' }]
@@ -113,7 +114,7 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
         states: [stage],
         transitions: [
           'advance',
-          ...(stage === 'reflecting' ? ['complete'] : []),
+          ...(stage === 'researching' ? ['complete'] : []),
           ...(stage === 'consolidating' ? ['reinject'] : []),
         ],
         tool: 'research.write:advance',
@@ -131,29 +132,9 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
             context.caller,
             record,
             context.tx,
-            parse(nextWaveChoiceSchema, context.input ?? {}),
+            parse(choiceSchema, context.input ?? {}),
           );
         },
-        // Creating a plan's work is never implied by an advance: a caller that does not know
-        // about the plan is asked, rather than launching work an agent wrote.
-        ...(stage === 'reflecting' || stage === 'consolidating'
-          ? {
-              requiredInput: async (context: WorkflowCheckContext) => {
-                const { caller, snapshot, tx, input } = context;
-                // A choice made, or asked by the advance taking this, was judged by the check;
-                // a skip reads no plan.
-                const choice = parse(nextWaveChoiceSchema, input ?? {});
-                if (choice.nextWave || ctx.checked.found(context)) return [];
-                // Without Git's answer a preflight reads the cycle as completing: the choice
-                // is asked whenever the plan continues, and honoured only when it completes. The
-                // transition carries that answer, so an advance that injects is not asked.
-                const record = await ctx.get(caller, snapshot.id, tx);
-                return (await continuing(ctx, caller, record, tx, choice.move ?? 'complete'))
-                  ? ['nextWave']
-                  : [];
-              },
-            }
-          : {}),
       })),
     ],
   };

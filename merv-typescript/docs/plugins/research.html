@@ -12,13 +12,13 @@
         "id": "research",
         "name": "Research",
         "group": "research",
-        "tagline": "The coordinator that moves a project through cycles of work, reflection and planning.",
+        "tagline": "The coordinator that moves a project through cycles of selected work.",
         "analogy": {
           "icon": "🔄",
-          "text": "A coach running training seasons. The coach doesn't play. They wait until the drills are done, call a team review, and plan the next season from what was learned."
+          "text": "A coach running training seasons. The coach doesn't play. They wait until the drills are done, make sure the season's gains are kept, and close the season."
         },
         "why": [
-          "Research is a loop: do the work, look back, plan again. Something has to keep that loop moving.",
+          "Research is a loop: pick the work, wait for it to end, keep what was accepted. Something has to keep that loop moving.",
           "Every cycle starts from the paper's **Problem**, so the work always aims at a clearly defined question.",
           "In **automatic** mode, cycles move forward on their own when work finishes, without the owner pressing a button."
         ],
@@ -45,24 +45,16 @@
             "name": "Tasks",
             "kind": "research",
             "dir": "out",
-            "says": "waits on and creates tasks",
-            "detail": "A cycle waits for its tasks to finish, and an approved plan's tasks are created through Tasks."
+            "says": "waits on tasks, creates consolidation",
+            "detail": "A cycle waits for its tasks to end, and creates the consolidation task through Tasks."
           },
           {
             "id": "experiments",
             "name": "Experiments",
             "kind": "research",
             "dir": "out",
-            "says": "waits on and creates experiments",
-            "detail": "A cycle waits for its experiments too, and creates the plan's new ones."
-          },
-          {
-            "id": "reflections",
-            "name": "Reflections",
-            "kind": "research",
-            "dir": "out",
-            "says": "opens a reflection wave",
-            "detail": "When the work is done, Research opens a wave that judges it."
+            "says": "waits on experiments",
+            "detail": "A cycle waits for its experiments too. Failed and abandoned ones count as outcomes."
           },
           {
             "id": "workflows",
@@ -83,7 +75,7 @@
             "name": "Artifacts",
             "dir": "out",
             "says": "saves a cycle digest",
-            "detail": "When a cycle ends, a summary of its decisions is saved for the next cycle to read."
+            "detail": "When a cycle ends, a summary of what it did is saved for a later cycle to read."
           }
         ],
         "story": {
@@ -103,34 +95,24 @@
             {
               "from": "self",
               "to": "experiments",
-              "text": "...and its experiments to finish. Research launches no agents itself."
-            },
-            {
-              "from": "self",
-              "to": "reflections",
-              "text": "When they are done, it opens a **reflection wave** and moves to **reflecting**."
+              "text": "...and its experiments to end. Research launches no agents itself."
             },
             {
               "from": "self",
               "to": "code-work",
-              "text": "The wave is approved. If accepted code is missing from main, a **consolidation** task brings it there first."
+              "text": "If accepted code is missing from main, a **consolidation** task brings it there first."
             },
             {
               "from": "self",
               "to": "artifacts",
-              "text": "The cycle is **complete**, and a digest of its decisions is saved."
-            },
-            {
-              "from": "self",
-              "to": "tasks",
-              "text": "If the approved plan says continue, Research creates the next tasks and experiments, and a new cycle that waits on them."
+              "text": "The cycle is **complete**, and a digest of what it did is saved."
             }
           ]
         },
         "words": [
           {
             "term": "Cycle",
-            "meaning": "One loop: defining, researching, reflecting, then complete."
+            "meaning": "One loop: defining, researching, then complete, with consolidating first when main lacks accepted code."
           },
           {
             "term": "Consolidation",
@@ -138,16 +120,16 @@
           },
           {
             "term": "Automatic mode",
-            "meaning": "Cycles advance on their own with the owner's earlier permission, up to a set number of cycles."
+            "meaning": "A cycle advances on its own with the owner's earlier permission. It does not start the next cycle."
           },
           {
             "term": "Digest",
-            "meaning": "A saved summary of a finished cycle that the next cycle reads."
+            "meaning": "A saved summary of a finished cycle that a cycle following it can read."
           }
         ],
         "not": [
           "It doesn't do the work or launch agents. **Tasks** and **Experiments** hold the work.",
-          "It doesn't judge the results. **Reflections** does.",
+          "It doesn't judge the results. Reviewers in **Tasks** and **Experiments** do.",
           "It doesn't write the paper. **Paper** stores it; Research only reads the Problem."
         ],
         "readme": "../../packages/research/README.md"

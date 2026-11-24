@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-// Experiment rules that Research and Reflections apply before they create experiments: pure, so
-// they import it without depending on the Experiments service.
+// Experiment rules, pure, so a reader imports them without depending on the Experiments service.
 
 /** The parts evidence plays (ExperimentRole), in the domain's own order: design, then results. */
 export const EXPERIMENT_ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'] as const;

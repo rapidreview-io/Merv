@@ -34,7 +34,7 @@ flowchart LR
     ui["UI"]
   end
   subgraph researchLayer["Research logic"]
-    researchLogic["Tasks, Experiments, Knowledge,<br/>Reflections, Research, Paper"]
+    researchLogic["Tasks, Experiments, Knowledge,<br/>Research, Paper"]
   end
   state -- "implements State" --> contracts
   scope -- "implements Scope" --> contracts

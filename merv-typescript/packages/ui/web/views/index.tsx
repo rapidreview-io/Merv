@@ -14,7 +14,6 @@ import { PaperView } from './paper';
 import { PiView } from './pi';
 import { CollectionView } from './remote';
 import { ResearchView } from './research';
-import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
@@ -51,7 +50,6 @@ const views: Record<string, ComponentType<ViewProps>> = {
   paper: PaperView,
   pi: PiView,
   research: ResearchView,
-  reflections: ReflectionsView,
   work: WorkView,
   'legacy-history': LegacyHistoryView,
   // The generic kind: a row a plugin describes through its manifest.

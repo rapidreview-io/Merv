@@ -26,7 +26,7 @@ export const knowledgeToolsPlugin = {
           },
           references: {
             description:
-              'Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.',
+              'Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.',
             input: knowledgeReferencesSchema,
             was: ['project.references'],
             handler: async (caller, input) => await knowledge.resolve(caller, input.refs),

@@ -20,8 +20,6 @@ export interface AdminWorkRow {
   /** The owner's type name, where it has one (`task.work`). */
   type?: string;
   title: string;
-  /** The unit it is part of, which the table draws it under: a lens's reflection. */
-  parent?: string;
   project: { id: string; name: string };
   person: string;
   state: string;

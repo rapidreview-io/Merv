@@ -36,7 +36,7 @@ There is **no design review**. The human accepts the plan agreed with their agen
 `service_experiment@1` has its own graph and owns its contract and payment records.
 Execution and review cannot change that contract. A scope change returns to planning
 and needs a new accepted and paid contract; repairs stay within the original allowance.
-It does not publish a paper, update the main research project, or start reflection waves.
+It does not publish a paper or update the main research project.
 
 ## First offer
 

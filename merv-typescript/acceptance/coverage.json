@@ -1014,109 +1014,6 @@
       "coverage": "area_only"
     },
     {
-      "tool": "reflection.create",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.end",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.get",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.lens",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.list",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.read",
-      "sources": [
-        "merv-typescript/packages/reflections/src/tools.ts",
-        "snapshot:scripts",
-        "snapshot:schemas"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.submit",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.submit_lens",
-      "sources": [
-        "snapshot:workers"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
-      "tool": "reflection.write",
-      "sources": [
-        "merv-typescript/packages/reflections/src/tools.ts",
-        "snapshot:scripts",
-        "snapshot:schemas"
-      ],
-      "scenarios": [
-        "knowledge"
-      ],
-      "status": "not_run",
-      "coverage": "area_only"
-    },
-    {
       "tool": "report.approve_visual",
       "sources": [
         "snapshot:workers"
@@ -2166,17 +2063,14 @@
         "reference",
         "nisa",
         "web",
-        "project",
-        "reflection"
+        "project"
       ],
-      "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise the supported research/reflection cycle with five independent lens contributions, independent reflection review and code consolidation review if exposed. Stop when authorized workers are unavailable.",
+      "prompt": "Read project paper, claims/references and research state. Add a clearly labelled synthetic claim supported only by fixture evidence; find and retain one real relevant reference through supported literature tools without inventing citations. Exercise a supported research cycle over the fixture tasks and experiments, with code consolidation review if exposed. Stop when authorized workers are unavailable.",
       "checks": [
         "paper_context",
         "claim_evidence",
         "real_reference",
         "research_cycle",
-        "five_lenses",
-        "reflection_review",
         "consolidation_review"
       ],
       "initialStatus": "not_run"

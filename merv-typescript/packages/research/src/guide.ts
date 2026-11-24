@@ -5,7 +5,7 @@ export const researchGuide = `Merv is a review-gated research system. A project 
 - a living paper, carried as project context in worker and reviewer assignments: a Problem document with four fixed sections (problem, scope, goals, constraints), Literature with its citations, then Methods and Results (paper.read, paper.write);
 - tasks: a goal and deliverables, delivered, then reviewed;
 - experiments: a plan, a design review, the run, then a results review;
-- research cycles: defining, researching, reflecting through five independent lenses, then complete, consolidating first when accepted code has not reached main;
+- research cycles: a round of selected tasks and experiments, defining, researching, then complete, consolidating first when accepted code has not reached main;
 - reviews, always by someone other than whoever produced the work;
 - immutable files (artifacts), the project's code, and the machines and agent sessions Merv dispatches to do the work.
 Work depends only task → experiment → task: an order between two experiments is a task between them.

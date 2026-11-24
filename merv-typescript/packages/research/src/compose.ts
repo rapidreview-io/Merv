@@ -3,12 +3,9 @@ import type { WorkflowDependency } from '@merv/workflows/models';
 import type { ResearchContext } from './index.js';
 import type { ResearchDigest, ResearchRecord } from './types.js';
 
-// A cycle's digest: what it decided, composed from records once it is over and kept as an
+// A cycle's digest: what it did, composed from records once it is over and kept as an
 // artifact. Each runs on ResearchService (index.ts) as its ResearchContext.
-/**
- * A digest rides inside a 32000-character reflection context, behind the assignment and any
- * rework feedback. At this bound it still fits beside them instead of being omitted whole.
- */
+/** A digest stays small enough to read whole beside an assignment's other context. */
 const DIGEST_MAX_CHARS = 12000;
 const DIGEST_TEXT_CHARS = 300;
 const DIGEST_LIST_LIMIT = 100;
@@ -30,10 +27,9 @@ export async function digested(
   late: boolean,
 ): Promise<Artifact> {
   if (record.digest) return record.digest;
-  const children = ctx.children(record);
   const selected = (await ctx.workflows.prerequisites(caller, [record.id], tx))
     .get(record.id)!
-    .filter((item) => !children.includes(item.id));
+    .filter((item) => !record.integrations.includes(item.id));
   const artifact = await ctx.providers.artifacts.create(
     caller,
     {
@@ -63,13 +59,8 @@ export async function compose(
   tx: Transaction,
   late: boolean,
 ): Promise<ResearchDigest> {
-  const { reflections, code } = ctx.providers;
+  const { code } = ctx.providers;
   const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
-  const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
-  // A cycle ended while reflecting has a child with nothing approved in it.
-  const reflection = record.reflectionId
-    ? await reflections.approved(caller, record.reflectionId, tx)
-    : null;
   const taskId = record.integrations.at(-1);
   const integration = taskId
     ? {
@@ -106,17 +97,13 @@ export async function compose(
     })),
     dropped: selected.filter((item) => item.failed).map((item) => item.id),
     carriedOver: selected.filter((item) => !item.terminal).map((item) => item.id),
-    rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
-      title: text(entry.title),
-      reason: text(entry.reason),
-    })),
   };
   const composedAt = now();
   let omitted = 0;
   for (const list of Object.values(lists)) omitted += list.splice(DIGEST_LIST_LIMIT).length;
   const reason = record.workflow.data.reason;
   const composed = (): ResearchDigest => ({
-    formatVersion: 1,
+    formatVersion: 2,
     cycle: {
       id: record.id,
       name: text(record.name),
@@ -127,22 +114,6 @@ export async function compose(
       late,
     },
     previousCycleId: record.previousCycleId,
-    reflection: reflection && {
-      id: reflection.id,
-      reviewId: reflection.reviewId,
-      approvedAt: reflection.approvedAt,
-      report: ref(reflection.report),
-      changeSpec: ref(reflection.changeSpec),
-      // The decision is the one line of the plan every later wave needs; the items that
-      // became work are records, which the successor's origin names.
-      next: reflection.plan
-        ? {
-            decision: reflection.plan.next.decision,
-            reason: reflection.plan.next.decision === 'stop' ? reflection.plan.next.reason : null,
-            rationale: text(reflection.plan.next.rationale),
-          }
-        : null,
-    },
     integration,
     ...lists,
     omitted,

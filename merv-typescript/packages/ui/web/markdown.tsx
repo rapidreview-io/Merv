@@ -91,7 +91,7 @@ type Listed = { id: string; name?: string; title?: string };
 /** `ui.home`: the people, and each row's records under the row's id. */
 export type NamedHome = object;
 type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
-type NamedRow = Pick<UiRowDescription, 'id' | 'path' | 'view' | 'workflow' | 'holds'>;
+type NamedRow = Pick<UiRowDescription, 'id' | 'path' | 'view' | 'workflow'>;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads: a record opens at

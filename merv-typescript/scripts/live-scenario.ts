@@ -32,8 +32,8 @@ const RUN_ID = randomBytes(4).toString('hex');
  *
  * Brief format: the Markdown the scenario briefs are written in
  * (`Scenarios/briefs/0N-*.md`). Sections are `## [N.] NAME [— …]` with NAME one of
- * PROJECT, CLAIMS, TASKS, EXPERIMENTS, REFLECTION, LIMITS; any other section, FEED
- * included (Feed is switched off by default), is not read. Inside them:
+ * PROJECT, CLAIMS, TASKS, EXPERIMENTS, LIMITS; any other section, FEED included (Feed is
+ * switched off by default), is not read. Inside them:
  *
  *   PROJECT      **Name:** `project` — and an **Introduction** blockquote; the
  *                **Research cycle** bullets supply `name`.
@@ -107,7 +107,7 @@ export interface Brief {
   limits: string;
 }
 
-const sectionNames = ['PROJECT', 'CLAIMS', 'TASKS', 'EXPERIMENTS', 'REFLECTION', 'LIMITS'] as const;
+const sectionNames = ['PROJECT', 'CLAIMS', 'TASKS', 'EXPERIMENTS', 'LIMITS'] as const;
 type SectionName = (typeof sectionNames)[number];
 
 /** `## 3. TASKS`, `## 7. LIMITS — …`: the first bare word names the section. */
@@ -1396,7 +1396,7 @@ async function main(options: Options) {
         'Trajectories and verdicts are asserted after the fact; no verdict text reaches any worker.',
         'A stage carrying a planted defect is launched by this harness, not the runner: the runner builds its child stdin from the frozen assignment and has no per-assignment prompt hook.',
         "Feed is switched off by default, so the brief's FEED section is not posted.",
-        'Reflection, consolidation and post-wave claim updates are outside this harness slice.',
+        'Consolidation and post-cycle claim updates are outside this harness slice.',
         brief.limits,
       ].filter(Boolean),
     };

@@ -1,8 +1,8 @@
 # Continuous research
 
-Tasks and experiments finish → reflection → the consolidation task, when main lacks accepted code → the approved next wave.
+Tasks and experiments end → the consolidation task, when main lacks accepted code → complete.
 
-On **Work → New cycle**, select the work and enable **Continue automatically through reviewed research waves**. Choose a maximum cycle count (default 10, including the first cycle). Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@6`; historical versions retain their original rules.
+On **Work → New cycle**, select the work and enable **Advance automatically as its work ends**. Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@7`; historical versions retain their original rules. Automatic mode advances one cycle: it creates no successor cycles and has no cycle limit. To continue, create a cycle that follows the finished one (`previousCycleId`).
 
 The equivalent tool input is:
 
@@ -11,7 +11,6 @@ The equivalent tool input is:
   "name": "Test the available data",
   "dependsOn": ["TASK_OR_EXPERIMENT_ID"],
   "automatic": true,
-  "maxCycles": 10,
   "requestId": "start-continuous-research"
 }
 ```
@@ -23,34 +22,29 @@ The project definition still needs problem, scope, goals and constraints. Automa
 Research consumes existing durable workflow events. It checks the same workflow guidance as a manual advance, then calls the same domain command with a stable request ID. No additional agent, scheduler plugin or worker permission is introduced.
 
 - **Defining:** pin the complete project definition and enter researching.
-- **Researching:** wait for all selected work to finish, including failed and abandoned work, then create the five-lens reflection.
-- **Reflecting:** wait for independent approval. Where the project is not hosted by Code, complete this cycle and apply the approved next-wave decision. Where it is, whether main lacks accepted code is Git's answer, given outside a transaction; the consumer's transaction cannot ask, so the cycle shows `integration_candidates_unavailable` while Research makes the same advance again on its own, outside that transaction, which injects the consolidation task or completes the cycle.
-- **Consolidating:** wait for the consolidation task to be accepted and published. `dependencies_pending` and Code's publication blockers (such as `code_publication_pending`) are waits recorded as the cycle's blocker, never failures, and cost no cycle; a published task completes the cycle and applies the next-wave decision. A stale publication is answered the same way as at reflection: a successor task, or completion when main lacks nothing now. A task ended without acceptance is a visible wait for the owner's advance with `retryIntegration: true`, or for `research.end`.
-- **Continue:** create the approved tasks, experiments and successor in the existing transaction. The successor inherits the original authority and cycle limit, and starts from main.
-- **Stop:** complete without a successor. At the cycle limit, finish reflection and any consolidation, then complete without creating more work. The approved proposal remains retained.
+- **Researching:** wait for all selected work to end, including failed and abandoned work. Where the project is not hosted by Code, complete this cycle. Where it is, whether main lacks accepted code is Git's answer, given outside a transaction; the consumer's transaction cannot ask, so the cycle shows `integration_candidates_unavailable` while Research makes the same advance again on its own, outside that transaction, which injects the consolidation task or completes the cycle.
+- **Consolidating:** wait for the consolidation task to be accepted and published. `dependencies_pending` and Code's publication blockers (such as `code_publication_pending`) are waits recorded as the cycle's blocker, never failures; a published task completes the cycle. A stale publication is answered the same way as at researching: a successor task, or completion when main lacks nothing now. A task ended without acceptance is a visible wait for the owner's advance with `retryIntegration: true`, or for `research.end`.
 
-Automatic reflections require an `application/json` change specification with an explicit continue/stop decision. This requirement is in their frozen assignment and checked by both submission and preflight. Manual and standalone reflections still accept prose. Independent reviews and return paths are unchanged.
-
-A successor automatically accepts the preceding definition only if its revision is unchanged. If the owner edited it, automatic work waits for an explicit `research.advance` in defining; the Work page offers **Accept changed definition**. Ending a cycle stops further handoffs; already-created children keep their own lifecycles.
+A cycle that follows another automatically accepts the preceding definition only if its revision is unchanged. If the owner edited it, automatic work waits for an explicit `research.advance` in defining; the Work page offers **Accept changed definition**. Ending a cycle stops further handoffs; its selected work keeps its own lifecycle.
 
 ## Failed work is an outcome
 
-Versions 5 and 6 use the selected work as the wave's subject, not as a success requirement. Completed, failed and abandoned records remain in the selection, evidence inventory, lineage and digest. Reflection approval and the consolidation task's publication govern later stages; the old failed experiment cannot block the cycle again.
+A cycle uses the selected work as its subject, not as a success requirement. Completed, failed and abandoned records remain in the selection, lineage and digest. The consolidation task's publication governs the later stage; the old failed experiment cannot block the cycle again.
 
-Execution dependencies still require successful inputs. Before opening reflection, automatic Research closes selected, never-started work whose required input has terminally failed. A task is marked failed; an experiment is abandoned. The retained reason starts with **Not run: required input ended without success**, identifies the input, and names the research wave. The closure repeats through the selected chain, including chains listed in reverse order.
+Execution dependencies still require successful inputs. While a cycle is researching, automatic Research closes selected, never-started work whose required input has terminally failed. A task is marked failed; an experiment is abandoned. The retained reason starts with **Not run: required input ended without success**, identifies the input, and names the research cycle. The closure repeats through the selected chain, including chains listed in reverse order.
 
 Only the selected work is eligible for this cleanup. Started work, reviews, unselected work, missing inputs and merely pending prerequisites are not automatically ended. Existing domain ownership rules still authorize each ending. A refusal is visible on the cycle; it does not grant the coordinator authority over somebody else's work.
 
 ## Durability and authority
 
-Research stores the original delegation (actor credential, machine key or human membership) privately and revalidates its current write authority before each action. It never stores a bearer token, exposes the delegation through `research.get`, or converts a leased worker into an owner. Leased workers still cannot create or advance research cycles. An automatic successor can be created only by the authorizing owner, including when a manual advance is used.
+Research stores the original delegation (actor credential, machine key or human membership) privately and revalidates its current write authority before each action. It never stores a bearer token, exposes the delegation through `research.get`, or converts a leased worker into an owner. Leased workers still cannot create or advance research cycles.
 
 The durable consumer resumes its cursor across restarts. Startup also enqueues a reconciliation event, so a previously observed blocker is retried when Research or a provider it requires restarts. Each cycle's effects are isolated in a savepoint inside the consumer transaction. Expected domain refusals roll back that cycle's partial effects and publish a readable blocker to Workflows as the `research` provider's, where the cycle's gate and every reader of it show it; unexpected errors roll back the event and retry. A database briefly unavailable retries the event, up to eight times (about 25 seconds); once those retries run out it shows as a blocker like any other outage (status 503), and the cycle is woken again 30 seconds later, for as long as the outage was first seen less than ten minutes ago, whatever codes it has reported since. One such retry waits per project, and a retry that fails because the database is still down is tried again within the same ten minutes. One blocked cycle does not stop other authorized cycles from advancing.
 
-The cycle's `automation` read model exposes its root, cycle number, maximum cycles and current blocker: the one Research published, or, for a run that completed its authorized cycles without a successor, `research_cycle_limit`. Source credentials are never returned. `research.automatically_advanced` and `research.blocked_work_closed` preserve system attribution alongside the original owner and existing workflow history.
+The cycle's `automation` read model exposes only its current blocker, the one Research published. Source credentials are never returned. `research.automatically_advanced` and `research.blocked_work_closed` preserve system attribution alongside the original owner and existing workflow history.
 
-The cycle cap covers this automatic chain. Existing session budgets and review limits continue to apply. This change does not add live cost accounting or cross-machine code transport. A consolidation task publishes to main through the same pull request and operator merge as any unit marked to publish.
+Existing session budgets and review limits continue to apply. This change does not add live cost accounting or cross-machine code transport. A consolidation task publishes to main through the same pull request and operator merge as any unit marked to publish.
 
 ## Verification
 
-`tests/research-automatic.test.ts` exercises real Tasks, Experiments, Reflections, Reviews, Research, Workflows and Domain Events. Retained checks cover two-wave continuation with dependencies and lineage, cycle limits, restart recovery without duplicate reflections, and revoked-source isolation. Dedicated UI creation and selection tests were removed during suite consolidation.
+`tests/research-automatic.test.ts` exercises real Tasks, Experiments, Reviews, Research, Workflows and Domain Events. Retained checks cover completion with no reflection step, automatic completion without a repeat after restart, hosted consolidation, and revoked-source isolation. Dedicated UI creation and selection tests were removed during suite consolidation.

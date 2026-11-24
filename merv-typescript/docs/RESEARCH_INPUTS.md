@@ -4,8 +4,8 @@ Current creation policy: all new tasks and experiments use managed Git, without 
 
 Paper supplies current project intent. Knowledge assembles project records from
 the existing domain services. Code resolves exact machine observations. These are
-read capabilities used by Reflection and Research. They do not themselves create
-a reflection wave or a published research baseline.
+read capabilities used by Research. They do not themselves create a published
+research baseline.
 
 ## Current intent and frozen agent context
 
@@ -47,9 +47,8 @@ next actions. Domain services retain ownership of their records; Knowledge
 passes one State transaction through their public read contracts.
 
 Reference input supports record IDs and explicit `task:`, `experiment:`,
-`reflection:`, `research:`, `artifact:`, `review:`, `code-commit:` and
-`session-final:`
-prefixes. The resolver distinguishes `resolved`, `missing`,
+`research:`, `artifact:`, `review:`, `code-commit:` and `session-final:`
+prefixes. A `reflection:` reference is an unknown kind and resolves as `unsupported`. The resolver distinguishes `resolved`, `missing`,
 `unsupported` and `unavailable`. A foreign-project ID is missing in this
 project. Unsupported services are not fabricated. A resolved code-capture
 reference can still have a `pending` capture status: resolving the identity
@@ -64,8 +63,7 @@ Research claims are retired: each existing claim was converted into a Markdown t
 ## Retired corpus snapshots
 
 `Knowledge.capture` and `Knowledge.get` froze a corpus for the retired
-`reflection@1` and are removed. Reflection waves read live research instead. The
-`knowledge@2` migration deleted every saved snapshot and its request receipt;
+`reflection@1` and are removed. The `knowledge@2` migration deleted every saved snapshot and its request receipt;
 nothing read them.
 
 ## Exact Code observation identities

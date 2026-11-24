@@ -17,7 +17,6 @@ flowchart LR
   subgraph logic["Research logic"]
     experiments["Experiments<br/><small>questions and attempts</small>"]
     research["Research<br/><small>cycle coordinator</small>"]
-    reflections["Reflections<br/><small>lens waves</small>"]
     paper["Paper<br/><small>living paper</small>"]
   end
   subgraph foundations["Foundations"]
@@ -34,8 +33,7 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   worker -- "calls experiment.* tools" --> experiments
-  research -- "creates plan experiments" --> experiments
-  reflections -- "applies experiment name and active-limit rules" --> experiments
+  research -- "waits on experiments" --> experiments
   experiments -- "registers experiment workflow; keeps its leases" --> workflows
   experiments -- "requests design, results reviews" --> reviews
   experiments -- "registers four recipes" --> contextBuilder
@@ -50,7 +48,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Experiments carries a research question through planning, a run and two independent reviews on its own `experiment` workflow. Those reviewers' paper changes land in Methods and Results through Paper, and Research creates the experiments an approved reflection plan names; dotted arrows are optional bindings.
+Experiments carries a research question through planning, a run and two independent reviews on its own `experiment` workflow. Those reviewers' paper changes land in Methods and Results through Paper, and a research cycle waits on the experiments it selects; dotted arrows are optional bindings.
 
 Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 
@@ -143,8 +141,7 @@ packages/experiments/
 ```
 
 Knowledge now owns metadata inventory, exact reference resolution and immutable
-terminal corpus capture. Reflection waves and code consolidation remain separate
-implementation work.
+terminal corpus capture. Code consolidation remains separate implementation work.
 This program does not publish code.
 
 New experiments (`experiment@45`) use native Git on the assigned work branch. Planning and execution keep a writable checkout. Submitting a plan or results stops the producer and freezes its exact tree and parent without making a commit. An independent reviewer mounts that immutable tree with read-only Git metadata and an external scratch directory. A passing review durably journals the approval; Code retains the exact approved tree as a commit before admitting another writer or exposing accepted results to dependent work. Rejected submissions remain immutable evidence and do not create approval commits. Earlier published versions remain readable and must drain on the previous runtime before cutover. See [Always-on Git](../../docs/ALWAYS_GIT.md).

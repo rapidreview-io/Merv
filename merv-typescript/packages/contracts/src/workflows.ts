@@ -30,8 +30,6 @@ export interface WorkflowDefinition {
   edges: { from: string; action: string; to: string }[];
   /** Every graph is managed: only its program's handle changes an instance. */
   managed?: true;
-  /** While an instance is nonterminal, pause creation of these workflow types in its project. */
-  blocksStarts?: string[];
 }
 /** A deployed definition as the catalog reads it: each edge with the tool that takes it, if any. */
 export interface WorkflowCatalogEntry extends Omit<WorkflowDefinition, 'edges'> {
@@ -129,18 +127,6 @@ export interface WorkflowPolicy {
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
-  /**
-   * The instances each of `instanceIds` fans work out to without a dependency edge, such as a
-   * reflection's lenses, by instance id; one left out has none. A usage rollup over a
-   * dependency closure unions them in, so the sessions they cost are not lost from the figure
-   * of the cycle that caused them. It is asked for up to 1,000 instances at once, never an
-   * empty list, on behalf of no caller, and only reads.
-   */
-  children?(context: {
-    projectId: string;
-    instanceIds: readonly string[];
-    tx: Transaction;
-  }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext): WorkflowDescription | Promise<WorkflowDescription>;
   /**
    * Before a read decides many instances of this version at once (guidance, an overview, a

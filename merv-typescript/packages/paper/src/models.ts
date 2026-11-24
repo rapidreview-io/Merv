@@ -56,6 +56,7 @@ export interface PaperCitation {
   updatedBy: string;
 }
 export interface PaperSource {
+  /** Revisions a reflection review wrote, before Reflections was removed, keep that source. */
   kind: 'experiment' | 'reflection';
   id: string;
   revision: number;

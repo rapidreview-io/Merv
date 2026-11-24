@@ -28,7 +28,6 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
     ]),
   );
   const types = await ctx.get('tasks')?.platformTypes(ids);
-  const lenses = await ctx.get('reflections')?.platformLenses(ids);
   const standalone = await ctx.get('customerExperiments')?.customers(work);
   const { people, projects } = await ctx.scope.directory();
   const names = new Map(projects.map(({ id, name }) => [id, name]));
@@ -68,8 +67,7 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
         id: unit.id,
         kind: unit.workflow,
         type: types?.get(unit.id),
-        title: lenses?.get(unit.id)?.name ?? unit.name,
-        parent: lenses?.get(unit.id)?.reflectionId,
+        title: unit.name,
         project: project(unit.projectId),
         // A standalone experiment's person is its customer, by sign-in, else the email they gave.
         person: !found

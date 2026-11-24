@@ -134,4 +134,46 @@ ALTER TABLE research_automation ADD COLUMN unavailable_since TEXT;
 UPDATE research_automation SET unavailable_since=blocker_json::jsonb->>'unavailableSince' WHERE blocker_json IS NOT NULL;
 ALTER TABLE research_automation DROP COLUMN blocker_json;
 `,
+  // (unpublished) Reflections are removed: no code moves a reflection wave, its lenses or a
+  // research@6 cycle (which reflected) any more. Finished ones stay as history, read through their
+  // pinned definitions, with their reviews, sessions and artifacts; the release is refused while
+  // one is still open or a live session still serves a wave or lens, so end them with the
+  // previous image first. Reflections' own tables, guards and migration rows go, as do the
+  // automation columns only a plan's successor cycles wrote, and the blockers those cycles
+  // published. research_cycles.reflection_id stays, unwritten: the published retirement ledger
+  // (@merv/workflows/retired-instances), which other components' migrations embed and a fresh
+  // database may run after this one, reads it.
+  // Read-only prod counts first:
+  //   SELECT i.workflow, i.version, i.state, count(*) FROM wf_instances i
+  //   WHERE i.workflow IN ('reflection','reflection.lens') OR (i.workflow='research' AND i.version<7)
+  //   GROUP BY 1,2,3;
+  //   SELECT count(*) FROM worker_sessions s JOIN wf_instances i ON i.id=s.instance_id
+  //   WHERE s.status IN ('offered','active') AND i.workflow IN ('reflection','reflection.lens');
+  10: `
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM wf_instances i JOIN wf_definitions d ON d.name=i.workflow AND d.version=i.version
+    WHERE (i.workflow IN ('reflection','reflection.lens') OR (i.workflow='research' AND i.version<7))
+      AND NOT (d.definition_json::jsonb->'terminal') @> to_jsonb(i.state)) THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      MESSAGE = 'Retirement refused: a reflection wave, lens or research@6 cycle is still open; end it before this release';
+  END IF;
+  IF to_regclass('worker_sessions') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM worker_sessions s JOIN wf_instances i ON i.id=s.instance_id
+      WHERE s.status IN ('offered','active') AND i.workflow IN ('reflection','reflection.lens')) THEN
+      RAISE EXCEPTION USING ERRCODE = '23514',
+        MESSAGE = 'Retirement refused: a live session serves a reflection wave or lens; halt dispatch until it closes';
+    END IF;
+  END IF;
+END $check$;
+DELETE FROM wf_blockers WHERE instance_id IN (SELECT id FROM wf_instances
+  WHERE workflow IN ('reflection','reflection.lens') OR (workflow='research' AND version<7));
+DROP TABLE IF EXISTS reflection_lenses, reflection_commands, reflection_leases, reflections;
+DROP FUNCTION IF EXISTS reflection_identity_immutable_guard(), reflection_approved_immutable_guard(), reflection_no_delete_guard(), reflection_lens_identity_immutable_guard(), reflection_lens_output_immutable_guard(), reflection_lens_no_delete_guard(), reflection_lease_immutable_guard(), reflection_lease_no_delete_guard();
+DELETE FROM component_migrations WHERE component='reflections';
+DROP TRIGGER research_automation_identity ON research_automation;
+ALTER TABLE research_automation DROP COLUMN root_id, DROP COLUMN cycle_index, DROP COLUMN max_cycles;
+CREATE TRIGGER research_automation_identity BEFORE UPDATE OF research_id,project_id,source_json ON research_automation
+FOR EACH ROW EXECUTE FUNCTION research_identity_guard();
+`,
 };

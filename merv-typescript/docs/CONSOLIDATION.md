@@ -1,7 +1,7 @@
 # Consolidation tasks
 
-Research consolidates accepted code through an ordinary Task after independent reflection
-approval. The task depends on the accepted units missing from the project base and uses the
+Research consolidates accepted code through an ordinary Task once a cycle's selected work
+has ended. The task depends on the accepted units missing from the project base and uses the
 normal task delivery, independent review and Code publication path. Research waits for its
 publication before completing the cycle. See [Research](RESEARCH.md).
 

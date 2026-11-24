@@ -20,14 +20,10 @@ function CycleDetail({ row, shell }: ViewProps) {
   const relations = process.dependencies;
   const waitsOn = relations.filter((item) => item.direction === 'depends_on');
   const unblocks = relations.filter((item) => item.direction === 'required_by');
-  const reflections = pathOf(shell.rows, 'reflections');
   const tasks = pathOf(shell.rows, 'tasks');
-  const phases = [
-    ...(record.reflectionId && reflections
-      ? [[`${reflections}/${record.reflectionId}`, 'Reflection']]
-      : []),
-    ...(tasks ? record.integrations.map((id) => [`${tasks}/${id}`, 'Consolidation task']) : []),
-  ];
+  const phases = tasks
+    ? record.integrations.map((id) => [`${tasks}/${id}`, 'Consolidation task'])
+    : [];
   return (
     <RecordPage
       back={<BackLink home={back.to} label={back.label} />}

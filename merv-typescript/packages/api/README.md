@@ -29,7 +29,7 @@ flowchart LR
     pi["Pi"]
   end
   subgraph researchLayer["Research logic"]
-    researchLogic["Tasks, Experiments, Knowledge,<br/>Reflections, Research, Paper"]
+    researchLogic["Tasks, Experiments, Knowledge,<br/>Research, Paper"]
   end
   browser -- "HTTP /ui and routes" --> api
   workerAgent -- "HTTP /mcp" --> api

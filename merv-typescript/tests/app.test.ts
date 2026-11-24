@@ -45,7 +45,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 27);
+    assert.equal(catalog.length, 25);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -60,7 +60,7 @@ test('assembled Cordis application preserves current MCP task closure across two
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     // Long-lived credential administration stays on Merv's pages; short-lived Git access is listed.
-    // Nor what it cannot use: a leased worker's writes, a Pi responder's answer, retiring waves.
+    // Nor what it cannot use: a leased worker's writes, a Pi responder's answer.
     for (const name of [
       'actor.credentials',
       'actor.issue_token',
@@ -71,21 +71,13 @@ test('assembled Cordis application preserves current MCP task closure across two
       ),
       ...['context', 'checkpoint', 'submit_delivery'].map((v) => `task.${v}`),
       'session.question.resolve',
-      ...['create', 'list', 'get', 'lens', 'submit_lens', 'submit', 'end'].map(
-        (v) => `reflection.${v}`,
-      ),
+      ...['read', 'write', 'submit', 'submit_lens'].map((v) => `reflection.${v}`),
     ])
       assert.ok(
         !catalog.some((tool) => tool.name === name),
         `${name} must not be offered to an agent`,
       );
-    for (const name of [
-      'report.read',
-      'reflection.read',
-      'task.write',
-      'task.read',
-      'project.read',
-    ])
+    for (const name of ['report.read', 'research.read', 'task.write', 'task.read', 'project.read'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         name,

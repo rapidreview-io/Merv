@@ -14,9 +14,8 @@ import type { AgentEvent } from '@merv/sessions/agent-stream';
  * calls the MCP endpoint with the credential it was registered with, so every call it makes
  * is admitted and observed the way a real one is.
  *
- * It runs after every other seed because the reflection wave it opens last pauses new tasks
- * and experiments. What it does NOT make is a GPU run: compute is granted only to a project a
- * signed-in person created, and this demo bootstraps its project.
+ * What it does NOT make is a GPU run: compute is granted only to a project a signed-in person
+ * created, and this demo bootstraps its project.
  */
 
 /** A tool call over HTTP with one bearer token, answering the result or throwing the error. */
@@ -859,42 +858,6 @@ export async function seedRunning(
     requestId: 'demo-running-ablation',
   });
 
-  // Last, since an open wave pauses new work: a reflection with one lens taken by an agent.
-  const wave = await ctx.reflections.create(owner, {
-    title: 'Mid-point reflection: what the sweeps show',
-    requestId: 'demo-running-reflection',
-  });
-  // Its first lens has reported; an agent is on the second.
-  const [first, lens] = wave.lenses;
-  const reporter = await agent('demo-running-lens-report', studio, first);
-  const assigned = await reporter.call('reflection.lens', { lensId: first.id });
-  const report = await reporter.call('artifact.create', {
-    title: 'Evidence lens: what the sweeps show',
-    content: [
-      '# Summary',
-      'Both sweeps agree: the grokking step falls as weight decay grows, at p = 97 and at p = 113.',
-      '',
-      '# Evidence',
-      '- Decay 0.3 groks at step 14,200; decay 1.0 at 9,810; decay 3.0 at 6,050 (p = 97).',
-      '- The p = 113 run at decay 0.3 has not grokked by step 4,000, as expected.',
-      '',
-      '# Gaps',
-      'One seed per setting so far; the warmup ablation was returned for more seeds.',
-    ].join('\n'),
-    mediaType: 'text/markdown',
-  });
-  await reporter.call('reflection.submit_lens', {
-    lensId: first.id,
-    artifactId: report.id,
-    expectedRevision: assigned.workflow?.revision ?? first.workflow.revision,
-    requestId: 'demo-running-lens-report',
-  });
-  leases.splice(leases.indexOf(reporter), 1);
-  await work.release(reporter.held);
-  const reflecting = await agent('demo-running-lens', studio, lens);
-  await reflecting.call('reflection.lens', { lensId: lens.id });
-  await reflecting.call('project.records');
-  reflecting.reads.push(['reflection.lens', { lensId: lens.id }], ['project.records', {}]);
   return { machines, leases, close: () => work.close() };
 }
 

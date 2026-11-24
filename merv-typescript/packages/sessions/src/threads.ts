@@ -95,7 +95,7 @@ const fullRoom = (): Room => ({
   download: READ_BYTES,
   gets: READ_GETS,
 });
-/** The most work items one read of their threads names: a wave and every attempt's lenses. */
+/** The most work items one read of their threads names. */
 const LIST_INSTANCES = 100;
 /** How many threads that want no attention a page of the project's threads holds. */
 const PAGE = 50;

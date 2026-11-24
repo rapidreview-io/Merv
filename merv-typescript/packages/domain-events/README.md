@@ -19,7 +19,6 @@ flowchart LR
   subgraph researchLayer["Research logic"]
     tasks["Tasks"]
     experiments["Experiments"]
-    reflections["Reflections"]
     research["Research"]
   end
   scope -- "emits actor.revoked" --> state
@@ -32,11 +31,10 @@ flowchart LR
   domainEvents -- "delivers workflow.transition" --> research
   domainEvents -- "delivers session.closed" --> tasks
   domainEvents -- "delivers session.closed" --> experiments
-  domainEvents -- "delivers session.closed" --> reflections
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Publishers never call Domain events: they append to State's log in their own transaction, and the dispatcher reads that log and hands each event to the consumers subscribed to its type. Closing a session, for example, releases the task, experiment and reflection leases it held.
+Publishers never call Domain events: they append to State's log in their own transaction, and the dispatcher reads that log and hands each event to the consumers subscribed to its type. Closing a session, for example, releases the task and experiment leases it held.
 
 Publishers append events through State in the same transaction as their change. They do not depend on delivery being available. Consumers register a stable ID, distinct event types, an explicit first-install position (`beginning` or `now`), and a handler that may await database operations. Reinstalling the same ID always resumes its persisted cursor. Changing subscribed types requires a new ID and an explicit replay choice.
 

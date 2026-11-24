@@ -16,7 +16,7 @@ flowchart LR
     domainEvents["Domain events<br/><small>delivers the event log</small>"]
   end
   subgraph researchLayer["Research logic"]
-    researchLogic["Tasks, Experiments, Knowledge,<br/>Reflections, Research, Paper"]
+    researchLogic["Tasks, Experiments, Knowledge,<br/>Research, Paper"]
   end
   subgraph externalLayer["External"]
     postgres[("PostgreSQL")]

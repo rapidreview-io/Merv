@@ -23,41 +23,6 @@ import {
 import { checkInstance, checkRevision, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowLeases } from './leases.js';
 
-/**
- * An open instance of any stored version whose definition pauses starts of `workflow`. Only
- * that version's nonterminal states are looked for, on the (project, workflow, version, state)
- * index, so the ended instances that make up most of a project are never read; a version with
- * no nonterminal state never pauses anything.
- */
-async function openBlocker(
-  tx: Transaction,
-  projectId: string,
-  workflow: string,
-): Promise<{ id: string; workflow: string } | undefined> {
-  const blocking = (
-    await tx.all<{ definition_json: string }>(
-      `SELECT definition_json FROM wf_definitions WHERE (definition_json::jsonb -> 'blocksStarts') @> jsonb_build_array(?::text)`,
-      workflow,
-    )
-  )
-    .map((row) => JSON.parse(row.definition_json) as WorkflowDefinition)
-    .map((definition) => ({
-      definition,
-      open: definition.states.filter((state) => !definition.terminal.includes(state)),
-    }))
-    .filter(({ open }) => open.length);
-  if (!blocking.length) return undefined;
-  return await tx.get<{ id: string; workflow: string }>(
-    `SELECT id,workflow FROM wf_instances WHERE project_id=? AND (${blocking
-      .map(
-        ({ open }) => `(workflow=? AND version=? AND state IN (${open.map(() => '?').join(',')}))`,
-      )
-      .join(' OR ')}) LIMIT 1`,
-    projectId,
-    ...blocking.flatMap(({ definition, open }) => [definition.name, definition.version, ...open]),
-  );
-}
-
 /** The commands that change an instance, with their receipts and history. */
 export class WorkflowCommands extends WorkflowLeases {
   /**
@@ -215,13 +180,6 @@ export class WorkflowCommands extends WorkflowLeases {
       );
       this.requireActive(owner);
       if (replay) return replay;
-      const blocker = await openBlocker(transaction, caller.projectId, name);
-      check(
-        !blocker,
-        'workflow_creation_paused',
-        `New ${name} work is paused while ${blocker?.workflow} ${blocker?.id} is active. Existing work may continue.`,
-        409,
-      );
       const time = now();
       const snapshot: WorkflowSnapshot = {
         id: newId('wf'),

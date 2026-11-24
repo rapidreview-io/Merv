@@ -1,5 +1,5 @@
 {
-  "research": ["tasks", "experiments", "knowledge", "reflections", "research", "paper"],
+  "research": ["tasks", "experiments", "knowledge", "research", "paper"],
   "library": ["contracts"],
   "labels": {
     "api": "API + Tools",
