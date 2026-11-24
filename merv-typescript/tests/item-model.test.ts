@@ -73,7 +73,7 @@ test('the key metric is the measure the plan names, else a held-out score, never
   assert.equal(keyMetric(['cost_usd']), undefined);
   assert.deepEqual(
     armsOfRuns([{ run: 'baseline-seed1' }, { run: 'baseline-seed2' }, { run: 'ablation_s1' }]),
-    [{ name: 'baseline', detail: '×2 seeds' }, { name: 'ablation' }],
+    [{ name: 'ablation' }, { name: 'baseline', detail: '×2 seeds' }],
   );
   // A run of one point draws no line; two runs share one frame.
   assert.deepEqual(sparkPaths([{ id: 'a', color: '#2a78d6', points: [[0, 1]] }]), []);

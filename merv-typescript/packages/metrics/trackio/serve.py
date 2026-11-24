@@ -7,7 +7,10 @@ if not os.environ.get("TRACKIO_WRITE_TOKEN"):
     print("TRACKIO_WRITE_TOKEN is not set; Trackio stays idle", flush=True)
     signal.pause()
 
-os.environ.setdefault("TRACKIO_COLOR_PALETTE", "#2563eb,#0f766e,#c81e1e,#b45309,#475569,#5f6875")
+# The same eight colour-blind-checked slots, in the same order, as Merv's own charts (chart.ts).
+os.environ.setdefault(
+    "TRACKIO_COLOR_PALETTE", "#2a78d6,#eb6834,#1baf7a,#eda100,#e87ba4,#008300,#6250d6,#e34948"
+)
 # Trackio links its logo through /file, which Merv serves only for project media: draw none.
 for key in ("TRACKIO_LOGO_LIGHT_URL", "TRACKIO_LOGO_DARK_URL"):
     os.environ.setdefault(key, "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='1'/%3E")

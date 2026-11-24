@@ -123,7 +123,9 @@ export function armsOfRuns(runs: readonly { run: string }[]): Arm[] {
     const arm = run.replace(/[-_ .]?(seed|s|rep|trial|run)[-_ ]?\d+$/i, '') || run;
     groups.set(arm, (groups.get(arm) ?? 0) + 1);
   }
-  return [...groups].map(([name, n]) => ({ name, ...(n > 1 && { detail: `×${n} seeds` }) }));
+  return [...groups]
+    .sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))
+    .map(([name, n]) => ({ name, ...(n > 1 && { detail: `×${n} seeds` }) }));
 }
 
 /** One step of an item's way, as the progress trail draws it. */

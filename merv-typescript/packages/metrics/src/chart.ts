@@ -45,7 +45,7 @@ export interface ItemMetrics {
     muted?: true;
     points: [number, number][];
   }[];
-  /** The newest current run's last value of the key metric. */
+  /** The best last value of the key metric among current runs (lowest for a loss). */
   last?: number;
   /** Where the runs say they ran (`machine` in their config, or the one connect was told). */
   machine?: string;

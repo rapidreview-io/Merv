@@ -92,7 +92,7 @@ export function ExperimentSummary({
   const arms = plan.arms.length
     ? plan.arms
     : metrics
-      ? armsOfRuns(metrics.runs.filter((run) => !run.muted).reverse())
+      ? armsOfRuns(metrics.runs.filter((run) => !run.muted))
       : [];
   return (
     <ItemSummary

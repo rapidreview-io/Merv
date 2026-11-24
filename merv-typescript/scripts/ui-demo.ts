@@ -15,7 +15,7 @@ import { buildMachine, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
 import { seedTrajectory } from './ui-demo-trajectory.js';
 import { startTrackio } from './ui-demo-trackio.js';
-import { seedItems } from './ui-demo-items.js';
+import { beginRound, seedItems } from './ui-demo-items.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
@@ -344,28 +344,32 @@ async function main() {
     leases,
     close: closeRunning,
     items: seeded,
-  } = await seedRunning(app, {
-    url,
-    directory,
-    owner,
-    token: boot.token,
-    producer: p,
-    producerCaller,
-    reviewer: r,
-    reviewerCaller,
-    offerTo,
-    trackio,
-    sweep: {
-      taskId: sweepTask.id,
-      sessionId: execution.id,
-      runnerId: 'local-demo',
-      call: mcp(url, working.token),
-      reads: [
-        ['workflow.assignment', { instanceId: sweepTask.id }],
-        ['task.get', { taskId: sweepTask.id }],
-      ],
-    },
-  });
+  } = await (async () => {
+    // The autoresearch round begins before the experiments it holds.
+    if (trackio) await beginRound(app, owner);
+    return await seedRunning(app, {
+      url,
+      directory,
+      owner,
+      token: boot.token,
+      producer: p,
+      producerCaller,
+      reviewer: r,
+      reviewerCaller,
+      offerTo,
+      trackio,
+      sweep: {
+        taskId: sweepTask.id,
+        sessionId: execution.id,
+        runnerId: 'local-demo',
+        call: mcp(url, working.token),
+        reads: [
+          ['workflow.assignment', { instanceId: sweepTask.id }],
+          ['task.get', { taskId: sweepTask.id }],
+        ],
+      },
+    });
+  })();
   // The Git writer's machine stays present, and its agent keeps reading its assignment.
   if (git) {
     const { unitId, sessionId, runnerId, secret } = git.writer;

@@ -15,6 +15,7 @@ import {
   PALETTE,
   figure,
   keyMetric,
+  lowerIsBetter,
   type Chart,
   type ChartMark,
   type ItemMetrics,
@@ -751,7 +752,11 @@ export class MetricsService {
           points: run.metrics[key.metric],
         }));
       if (!lines.length) continue;
-      const newest = lines.find((line) => !line.muted) ?? lines[0];
+      // The best value any current run has reached: what the item has shown so far.
+      const finals = (
+        lines.some((line) => !line.muted) ? lines.filter((l) => !l.muted) : lines
+      ).map((line) => line.points.at(-1)![1]);
+      const best = lowerIsBetter(key.metric) ? Math.min(...finals) : Math.max(...finals);
       const costs = key.cost
         ? mine.flatMap((run) =>
             run.metrics[key.cost!]?.length ? [run.metrics[key.cost!].at(-1)![1]] : [],
@@ -762,7 +767,7 @@ export class MetricsService {
         metric: key.metric,
         metrics: key.metrics,
         runs: lines,
-        last: newest.points.at(-1)![1],
+        last: best,
         ...(machine && { machine }),
         ...(costs.length && { costUsd: Math.round(costs.reduce((a, b) => a + b, 0) * 100) / 100 }),
       };
