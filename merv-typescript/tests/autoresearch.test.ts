@@ -18,8 +18,14 @@ async function fixture(t: TestContext) {
   const { app, owner, token, ok, sessions } = f;
   const service = app.ctx.autoresearch as unknown as AutoresearchService;
   // What Sandboxes says the round's compute has cost: the test sets it.
-  let spent = 0;
-  service.spendSource = { since: async () => ({ usd: spent }) };
+  // null: Sandboxes does not answer.
+  let spent: number | null = 0;
+  service.spendSource = {
+    since: async () => {
+      if (spent === null) throw new Error('Sandboxes is unreachable');
+      return { usd: spent };
+    },
+  };
   await waitForManagedCode(app.ctx.codeWork, owner);
   const pump = async () => {
     await app.ctx.domainEvents.drain();
@@ -114,7 +120,7 @@ async function fixture(t: TestContext) {
   return {
     ...f,
     service,
-    setSpent: (usd: number) => void (spent = usd),
+    setSpent: (usd: number | null) => void (spent = usd),
     pump,
     status,
     write,
@@ -386,4 +392,80 @@ test('autoresearch: only the manager decides, and a person pauses and resumes it
   now = await f.write('configure', { enabled: false });
   assert.equal(now.enabled, false);
   assert.equal(now.managerId, null);
+});
+
+test('autoresearch: a run that ends while the manager waits on the person reaches its next visit', async (t) => {
+  const f = await fixture(t);
+  const on = await f.write('configure', { enabled: true, goal: 'Compare two baselines.' });
+  const managerId = on.managerId!;
+  let a!: string;
+  let b!: string;
+  await f.visit(managerId, async (worker, session) => {
+    a = (await f.experiment(worker, 'Alpha')).id;
+    b = (await f.experiment(worker, 'Beta')).id;
+    await f.decide(worker, session, 'Started both baselines.');
+  });
+  await f.finish(a);
+  // The manager asks the person; B ends meanwhile, while it is still managing.
+  const asking = await f.visit(managerId, async (worker, session) => {
+    assert.match(session.assignment.brief, /Experiment "Alpha"/);
+    assert.doesNotMatch(session.assignment.brief, /Experiment "Beta"/);
+    await f.app.ctx.tools.call('session.ask_owner', worker, { question: 'A failed. Keep B?' });
+  });
+  await f.finish(b);
+  assert.equal((await f.status()).wakes.pending, 1);
+  const answer = await f.ok('POST', `/sessions/threads/${asking.threadId}/messages`, f.token, {
+    body: 'Yes, keep B.',
+    requestId: randomUUID(),
+  });
+  await f.pump();
+  await f.visit(managerId, async (worker, session) => {
+    // Its brief reports B, which ended while it waited, not "no work ended".
+    assert.match(session.assignment.brief, /What woke you \(2 runs ended\)/);
+    assert.match(session.assignment.brief, new RegExp(`Experiment "Beta" \\(${b}\\) ended`));
+    assert.doesNotMatch(session.assignment.brief, /No work ended/);
+    await f.app.ctx.tools.call('session.message.ack', worker, {
+      messageId: answer.message.id,
+      requestId: randomUUID(),
+    });
+    // Both reports were read here, so nothing is left to wait for.
+    await assert.rejects(f.decide(worker, session, 'Waiting.'), /Nothing you started is running/);
+    await f.app.ctx.tools.call('autoresearch.decide', worker, {
+      autoresearchId: managerId,
+      expectedRevision: session.expectedRevision,
+      note: 'Both baselines failed; ending the round.',
+      next: 'end',
+      summary: 'Neither baseline reproduced.',
+      requestId: randomUUID(),
+    });
+  });
+  const now = await f.status();
+  assert.equal(now.state, 'idle');
+  assert.equal(now.wakes.pending, 0);
+});
+
+test('autoresearch: when Sandboxes does not report the spend, the loop pauses and asks the person', async (t) => {
+  const f = await fixture(t);
+  const on = await f.write('configure', { enabled: true, goal: 'Probe the model.' });
+  const managerId = on.managerId!;
+  f.setSpent(null);
+  await f.visit(managerId, async (worker, session) => {
+    assert.match(session.assignment.brief, /an unknown amount/);
+    await assert.rejects(f.experiment(worker, 'Probe'), (error: Error & { code?: string }) => {
+      assert.equal(error.code, 'autoresearch_spend_unavailable');
+      return true;
+    });
+    await f.decide(worker, session, 'Sandboxes did not report the spend; waiting for the person.');
+  });
+  let now = await f.status();
+  assert.equal(now.state, 'paused');
+  assert.equal(now.paused, 'cap');
+  const ask = await f.yours(managerId);
+  assert.equal(ask?.blocker?.provider, 'autoresearch');
+  assert.match(ask?.ask ?? '', /resume .* once Sandboxes answers again/);
+  // Sandboxes answers again; the person resumes and the manager goes on.
+  f.setSpent(0);
+  now = await f.write('resume');
+  assert.equal(now.state, 'managing');
+  assert.equal(await f.yours(managerId), undefined);
 });

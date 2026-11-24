@@ -52,6 +52,8 @@ const CONSUMER = 'autoresearch.wakes.v1';
 /** How long a spend read may take before scheduling is refused for now (503). */
 const SPEND_MS = 5_000;
 const LINES = 30;
+/** The label a visit's references give each run its brief reports as ended. */
+const ENDED_RUN = 'Ended run';
 const RUNS = 50;
 /** How many of an ended run's own last events its wake report carries. */
 const RESULT_EVENTS = 4;
@@ -229,7 +231,7 @@ export class AutoresearchService implements Autoresearch {
     if (spend.spentUsd === null)
       throw new MervError(
         'autoresearch_spend_unavailable',
-        'Sandboxes did not say what this round has spent, so no new work is started now. Nothing changed; try again in a minute, or end your visit with autoresearch.decide.',
+        'Sandboxes did not say what this round has spent, so no new work is started now. Nothing changed; try again in a minute. If it still does not answer, end your visit with autoresearch.decide: next "wait" (once nothing you started runs, the person is asked to resume the loop when Sandboxes answers again), or next "end" with a summary.',
         503,
       );
     if (!spend.allowsRun)
@@ -359,8 +361,10 @@ export class AutoresearchService implements Autoresearch {
   async assignment(context: WorkflowCheckContext): Promise<WorkflowAssignmentContent> {
     const { snapshot, tx } = context;
     const row = await this.row(snapshot.projectId, tx);
+    // Those given to this visit, and those that ended since while it was still here (a run that
+    // ended while it waited for the person's answer): its decision marks these as read.
     const wakes = await tx.all<WakeRow>(
-      'SELECT * FROM autoresearch_wakes WHERE project_id=? AND manager_id=? AND delivered_revision=? ORDER BY _merv_rowid',
+      'SELECT * FROM autoresearch_wakes WHERE project_id=? AND manager_id=? AND (delivered_revision=? OR delivered_revision IS NULL) ORDER BY _merv_rowid',
       snapshot.projectId,
       snapshot.id,
       snapshot.revision,
@@ -393,7 +397,7 @@ export class AutoresearchService implements Autoresearch {
       name: 'Autoresearch manager',
       brief,
       references: [
-        ...wakes.map((wake) => ({ kind: 'workflow', id: wake.run_id, label: 'Ended run' })),
+        ...wakes.map((wake) => ({ kind: 'workflow', id: wake.run_id, label: ENDED_RUN })),
         ...open.map((run) => ({ kind: 'workflow', id: run.id, label: 'Running' })),
       ],
       handoff: {
@@ -680,6 +684,18 @@ export class AutoresearchService implements Autoresearch {
         'The manager moved on since this visit began',
         409,
       );
+      // What this visit's brief reported is read: the rest wakes it again.
+      const shown = (await this.sessions.session(caller, tx)).assignment.references
+        .filter((item) => item.label === ENDED_RUN)
+        .map((item) => item.id);
+      if (shown.length)
+        await tx.run(
+          `UPDATE autoresearch_wakes SET delivered_revision=? WHERE project_id=? AND manager_id=? AND delivered_revision IS NULL AND run_id IN (${shown.map(() => '?').join(',')})`,
+          manager.revision,
+          row.project_id,
+          row.manager_id,
+          ...shown,
+        );
       if (input.next === 'wait') {
         const pending = await this.count(
           tx,
@@ -756,6 +772,7 @@ export class AutoresearchService implements Autoresearch {
     manager: WorkflowSnapshot,
     why: AutoresearchPause,
     tx: Transaction,
+    read?: AutoresearchSpend,
   ) {
     const moved = await this.move(this.open(), caller, manager, 'pause', tx);
     await tx.run(
@@ -764,7 +781,7 @@ export class AutoresearchService implements Autoresearch {
       row.project_id,
     );
     const paused = { ...row, paused: why };
-    const spend = await this.spend(paused, tx);
+    const spend = read ?? (await this.spend(paused, tx));
     await this.line(
       tx,
       caller,
@@ -774,7 +791,9 @@ export class AutoresearchService implements Autoresearch {
       why === 'person'
         ? 'Paused by the person.'
         : why === 'cap'
-          ? `Paused at the spend cap: ${spendLine(spend)}`
+          ? spend.spentUsd === null
+            ? 'Paused: Sandboxes did not report the spend, so no run can be admitted.'
+            : `Paused at the spend cap: ${spendLine(spend)}`
           : `Paused after ${row.automatic_wakes} automatic wakes in a row; updates are queued.`,
     );
     await this.publish(paused, moved, tx, spend);
@@ -806,34 +825,50 @@ export class AutoresearchService implements Autoresearch {
     tx: Transaction,
     spend?: AutoresearchSpend,
   ) {
+    const capped = manager.state === 'paused' && row.paused === 'cap';
+    const read = capped ? (spend ?? (await this.spend(row, tx))) : undefined;
     const blockers =
-      manager.state === 'paused' && row.paused === 'cap'
+      capped && read!.spentUsd === null
         ? [
             {
               key: 'cap',
-              code: 'autoresearch_cap_reached',
-              status: 409,
-              message: `Autoresearch reached its spend cap. ${spendLine(spend ?? (await this.spend(row, tx)))}`,
-              next: 'Choose: raise the cap with autoresearch.write configure (capUsd) and the manager goes on, or end the round with autoresearch.write end_round.',
+              code: 'autoresearch_spend_unavailable',
+              status: 503,
+              message:
+                'Autoresearch paused: Sandboxes did not report what this round has spent, so the manager cannot start another run, and nothing it started is running.',
+              next: 'Choose: resume with autoresearch.write resume once Sandboxes answers again (the spend page shows it), or end the round with autoresearch.write end_round.',
               whose: 'owner' as const,
               related: [],
               revision: manager.revision,
             },
           ]
-        : manager.state === 'paused' && row.paused === 'wake_limit'
+        : capped
           ? [
               {
-                key: 'wake_limit',
-                code: 'autoresearch_wake_limit',
+                key: 'cap',
+                code: 'autoresearch_cap_reached',
                 status: 409,
-                message: `The manager woke ${row.automatic_wakes} times in a row on its own, the limit (${row.wake_limit}). What finished since is queued for it.`,
-                next: 'Choose: resume with autoresearch.write resume, or write to the manager’s thread, and it goes on; or end the round with autoresearch.write end_round.',
+                message: `Autoresearch reached its spend cap. ${spendLine(read!)}`,
+                next: 'Choose: raise the cap with autoresearch.write configure (capUsd) and the manager goes on, or end the round with autoresearch.write end_round.',
                 whose: 'owner' as const,
                 related: [],
                 revision: manager.revision,
               },
             ]
-          : [];
+          : manager.state === 'paused' && row.paused === 'wake_limit'
+            ? [
+                {
+                  key: 'wake_limit',
+                  code: 'autoresearch_wake_limit',
+                  status: 409,
+                  message: `The manager woke ${row.automatic_wakes} times in a row on its own, the limit (${row.wake_limit}). What finished since is queued for it.`,
+                  next: 'Choose: resume with autoresearch.write resume, or write to the manager’s thread, and it goes on; or end the round with autoresearch.write end_round.',
+                  whose: 'owner' as const,
+                  related: [],
+                  revision: manager.revision,
+                },
+              ]
+            : [];
     await this.workflows.replaceBlockers(
       {
         projectId: row.project_id,
@@ -1013,9 +1048,10 @@ export class AutoresearchService implements Autoresearch {
       return;
     }
     const spend = await this.spend(row, tx);
-    // Nothing runs and nothing more fits: the manager cannot go on without the person.
-    if (spend.openRuns === 0 && spend.spentUsd !== null && !spend.allowsRun)
-      await this.pause(caller, row, manager, 'cap', tx);
+    // Nothing runs and no run fits, or none can be admitted while the spend is unknown: nothing
+    // would ever wake the manager, so it waits for the person, who is asked in Needs you.
+    if (spend.openRuns === 0 && !spend.allowsRun)
+      await this.pause(caller, row, manager, 'cap', tx, spend);
   }
   /** A message to the manager's thread: the person spoke. */
   private async spoke(caller: Caller, row: Row, tx: Transaction) {

@@ -64,7 +64,10 @@ passes or fails ends in one of these), it records a wake: the run's final state,
 counts as success, what its final move carried, its last own records (a failure's reason, a
 review's verdict) and where to read the rest. If the manager is `waiting`, it is moved by `wake`
 to `managing` and the waiting wakes are given to that visit. Wakes that arrive while it works
-or is paused wait for its next visit. Startup re-reads every project whose loop is on.
+or is paused wait for its next visit. A visit's brief reports both the wakes given to it and
+any that ended since while the manager was still in `managing` (for example, while it waited
+for the person's answer). Its `autoresearch.decide` marks exactly the runs its brief reported
+as read, so whatever ended later wakes it again. Startup re-reads every project whose loop is on.
 
 The loop acts under the delegation of the admin who turned it on, which is checked again at
 each move, as [continuous research](CONTINUOUS_RESEARCH.md) does. A refusal is published on the
@@ -86,6 +89,10 @@ zero, and refuses with `autoresearch_spend_unavailable` (503).
 
 When nothing of the manager's runs and no further run fits, the loop pauses (`paused: cap`) and
 Needs you asks the person to choose: raise the cap, which resumes the manager, or end the round.
+The same happens when nothing runs and the spend is unknown: no run can be admitted, so nothing
+would wake the manager. Needs you then says Sandboxes did not report the spend
+(`autoresearch_spend_unavailable`), and asks the person to resume once it answers again, or end
+the round.
 
 ## Wake limit
 
@@ -132,5 +139,9 @@ is a real Sessions offer, and the test plays the agent through the manager's gra
 4. Raising the cap resumes the manager. The wake limit then pauses the loop, and the person's
    message to the thread resumes it.
 
-A second test covers a task run, refusals of the person's and the manager's wrong moves, and
-pause, resume and turning it off.
+Further tests cover:
+
+- a task run, refusals of the person's and the manager's wrong moves, and pause, resume and
+  turning it off;
+- a run that ends while the manager waits on the person, which its next visit reports;
+- an unknown spend with nothing running, which pauses the loop and asks the person.
