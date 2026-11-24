@@ -5,6 +5,9 @@ flowchart BT
     merv_artifact_tools["merv-artifact-tools"]
     merv_artifact_ui["merv-artifact-ui"]
     artifacts["artifacts"]
+    autoresearch["autoresearch"]
+    merv_autoresearch_tools["merv-autoresearch-tools"]
+    merv_autoresearch_ui["merv-autoresearch-ui"]
     blobs["blobs"]
     board["board"]
     merv_board_links["merv-board-links"]
@@ -103,6 +106,15 @@ flowchart BT
   artifacts --> state
   artifacts --> scope
   artifacts --> blobs
+  autoresearch --> state
+  autoresearch --> scope
+  autoresearch --> workflows
+  autoresearch --> domainEvents
+  autoresearch --> sessions
+  merv_autoresearch_tools --> autoresearch
+  merv_autoresearch_tools --> tools
+  merv_autoresearch_ui --> autoresearch
+  merv_autoresearch_ui --> ui
   board --> state
   board --> scope
   merv_board_links --> board

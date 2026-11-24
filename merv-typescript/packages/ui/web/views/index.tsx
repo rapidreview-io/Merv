@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
 import type { ShellData } from '../shell-types';
 import { ArtifactsView } from './artifacts';
+import { AutoresearchView } from './autoresearch';
 import { MetricsView } from './metrics';
 import { BoardsView } from './board';
 import { CodeView } from './code';
@@ -50,6 +51,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   paper: PaperView,
   pi: PiView,
   research: ResearchView,
+  autoresearch: AutoresearchView,
   work: WorkView,
   'legacy-history': LegacyHistoryView,
   // The generic kind: a row a plugin describes through its manifest.

@@ -88,7 +88,8 @@
         "label": "Research coordination",
         "purpose": "Choose and advance the research cycle using the capabilities below.",
         "members": [
-          "research"
+          "research",
+          "autoresearch"
         ]
       }
     ],
@@ -142,6 +143,7 @@
         "purpose": "Expose a domain through the shared Tools registry, which lives in layer 2.",
         "members": [
           "merv-artifact-tools",
+          "merv-autoresearch-tools",
           "merv-board-tools",
           "merv-code-tools",
           "merv-experiments-tools",
@@ -174,6 +176,7 @@
         "members": [
           "ui",
           "merv-artifact-ui",
+          "merv-autoresearch-ui",
           "merv-board-ui",
           "merv-code-ui",
           "merv-experiments-ui",
@@ -318,6 +321,7 @@
       "caption": "Discovered in source",
       "members": [
         "merv-admin",
+        "autoresearch",
         "merv-board-links",
         "codeWork",
         "customerExperiments",
@@ -438,6 +442,80 @@
       "owner": "artifacts",
       "label": "Artifacts",
       "purpose": "Owns immutable file metadata, content hashes and permission-checked reads. It stores records in State and bytes through Blobs.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-autoresearch",
+      "source": "packages/autoresearch/src/index.ts",
+      "provides": [
+        "autoresearch"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "domainEvents",
+        "sessions"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "autoresearch",
+      "group": "other",
+      "owner": "autoresearch",
+      "label": "Autoresearch",
+      "purpose": "A manager agent per research project: a Sessions worker on the project's autoresearch workflow, woken when a task or experiment it started ends. It schedules the next work through the ordinary task and experiment tools within a spend cap (Sandboxes spend, admitted at each start through Workflows), asks the person only for real decisions, and pauses for them at the cap and after a run of automatic wakes.",
+      "exposedTools": [
+        {
+          "name": "autoresearch.decide",
+          "description": "Autoresearch manager only: end this visit with your decision. next \"wait\" waits for the work you started (you wake in this same conversation as soon as any of it ends); next \"end\" ends the round, with a summary of what it found. note is the one line the person reads about this decision, at most 200 characters. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-autoresearch-tools",
+      "source": "packages/autoresearch/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-autoresearch-tools",
+      "group": "front",
+      "owner": "autoresearch",
+      "label": "Autoresearch · tools adapter",
+      "purpose": "Connects Autoresearch to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "autoresearch.decide",
+          "description": "Autoresearch manager only: end this visit with your decision. next \"wait\" waits for the work you started (you wake in this same conversation as soon as any of it ends); next \"end\" ends the round, with a summary of what it found. note is the one line the person reads about this decision, at most 200 characters. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-autoresearch-ui",
+      "source": "packages/autoresearch/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "autoresearch",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-autoresearch-ui",
+      "group": "front",
+      "owner": "autoresearch",
+      "label": "Autoresearch · ui adapter",
+      "purpose": "Connects Autoresearch to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -2718,6 +2796,51 @@
       "optional": false
     },
     {
+      "from": "autoresearch",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "autoresearch",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-tools",
+      "to": "autoresearch",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-ui",
+      "to": "autoresearch",
+      "optional": false
+    },
+    {
+      "from": "merv-autoresearch-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "board",
       "to": "state",
       "optional": false
@@ -4009,10 +4132,10 @@
     }
   ],
   "counts": {
-    "plugins": 86,
-    "providers": 39,
-    "adapters": 47,
-    "dependencies": 272
+    "plugins": 89,
+    "providers": 40,
+    "adapters": 49,
+    "dependencies": 281
   },
   "network": [
     {

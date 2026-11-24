@@ -258,7 +258,9 @@ need `read`; a handle's commands need `read`, and the program authorizes the act
 `extendLimit` needs `admin`. The trusted provider seams (`replaceBlockers`,
 `systemPrerequisites(provider).replace`, `relations`, `sponsoringRoots`) take a
 `projectId` and the caller's `tx` and authorize no caller: only in-process code reaches
-them. `pinned` reads a version's frozen contract, which is no project's data, so it takes no
+them. `admitStarts(admission)` is another such seam: each admission is asked about every new
+instance inside the transaction that starts it (after its row and dependencies are written),
+and a refusal rolls the start back; Autoresearch holds the spend cap there. `pinned` reads a version's frozen contract, which is no project's data, so it takes no
 caller either. A lease step authorizes its worker at entry. No decision is repeated after the
 callbacks, so a callback that revokes its own caller goes unnoticed; only
 `dispatchCandidates` and `offerLease` authorize their source again once every callback has

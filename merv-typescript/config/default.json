@@ -14,6 +14,19 @@
       "name": "@merv/research"
     },
     {
+      "id": "autoresearch-tools",
+      "name": "@merv/autoresearch/tools"
+    },
+    {
+      "id": "autoresearch-ui",
+      "name": "@merv/autoresearch/ui",
+      "required": false
+    },
+    {
+      "id": "autoresearch",
+      "name": "@merv/autoresearch"
+    },
+    {
       "id": "paper-tools",
       "name": "@merv/paper/tools"
     },

@@ -296,6 +296,12 @@ export interface WorkflowRecord {
   dependencies: WorkflowDependency[];
   dependents: WorkflowDependency[];
 }
+/** What a start admission is told of one new instance (see `Workflows.admitStarts`). */
+export type WorkflowStartAdmission = (
+  caller: Caller,
+  snapshot: WorkflowSnapshot,
+  tx: Transaction,
+) => Promise<void>;
 export interface Workflows {
   /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
   dispatchCandidates(
@@ -340,6 +346,14 @@ export interface Workflows {
   assignment(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowAssignment>;
   begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment>;
   workStarts(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowWorkStart[]>;
+  /**
+   * Internal provider capability; never exposed through a tool or a lease. Every admission is
+   * asked about each new instance inside the transaction that starts it, after its row and
+   * dependencies are written and before the start is recorded: a refusal (a MervError) rolls
+   * the whole start back, and the caller sees it. A replayed start asks nothing. The returned
+   * function withdraws the admission.
+   */
+  admitStarts(admission: WorkflowStartAdmission): () => void;
   register(
     definition: WorkflowDefinition,
     policy?: WorkflowPolicy,

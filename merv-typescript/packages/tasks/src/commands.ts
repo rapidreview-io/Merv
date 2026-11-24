@@ -246,8 +246,14 @@ export async function createTask(
       });
       const task = await ctx.hydrate(caller, await ctx.row(tx, caller, workflow.id), tx);
       // Render what every work context embeds, or the task could never begin. A session's
-      // lease is on its own task, so the check reads as the session's actor.
-      const { session: _session, ...owner } = caller;
+      // lease is on its own work, not this task, so the check reads as the authority its visit
+      // acts for (a thread's actor holds no authority outside its live visit).
+      const owner: Caller = caller.session
+        ? {
+            projectId: caller.projectId,
+            actorId: (await ctx.scope.authorityActor(caller, tx)).id,
+          }
+        : caller;
       const subject = { id: task.id, revision: task.workflow.revision };
       const inputs = await contextInputs(ctx, owner, task, 'work', undefined, tx);
       // The brief is rendered as the text in hand rather than read back.

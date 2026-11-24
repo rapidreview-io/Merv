@@ -201,6 +201,15 @@ wrote the usage file, which may be the agent process; they can be wrong in eithe
 direction, so a forged report can pause dispatch early or never trip a token budget. The
 pause is visible (`budgets[]`, the runner's last decision) and an admin reverses it.
 
+## Autoresearch
+
+[Autoresearch](AUTORESEARCH.md) has two bounds of its own. Its **spend cap** is in US dollars per
+round, measured from Sandboxes' accrued and reserved money for the project's linked namespace,
+with an estimate held for each run still open. It is checked when the manager starts a task or
+experiment, and refuses that start with `autoresearch_cap_reached`. Its **wake limit** (20 by
+default) counts the manager's automatic wakes in a row, and starts again whenever the person
+speaks. Either one pauses the loop and puts it in Needs you; nothing running is stopped.
+
 ## Launch retry cap
 
 Failed launches on one instance revision used to be retried for ever, thirty seconds

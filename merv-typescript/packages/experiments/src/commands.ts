@@ -1,6 +1,7 @@
 import { visible, mapAsync } from '@merv/contracts';
 import { childRequest, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { requireDependencies } from '@merv/workflows/rules';
+import { leaseRows } from '@merv/workflows/lease-rows';
 import {
   check,
   digest,
@@ -115,8 +116,17 @@ export async function create(
   return await inTransaction(ctx.state, transaction, async (tx) => {
     await ctx.scope.require(caller, 'write', tx);
     return await command(ctx, caller, 'create', input, tx, async () => {
+      // A leased worker creates one only where its assignment grants experiment.create (the
+      // autoresearch manager's does); an experiment's own worker never does.
       check(
-        !caller.session,
+        !caller.session ||
+          !(
+            await leaseRows(tx, {
+              projectId: caller.projectId,
+              id: caller.session.id,
+              workflows: ['experiment'],
+            })
+          ).length,
         'forbidden',
         'An assigned experiment worker cannot create a separate experiment',
         403,

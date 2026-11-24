@@ -8,6 +8,7 @@ import type {
   WorkflowTransition,
   WorkflowAddDependencies,
   WorkflowExtendLimit,
+  WorkflowStartAdmission,
 } from '@merv/contracts';
 import type { WorkflowSnapshot, WorkflowLimitStatus } from './models.js';
 import { clearBlockers } from './blockers.js';
@@ -25,6 +26,16 @@ import { WorkflowLeases } from './leases.js';
 
 /** The commands that change an instance, with their receipts and history. */
 export class WorkflowCommands extends WorkflowLeases {
+  /** What other plugins ask of every new instance (`admitStarts`), in the order they came. */
+  private readonly admissions = new Set<WorkflowStartAdmission>();
+  admitStarts(admission: WorkflowStartAdmission): () => void {
+    this.assertOpen();
+    // Each registration is an entry of its own: withdrawing one leaves another of the same function.
+    const own = (caller: Caller, snapshot: WorkflowSnapshot, tx: Transaction) =>
+      admission(caller, snapshot, tx);
+    this.admissions.add(own);
+    return () => void this.admissions.delete(own);
+  }
   /**
    * An engine command rather than a program's, so it reaches managed workflows too. It writes
    * a grant without changing an active assignment's revision, so a pinned review stays valid.
@@ -206,6 +217,9 @@ export class WorkflowCommands extends WorkflowLeases {
       );
       // The id was just minted, so no edge can lead back to it.
       await attachDependencies(transaction, this.contracts, snapshot, dependsOn, { fresh: true });
+      // A refusal rolls this start back whole; each admission reads its own copy.
+      for (const admission of [...this.admissions])
+        await admission(structuredClone(caller), structuredClone(snapshot), transaction);
       await this.record(
         transaction,
         caller,

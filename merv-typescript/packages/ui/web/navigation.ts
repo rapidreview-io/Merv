@@ -10,7 +10,7 @@ import type { WorkflowActionStatus as Step } from '@merv/workflows/models';
  * does not list it.
  */
 const RAIL = [
-  { label: '', ids: ['work', 'pi', 'boards'] },
+  { label: '', ids: ['work', 'autoresearch', 'pi', 'boards'] },
   { label: 'Fleet', ids: ['sessions', 'sandboxes'] },
   { label: 'Ops', ids: ['code', 'artifacts', 'settings'] },
 ];

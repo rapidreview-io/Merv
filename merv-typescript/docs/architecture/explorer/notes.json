@@ -218,6 +218,10 @@
     "metrics": {
       "label": "Metrics",
       "purpose": "Optional Trackio training curves, project-scoped proxy, snapshots and retained attempt exports."
+    },
+    "autoresearch": {
+      "label": "Autoresearch",
+      "purpose": "A manager agent per research project: a Sessions worker on the project's autoresearch workflow, woken when a task or experiment it started ends. It schedules the next work through the ordinary task and experiment tools within a spend cap (Sandboxes spend, admitted at each start through Workflows), asks the person only for real decisions, and pauses for them at the cap and after a run of automatic wakes."
     }
   },
   "hierarchy": {
@@ -273,7 +277,7 @@
         "id": "coordination",
         "label": "Research coordination",
         "purpose": "Choose and advance the research cycle using the capabilities below.",
-        "members": ["research"]
+        "members": ["research", "autoresearch"]
       }
     ],
     "boundaries": [
