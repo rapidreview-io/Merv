@@ -25,6 +25,7 @@
     "tests/ui-board-pen-size.test.ts",
     "tests/ui-board-shared.test.ts",
     "tests/ui-merv-panel.test.ts",
+    "tests/ui-trail-words.test.ts",
     "tests/ui-page-card-media.test.ts",
     "tests/ui-project-owner-lifecycle.test.ts",
     "tests/ui-voice-lines.test.ts",

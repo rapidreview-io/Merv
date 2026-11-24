@@ -20,7 +20,7 @@ import {
   type VoiceState,
 } from './voice-backend';
 import { VoiceRouter } from './voice-router';
-import { agentName } from './desk-voice';
+import { agentName } from '../board-app/sessions';
 import { type TellingPort, Telling, blip } from './voice-lines';
 import { holdStaleBuild } from '../stale-build';
 import { TYPED } from './typed';

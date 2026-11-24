@@ -84,12 +84,14 @@ export const Trail = memo(function Trail({
   const line = (group: Step[], i: number) => {
     const expanded = group.some((step) => step.item === picked);
     const failed = group.some((s) => s.failed);
-    // What a read or a search printed is never worth reading here; a command's or an edit's is.
+    // Each step opens to what it printed or answered: a command's output, an edit's diff, a tool's
+    // answer. One loaded on demand (`deferred`) opens where it matters most: a failure or an edit.
     const details = group.filter(
       (s) =>
         !s.agent &&
         ((s.kind === 'run' && !!(load || s.detail)) ||
-          ((s.detail || s.deferred) && (failed || s.kind === 'edit'))),
+          !!s.detail ||
+          (s.deferred && (failed || s.kind === 'edit'))),
     );
     const running = group.find((s) => live && !s.done && s.kind === 'run');
     const lastLine = running?.detail

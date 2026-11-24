@@ -1320,7 +1320,6 @@ select.input,
 }
 .picker-chip-name,
 .picker-option-name > span:last-child,
-.agent-step-summary,
 .unit-row-name,
 .thread-doc > span,
 .agent-card-word,
@@ -6546,50 +6545,7 @@ button.role-mark--disc:hover,
   font-size: var(--text-base);
   color: var(--text);
 }
-.agent-step-line {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--faint);
-  text-align: left;
-  cursor: pointer;
-}
-.agent-step-line:hover,
-.agent-step-line[aria-expanded='true'] {
-  color: var(--muted);
-}
-.agent-step-icon {
-  flex: none;
-  color: var(--ghost);
-}
-.agent-step-label {
-  flex: none;
-  font-weight: 500;
-}
-.agent-step--tool .agent-step-summary {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
 /* A step that failed: a red accent and its few words, in sight even with its group shut. */
-.agent-step--error {
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--refutes);
-}
-.agent-step--error .agent-step-label,
-.agent-step--error .agent-step-icon,
-.agent-steps-failed {
-  color: var(--refutes);
-}
-.agent-step--error .agent-step-summary {
-  color: var(--muted);
-}
 .agent-step-body {
   display: flex;
   flex-direction: column;
@@ -6599,22 +6555,6 @@ button.role-mark--disc:hover,
 }
 .agent-step-thought {
   color: var(--muted);
-}
-.agent-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.agent-steps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-left: 5px;
-  padding-left: var(--space-3);
-  border-left: 1px solid var(--line);
-}
-.agent-steps > .agent-step--error {
-  margin-left: 20px;
 }
 .agent-output > summary {
   display: flex;

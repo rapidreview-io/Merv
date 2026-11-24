@@ -1,13 +1,5 @@
-import { useSyncExternalStore } from 'react';
 import { useLazyRich } from './lazy-rich';
-
-/** The theme the page wears, drawn again when the appearance changes. */
-const worn = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
-const onWorn = (changed: () => void) => {
-  const watch = new MutationObserver(changed);
-  watch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  return () => watch.disconnect();
-};
+import { Mermaid } from '../mermaid';
 
 /** Every component initially renders source; modules and fonts load only near the viewport. */
 export function HighlightedCode({ text, language }: { text: string; language: string }) {
@@ -57,29 +49,14 @@ export function MathContent({ text, display = false }: { text: string; display?:
   );
 }
 
+/** A diagram in prose, drawn by the page's one Mermaid (../mermaid.tsx): fitted, strict, and
+ *  shown at full size on a press; while it loads, or where it cannot be read, its source. */
 export function MermaidContent({ text }: { text: string }) {
-  const theme = useSyncExternalStore(onWorn, worn, () => 'dark' as const);
-  const { ref, value } = useLazyRich(
-    `${theme}\0${text}`,
-    async (signal) => {
-      const { renderMermaid } = await import('./render-mermaid');
-      return renderMermaid(text, signal, theme);
-    },
-    text.length <= 12_000,
-  );
   return (
-    <div ref={ref} className="prose-mermaid" data-find-text={text} data-find-block>
-      {value === undefined ? (
-        <pre data-find-ignore className="prose-code">
-          {text}
-        </pre>
-      ) : (
-        <div
-          data-find-ignore
-          className="prose-diagram"
-          dangerouslySetInnerHTML={{ __html: value }}
-        />
-      )}
+    <div className="prose-mermaid" data-find-text={text} data-find-block>
+      <div data-find-ignore className="prose-diagram">
+        <Mermaid source={text} />
+      </div>
     </div>
   );
 }

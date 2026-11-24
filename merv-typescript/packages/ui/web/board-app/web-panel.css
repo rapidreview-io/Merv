@@ -1286,3 +1286,29 @@ html.chat-stage:not([data-theme='light']) .web-panel.is-stage {
     height: auto;
   }
 }
+
+/* Merv draws the panel's parts in the page too: the trail inside an agent's session and the
+   customer page's conversation (is-inline), and the Agent's own page (is-page). There the panel
+   stands in the page's flow, on the page's ground, and never slides in or out. */
+.web-panel:is(.is-inline, .is-page) {
+  position: static;
+  width: auto;
+  max-width: none;
+  padding-top: 0;
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  pointer-events: auto;
+  box-shadow: none;
+  background: none;
+  transition: none;
+}
+.web-panel.is-page {
+  height: calc(100dvh - 2 * var(--space-6, 24px));
+  max-width: 820px;
+  margin: 0 auto;
+}
+.web-panel.agent-trail {
+  font-size: 13px;
+  line-height: 20px;
+}

@@ -55,11 +55,79 @@ const MERV: Record<string, string> = {
   persona_read: 'Read your preferences',
   persona_edit: 'Changed a preference',
 };
+/** Merv's research product's own tools: what each noun is called when said aloud. */
+const THINGS: Record<string, [one: string, many: string]> = {
+  artifact: ['a file', 'the files'],
+  board: ['the board', 'the boards'],
+  code: ['the code', 'the code'],
+  experiment: ['an experiment', 'the experiments'],
+  feed: ['the feed', 'the feed'],
+  history: ['the history', 'the history'],
+  intake: ['an intake', 'the intakes'],
+  metrics: ['the metrics', 'the metrics'],
+  paper: ['the paper', 'the paper'],
+  project: ['the project', 'the project'],
+  reflection: ['a reflection', 'the reflections'],
+  report: ['a report', 'the reports'],
+  research: ['the research', 'the research cycles'],
+  review: ['a review', 'the reviews'],
+  session: ['a session', 'the sessions'],
+  task: ['a task', 'the tasks'],
+  workflow: ['the work', 'the work'],
+  system: ['the system', 'the system'],
+};
+/** What a write's action did, said in the past: "Created a task". */
+const DID: Record<string, string> = {
+  create: 'Created',
+  draw: 'Drew on',
+  delete: 'Deleted',
+  submit: 'Submitted',
+  message: 'Messaged',
+  set: 'Changed',
+  update: 'Changed',
+  edit: 'Changed',
+  start: 'Started',
+  end: 'Ended',
+  advance: 'Moved on',
+  claim: 'Claimed',
+};
+/** One of Merv's tools by its noun and action, where the table above has no line of its own. */
+function mervNoun(tool: string, action: string): string | undefined {
+  if (tool === 'screen_read' || tool === 'pi_screen') return 'Looked at your screen';
+  if (tool === 'web_read') return 'Searched the web';
+  if (/^sandboxes_/.test(tool)) return 'Used a machine';
+  const [, noun = '', verb = ''] =
+    /^([a-z]+)_(read|write|look|status.*|status_and_next|[a-z_]+)$/.exec(tool) ?? [];
+  const thing = THINGS[noun];
+  if (!thing) return undefined;
+  if (verb === 'look') return `Looked at ${thing[0].replace(/^an? /, 'the ')}`;
+  if (verb.startsWith('status')) return `Checked ${thing[1]}`;
+  if (verb === 'read')
+    return action === 'list' || action === 'find'
+      ? `Listed ${thing[1]}`
+      : `Read ${thing[0].replace(/^an? /, 'the ')}`;
+  if (verb === 'write')
+    return `${DID[action] ?? 'Changed'} ${DID[action] ? thing[0] : thing[0].replace(/^an? /, 'the ')}`;
+  return undefined;
+}
 /** A step of Merv's own, by its tool and the action it took: its title is `merv:<tool>.<action>`. */
 export const MERV_STEP = 'merv:';
 function mervSaid(title: string): string {
   const [tool = '', action = ''] = title.slice(MERV_STEP.length).split('.');
-  return MERV[`${tool}.${action}`] ?? MERV[tool] ?? (tool.replace(/_/g, ' ') || 'Used a tool');
+  return (
+    MERV[`${tool}.${action}`] ??
+    MERV[tool] ??
+    mervNoun(tool, action) ??
+    (tool.replace(/_/g, ' ') || 'Used a tool')
+  );
+}
+/** What kind of step a tool of Merv's is, for its glyph and for whether its output opens. */
+export function mervKind(tool: string): Step['kind'] {
+  if (tool === 'web_read' || tool.startsWith('browser')) return 'web';
+  if (/^sandboxes_/.test(tool)) return 'run';
+  if (/_(read|look)$|^screen_read$|_status/.test(tool)) return 'read';
+  if (/_write$/.test(tool)) return 'edit';
+  return 'tool';
 }
 
 /** A step still under way, or waiting on the person, says so: "Editing app.tsx", not "Edited". */

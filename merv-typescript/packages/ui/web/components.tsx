@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { readOnly, useTool, type ApiError } from './api';
+import { useDismissOn } from './panel/use-dismiss';
 import { Icon } from './icons';
 import {
   capital,
@@ -707,7 +708,8 @@ export function useOpenedForm(
 
 /**
  * A menu or a panel shut by a press outside `box`, or by Escape, while it is `open`. Where it
- * `claims` Escape, that is all the key means: nothing else on the page takes it as well.
+ * `claims` Escape, that is all the key means: nothing else on the page takes it as well. The one
+ * implementation is the panel parts' (panel/use-dismiss.ts); this is Merv's pages' way to it.
  */
 export function useDismiss(
   open: boolean,
@@ -715,25 +717,12 @@ export function useDismiss(
   shut: () => void,
   claims = false,
 ) {
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: Event) => {
-      if (event instanceof KeyboardEvent) {
-        if (event.key !== 'Escape') return;
-        if (claims) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      } else if (box.current?.contains(event.target as Node)) return;
-      shut();
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', away, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', away, true);
-    };
-  }, [open]);
+  useDismissOn(open, () => box.current, shut, {
+    capture: false,
+    prevent: claims,
+    stop: claims,
+    press: 'mousedown',
+  });
 }
 
 /**

@@ -165,26 +165,43 @@ export function useThreadData(on = true): ThreadData {
   }, [threads, read.data, read.error, project.name]);
 }
 
-/** One id per press, so a retried send is the same answer. */
-const requestId = () =>
-  globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+/** One id per answer: the same choice pressed again on the same question (a retry after a send
+ *  that did not answer, or a second press) is the same request, which the thread takes once. */
+const answers = new Map<string, string>();
+const requestId = (key: string) => {
+  let id = answers.get(key);
+  if (!id) {
+    id =
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    answers.set(key, id);
+  }
+  return id;
+};
 
 /** A choice pressed on an agent's question, sent to its thread as the person's answer. */
+/** The person's answer to the question an agent asked, sent to its thread as a message, which is
+ *  what answers `session.ask_owner`. `asked` names the question, so a retry is the same request. */
+export async function answerThread(thread: string, asked: string, text: string) {
+  await accountRequest(`/sessions/threads/${encodeURIComponent(thread)}/messages`, {
+    method: 'POST',
+    scoped: true,
+    body: { body: text, requestId: requestId(`${thread}:${asked}:${text}`) },
+  });
+  refreshTools(
+    '/sessions/threads',
+    `/sessions/threads/${encodeURIComponent(thread)}/messages`,
+    'ui.home',
+  );
+  return true;
+}
+
+/** A choice pressed on an agent's question in the thread, sent as the person's answer. */
 export function useAnswer() {
-  return useCallback(async (row: QuestionRow, choice: string) => {
-    const thread = row.who.id;
-    await accountRequest(`/sessions/threads/${encodeURIComponent(thread)}/messages`, {
-      method: 'POST',
-      scoped: true,
-      body: { body: choice, requestId: requestId() },
-    });
-    refreshTools(
-      '/sessions/threads',
-      `/sessions/threads/${encodeURIComponent(thread)}/messages`,
-      'ui.home',
-    );
-    return true;
-  }, []);
+  return useCallback(
+    (row: QuestionRow, choice: string) =>
+      answerThread(row.who.id, row.request ?? String(row.seq), choice),
+    [],
+  );
 }
 
 /** This page's conversation with the Agent as lines, each with where the conversation keeps it. */
@@ -209,6 +226,13 @@ export function localLines(snapshot: PiSnapshot | null | undefined): LocalLine[]
     );
 }
 
+/** What a call answered, as its step opens to it: its text, else its JSON, cut to what reads. */
+const OUTPUT_MOST = 4_000;
+const outputWords = (output: unknown) => {
+  const text = typeof output === 'string' ? output : (JSON.stringify(output, null, 2) ?? '');
+  return text.length > OUTPUT_MOST ? `${text.slice(0, OUTPUT_MOST)}\n…` : text;
+};
+
 /** The Agent's own tool calls, turn by turn, so the thread says what it did ("Read the board"),
  *  one quiet line per run of a kind, never its tools' own words. */
 export function mervTurns(snapshot: PiSnapshot | null | undefined): MervTurn[] {
@@ -225,6 +249,7 @@ export function mervTurns(snapshot: PiSnapshot | null | undefined): MervTurn[] {
                 tool: outcome.name.replace(/\./g, '_'),
                 ...(typeof input?.action === 'string' && { action: input.action }),
                 ...(!!(output && typeof output === 'object' && output.error) && { failed: true }),
+                ...(outcome.output !== undefined && { output: outputWords(outcome.output) }),
               };
             }),
           },

@@ -1,5 +1,21 @@
-import type { VoiceTarget } from './desk-voice';
-export type { VoiceTarget, VoiceChoice } from './desk-voice';
+/**
+ * A session another voice backend could be connected to. In merv-desktop the voice could be handed
+ * to a session on the person's Mac; Merv has no Mac, so its voice always talks to Merv and a
+ * target is never set. The shape stays, for the parts that name who is speaking.
+ */
+export interface VoiceTarget {
+  device: string;
+  thread: string;
+  provider: 'claude' | 'codex';
+  title: string;
+  label: string;
+  main?: boolean;
+}
+export interface VoiceChoice {
+  query: string;
+  targets: VoiceTarget[];
+  clarification?: string;
+}
 export type VoiceState = 'off' | 'connecting' | 'listening' | 'working' | 'speaking' | 'closing';
 export const QUIET_MS = 1_400;
 const SAYABLE = 1_800;

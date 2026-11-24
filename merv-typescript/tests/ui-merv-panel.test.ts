@@ -33,6 +33,7 @@ const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
 const { hold } = await import('../packages/ui/web/board-app/held.js');
 const { setToken } = await import('../packages/ui/web/api.js');
+const { AgentQuestion } = await import('../packages/ui/web/board-app/agent-question.js');
 
 const project = {
   id: 'project_1',
@@ -175,4 +176,34 @@ test('work handed from a board waits for Approve and never sends itself', async 
     0,
     requests.slice(before).join('\n'),
   );
+});
+
+test("Needs you answers an agent's question with its worded buttons; a retry is the same request", async (t) => {
+  t.after(unmount);
+  localStorage.clear();
+  setToken('fixture-token');
+  serve('/sessions/threads', { body: { threads: [asking], next: null } });
+  const sent: Record<string, unknown>[] = [];
+  serve('/sessions/threads/thr_1/messages', (call, body) => {
+    sent.push(body);
+    // The first send does not answer: the card keeps the choice for another press.
+    return call === 1
+      ? { status: 503, body: { error: { code: 'unavailable', message: 'Try again' } } }
+      : { body: { message: { id: 'msg_1' } } };
+  });
+  await mount(createElement(MemoryRouter, {}, createElement(AgentQuestion, { thread: 'thr_1' })));
+  await settle(20);
+  assert.match(text(), new RegExp(question.replace('?', '\\?')));
+  await click('Rent one A100');
+  await click('Send');
+  await settle(20);
+  assert.match(text(), /did not go/);
+  await click('Send');
+  await settle(20);
+  assert.equal(sent.length, 2);
+  assert.deepEqual(
+    sent.map((one) => one.body),
+    ['Rent one A100', 'Rent one A100'],
+  );
+  assert.equal(sent[0]!.requestId, sent[1]!.requestId, 'a retry is the same answer');
 });

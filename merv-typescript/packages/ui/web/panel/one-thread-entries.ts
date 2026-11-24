@@ -8,7 +8,7 @@
  */
 import type { Block, Step } from './chat-events';
 import type { AgentEntryBlock, JobEntryBlock } from './agent-cards';
-import { MERV_STEP } from './tool-words';
+import { MERV_STEP, mervKind } from './tool-words';
 import {
   memberWords,
   type DoneRow,
@@ -22,7 +22,9 @@ import type { JobView } from './rows';
 /** One of Merv's turns and the tools it used, in order: what a page of Merv's conversation knows of it. */
 export interface MervTurn {
   command: string;
-  steps: { id: string; tool: string; action?: string; failed?: boolean }[];
+  /** Each call: its tool (dots said as underscores), the action it took, whether it failed, and
+   *  what it answered, which its step opens to. */
+  steps: { id: string; tool: string; action?: string; failed?: boolean; output?: string }[];
 }
 
 type Placed = { device?: string; notes: ThreadNote[] };
@@ -38,7 +40,8 @@ export type ThreadEntry =
 function mervStep(step: MervTurn['steps'][number]): Step {
   return {
     item: step.id,
-    kind: 'tool',
+    kind: mervKind(step.tool),
+    ...(step.output && { detail: step.output }),
     title: `${MERV_STEP}${step.tool}${step.action ? `.${step.action}` : ''}`,
     done: true,
     failed: !!step.failed,

@@ -1,18 +1,16 @@
 import { useBoardView } from '../board-app/board-view';
 import { useBackCloses } from '../board-app/phone-back';
-import { ProviderMark } from '../panel/marks';
-import { agentName as nameOf } from '../board-app/sessions';
 /**
  * Handing board work to an agent, the board's half (web and Merv.app; docs/handoff.md). A selection
  * that rests offers one mark: pressing it asks Merv, in the person's own words, to execute it. An
- * agent's own look at the board plays as its snapshot there, and nothing is left on the board. The agent's questions come back as cards beside the work, answered by a click
- * or by talking with Merv; a card goes once answered.
+ * agent's own look at the board plays as its snapshot there, and nothing is left on the board. In
+ * Merv the work then waits in Merv's panel for the person's Approve (board-app/held.ts); an agent's
+ * questions about it are answered there, with its worded buttons.
  */
 import { useEffect, useRef, useState } from 'react';
 import { getCommonBounds, sceneCoordsToViewportCoords } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
-import type { Chat } from '@merv/protocol/link';
-import { accountRequest, call } from '../api';
+import { call } from '../api';
 import { exportBoardSnapshot } from './board-export';
 import { worn } from '../theme';
 import { agentLooks } from './board-presence';
@@ -21,29 +19,14 @@ import { answeringTurn, promptOutcome, type PromptFailure } from './handoff-turn
 import { hold } from '../board-app/held';
 import './board-handoff.css';
 
-type Provider = 'claude' | 'codex';
 type Region = { x: number; y: number; width: number; height: number };
 type Pt = { x: number; y: number };
-type Ask = {
-  device: string;
-  thread: string;
-  generation: number;
-  unit: string;
-  run: number;
-  provider: Provider;
-  root?: Region;
-  request: Chat['requests'][number];
-};
-type Decision =
-  | { kind: 'allow' | 'deny' }
-  | { kind: 'answer'; text?: string; answers?: Record<string, string[]> };
 
-/** A selection rests this long before it offers the mark; the desk is asked this often. */
-const [REST_MS, POLL_MS] = [600, 2000];
+/** A selection rests this long before it offers the mark. */
+const REST_MS = 600;
 const calm = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
-const keyOf = (ask: Ask) => `${ask.thread}:${ask.request.id}:${ask.generation}`;
 
 export function BoardHandoff(props: {
   api: ExcalidrawImperativeAPI;
@@ -172,8 +155,6 @@ function Handoff({
   const picked = useRef<Region | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState('');
-  const [asks, setAsks] = useState<Ask[]>([]);
-  const answered = useRef(new Set<string>());
   const moment = useMoment(api);
 
   // The overlay follows the board as it pans and zooms; a selection at rest offers the mark, when it
@@ -212,29 +193,6 @@ function Handoff({
     return () => void agentLooks.delete(hear);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // The questions the desk's units wait on, beside the work they are about.
-  useEffect(() => {
-    if (!mervApp()) return;
-    let over = false;
-    const look = async () => {
-      if (document.hidden) return;
-      const got = await accountRequest<{ asks: Ask[] }>(
-        `/desk/handoffs?board=${encodeURIComponent(board)}`,
-        { scoped: true },
-      ).catch(() => null);
-      if (over || !got) return;
-      const open = new Set(got.asks.map(keyOf));
-      for (const key of answered.current) if (!open.has(key)) answered.current.delete(key);
-      setAsks((was) => (JSON.stringify(was) === JSON.stringify(got.asks) ? was : got.asks));
-    };
-    void look();
-    const timer = setInterval(() => void look(), POLL_MS);
-    return () => {
-      over = true;
-      clearInterval(timer);
-    };
-  }, [board]);
 
   // Merv's turn on a hand-off is followed to its end: one that sent no unit for this board leaves the
   // card nothing to wait for, so the Mac is told why and the card says so (handoff-turn.ts).
@@ -343,13 +301,6 @@ function Handoff({
     setMark(null);
     setText('');
   };
-  // One question per unit at a time, beside the work it is about.
-  const shown = asks.filter(
-    (ask, index) =>
-      !answered.current.has(keyOf(ask)) &&
-      asks.findIndex((other) => other.unit === ask.unit && !answered.current.has(keyOf(other))) ===
-        index,
-  );
   const at = mark && !field && !moment.busy && client(mark);
   // The composer stands under what it is about, or over it when there is no room below.
   const typing =
@@ -422,278 +373,7 @@ function Handoff({
           }}
         />
       )}
-      {shown.map((ask) => {
-        const p = ask.root
-          ? client({ x: ask.root.x + ask.root.width + 16, y: ask.root.y })
-          : { x: innerWidth - 380, y: 80 };
-        const left = Math.max(8, Math.min(p.x, innerWidth - 372));
-        const top = Math.max(56, Math.min(p.y, innerHeight - 160));
-        return (
-          <div
-            key={keyOf(ask)}
-            className="handoff-cursor is-arriving"
-            style={{ maxWidth: 'calc(100vw - 16px)', transform: `translate(${left}px, ${top}px)` }}
-          >
-            <Cursor provider={ask.provider} />
-            <Question
-              ask={ask}
-              done={() => {
-                answered.current.add(keyOf(ask));
-                setAsks((asks) => asks.filter((item) => keyOf(item) !== keyOf(ask)));
-              }}
-            />
-          </div>
-        );
-      })}
     </div>
-  );
-}
-
-/** An approval as one plain question: the agent's own reason when it gave one, else what it wants to
- *  do, cut to a line. The command and folder stay in the thread. */
-const asked = ({ title, detail }: { title: string; detail?: string }) => {
-  const reason = detail?.split('\n')[0]?.trim();
-  const said = reason && !reason.startsWith('in /') ? reason : title;
-  return said.length > 90 ? `${said.slice(0, 89)}…` : said;
-};
-
-/** One open request, its questions one at a time, sent together once the last is answered. */
-function Question({ ask, done }: { ask: Ask; done(): void }) {
-  const voice = useAgent()?.voice;
-  const { request } = ask;
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState('');
-  const approval = !['question', 'elicitation'].includes(request.kind);
-  const questions = request.questions?.length
-    ? request.questions
-    : [
-        {
-          id: 'answer',
-          question: request.title,
-          options: (request.options ?? []).map((label) => ({ label })),
-          isSecret: false,
-        },
-      ];
-  const now = questions[Math.min(step, questions.length - 1)]!;
-  const decide = async (decision: Decision) => {
-    setBusy(true);
-    setProblem('');
-    try {
-      await accountRequest('/desk/decision', {
-        method: 'POST',
-        scoped: true,
-        body: {
-          device: ask.device,
-          thread: ask.thread,
-          request: request.id,
-          generation: ask.generation,
-          decision,
-        },
-      });
-      done();
-    } catch (error) {
-      setProblem((error as Error).message);
-      setBusy(false);
-    }
-  };
-  const answer = (value: string | string[]) => {
-    const values = [value].flat();
-    if (busy || !values.length) return;
-    if (approval) return void decide({ kind: value === 'allow' ? 'allow' : 'deny' });
-    const all = { ...answers, [now.id]: values };
-    if (step + 1 < questions.length) {
-      setAnswers(all);
-      return setStep(step + 1);
-    }
-    void decide(
-      request.questions?.length
-        ? { kind: 'answer', answers: all }
-        : { kind: 'answer', text: values.join(', ') },
-    );
-  };
-  return (
-    <AskCard
-      key={step}
-      provider={ask.provider}
-      question={approval ? asked(request) : now.question}
-      options={now.options.map((option) => option.label)}
-      kind={approval ? 'approval' : now.options.length ? 'choice' : 'text'}
-      multi={'multiSelect' in now && !!now.multiSelect}
-      step={questions.length > 1 ? `${step + 1}/${questions.length}` : undefined}
-      secret={now.isSecret}
-      busy={busy}
-      problem={problem}
-      onAnswer={answer}
-      onTalk={() => {
-        if (voice?.state === 'off') voice.start();
-        else if (voice?.muted) voice.mute();
-      }}
-    />
-  );
-}
-
-/** An agent's question on the canvas: choices, a free answer, Allow and Deny for an approval, and a
- *  mic that brings Merv in to talk it through. */
-export function AskCard(props: {
-  provider: Provider;
-  question: string;
-  options?: string[];
-  kind: 'choice' | 'text' | 'approval';
-  step?: string;
-  secret?: boolean;
-  /** Several choices count: they toggle, and the arrow sends them. */
-  multi?: boolean;
-  busy?: boolean;
-  problem?: string;
-  onAnswer(value: string | string[]): void;
-  onTalk(): void;
-}) {
-  const [typed, setTyped] = useState('');
-  const [chosen, setChosen] = useState<string[]>([]);
-  const pick = (value: string) => {
-    if (props.multi)
-      return setChosen((now) =>
-        now.includes(value) ? now.filter((one) => one !== value) : [...now, value],
-      );
-    setChosen([value]);
-    props.onAnswer(value);
-  };
-  return (
-    <div
-      className="handoff-card"
-      style={{ boxSizing: 'border-box', maxWidth: 'calc(100vw - 40px)' }}
-      role="dialog"
-      aria-label={`${nameOf(props.provider)} asks: ${props.question}`}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <p className="handoff-ask">
-        {props.question}
-        {props.step && <small>{props.step}</small>}
-      </p>
-      {props.kind === 'choice' && (
-        <div className="handoff-choices">
-          {props.options?.map((option) => (
-            <button
-              key={option}
-              type="button"
-              disabled={props.busy}
-              className={chosen.includes(option) ? 'is-on' : ''}
-              onClick={() => pick(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="handoff-row">
-        <button
-          type="button"
-          className="handoff-quiet"
-          aria-label="Talk it through with Merv"
-          title="Talk it through with Merv"
-          onClick={props.onTalk}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <rect
-              x="5"
-              y="1.5"
-              width="4"
-              height="7"
-              rx="2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.3"
-            />
-            <path
-              d="M3 6.5a4 4 0 0 0 8 0M7 10.5v2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-        {props.kind === 'approval' ? (
-          <span className="handoff-row-end">
-            <button
-              type="button"
-              className="handoff-quiet"
-              disabled={props.busy}
-              onClick={() => props.onAnswer('deny')}
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              className="handoff-primary"
-              disabled={props.busy}
-              onClick={() => props.onAnswer('allow')}
-            >
-              Allow
-            </button>
-          </span>
-        ) : (
-          <input
-            key={props.question}
-            autoFocus={props.kind === 'text'}
-            disabled={props.busy}
-            type={props.secret ? 'password' : 'text'}
-            aria-label="Your answer"
-            placeholder={props.kind === 'choice' ? '…or say it' : 'Your answer'}
-            value={typed}
-            onChange={(event) => setTyped(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || !(typed.trim() || (props.multi && chosen.length)))
-                return;
-              if (props.multi) props.onAnswer([...chosen, ...(typed.trim() ? [typed.trim()] : [])]);
-              else pick(typed.trim());
-              setTyped('');
-            }}
-          />
-        )}
-        {props.multi && props.kind === 'choice' && (
-          <button
-            type="button"
-            className="handoff-primary"
-            aria-label="Send"
-            title="Send"
-            disabled={props.busy || !chosen.length}
-            onClick={() => props.onAnswer(chosen)}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-              <path
-                d="M3 7h8M7.5 3.5 11 7l-3.5 3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        )}
-      </div>
-      {props.problem && (
-        <p className="handoff-problem" role="alert">
-          {props.problem}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** The agent's cursor: the arrow, and its mark and name beside it. */
-function Cursor({ provider }: { provider: Provider }) {
-  return (
-    <>
-      <Arrow className="handoff-arrow" fill={provider === 'claude' ? '#d97757' : '#5b6cff'} />
-      <span className={`handoff-name is-${provider}`}>
-        <ProviderMark provider={provider} size={12} />
-        {nameOf(provider)}
-      </span>
-    </>
   );
 }
 
