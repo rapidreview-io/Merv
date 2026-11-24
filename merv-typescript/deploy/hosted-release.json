@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:93ab9d9a7f614af0c56c709f7e5018b290c0cb48ad5661e8b7e0b100247f9ca8",
-    "releaseId": "rt1_5bafdb6ff6af9b5f95c7b526377a6d5099b01d1f4f66a91264f80d53f82372f5",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:eab7e256263a7d9e543f60337f5b8af133eb44f4abfe0cd494dbbcbd9b62c65c",
+    "releaseId": "rt1_d2061e3557fa74e3da890149beb89c932b93083a3f5805db297c8c99070724db",
     "releases": {
-      "cloudflare-fleet": "rt1_5bafdb6ff6af9b5f95c7b526377a6d5099b01d1f4f66a91264f80d53f82372f5",
-      "cloudflare-fleet-large": "rt1_f7abb8747e2ca1289ae31c1039b0298ced656578060662c590eed7f2aa928c09"
+      "cloudflare-fleet": "rt1_d2061e3557fa74e3da890149beb89c932b93083a3f5805db297c8c99070724db",
+      "cloudflare-fleet-large": "rt1_8bec3ba22531baf759282e76d2ea7cb097f84ea7623d41a141eec6e25a9d431b"
     },
-    "localId": "sha256:e77a60930688d7a2e19f1419286f8d607bf75d5bead302b698c28e79563f979d",
-    "sourceCommit": "648311b09aa50b8c968a20da90909ce58dfad410",
+    "localId": "sha256:b6fdd91036cfa1c9a07bf17314addf3a70785e216fd2e4c85f92f733da4d2ca6",
+    "sourceCommit": "347a4bb3a4f6d6ee1388a6127c31ce44afe5dc65",
     "sandboxesCommit": "d95468428d971eca3c9419361a60e8b81eea6d9b"
   },
   "inputs": [
@@ -74,9 +74,9 @@
   ],
   "staging": {
     "status": "deferred",
-    "reason": "Staging native isolation remains fenced pending scoped storage credentials",
-    "sourceRun": "20261021T203349Z-38072c33",
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:e642793d76ca9aa3d65a780d5c281ab4a2539c86234ec7db822718dcc895c60a",
-    "releaseId": "rt1_e2d51f24f1cc115246365d02ad63dfbbfd2a4e71f1c48991c27dd40177329454"
+    "reason": "staging Main is down since release 20261124T194903Z-2cb34164; the owner deferred staging on 2026-11-24",
+    "sourceRun": "20261124T221111Z-347a4bb3",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:eab7e256263a7d9e543f60337f5b8af133eb44f4abfe0cd494dbbcbd9b62c65c",
+    "releaseId": "rt1_d2061e3557fa74e3da890149beb89c932b93083a3f5805db297c8c99070724db"
   }
 }
