@@ -30,18 +30,6 @@ export function taskExecutionPolicy(
     workspace: codeWorkspace(purpose, purpose === 'work' ? 'tasks' : 'task-reviews', ordinaryGit),
     tools: [
       ...(research ? [grant('nisa.research', {})] : []),
-      // Training curves: a Git task's producer logs its runs to Trackio and keeps their figure,
-      // as an experiment's does; everyone on it reads them. Absent where Metrics is not loaded.
-      ...(ordinaryGit
-        ? [
-            ...['runs', 'run', 'series', 'look', 'query'].map((name) =>
-              grant(`metrics.${name}`, {}),
-            ),
-            ...(purpose === 'work'
-              ? ['connect', 'export'].map((name) => grant(`metrics.${name}`, task))
-              : []),
-          ]
-        : []),
       grant('workflow.status_and_next', instance, {
         instanceId: { kind: 'oneOf', name: 'dependencies' },
       }),
