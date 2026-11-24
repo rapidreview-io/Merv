@@ -151,7 +151,7 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
   if (failed)
     return {
       says: ['Stopped: ', failed.name, ' failed'],
-      who: 'The owner ends the experiment, or its cycle replans it.',
+      who: 'The owner ends the experiment, or its round replans it.',
     };
   const refused = standing.refusedCaptures ?? 0;
   const retrying = standing.retryingCaptures ?? 0;

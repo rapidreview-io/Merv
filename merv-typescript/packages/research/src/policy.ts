@@ -69,17 +69,17 @@ export function policy(ctx: ResearchContext): WorkflowPolicy {
             label: 'Consolidation task',
           })),
           ...(record.successorId
-            ? [{ kind: 'workflow', id: record.successorId, label: 'Next research cycle' }]
+            ? [{ kind: 'workflow', id: record.successorId, label: 'Next round' }]
             : []),
           ...(record.digest
-            ? [{ kind: 'artifact', id: record.digest.id, label: 'Cycle digest' }]
+            ? [{ kind: 'artifact', id: record.digest.id, label: 'Round digest' }]
             : []),
           ...(previous?.digest
             ? [
                 {
                   kind: 'artifact',
                   id: (JSON.parse(previous.digest) as Artifact).id,
-                  label: 'Predecessor cycle digest',
+                  label: 'Previous round digest',
                 },
               ]
             : []),

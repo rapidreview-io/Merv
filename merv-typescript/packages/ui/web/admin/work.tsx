@@ -14,7 +14,7 @@ const KINDS: Record<string, [kind: string, label: string, path?: string]> = {
   task: ['tasks', 'Task', 'tasks'],
   experiment: ['experiments', 'Experiment', 'experiments'],
   service_experiment: ['experiments', 'Standalone'],
-  research: ['research', 'Cycle', 'research'],
+  research: ['research', 'Round', 'research'],
   pi: ['sessions', 'Agent'],
 };
 const kindOf = (kind: string) => KINDS[kind] ?? ['', words(kind)];

@@ -43,7 +43,7 @@ export const researchUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'research',
-        label: 'Cycles',
+        label: 'Rounds',
         // The cycles frame the Work page, which reaches them; the rail does not list them.
         group: 'hidden',
         order: 14,

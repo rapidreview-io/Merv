@@ -233,7 +233,7 @@ export const runningNode = z
   .object({
     key,
     lane: runningLane,
-    /** The small word above the title in the work lane ('Task', 'Experiment', 'Cycle'). */
+    /** The small word above the title in the work lane ('Task', 'Experiment', 'Round'). */
     kind: words(40).optional(),
     title: words(200),
     /** Accessible name and hover title, where the title is not the thing's name (a sandbox titled '8× H100' is named 'aurora-sweep'). */

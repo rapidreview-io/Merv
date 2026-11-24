@@ -16,6 +16,7 @@ import { call, scopeVersion, useTool } from './api';
 import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
+import { ReportChart, readChart } from './report-chart';
 import { ArtifactFigure, WebFigure } from './artifact-figure';
 import { pathOf, Records, rowOf, useRows } from './navigation';
 import { offThread } from './off-thread';
@@ -34,8 +35,9 @@ export { safeHref, splitIds };
  * elements. Nothing is ever handed to the browser as
  * HTML: a tag an author wrote is text, retained images use scoped artifact reads, a web image is
  * only ever an <img> of an https or raster data address, and
- * an address the app would not open itself never becomes an href. Code, diagrams
- * and formulas are drawn by components of their own (`CodeBlock`, `Mermaid`, `TeX`),
+ * an address the app would not open itself never becomes an href. Code, diagrams,
+ * formulas and a report's charts are drawn by components of their own (`CodeBlock`, `Mermaid`,
+ * `TeX`, `ReportChart`),
  * each of which loads what it needs the first time it is shown.
  */
 
@@ -485,6 +487,8 @@ function blocks(nodes: Block[], names: RecordNames | undefined, under: number): 
       case 'code':
         return node.lang?.toLowerCase() === 'mermaid' ? (
           <Mermaid key={key} source={node.value} />
+        ) : node.lang?.toLowerCase() === 'chart' && readChart(node.value) ? (
+          <ReportChart key={key} source={node.value} />
         ) : (
           <CodeBlock
             key={key}

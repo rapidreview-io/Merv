@@ -9418,3 +9418,26 @@ html.modal-open {
 .board-shared .main-menu-trigger {
   display: none;
 }
+
+/* A report's chart, drawn as its PDF draws it: the sentence it makes above the plot. */
+.md > .report-chart {
+  width: min(var(--md-measure), 100%);
+  margin-inline: 0;
+}
+.report-chart-message {
+  padding: var(--space-3) var(--space-3) 0;
+  background: var(--bg-elev);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.report-chart-view {
+  padding: var(--space-3);
+  background: var(--bg-elev);
+  overflow-x: auto;
+}
+.report-chart-view svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}

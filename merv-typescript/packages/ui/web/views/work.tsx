@@ -203,12 +203,12 @@ export function CreateResearch({
         });
       }}
     >
-      <h2>New cycle</h2>
+      <h2>New round</h2>
       {follows && <p className="muted">Follows {follows.name}</p>}
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <RecordPicker
-          label="Work in this cycle"
+          label="Work in this round"
           {...work}
           value={dependencies}
           onChange={setDependencies}
@@ -397,12 +397,12 @@ function WorkList({ shell }: { shell: ShellData }) {
         noun="work"
         kind="work"
         emptyTitle="No work yet"
-        emptyHint="Start a research cycle to organize the project's work."
+        emptyHint="Start a round to organize the project's work."
         filter={{ ...filter, filtering: narrowed, clear }}
         create={
           rowOf('research')
             ? {
-                label: 'New cycle',
+                label: 'New round',
                 shown: writes(actor),
                 form: (close) => (
                   <CreateResearch
@@ -429,7 +429,7 @@ function WorkList({ shell }: { shell: ShellData }) {
                   <Link
                     className="work-cycle-link"
                     to={`${rowOf('research')!.path}/${cycle.id}`}
-                    title={`${ended(shell.workflows, cycle.workflow) ? 'Latest' : 'Current'} cycle · ${cycle.progress.settled} of ${cycle.progress.total} selected work accepted`}
+                    title={`${ended(shell.workflows, cycle.workflow) ? 'Latest' : 'Current'} round · ${cycle.progress.settled} of ${cycle.progress.total} selected work accepted`}
                   >
                     <span>{cycle.name}</span>
                     <span className="work-cycle-count">
@@ -507,19 +507,19 @@ function WorkList({ shell }: { shell: ShellData }) {
                   </label>
                   {allCycles.length > 0 && (
                     <label>
-                      <span>Cycle</span>
+                      <span>Round</span>
                       <select
-                        aria-label="Cycle"
+                        aria-label="Round"
                         value={cycleFilter}
                         onChange={(event) => setCycleFilter(event.target.value)}
                       >
-                        <option value="">All cycles</option>
+                        <option value="">All rounds</option>
                         {allCycles.map((cycle) => (
                           <option key={cycle.id} value={cycle.id}>
                             {cycle.name}
                           </option>
                         ))}
-                        <option value="none">No cycle</option>
+                        <option value="none">No round</option>
                       </select>
                     </label>
                   )}

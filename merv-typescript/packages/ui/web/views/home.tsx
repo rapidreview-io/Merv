@@ -98,7 +98,7 @@ function Ring({ units }: { units: Unit[] }) {
   const done = units.filter((u) => u.standing === 'done' || u.standing === 'failed').length;
   return (
     <div className="hub-ring">
-      <svg viewBox={`0 0 ${2 * C} ${2 * C}`} role="list" aria-label="Units of the cycle">
+      <svg viewBox={`0 0 ${2 * C} ${2 * C}`} role="list" aria-label="Units of the round">
         {units.map((unit, i) => (
           <path
             key={unit.id}

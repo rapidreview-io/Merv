@@ -2,7 +2,7 @@
 
 Tasks and experiments end → the consolidation task, when main lacks accepted code → complete.
 
-On **Work → New cycle**, select the work and enable **Advance automatically as its work ends**. Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@7`; historical versions retain their original rules. Automatic mode advances one cycle: it creates no successor cycles and has no cycle limit. To continue, create a cycle that follows the finished one (`previousCycleId`).
+On **Work → New round**, select the work and enable **Advance automatically as its work ends**. Existing cycles and API calls that omit automatic mode remain manual. New cycles use `research@7`; historical versions retain their original rules. Automatic mode advances one cycle: it creates no successor cycles and has no cycle limit. To continue, create a cycle that follows the finished one (`previousCycleId`).
 
 The equivalent tool input is:
 

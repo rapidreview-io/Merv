@@ -329,10 +329,10 @@ test('Work groups actionable rows, filters them accurately and opens details on 
   assert.match(text(), /Nothing matches/);
   conserved();
   await click('Reset filters');
-  await select('Cycle', 'cycle_current');
+  await select('Round', 'cycle_current');
   assert.deepEqual(keys(), ['experiment_running', 'task_ready']);
   conserved();
-  await select('Cycle', 'none');
+  await select('Round', 'none');
   assert.deepEqual(keys(), ['orphan', 'task_merge', 'task_review', 'task_stalled', 'task_waiting']);
   conserved();
   await click('Reset filters');

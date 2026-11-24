@@ -69,7 +69,7 @@ const THINGS: Record<string, [one: string, many: string]> = {
   project: ['the project', 'the project'],
   autoresearch: ['the autoresearch', 'the autoresearch'],
   report: ['a report', 'the reports'],
-  research: ['the research', 'the research cycles'],
+  research: ['the research', 'the research rounds'],
   review: ['a review', 'the reviews'],
   session: ['a session', 'the sessions'],
   task: ['a task', 'the tasks'],

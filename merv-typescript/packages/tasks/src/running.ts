@@ -105,7 +105,7 @@ function need(task: TaskStanding): RunningAttention | undefined {
   if (failed)
     return {
       says: [short(failed.name), ' failed'],
-      who: 'The producer ends this task, or its cycle replans it',
+      who: 'The producer ends this task, or its round replans it',
     };
   // Rounds used up, and a suspended task waiting for an admin to resume it, are Workflows' mark
   // on the card, in the words every owner's work shares; no reviewer left is Reviews'.
