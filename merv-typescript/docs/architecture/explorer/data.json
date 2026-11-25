@@ -60,7 +60,8 @@
           "board",
           "reviews",
           "codeWork",
-          "pi"
+          "pi",
+          "mainThread"
         ]
       },
       {
@@ -203,10 +204,15 @@
         "from": "codeWork",
         "to": "reviews",
         "optional": false
+      },
+      {
+        "from": "mainThread",
+        "to": "pi",
+        "optional": true
       }
     ]
   },
-  "snapshot": "2026-11-24",
+  "snapshot": "2026-11-25",
   "groups": [
     {
       "id": "front",
@@ -322,6 +328,7 @@
         "merv-fleet-workflow",
         "payments",
         "pi",
+        "mainThread",
         "sandboxEvidence",
         "merv-sandboxes-console",
         "merv-sandboxes-credits",
@@ -1642,6 +1649,31 @@
       "owner": "pi",
       "label": "Pi · api adapter",
       "purpose": "Connects Pi to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-pi-main-thread",
+      "source": "packages/pi/src/main-thread.ts",
+      "provides": [
+        "mainThread"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "tools"
+      ],
+      "optional": [
+        "pi",
+        "ui"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "mainThread",
+      "group": "other",
+      "owner": "mainThread",
+      "label": "Main thread",
+      "purpose": "Keeps a project's one conversation as a log that a person's own Mac agent and Merv cloud both continue, with a lease that says which of them answers.",
       "exposedTools": []
     },
     {
@@ -3546,6 +3578,31 @@
       "optional": false
     },
     {
+      "from": "mainThread",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "pi",
+      "optional": true
+    },
+    {
+      "from": "mainThread",
+      "to": "ui",
+      "optional": true
+    },
+    {
       "from": "merv-pi-tools",
       "to": "pi",
       "optional": false
@@ -4112,10 +4169,10 @@
     }
   ],
   "counts": {
-    "plugins": 88,
-    "providers": 40,
+    "plugins": 89,
+    "providers": 41,
     "adapters": 48,
-    "dependencies": 280
+    "dependencies": 285
   },
   "network": [
     {

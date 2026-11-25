@@ -49,6 +49,11 @@ CREATE TABLE pi_main_leases (
   holder TEXT NOT NULL CHECK (holder IN ('mac','pi')), device TEXT NOT NULL,
   number BIGINT NOT NULL, expires_at BIGINT NOT NULL,
   PRIMARY KEY (project_id, person)
+);
+CREATE TABLE pi_main_cards (
+  project_id TEXT NOT NULL, person TEXT NOT NULL, id TEXT NOT NULL,
+  body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, person, id)
 );`,
   },
 ];
@@ -70,6 +75,20 @@ export const syncInput = z
     items: z.array(macItem).max(12).default([]),
     /** The last cloud item this Mac has kept. */
     after: z.number().int().min(0).default(0),
+    /** Work the thread shows beside its words (an experiment as it now stands), kept whole by id.
+     *  The Mac owns each card; the web only reads it. */
+    cards: z
+      .array(
+        z
+          .object({ id: z.string().min(1).max(100), body: z.record(z.unknown()) })
+          .strict()
+          .refine(
+            (card) => JSON.stringify(card.body).length <= 64_000,
+            'A card holds at most 64 KB',
+          ),
+      )
+      .max(20)
+      .optional(),
     /** The Mac is quitting or going to sleep: its hold ends now, so Merv cloud may answer at once. */
     release: z.boolean().optional(),
   })
@@ -100,7 +119,12 @@ type Row = {
   request_id: string | null;
   created_at: string;
 };
-type Lease = { holder: 'mac' | 'pi'; device: string; number: number | string; expires_at: number | string };
+type Lease = {
+  holder: 'mac' | 'pi';
+  device: string;
+  number: number | string;
+  expires_at: number | string;
+};
 const itemOf = (row: Row): MainItem => ({
   seq: Number(row.seq),
   engine: row.engine,
@@ -213,7 +237,13 @@ export class MainThreadService {
   private async append(
     tx: Transaction,
     key: { projectId: string; person: string; lease: number },
-    item: { localId: string; engine: string; kind: MainItem['kind']; text: string; requestId?: string },
+    item: {
+      localId: string;
+      engine: string;
+      kind: MainItem['kind'];
+      text: string;
+      requestId?: string;
+    },
   ) {
     await tx.run(
       `INSERT INTO pi_main_items (project_id, person, seq, local_id, engine, kind, words, request_id, lease, created_at)
@@ -246,7 +276,7 @@ export class MainThreadService {
   /** The Mac's heartbeat: it takes or renews the lease, appends its finished turns, and reads
    *  what Merv cloud said after `after`. A retry of the same items writes nothing twice. */
   async sync(caller: Caller, input: unknown) {
-    const { device, engine, items, after, release } = syncInput.parse(input);
+    const { device, engine, items, after, release, cards } = syncInput.parse(input);
     caller = structuredClone(caller);
     const wait = await inTransaction(this.state, undefined, async (tx) =>
       JSON.stringify([caller.projectId, await this.person(caller, tx)]),
@@ -256,7 +286,10 @@ export class MainThreadService {
     return await inTransaction(this.state, undefined, async (tx) => {
       const person = await this.person(caller, tx);
       // One writer at a time for this thread's sequence, whatever process asks.
-      await tx.get('SELECT pg_advisory_xact_lock(hashtext(?))', `pi-main:${caller.projectId}:${person}`);
+      await tx.get(
+        'SELECT pg_advisory_xact_lock(hashtext(?))',
+        `pi-main:${caller.projectId}:${person}`,
+      );
       const taken = await this.take(tx, caller.projectId, person, 'mac', device, MAC_LEASE_MS);
       const key = { projectId: caller.projectId, person, lease: taken.number };
       if (taken.from?.holder === 'pi') {
@@ -275,6 +308,18 @@ export class MainThreadService {
       }
       for (const item of items)
         await this.append(tx, key, { ...item, localId: 'mac:' + item.localId, engine });
+      const stamp = new Date(this.now()).toISOString();
+      for (const card of cards ?? [])
+        await tx.run(
+          `INSERT INTO pi_main_cards (project_id, person, id, body, created_at, updated_at) VALUES (?,?,?,?,?,?)
+           ON CONFLICT (project_id, person, id) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at`,
+          caller.projectId,
+          person,
+          card.id,
+          JSON.stringify(card.body),
+          stamp,
+          stamp,
+        );
       const rows = await tx.all<Row>(
         `SELECT * FROM pi_main_items WHERE project_id=? AND person=? AND seq>? AND (engine='pi' OR kind='ready')
          ORDER BY seq LIMIT 13`,
@@ -310,10 +355,21 @@ export class MainThreadService {
         before ?? Number.MAX_SAFE_INTEGER,
         limit + 1,
       );
+      const cards = await tx.all<{ id: string; body: string; created_at: string }>(
+        'SELECT id, body, created_at FROM pi_main_cards WHERE project_id=? AND person=? ORDER BY created_at DESC, id LIMIT 30',
+        caller.projectId,
+        person,
+      );
       const held = await this.lease(tx, caller.projectId, person);
       const desktop = held?.holder === 'mac' && Number(held.expires_at) > this.now();
       return {
         items: rows.slice(0, limit).reverse().map(itemOf),
+        /** Experiments as the Mac last reported them, oldest first. */
+        cards: cards.reverse().map((card) => ({
+          id: card.id,
+          at: card.created_at,
+          body: JSON.parse(card.body) as Record<string, unknown>,
+        })),
         more: rows.length > limit,
         /** `mac`: their own agent has the thread. `cloud`: Merv answers here. */
         engine: desktop ? ('mac' as const) : ('cloud' as const),
@@ -339,10 +395,18 @@ export class MainThreadService {
       );
     return await this.serial(JSON.stringify([caller.projectId, person]), async () => {
       const start = await inTransaction(this.state, undefined, async (tx) => {
-        await tx.get('SELECT pg_advisory_xact_lock(hashtext(?))', `pi-main:${caller.projectId}:${person}`);
+        await tx.get(
+          'SELECT pg_advisory_xact_lock(hashtext(?))',
+          `pi-main:${caller.projectId}:${person}`,
+        );
         const before = await said(tx);
         if (before.length) {
-          check(before[0]!.words === text, 'request_conflict', 'This message ID already belongs to another message', 409);
+          check(
+            before[0]!.words === text,
+            'request_conflict',
+            'This message ID already belongs to another message',
+            409,
+          );
           check(before.length === 2, 'conflict', 'That message is still being answered', 409);
           return { done: before };
         }
@@ -362,7 +426,8 @@ export class MainThreadService {
         );
         return { lease: taken.number, history: history.map(itemOf) };
       });
-      if ('done' in start) return { person: itemOf(start.done![0]!), answer: itemOf(start.done![1]!) };
+      if ('done' in start)
+        return { person: itemOf(start.done![0]!), answer: itemOf(start.done![1]!) };
       const answer = (
         await this.turn!(caller, {
           instructions,
@@ -373,7 +438,10 @@ export class MainThreadService {
       check(answer, 'pi_unavailable', 'Merv cloud could not answer. Try again.', 503);
       return await inTransaction(this.state, undefined, async (tx) => {
         await this.person(caller, tx);
-        await tx.get('SELECT pg_advisory_xact_lock(hashtext(?))', `pi-main:${caller.projectId}:${person}`);
+        await tx.get(
+          'SELECT pg_advisory_xact_lock(hashtext(?))',
+          `pi-main:${caller.projectId}:${person}`,
+        );
         const held = await this.lease(tx, caller.projectId, person);
         // The thread moved while this was being written: an old lease number never appends.
         check(
@@ -383,10 +451,26 @@ export class MainThreadService {
           409,
         );
         const key = { projectId: caller.projectId, person, lease: start.lease! };
-        await this.append(tx, key, { localId: local, engine: 'pi', kind: 'person', text, requestId });
-        await this.append(tx, key, { localId: 'answer:' + requestId, engine: 'pi', kind: 'answer', text: answer.slice(0, TEXT) });
+        await this.append(tx, key, {
+          localId: local,
+          engine: 'pi',
+          kind: 'person',
+          text,
+          requestId,
+        });
+        await this.append(tx, key, {
+          localId: 'answer:' + requestId,
+          engine: 'pi',
+          kind: 'answer',
+          text: answer.slice(0, TEXT),
+        });
         // Answered: the Mac may have the thread back at once.
-        await tx.run('UPDATE pi_main_leases SET expires_at=? WHERE project_id=? AND person=?', this.now(), caller.projectId, person);
+        await tx.run(
+          'UPDATE pi_main_leases SET expires_at=? WHERE project_id=? AND person=?',
+          this.now(),
+          caller.projectId,
+          person,
+        );
         const rows = await said(tx);
         return { person: itemOf(rows[0]!), answer: itemOf(rows[1]!) };
       });
@@ -413,14 +497,17 @@ const config = z
 export const mainThreadPlugin = {
   name: 'merv-pi-main-thread',
   inject: ['state', 'scope', 'tools'],
-  Config: config,
   async apply(ctx: Context, input: unknown) {
     const settings = config.parse(input ?? {});
     const service = new MainThreadService(ctx.state, ctx.scope);
     await service.initialize();
     if (settings.localModel)
       service.turn = async (_caller, ask) => {
-        const request = piAsk(settings, { model: settings.localModel!, effort: 'low', ...ask }, 60_000);
+        const request = piAsk(
+          settings,
+          { model: settings.localModel!, effort: 'low', ...ask },
+          60_000,
+        );
         if (!request) throw new MervError('pi_unavailable', 'Merv cloud has no model key', 503);
         return (await request.send()).texts.join('\n');
       };
@@ -449,7 +536,7 @@ export const mainThreadPlugin = {
       ctx.tools.noun('main.read', {
         readOnly: true,
         description:
-          "Read your main thread in this project: the one conversation your own desktop agent and Merv cloud both continue. page (its items, oldest first, and who has it now).",
+          'Read your main thread in this project: the one conversation your own desktop agent and Merv cloud both continue. page (its items, oldest first, and who has it now).',
         actions: {
           page: {
             description:

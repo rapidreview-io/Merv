@@ -75,3 +75,37 @@
 .main-reply textarea:focus {
   border-bottom-color: currentColor;
 }
+
+/* An experiment in the thread: a title, one line of state, the curve. No frame. */
+.main-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.main-card p {
+  margin: 0 0 6px;
+}
+.main-live::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #d9a400;
+  vertical-align: middle;
+}
+.main-curve {
+  margin: 8px 0;
+}
+.main-curve svg {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+}
+.main-curve figcaption {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
