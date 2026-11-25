@@ -76,36 +76,20 @@
   border-bottom-color: currentColor;
 }
 
-/* An experiment in the thread: a title, one line of state, the curve. No frame. */
-.main-card h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
+/* The project's jobs: plain lines, and one red word to stop one under way. */
+.main-jobs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--muted, #6b6f76);
 }
-.main-card p {
-  margin: 0 0 6px;
-}
-.main-live::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: #d9a400;
-  vertical-align: middle;
-}
-.main-curve {
-  margin: 8px 0;
-}
-.main-curve svg {
-  display: block;
-  width: 100%;
-  max-width: 420px;
-  height: auto;
-}
-.main-curve figcaption {
-  display: flex;
-  gap: 14px;
-  font-size: 12px;
+.main-stop {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #c0392b;
+  font: inherit;
+  cursor: pointer;
 }
