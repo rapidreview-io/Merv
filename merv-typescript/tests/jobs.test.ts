@@ -49,6 +49,10 @@ function git(cwd: string, args: string[]) {
   });
 }
 const code = (error: unknown) => (error as { code?: string }).code;
+type Allowance = {
+  allowance: { capUsd: number; committedUsd: number; leftUsd: number } | null;
+  allowanceReason: string | null;
+};
 
 async function fixture(t: TestContext) {
   const f = await twoStepWorkflow(t, 'jobs');
@@ -106,17 +110,22 @@ async function fixture(t: TestContext) {
   };
   service.machine = machine;
   // What Sandboxes says the project has spent, against autoresearch's default $20 cap.
-  let spent = 0;
+  let spent: number | null = 0;
   (app.ctx.autoresearch as unknown as AutoresearchService).spendSource = {
-    since: async () => ({ usd: spent }),
+    since: async () => {
+      if (spent === null) throw new Error('Sandboxes is unreachable');
+      return { usd: spent };
+    },
   };
 
   const call = async <T = JobView>(name: string, caller: Caller, input: Record<string, unknown>) =>
     (await app.ctx.tools.call(name, caller, input)) as T;
   const get = async (jobId: string) =>
-    await call<{ job: JobView; live: Record<string, number> | null }>('job.read:get', owner, {
-      jobId,
-    });
+    await call<{ job: JobView; live: Record<string, number> | null } & Allowance>(
+      'job.read:get',
+      owner,
+      { jobId },
+    );
   const propose = async (title = 'Dropout sweep', estimateUsd = 1.2) =>
     await call('job.write:propose', owner, {
       title,
@@ -163,7 +172,7 @@ async function fixture(t: TestContext) {
     setEnding: (state: MachineProgress['state']) => void (ending = state),
     setReleased: (value: boolean) => void (released = value),
     releases: () => releases,
-    setSpent: (usd: number) => void (spent = usd),
+    setSpent: (usd: number | null) => void (spent = usd),
     call,
     get,
     propose,
@@ -178,6 +187,8 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
 
   let job = await f.propose();
   assert.equal(job.state, 'proposed');
+  // What is left under the cap, as Run will admit it: autoresearch's default $20, nothing spent.
+  assert.deepEqual((await f.get(job.id)).allowance, { capUsd: 20, committedUsd: 0, leftUsd: 20 });
   assert.deepEqual(
     job.steps.map((step) => step.place),
     ['mac', 'machine', 'mac'],
@@ -300,7 +311,10 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   const moved = await machine();
   assert.equal(moved.code, 97);
   assert.match(moved.out, /code changed/);
-  assert.deepEqual((await f.get(job.id)).live, { step: 10, loss: 1.5 });
+  const running = await f.get(job.id);
+  assert.deepEqual(running.live, { step: 10, loss: 1.5 });
+  // A running job holds its estimate.
+  assert.deepEqual(running.allowance, { capUsd: 20, committedUsd: 1.2, leftUsd: 18.8 });
   await f.ok('POST', `/sessions/${writer.session.id}/release`, f.token, { runnerId: 'mac-desk' });
 
   // The run ends: its cost and final readings are recorded, the machine released, the grant gone.
@@ -413,6 +427,9 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   // $19 of the $20 cap spent: a $2 run does not fit and nothing starts; a $0.50 one does.
   f.setSpent(19);
   const dear = await f.propose('Dear', 2);
+  const listed = await call<{ jobs: JobView[] } & Allowance>('job.read:list', f.owner, {});
+  assert.deepEqual(listed.allowance, { capUsd: 20, committedUsd: 19, leftUsd: 1 });
+  assert.equal(listed.allowanceReason, null);
   await assert.rejects(f.move('run', dear), (error) => {
     assert.equal(code(error), 'job_cap_reached');
     assert.match(
@@ -423,6 +440,12 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   });
   assert.equal((await f.get(dear.id)).job.state, 'proposed');
   assert.equal((await f.move('run', await f.propose('Cheap', 0.5))).state, 'writing');
+  // Spend Sandboxes does not report: no allowance, a plain reason, and Run refused.
+  f.setSpent(null);
+  const unknown = await f.get(dear.id);
+  assert.equal(unknown.allowance, null);
+  assert.match(unknown.allowanceReason!, /did not say what this project has spent/);
+  await assert.rejects(f.move('run', dear), (error) => code(error) === 'job_spend_unavailable');
 });
 
 test('jobs: the machine step is one capped pipeline scoped to the job, its token only in env', async () => {

@@ -38,13 +38,14 @@ export const jobsToolsPlugin = {
           'Read the project’s jobs. Each job is plan on your Mac, run on a rented machine at an exact commit, review on your Mac; its record says where it stands, the commit it ran, the run’s cost, capture artifact and final METRIC values, and the review’s verdict.',
         actions: {
           list: {
-            description: 'Every job of the project, newest first.',
+            description:
+              'Every job of the project, newest first, with allowance: the cap, what is spent or held under it and what is left for a run (null, with allowanceReason, when it is not known).',
             input: z.strictObject({}),
             handler: (caller) => jobs.list(caller),
           },
           get: {
             description:
-              'One job. While it runs, live holds the latest METRIC values its command printed (best effort, else null). After Stop, run.machineReleased says whether its machine is released.',
+              'One job, with the project’s allowance as list gives it. While it runs, live holds the latest METRIC values its command printed (best effort, else null). After Stop, run.machineReleased says whether its machine is released.',
             input: z.strictObject({ jobId: z.string().min(1) }),
             handler: (caller, input) => jobs.get(caller, input),
           },

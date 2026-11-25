@@ -271,11 +271,13 @@ export class AutoresearchService implements Autoresearch {
   }
 
   /**
-   * The project's cap and what its round has spent and holds, read fresh: other programs admit
-   * their own runs against it (Jobs' Run). A project never configured has the default cap.
+   * The project's cap and what its round has spent and holds: other programs admit their own
+   * runs against it (Jobs' Run), read fresh; a page's read (`fresh` false) may be 15 s old. A
+   * project never configured has the default cap.
    */
-  async room(projectId: string, tx: Transaction): Promise<AutoresearchSpend> {
-    return await this.spend((await this.row(projectId, tx)) ?? defaults(projectId, ''), tx);
+  async room(projectId: string, tx: Transaction, fresh = true): Promise<AutoresearchSpend> {
+    const row = (await this.row(projectId, tx)) ?? defaults(projectId, '');
+    return await this.spend(row, tx, fresh);
   }
 
   // ── Reads ────────────────────────────────────────────────────────────────────────────────

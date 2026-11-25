@@ -51,6 +51,12 @@ export interface JobView extends JobPlan {
   createdAt: string;
   updatedAt: string;
 }
+/** The project's cap, what Sandboxes says is spent plus every running job's estimate, and the rest. */
+export interface JobAllowance {
+  capUsd: number;
+  committedUsd: number;
+  leftUsd: number;
+}
 export interface JobMove {
   jobId: string;
   expectedRevision: number;

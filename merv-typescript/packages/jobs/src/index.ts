@@ -22,7 +22,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxesMachine, type JobMachine, type MachineProgress } from './machine.js';
 import { definition, JOB_WORKFLOW, pick, policy, view } from './program.js';
-import type { JobMove, JobPlan, JobRun, JobView } from './types.js';
+import type { JobAllowance, JobMove, JobPlan, JobRun, JobView } from './types.js';
 export type * from './types.js';
 
 /** How long the machine's Git read lasts: renting and fetching happen well within it. */
@@ -33,7 +33,11 @@ const LIVE_MS = 3000;
 type Room = (
   projectId: string,
   tx: Transaction,
+  fresh?: boolean,
 ) => Promise<{ capUsd: number; committedUsd: number | null }>;
+/** What is left under the project's cap, or why it is not known. */
+type Allowance =
+  { allowance: JobAllowance; allowanceReason: null } | { allowance: null; allowanceReason: string };
 
 const usd = (value: number) => `$${value.toFixed(2)}`;
 
@@ -90,11 +94,16 @@ export class JobsService {
     return job;
   }
   async list(caller: Caller) {
-    const all = await this.workflows.list(caller, undefined, JOB_WORKFLOW);
-    return { jobs: all.reverse().map(view) };
+    return await forRead(this.state, async (tx) => {
+      const all = await this.workflows.list(caller, tx, JOB_WORKFLOW);
+      return { jobs: all.reverse().map(view), ...(await this.allowance(caller.projectId, tx)) };
+    });
   }
   async get(caller: Caller, input: { jobId: string }) {
-    const job = view(await forRead(this.state, (tx) => this.snapshot(caller, input.jobId, tx)));
+    const { job, ...allowance } = await forRead(this.state, async (tx) => ({
+      job: view(await this.snapshot(caller, input.jobId, tx)),
+      ...(await this.allowance(caller.projectId, tx)),
+    }));
     let live: Record<string, number> | null = null;
     // Live readings are best effort: a slow or failing read leaves them out.
     if (job.state === 'running' && job.run && this.machine) {
@@ -104,7 +113,7 @@ export class JobsService {
         new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
       ]);
     }
-    return { job, live };
+    return { job, live, ...allowance };
   }
 
   // ── The person's moves ───────────────────────────────────────────────────────────────────
@@ -166,25 +175,47 @@ export class JobsService {
       'Connect compute for this project before you run a job',
       409,
     );
-    if (!this.room) return;
-    const room = await this.room(projectId, tx);
-    check(
-      room.committedUsd !== null,
-      'job_spend_unavailable',
-      'Sandboxes did not say what this project has spent, so no run starts now. Nothing changed; try again in a minute.',
-      503,
-    );
-    const held = (await this.workflows.open(JOB_WORKFLOW, projectId, tx))
-      .filter((item) => item.id !== job.id && ['running', 'stopping'].includes(item.state))
-      .reduce((sum, item) => sum + Number(item.data.estimateUsd), 0);
-    const committed = room.committedUsd + held;
-    if (committed + job.estimateUsd > room.capUsd + 1e-9)
+    const { allowance, allowanceReason } = await this.allowance(projectId, tx, true);
+    if (!allowance) {
+      // A server without Autoresearch has no cap to admit against.
+      check(!this.room, 'job_spend_unavailable', `${allowanceReason} Nothing changed.`, 503);
+      return;
+    }
+    if (job.estimateUsd > allowance.leftUsd + 1e-9)
       throw new MervError(
         'job_cap_reached',
-        `This run's estimate of ${usd(job.estimateUsd)} does not fit under the project's cap of ${usd(room.capUsd)}: ${usd(committed)} is already spent or held. Nothing started. Raise the cap (autoresearch.write configure capUsd) or lower the estimate.`,
+        `This run's estimate of ${usd(job.estimateUsd)} does not fit under the project's cap of ${usd(allowance.capUsd)}: ${usd(allowance.committedUsd)} is already spent or held. Nothing started. Raise the cap (autoresearch.write configure capUsd) or lower the estimate.`,
         409,
-        { capUsd: room.capUsd, committedUsd: committed, estimateUsd: job.estimateUsd },
+        { ...allowance, estimateUsd: job.estimateUsd },
       );
+  }
+
+  /**
+   * The cap, what is spent or held under it (Sandboxes' spend and every running job's estimate)
+   * and what is left: the read Run is admitted on, which `fresh` false lets be 15 s old.
+   */
+  async allowance(projectId: string, tx: Transaction, fresh = false): Promise<Allowance> {
+    if (!this.room) return { allowance: null, allowanceReason: 'No cap applies on this server.' };
+    const room = await this.room(projectId, tx, fresh);
+    if (room.committedUsd === null)
+      return {
+        allowance: null,
+        allowanceReason:
+          'Sandboxes did not say what this project has spent, so no run starts now. Try again in a minute.',
+      };
+    const held = (await this.workflows.open(JOB_WORKFLOW, projectId, tx))
+      .filter((item) => ['running', 'stopping'].includes(item.state))
+      .reduce((sum, item) => sum + Number(item.data.estimateUsd), 0);
+    const cents = (usd: number) => Math.round(usd * 100) / 100;
+    const committedUsd = cents(room.committedUsd + held);
+    return {
+      allowance: {
+        capUsd: room.capUsd,
+        committedUsd,
+        leftUsd: Math.max(0, cents(room.capUsd - committedUsd)),
+      },
+      allowanceReason: null,
+    };
   }
 
   // ── The leased agents' hand-ins ──────────────────────────────────────────────────────────
@@ -403,7 +434,7 @@ export const jobsPlugin = {
       // wherever they are loaded.
       ctx.inject(['autoresearch'], (ctx) => {
         ctx.effect(() => {
-          service.room = (projectId, tx) => ctx.autoresearch.room(projectId, tx);
+          service.room = (projectId, tx, fresh) => ctx.autoresearch.room(projectId, tx, fresh);
           return () => void (service.room = undefined);
         });
       });
