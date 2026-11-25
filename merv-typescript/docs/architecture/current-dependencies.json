@@ -36,8 +36,7 @@
     "nisa": 1,
     "paper": 5,
     "payments": 2,
-    "pi": 5,
-    "mainThread": 0,
+    "pi": 4,
     "reports": 3,
     "research": 2,
     "reviews": 7,
@@ -48,6 +47,7 @@
     "scripts": 1,
     "secrets": 2,
     "sessions": 12,
+    "mainThread": 1,
     "state": 32,
     "tasks": 4,
     "tools": 34,
@@ -859,7 +859,8 @@
         "blobs"
       ],
       "optional": [
-        "sessions"
+        "sessions",
+        "mainThread"
       ],
       "kind": "service",
       "runtime": "server",
@@ -875,25 +876,6 @@
       ],
       "optional": [],
       "kind": "api",
-      "runtime": "server",
-      "defaultConfiguration": false
-    },
-    {
-      "plugin": "merv-pi-main-thread",
-      "source": "packages/pi/src/main-thread.ts",
-      "provides": [
-        "mainThread"
-      ],
-      "requires": [
-        "state",
-        "scope",
-        "tools"
-      ],
-      "optional": [
-        "pi",
-        "ui"
-      ],
-      "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false
     },
@@ -1263,6 +1245,24 @@
       ],
       "optional": [],
       "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-sessions-main-thread",
+      "source": "packages/sessions/src/main-thread.ts",
+      "provides": [
+        "mainThread"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "tools"
+      ],
+      "optional": [
+        "ui"
+      ],
+      "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
     },

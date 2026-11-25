@@ -1,12 +1,14 @@
 /**
- * A project's main thread: the one conversation a person has with their project, which their own
- * agent continues on their Mac and Merv's agent continues when the Mac is away.
+ * A person's main thread in a project: the one conversation their own agent continues on their
+ * Mac and Merv's agent (Pi) continues when the Mac is away. The thread is this log, not either
+ * engine's transcript: each engine's native session is only a cache of it.
  *
- * The thread is this log, not either engine's transcript. The Mac appends each finished turn
- * (`sync`), which also renews its lease. While that lease is live, only the Mac answers. Once it
- * has run out, a message from the web or a phone (`say`) is answered here by Merv's own model on
- * Merv's keys, from the log's history, and appended. The Mac reads what it missed on its next
- * sync and gives it to its own agent with the person's next message.
+ * One lease says who may append. The Mac takes and renews it with each `sync`, which appends its
+ * finished turns; its number only goes up, and moves on whenever the holder changes, so a Mac
+ * that names the number it held is refused once the thread has moved on. Once the Mac's lease has
+ * run out, a message from the web or a phone (`say`) is answered here by the turn Pi registers,
+ * on Merv's keys, and appended. Each native session has a delivery receipt: `sync` hands it only
+ * the items after it that it has not been given or written itself, and never the same one twice.
  *
  * Nothing here starts work on a Mac, and no credential of the person's agent ever reaches it.
  */
@@ -15,6 +17,7 @@ import { z } from 'zod';
 import {
   MervError,
   check,
+  digest,
   inTransaction,
   type Caller,
   type Migration,
@@ -24,37 +27,55 @@ import {
 } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {} from '@merv/ui/types';
-import { personKey } from '@merv/fleet/model-ledger';
-import { piAsk } from './relay.js';
 
 /** The Mac renews every 20 seconds; a lease this old means it is away. */
 export const MAC_LEASE_MS = 90_000;
 /** Long enough for one answer. A Mac that returns meanwhile waits for it. */
 const PI_LEASE_MS = 120_000;
 const TEXT = 256_000;
+/** Items one sync returns at most; `more` says there are others. */
+const PAGE = 12;
 
+/**
+ * Step A of the move from the Pi plugin's tables: the thread, its items and its lease are copied
+ * (each item keeps its sequence number); `pi_main_*` stay, so the previous server still starts.
+ * The Pi plugin's experiment cards are not copied: jobs replace them.
+ */
 export const mainThreadMigrations: Migration[] = [
   {
     version: 1,
     sql: `
-CREATE TABLE pi_main_items (
-  project_id TEXT NOT NULL, person TEXT NOT NULL, seq BIGINT NOT NULL,
-  local_id TEXT NOT NULL, engine TEXT NOT NULL,
+CREATE TABLE session_main_threads (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, person TEXT NOT NULL,
+  holder TEXT CHECK (holder IN ('mac','pi')), device TEXT,
+  number BIGINT NOT NULL DEFAULT 0, expires_at BIGINT NOT NULL DEFAULT 0,
+  UNIQUE (project_id, person)
+);
+CREATE TABLE session_main_items (
+  thread_id TEXT NOT NULL REFERENCES session_main_threads(id), seq BIGINT NOT NULL,
+  local_id TEXT NOT NULL, engine TEXT NOT NULL, native_session TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('person','answer','ready')),
   words TEXT NOT NULL, request_id TEXT, lease BIGINT NOT NULL, created_at TEXT NOT NULL,
-  PRIMARY KEY (project_id, person, seq), UNIQUE (project_id, person, local_id)
+  PRIMARY KEY (thread_id, seq), UNIQUE (thread_id, local_id)
 );
-CREATE TABLE pi_main_leases (
-  project_id TEXT NOT NULL, person TEXT NOT NULL,
-  holder TEXT NOT NULL CHECK (holder IN ('mac','pi')), device TEXT NOT NULL,
-  number BIGINT NOT NULL, expires_at BIGINT NOT NULL,
-  PRIMARY KEY (project_id, person)
+CREATE TABLE session_main_deliveries (
+  thread_id TEXT NOT NULL REFERENCES session_main_threads(id), engine TEXT NOT NULL,
+  native_session TEXT NOT NULL, through_seq BIGINT NOT NULL,
+  PRIMARY KEY (thread_id, engine, native_session)
 );
-CREATE TABLE pi_main_cards (
-  project_id TEXT NOT NULL, person TEXT NOT NULL, id TEXT NOT NULL,
-  body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-  PRIMARY KEY (project_id, person, id)
-);`,
+DO $copy$
+BEGIN
+  IF to_regclass('pi_main_items') IS NOT NULL THEN
+    INSERT INTO session_main_threads (id, project_id, person, holder, device, number, expires_at)
+    SELECT 'mth_' || md5(k.project_id || '/' || k.person), k.project_id, k.person, l.holder, l.device,
+      COALESCE(l.number, 0), COALESCE(l.expires_at, 0)
+    FROM (SELECT project_id, person FROM pi_main_items UNION SELECT project_id, person FROM pi_main_leases) k
+    LEFT JOIN pi_main_leases l ON l.project_id = k.project_id AND l.person = k.person;
+    INSERT INTO session_main_items (thread_id, seq, local_id, engine, kind, words, request_id, lease, created_at)
+    SELECT t.id, i.seq, i.local_id, i.engine, i.kind, i.words, i.request_id, i.lease, i.created_at
+    FROM pi_main_items i JOIN session_main_threads t ON t.project_id = i.project_id AND t.person = i.person;
+  END IF;
+END $copy$;`,
   },
 ];
 
@@ -73,22 +94,23 @@ export const syncInput = z
     device: z.string().min(1).max(100),
     engine: z.enum(['claude', 'codex']),
     items: z.array(macItem).max(12).default([]),
-    /** The last cloud item this Mac has kept. */
+    /** Without `native`: the last cloud item this Mac has kept. */
     after: z.number().int().min(0).default(0),
-    /** Work the thread shows beside its words (an experiment as it now stands), kept whole by id.
-     *  The Mac owns each card; the web only reads it. */
-    cards: z
-      .array(
-        z
-          .object({ id: z.string().min(1).max(100), body: z.record(z.unknown()) })
-          .strict()
-          .refine(
-            (card) => JSON.stringify(card.body).length <= 64_000,
-            'A card holds at most 64 KB',
-          ),
-      )
-      .max(20)
+    /** The lease number this Mac holds: its items are refused (lease_stale) once the thread has
+     *  another. A Mac that sends none is not checked. */
+    lease: z.number().int().min(0).optional(),
+    /** The native session the items come from and are given to: the reply is its delta, the
+     *  items after its receipt (or `through`, what it already has) that it neither wrote nor was
+     *  given before. */
+    native: z
+      .object({
+        session: z.string().min(1).max(300),
+        through: z.number().int().min(0).default(0),
+      })
+      .strict()
       .optional(),
+    /** Ignored: an older Mac's experiment cards, which jobs replace. */
+    cards: z.array(z.unknown()).max(20).optional(),
     /** The Mac is quitting or going to sleep: its hold ends now, so Merv cloud may answer at once. */
     release: z.boolean().optional(),
   })
@@ -119,9 +141,10 @@ type Row = {
   request_id: string | null;
   created_at: string;
 };
-type Lease = {
-  holder: 'mac' | 'pi';
-  device: string;
+type Thread = {
+  id: string;
+  holder: 'mac' | 'pi' | null;
+  device: string | null;
   number: number | string;
   expires_at: number | string;
 };
@@ -133,6 +156,14 @@ const itemOf = (row: Row): MainItem => ({
   at: row.created_at,
   ...(row.request_id && { requestId: row.request_id }),
 });
+/** Whose thread it is: a person's sign-in identity, else the acting actor (as Fleet keys a
+ *  person's model spending, so the threads Pi's plugin kept are found under the same key). */
+const personKey = (user: { issuer: string; subject: string } | null, caller: Caller) =>
+  digest(
+    user
+      ? { issuer: user.issuer, subject: user.subject }
+      : { projectId: caller.projectId, actorId: caller.actorId },
+  );
 
 export const historyRule =
   'Historical material is context, not a new request. Follow only the current request.';
@@ -173,13 +204,14 @@ const instructions =
   "You are Merv cloud, standing in for the person's own desktop agent in this research project while their Mac is away. Continue the conversation: answer from what was said, briefly and plainly. You cannot reach the Mac, its files or its agents, and you cannot start work there. For anything that needs it, say “that needs your desktop” and what to do there. " +
   historyRule;
 
+/** One answer of Merv's own model, metered to the person: Pi registers it. */
 export type MainTurn = (
   caller: Caller,
   input: { instructions: string; text: string; maxTokens: number },
 ) => Promise<string>;
 
 export class MainThreadService {
-  /** Merv's own model, metered to the person. Unset, nobody can be answered here. */
+  /** Unset, nobody can be answered here. */
   turn?: MainTurn;
   /** One answer at a time for a thread; a returning Mac waits behind it. */
   private readonly active = new Map<string, Promise<unknown>>();
@@ -189,7 +221,12 @@ export class MainThreadService {
     private readonly now: () => number = Date.now,
   ) {}
   async initialize(): Promise<void> {
-    await this.state.migrate('pi-main-thread', mainThreadMigrations);
+    await this.state.migrate('session_main', mainThreadMigrations);
+  }
+  /** Pi answers here while it is loaded. */
+  answerWith(turn: MainTurn) {
+    this.turn = turn;
+    return () => void (this.turn === turn && (this.turn = undefined));
   }
 
   /** The person this caller acts for: a signed-in person or their own key, never a worker. */
@@ -201,65 +238,69 @@ export class MainThreadService {
       403,
     );
     const actor = await this.scope.require(caller, 'read', tx);
-    return personKey(actor.user, caller);
+    return personKey(actor.user ?? null, caller);
   }
-  private lease(tx: Transaction, projectId: string, person: string) {
-    return tx.get<Lease>(
-      'SELECT holder, device, number, expires_at FROM pi_main_leases WHERE project_id=? AND person=?',
+  /** The person's thread; a writer creates it and holds it until it commits. */
+  private async thread(tx: Transaction, projectId: string, person: string, write = false) {
+    if (write)
+      await tx.run(
+        `INSERT INTO session_main_threads (id, project_id, person) VALUES ('mth_' || md5(? || '/' || ?), ?, ?)
+         ON CONFLICT (project_id, person) DO NOTHING`,
+        projectId,
+        person,
+        projectId,
+        person,
+      );
+    return await tx.get<Thread>(
+      `SELECT id, holder, device, number, expires_at FROM session_main_threads WHERE project_id=? AND person=?${write ? ' FOR UPDATE' : ''}`,
       projectId,
       person,
     );
   }
-  private async take(
-    tx: Transaction,
-    projectId: string,
-    person: string,
-    holder: Lease['holder'],
-    device: string,
-    ms: number,
-  ): Promise<{ number: number; from?: Lease }> {
-    const held = await this.lease(tx, projectId, person);
-    const same = held?.holder === holder && held.device === device;
-    const number = held ? Number(held.number) + (same ? 0 : 1) : 1;
+  private held(thread: Thread | undefined, holder: 'mac' | 'pi') {
+    return thread?.holder === holder && Number(thread.expires_at) > this.now();
+  }
+  /** Takes or renews the lease: its number moves on only when another holder takes it. */
+  private async take(tx: Transaction, thread: Thread, holder: 'mac' | 'pi', device: string) {
+    const same = thread.holder === holder && thread.device === device;
+    const number = Number(thread.number) + (same ? 0 : 1);
     await tx.run(
-      `INSERT INTO pi_main_leases (project_id, person, holder, device, number, expires_at) VALUES (?,?,?,?,?,?)
-       ON CONFLICT (project_id, person) DO UPDATE SET holder=excluded.holder, device=excluded.device,
-         number=excluded.number, expires_at=excluded.expires_at`,
-      projectId,
-      person,
+      'UPDATE session_main_threads SET holder=?, device=?, number=?, expires_at=? WHERE id=?',
       holder,
       device,
       number,
-      this.now() + ms,
+      this.now() + (holder === 'mac' ? MAC_LEASE_MS : PI_LEASE_MS),
+      thread.id,
     );
-    return { number, ...(held && !same && { from: held }) };
+    return { number, from: same ? null : thread.holder };
   }
   private async append(
     tx: Transaction,
-    key: { projectId: string; person: string; lease: number },
+    thread: string,
+    lease: number,
     item: {
       localId: string;
       engine: string;
+      native?: string;
       kind: MainItem['kind'];
       text: string;
       requestId?: string;
     },
   ) {
     await tx.run(
-      `INSERT INTO pi_main_items (project_id, person, seq, local_id, engine, kind, words, request_id, lease, created_at)
-       SELECT ?,?,COALESCE(MAX(seq),0)+1,?,?,?,?,?,?,? FROM pi_main_items WHERE project_id=? AND person=?
-       ON CONFLICT (project_id, person, local_id) DO NOTHING`,
-      key.projectId,
-      key.person,
+      `INSERT INTO session_main_items (thread_id, seq, local_id, engine, native_session, kind, words, request_id, lease, created_at)
+       SELECT ?,COALESCE(MAX(seq),0)+1,?,?,?,?,?,?,?,? FROM session_main_items WHERE thread_id=?
+       ON CONFLICT (thread_id, local_id) DO NOTHING`,
+      thread,
       item.localId,
       item.engine,
+      item.native ?? null,
       item.kind,
       item.text,
       item.requestId ?? null,
-      key.lease,
+      lease,
       new Date(this.now()).toISOString(),
-      key.projectId,
-      key.person,
+      thread,
     );
   }
   private async serial<T>(key: string, run: () => Promise<T>): Promise<T> {
@@ -274,9 +315,9 @@ export class MainThreadService {
   }
 
   /** The Mac's heartbeat: it takes or renews the lease, appends its finished turns, and reads
-   *  what Merv cloud said after `after`. A retry of the same items writes nothing twice. */
+   *  what it has not seen. A retry of the same items writes nothing twice. */
   async sync(caller: Caller, input: unknown) {
-    const { device, engine, items, after, release, cards } = syncInput.parse(input);
+    const { device, engine, items, after, lease, native, release } = syncInput.parse(input);
     caller = structuredClone(caller);
     const wait = await inTransaction(this.state, undefined, async (tx) =>
       JSON.stringify([caller.projectId, await this.person(caller, tx)]),
@@ -285,21 +326,23 @@ export class MainThreadService {
     await this.active.get(wait)?.catch(() => {});
     return await inTransaction(this.state, undefined, async (tx) => {
       const person = await this.person(caller, tx);
-      // One writer at a time for this thread's sequence, whatever process asks.
-      await tx.get(
-        'SELECT pg_advisory_xact_lock(hashtext(?))',
-        `pi-main:${caller.projectId}:${person}`,
-      );
-      const taken = await this.take(tx, caller.projectId, person, 'mac', device, MAC_LEASE_MS);
-      const key = { projectId: caller.projectId, person, lease: taken.number };
-      if (taken.from?.holder === 'pi') {
+      const thread = (await this.thread(tx, caller.projectId, person, true))!;
+      // An old lease never appends: the thread moved on while this Mac was away.
+      if (lease !== undefined && items.length && lease !== Number(thread.number))
+        throw new MervError(
+          'lease_stale',
+          `The thread has moved on to lease ${thread.number}: read what you missed, then send these again.`,
+          409,
+          { lease: Number(thread.number) },
+        );
+      const taken = await this.take(tx, thread, 'mac', device);
+      if (taken.from === 'pi') {
         const last = await tx.get<Row>(
-          'SELECT * FROM pi_main_items WHERE project_id=? AND person=? ORDER BY seq DESC LIMIT 1',
-          caller.projectId,
-          person,
+          'SELECT * FROM session_main_items WHERE thread_id=? ORDER BY seq DESC LIMIT 1',
+          thread.id,
         );
         if (last?.engine === 'pi' && last.kind === 'answer')
-          await this.append(tx, key, {
+          await this.append(tx, thread.id, taken.number, {
             localId: 'ready:' + last.seq,
             engine,
             kind: 'ready',
@@ -307,38 +350,57 @@ export class MainThreadService {
           });
       }
       for (const item of items)
-        await this.append(tx, key, { ...item, localId: 'mac:' + item.localId, engine });
-      const stamp = new Date(this.now()).toISOString();
-      for (const card of cards ?? [])
-        await tx.run(
-          `INSERT INTO pi_main_cards (project_id, person, id, body, created_at, updated_at) VALUES (?,?,?,?,?,?)
-           ON CONFLICT (project_id, person, id) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at`,
-          caller.projectId,
-          person,
-          card.id,
-          JSON.stringify(card.body),
-          stamp,
-          stamp,
+        await this.append(tx, thread.id, taken.number, {
+          ...item,
+          localId: 'mac:' + item.localId,
+          engine,
+          native: native?.session,
+        });
+      let rows: Row[];
+      let through: number | undefined;
+      if (native) {
+        // Its receipt only goes up: what was given once is never given again.
+        const receipt = [thread.id, engine, native.session] as const;
+        const seen = await tx.get<{ through_seq: number | string }>(
+          'SELECT through_seq FROM session_main_deliveries WHERE thread_id=? AND engine=? AND native_session=?',
+          ...receipt,
         );
-      const rows = await tx.all<Row>(
-        `SELECT * FROM pi_main_items WHERE project_id=? AND person=? AND seq>? AND (engine='pi' OR kind='ready')
-         ORDER BY seq LIMIT 13`,
-        caller.projectId,
-        person,
-        after,
-      );
+        const from = Math.max(Number(seen?.through_seq ?? 0), native.through);
+        rows = await tx.all<Row>(
+          `SELECT * FROM session_main_items WHERE thread_id=? AND seq>? AND NOT (engine=? AND native_session IS NOT DISTINCT FROM ?)
+           ORDER BY seq LIMIT ${PAGE + 1}`,
+          thread.id,
+          from,
+          engine,
+          native.session,
+        );
+        through = Math.max(from, ...rows.slice(0, PAGE).map((row) => Number(row.seq)));
+        await tx.run(
+          `INSERT INTO session_main_deliveries (thread_id, engine, native_session, through_seq) VALUES (?,?,?,?)
+           ON CONFLICT (thread_id, engine, native_session) DO UPDATE SET through_seq=excluded.through_seq`,
+          ...receipt,
+          through,
+        );
+      } else
+        rows = await tx.all<Row>(
+          `SELECT * FROM session_main_items WHERE thread_id=? AND seq>? AND (engine='pi' OR kind='ready')
+           ORDER BY seq LIMIT ${PAGE + 1}`,
+          thread.id,
+          after,
+        );
       if (release)
         await tx.run(
-          'UPDATE pi_main_leases SET expires_at=? WHERE project_id=? AND person=?',
+          'UPDATE session_main_threads SET expires_at=? WHERE id=?',
           this.now(),
-          caller.projectId,
-          person,
+          thread.id,
         );
       return {
+        thread: thread.id,
         lease: taken.number,
         renewMs: 20_000,
-        items: rows.slice(0, 12).map(itemOf),
-        more: rows.length > 12,
+        items: rows.slice(0, PAGE).map(itemOf),
+        more: rows.length > PAGE,
+        ...(through !== undefined && { through }),
       };
     });
   }
@@ -347,32 +409,21 @@ export class MainThreadService {
   async page(caller: Caller, input: unknown) {
     const { before, limit } = pageInput.parse(input ?? {});
     return await inTransaction(this.state, undefined, async (tx) => {
-      const person = await this.person(caller, tx);
-      const rows = await tx.all<Row>(
-        'SELECT * FROM pi_main_items WHERE project_id=? AND person=? AND seq<? ORDER BY seq DESC LIMIT ?',
-        caller.projectId,
-        person,
-        before ?? Number.MAX_SAFE_INTEGER,
-        limit + 1,
-      );
-      const cards = await tx.all<{ id: string; body: string; created_at: string }>(
-        'SELECT id, body, created_at FROM pi_main_cards WHERE project_id=? AND person=? ORDER BY created_at DESC, id LIMIT 30',
-        caller.projectId,
-        person,
-      );
-      const held = await this.lease(tx, caller.projectId, person);
-      const desktop = held?.holder === 'mac' && Number(held.expires_at) > this.now();
+      const thread = await this.thread(tx, caller.projectId, await this.person(caller, tx));
+      const rows = thread
+        ? await tx.all<Row>(
+            'SELECT * FROM session_main_items WHERE thread_id=? AND seq<? ORDER BY seq DESC LIMIT ?',
+            thread.id,
+            before ?? Number.MAX_SAFE_INTEGER,
+            limit + 1,
+          )
+        : [];
       return {
+        thread: thread?.id ?? null,
         items: rows.slice(0, limit).reverse().map(itemOf),
-        /** Experiments as the Mac last reported them, oldest first. */
-        cards: cards.reverse().map((card) => ({
-          id: card.id,
-          at: card.created_at,
-          body: JSON.parse(card.body) as Record<string, unknown>,
-        })),
         more: rows.length > limit,
         /** `mac`: their own agent has the thread. `cloud`: Merv answers here. */
-        engine: desktop ? ('mac' as const) : ('cloud' as const),
+        engine: this.held(thread, 'mac') ? ('mac' as const) : ('cloud' as const),
         available: !!this.turn,
       };
     });
@@ -385,21 +436,17 @@ export class MainThreadService {
     caller = structuredClone(caller);
     const person = await inTransaction(this.state, undefined, (tx) => this.person(caller, tx));
     const local = 'person:' + requestId;
-    const said = (tx: Transaction) =>
+    const said = (tx: Transaction, thread: string) =>
       tx.all<Row>(
-        'SELECT * FROM pi_main_items WHERE project_id=? AND person=? AND local_id IN (?,?) ORDER BY seq',
-        caller.projectId,
-        person,
+        'SELECT * FROM session_main_items WHERE thread_id=? AND local_id IN (?,?) ORDER BY seq',
+        thread,
         local,
         'answer:' + requestId,
       );
     return await this.serial(JSON.stringify([caller.projectId, person]), async () => {
       const start = await inTransaction(this.state, undefined, async (tx) => {
-        await tx.get(
-          'SELECT pg_advisory_xact_lock(hashtext(?))',
-          `pi-main:${caller.projectId}:${person}`,
-        );
-        const before = await said(tx);
+        const thread = (await this.thread(tx, caller.projectId, person, true))!;
+        const before = await said(tx, thread.id);
         if (before.length) {
           check(
             before[0]!.words === text,
@@ -410,21 +457,19 @@ export class MainThreadService {
           check(before.length === 2, 'conflict', 'That message is still being answered', 409);
           return { done: before };
         }
-        const held = await this.lease(tx, caller.projectId, person);
         check(
-          !(held?.holder === 'mac' && Number(held.expires_at) > this.now()),
+          !this.held(thread, 'mac'),
           'desktop_here',
           'Your desktop has this conversation. Write to it there.',
           409,
         );
         check(this.turn, 'pi_unavailable', 'Merv cloud is unavailable', 503);
-        const taken = await this.take(tx, caller.projectId, person, 'pi', 'cloud', PI_LEASE_MS);
+        const taken = await this.take(tx, thread, 'pi', 'cloud');
         const history = await tx.all<Row>(
-          "SELECT * FROM pi_main_items WHERE project_id=? AND person=? AND kind<>'ready' ORDER BY seq",
-          caller.projectId,
-          person,
+          "SELECT * FROM session_main_items WHERE thread_id=? AND kind<>'ready' ORDER BY seq",
+          thread.id,
         );
-        return { lease: taken.number, history: history.map(itemOf) };
+        return { thread: thread.id, lease: taken.number, history: history.map(itemOf) };
       });
       if ('done' in start)
         return { person: itemOf(start.done![0]!), answer: itemOf(start.done![1]!) };
@@ -438,27 +483,17 @@ export class MainThreadService {
       check(answer, 'pi_unavailable', 'Merv cloud could not answer. Try again.', 503);
       return await inTransaction(this.state, undefined, async (tx) => {
         await this.person(caller, tx);
-        await tx.get(
-          'SELECT pg_advisory_xact_lock(hashtext(?))',
-          `pi-main:${caller.projectId}:${person}`,
-        );
-        const held = await this.lease(tx, caller.projectId, person);
+        const thread = (await this.thread(tx, caller.projectId, person, true))!;
         // The thread moved while this was being written: an old lease number never appends.
         check(
-          held?.holder === 'pi' && Number(held.number) === start.lease,
+          thread.holder === 'pi' && Number(thread.number) === start.lease,
           'desktop_here',
           'Your desktop took this conversation back. Ask it there.',
           409,
         );
-        const key = { projectId: caller.projectId, person, lease: start.lease! };
-        await this.append(tx, key, {
-          localId: local,
-          engine: 'pi',
-          kind: 'person',
-          text,
-          requestId,
-        });
-        await this.append(tx, key, {
+        const at = { localId: local, engine: 'pi', kind: 'person' as const, text, requestId };
+        await this.append(tx, thread.id, start.lease, at);
+        await this.append(tx, thread.id, start.lease, {
           localId: 'answer:' + requestId,
           engine: 'pi',
           kind: 'answer',
@@ -466,12 +501,11 @@ export class MainThreadService {
         });
         // Answered: the Mac may have the thread back at once.
         await tx.run(
-          'UPDATE pi_main_leases SET expires_at=? WHERE project_id=? AND person=?',
+          'UPDATE session_main_threads SET expires_at=? WHERE id=?',
           this.now(),
-          caller.projectId,
-          person,
+          thread.id,
         );
-        const rows = await said(tx);
+        const rows = await said(tx, thread.id);
         return { person: itemOf(rows[0]!), answer: itemOf(rows[1]!) };
       });
     });
@@ -484,41 +518,12 @@ declare module 'cordis' {
   }
 }
 
-const config = z
-  .object({
-    /** Local development only: answer with this model on the server's own key, unmetered, when
-     *  the Pi service is not loaded. Never set in a deployment. */
-    localModel: z.string().min(1).optional(),
-    modelApiKeyEnv: z.string().default('MERV_PI_MODEL_API_KEY'),
-    anthropicApiKeyEnv: z.string().default('MERV_PI_ANTHROPIC_API_KEY'),
-  })
-  .strict();
-
 export const mainThreadPlugin = {
-  name: 'merv-pi-main-thread',
+  name: 'merv-sessions-main-thread',
   inject: ['state', 'scope', 'tools'],
-  async apply(ctx: Context, input: unknown) {
-    const settings = config.parse(input ?? {});
+  async apply(ctx: Context) {
     const service = new MainThreadService(ctx.state, ctx.scope);
     await service.initialize();
-    if (settings.localModel)
-      service.turn = async (_caller, ask) => {
-        const request = piAsk(
-          settings,
-          { model: settings.localModel!, effort: 'low', ...ask },
-          60_000,
-        );
-        if (!request) throw new MervError('pi_unavailable', 'Merv cloud has no model key', 503);
-        return (await request.send()).texts.join('\n');
-      };
-    // The Pi service, where it is loaded, answers on the person's metered Agent spending.
-    ctx.inject(['pi'], (part) => {
-      const local = service.turn;
-      service.turn = (caller, ask) => part.pi.turn(caller, ask);
-      part.effect(() => () => {
-        service.turn = local;
-      });
-    });
     ctx.provide('mainThread', service);
     ctx.inject(['ui'], (part) => {
       part.effect(() =>
@@ -563,7 +568,7 @@ export const mainThreadPlugin = {
           },
           sync: {
             description:
-              "Your own Mac's heartbeat: it renews the Mac's hold on the thread, appends its finished turns and returns what Merv cloud said after `after`. Not for agents.",
+              "Your own Mac's heartbeat: it renews the Mac's hold on the thread, appends its finished turns and returns what Merv cloud said after `after`; with `native`, what that native session has not seen, once. With `lease`, its items are refused (lease_stale) once the thread has moved on. Not for agents.",
             input: syncInput,
             handler: async (caller, input) => await service.sync(caller, input),
           },
