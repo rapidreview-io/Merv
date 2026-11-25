@@ -1,5 +1,29 @@
 # Production releases
 
+## Main thread for the research app, 2026-11-25
+
+Main `20261125T033208Z-de261753-4a8a825be9e7` is live from source `de2617531` (code at `40ae755da`,
+[CI run 45538121134](https://github.com/rapidreview-io/Merv/actions/runs/45538121134) green). The same code passed
+staging as `20261125T032149Z-40ae755d-4171108029d0` after staging's configuration was repaired forward (see
+[STAGING_RELEASES.md](STAGING_RELEASES.md)). Production is healthy with 78/81 plugins (`pi-main-thread` active; the
+same three Feed entries inactive as before), and the health, UI, asset, anonymous and origin checks passed. The hosted
+check found no hosted input changed.
+
+The release adds migration `pi-main-thread@1` (tables `pi_main_items`, `pi_main_leases`, `pi_main_cards`), read back
+from production with hash `6a201aaa52c5c7a464b10e3e12fc504e3e1f1cc09082fa9e5efbee13d4b45a4e`. The previous image
+cannot boot this schema, so the release used `--no-rollback`. A `pg_dump -Fc` of the production schema was taken and
+listed first: `/var/backups/merv/main-thread-prod/20261125T033000Z/` (511 MB, with `SHA256SUMS`).
+
+Acceptance in production, on a synthetic project whose credential expired after 15 minutes: a Mac's sync takes the
+lease and appends its turn and an experiment card; a message while the Mac holds the thread is refused
+(`desktop_here`); after the Mac releases, Merv's model answers from the log on the person's metered Agent spending
+("You said to use seed 3 for everything."); the returning Mac reads exactly what it missed and one ready line.
+Then, with the founder's own key in the dedicated project `project_1b44403d7210447c8568dada649c4b2d`, a private Mac
+desk ran the whole loop against production Sandboxes: Claude Code proposed an experiment, Run rented one Modal T4,
+nine metric points arrived live, the machine was released (0 active before and after) and the run cost $0.09.
+Not exercised in production: the fact-A/fact-B handoff with a real Mac desk (proved against a local Merv with the
+real model only), and the web page in a signed-in person's browser.
+
 ## Pi worker-question responder, 2026-10-12
 
 Main `20261012T020301Z-440f47a5-cfb43641bb50` is live from source `440f47a53`.
