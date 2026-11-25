@@ -1,4 +1,4 @@
-import type { CodeBrowsed, CodeLogEntry } from '@merv/code/models';
+import type { CodeBrowsed, CodeDiff, CodeLogEntry } from '@merv/code/models';
 import type {
   Caller,
   CodeCommandRecord,
@@ -140,6 +140,8 @@ export interface CodeUnits {
     caller: Caller,
     input: { ref?: string; path?: string },
   ): Promise<CodeBrowsed & { ref: string }>;
+  /** What main, a unit of work or a commit changed against its first parent (code.read diff). */
+  diff(caller: Caller, input: { ref?: string }): Promise<CodeDiff & { ref: string }>;
   /** One file's bytes as of main, a unit of work or a commit: what the page shows whole. */
   raw(caller: Caller, input: { ref?: string; path: string }): Promise<Buffer>;
   /** The history of main, a unit of work or a commit, each commit with the work it came from. */

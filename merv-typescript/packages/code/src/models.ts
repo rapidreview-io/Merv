@@ -17,6 +17,15 @@ export type CodeBrowsed =
       withheld?: 'binary' | 'too_large';
     };
 
+/** What one commit changed against its first parent (none: a root commit), as a patch. */
+export interface CodeDiff {
+  commit: string;
+  parent: string | null;
+  /** The patch, when it is small enough to show; otherwise why not. */
+  text?: string;
+  withheld?: 'too_large';
+}
+
 /** One commit of a history, as `git log` says it, and the work it came from (code.read log). */
 export interface CodeLogEntry {
   oid: string;

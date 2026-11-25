@@ -115,6 +115,7 @@ export class CodeService implements Code {
       | 'gitRemote'
       | 'browse'
       | 'raw'
+      | 'diff'
       | 'log'
       | 'added'
     >,
@@ -469,6 +470,10 @@ export class CodeService implements Code {
   async files(caller: Caller, input: { ref?: string; path?: string }) {
     const { ref, commit } = await this.commitOf(caller, input);
     return { ref, ...(await this.utility.browse(caller.projectId, commit, input.path ?? '')) };
+  }
+  async diff(caller: Caller, input: { ref?: string }) {
+    const { ref, commit } = await this.commitOf(caller, input);
+    return { ref, ...(await this.utility.diff(caller.projectId, commit)) };
   }
   async raw(caller: Caller, input: { ref?: string; path: string }) {
     const { commit } = await this.commitOf(caller, input);

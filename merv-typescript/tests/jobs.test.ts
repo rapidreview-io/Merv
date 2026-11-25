@@ -323,7 +323,7 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(ran.code, 0, ran.out);
   assert.match(ran.out, new RegExp(`^${commit}$`, 'm'));
   assert.doesNotMatch(ran.out, new RegExp(grant.token), 'the command never sees the token');
-  await f.push('desk-run/dropout-1', 'print("moved")\n');
+  const later = await f.push('desk-run/dropout-1', 'print("moved")\n');
   const moved = await machine();
   assert.equal(moved.code, 97);
   assert.match(moved.out, /code changed/);
@@ -391,6 +391,19 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
       requestId: randomUUID(),
     });
   await assert.rejects(review('c'.repeat(40)), (e) => code(e) === 'job_commit_stale');
+  // The result links to its diff: what the job's commit changed against its parent (none here).
+  const change = await call<{ commit: string; parent: string | null; text: string }>(
+    'code.read:diff',
+    reviewer.worker,
+    { ref: commit },
+  );
+  assert.deepEqual([change.commit, change.parent], [commit, null]);
+  assert.match(change.text, /^\+\+\+ b\/train\.py\n@@ .* @@\n\+print\("METRIC/m);
+  const after = await call<{ parent: string; text: string }>('code.read:diff', f.owner, {
+    ref: later,
+  });
+  assert.equal(after.parent, commit);
+  assert.match(after.text, /^-print\("METRIC.*\n\+print\("moved"\)$/m);
   const next = {
     title: 'Dropout 0.2',
     goal: 'Does more dropout help?',

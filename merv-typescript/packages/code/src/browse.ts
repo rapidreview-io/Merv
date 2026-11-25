@@ -5,7 +5,7 @@
  */
 import { MervError, check, clip, oidPattern } from '@merv/contracts';
 import type { CodeRepositories } from './store/repository.js';
-import type { CodeBrowsed, CodeFolderEntry, CodeLogEntry } from './models.js';
+import type { CodeBrowsed, CodeDiff, CodeFolderEntry, CodeLogEntry } from './models.js';
 
 /** The most of one file shown as text. */
 export const MOST_FILE_BYTES = 1024 * 1024;
@@ -127,6 +127,39 @@ export async function raw(
   const read = await git(['cat-file', 'blob', target], bytes + 1024);
   check(read.code === 0, 'code_git_failed', 'The file could not be read', 500);
   return read.stdout;
+}
+
+/** What `commit` changed against its first parent, as a patch of up to 1 MiB. */
+export async function diff(
+  repositories: CodeRepositories,
+  projectId: string,
+  commit: string,
+): Promise<CodeDiff> {
+  const { git } = await at(repositories, projectId, commit, '');
+  const parent = (await git(['rev-parse', '-q', '--verify', `${commit}^1`])).stdout
+    .toString('utf8')
+    .trim();
+  let size = 0;
+  const chunks: Buffer[] = [];
+  const shown = await repositories.git.run(
+    ['diff-tree', '-p', '-M', '--root', '--no-commit-id', '--diff-merges=first-parent', commit],
+    {
+      env: repositories.environment(projectId),
+      timeoutMs: 10_000,
+      output: (chunk) => {
+        size += chunk.length;
+        if (size <= MOST_FILE_BYTES) chunks.push(chunk);
+      },
+    },
+  );
+  check(shown.code === 0, 'code_git_failed', 'The change could not be read', 500);
+  return {
+    commit,
+    parent: parent || null,
+    ...(size > MOST_FILE_BYTES
+      ? { withheld: 'too_large' as const }
+      : { text: Buffer.concat(chunks).toString('utf8') }),
+  };
 }
 
 /** The most commits one read of history returns. */

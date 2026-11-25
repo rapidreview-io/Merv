@@ -46,6 +46,13 @@ const outputs = {
     text: z.string().optional(),
     withheld: z.enum(['too_large', 'binary']).optional(),
   }),
+  diff: output({
+    ref: z.string(),
+    commit: z.string(),
+    parent: z.string().nullable(),
+    text: z.string().optional(),
+    withheld: z.literal('too_large').optional(),
+  }),
   log: output({
     ref: z.string(),
     commit: z.string(),
@@ -100,6 +107,15 @@ const reads = (ctx: Context): NounActions => ({
     output: outputs.files,
     was: ['code.files'],
     handler: (caller, input) => ctx.codeWork.files(caller, input),
+  },
+  diff: {
+    summary:
+      'The patch one commit made against its first parent. ref: main (default), task/experiment ID or full commit ID (a job’s code.commit). Up to 1 MiB, else withheld.',
+    description:
+      "Read what one commit changed, as a patch against its first parent (parent null: a root commit, against nothing), the way a repository browser shows a commit. ref chooses the commit: main (the default), a task or experiment by its work unit id, or a full commit id such as a job's code.commit. A patch over 1 MiB is withheld (too_large). It changes nothing.",
+    input: browseInput.omit({ path: true }),
+    output: outputs.diff,
+    handler: (caller, input) => ctx.codeWork.diff(caller, input),
   },
   log: {
     summary:

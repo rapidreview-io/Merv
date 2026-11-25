@@ -1,4 +1,4 @@
-import { added, browse, log, raw } from './browse.js';
+import { added, browse, diff, log, raw } from './browse.js';
 import type { CodeBrowsed } from './models.js';
 import { createService, type Scope, type State, type Transaction } from '@merv/contracts';
 import { retireGitHubConnections } from './github-retirement.js';
@@ -122,6 +122,10 @@ export class CodeService {
   /** One file's bytes as they are; the caller has read the project. */
   raw(projectId: string, commit: string, path: string): Promise<Buffer> {
     return raw(this.repositories, projectId, commit, path);
+  }
+  /** What one commit changed against its first parent; the caller has read the project. */
+  diff(projectId: string, commit: string) {
+    return diff(this.repositories, projectId, commit);
   }
   /** One commit's history, newest first; the caller has read the project. */
   log(projectId: string, commit: string, options: { limit?: number; path?: string }) {
