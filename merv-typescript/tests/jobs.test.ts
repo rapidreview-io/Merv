@@ -84,6 +84,7 @@ async function fixture(t: TestContext) {
   const grants: { url: string; token: string }[] = [];
   const runs: MachineRun[] = [];
   let ending: MachineProgress['state'] = 'running';
+  let started = false;
   let released = true;
   let releases = 0;
   const machine: JobMachine = {
@@ -95,6 +96,7 @@ async function fixture(t: TestContext) {
       }
       return {
         state: ending,
+        started: started || ending !== 'running',
         workflowId: `wf_${run.attempt}`,
         costUsd: ending === 'running' ? null : 0.42,
         captureArtifactId: null,
@@ -102,7 +104,10 @@ async function fixture(t: TestContext) {
         error: null,
       };
     },
-    live: async () => ({ step: 10, loss: 1.5 }),
+    live: async (_caller, jobId, attempt) =>
+      runs.some((item) => item.jobId === jobId && item.attempt === attempt)
+        ? { step: 10, loss: 1.5 }
+        : null,
     release: async () => {
       releases++;
       return released;
@@ -170,6 +175,7 @@ async function fixture(t: TestContext) {
     grants,
     runs,
     setEnding: (state: MachineProgress['state']) => void (ending = state),
+    setStarted: (value: boolean) => void (started = value),
     setReleased: (value: boolean) => void (released = value),
     releases: () => releases,
     setSpent: (usd: number | null) => void (spent = usd),
@@ -201,7 +207,10 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
 
   const writer = await f.offer(job);
   assert.equal(writer.session.assignment.role, 'producer');
-  assert.match(writer.session.assignment.brief, /job\.submit_code/);
+  // On the Mac the app pushes and hands in: the agent only commits and ends its turn.
+  assert.match(writer.session.assignment.brief, /commit it on the branch you were given/);
+  assert.match(writer.session.assignment.brief, /Do not push/);
+  assert.doesNotMatch(writer.session.assignment.brief, /job\.submit_code/);
   // The writer may not move the job as a person, nor review it.
   await assert.rejects(
     call('job.write:stop', writer.worker, {
@@ -311,7 +320,13 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   const moved = await machine();
   assert.equal(moved.code, 97);
   assert.match(moved.out, /code changed/);
+  // Started on the machine: the record says so at the next tick, before the run ends.
+  assert.equal((await f.get(job.id)).job.run!.state, 'starting');
+  f.setStarted(true);
+  await f.service.tick();
   const running = await f.get(job.id);
+  assert.equal(running.job.run!.state, 'running');
+  assert.equal(running.job.run!.workflowId, 'wf_2');
   assert.deepEqual(running.live, { step: 10, loss: 1.5 });
   // A running job holds its estimate.
   assert.deepEqual(running.allowance, { capUsd: 20, committedUsd: 1.2, leftUsd: 18.8 });
@@ -335,6 +350,9 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(reviewer.session.assignment.role, 'reviewer');
   assert.notEqual(reviewer.session.actorId, writer.session.actorId);
   assert.equal(reviewer.session.execution.policy.readOnly, true);
+  assert.match(reviewer.session.assignment.brief, /VERDICT: pass.*VERDICT: needs changes/);
+  assert.match(reviewer.session.assignment.brief, new RegExp(commit));
+  assert.doesNotMatch(reviewer.session.assignment.brief, /job\.review/);
   await assert.rejects(
     call('job.submit_code', reviewer.worker, {
       jobId: job.id,
@@ -448,6 +466,46 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   await assert.rejects(f.move('run', dear), (error) => code(error) === 'job_spend_unavailable');
 });
 
+test('jobs: a read-only key reads a running job before any machine tick, writing nothing', async (t) => {
+  const f = await fixture(t);
+  const { app, owner, call } = f;
+  // No machine tick runs: the jobs service actor does not exist yet when the job is read.
+  const tick = f.service.tick;
+  f.service.tick = async () => {};
+  let job = await f.move('run', await f.propose());
+  const writer = await f.offer(job);
+  const commit = await f.push('desk-run/read-1', 'print(1)\n');
+  job = await call('job.submit_code', writer.worker, {
+    jobId: job.id,
+    expectedRevision: job.revision,
+    ref: 'desk-run/read-1',
+    commit,
+    requestId: randomUUID(),
+  });
+  const reader = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
+  const before = await app.ctx.state.transaction((tx) =>
+    tx.get<{ n: string }>('SELECT count(*) AS n FROM actors WHERE project_id=?', owner.projectId),
+  );
+  const read = await f.http('POST', '/tools/job.read', reader.token, {
+    action: 'get',
+    get: { jobId: job.id },
+  });
+  assert.equal(read.status, 200, read.text);
+  assert.equal(read.body.result.job.state, 'running');
+  assert.equal(read.body.result.job.run.state, 'starting');
+  assert.deepEqual(read.body.result.live, null, 'nothing has started on the machine yet');
+  const listed = await f.http('POST', '/tools/job.read', reader.token, { action: 'list' });
+  assert.equal(listed.status, 200, listed.text);
+  const after = await app.ctx.state.transaction((tx) =>
+    tx.get<{ n: string }>('SELECT count(*) AS n FROM actors WHERE project_id=?', owner.projectId),
+  );
+  assert.equal(after!.n, before!.n, 'a read creates no actor');
+  f.service.tick = tick;
+});
+
 test('jobs: the machine step is one capped pipeline scoped to the job, its token only in env', async () => {
   const submitted: { request: Record<string, any>; principal: Record<string, unknown> }[] = [];
   const released: unknown[] = [];
@@ -492,6 +550,7 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
   );
   assert.deepEqual(progress, {
     state: 'running',
+    started: false,
     workflowId: 'wf_1',
     costUsd: null,
     captureArtifactId: null,

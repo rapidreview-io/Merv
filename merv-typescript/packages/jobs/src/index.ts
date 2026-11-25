@@ -106,10 +106,10 @@ export class JobsService {
     }));
     let live: Record<string, number> | null = null;
     // Live readings are best effort: a slow or failing read leaves them out.
+    // They are read as the reader, who may read the project: a read creates nothing in Merv.
     if (job.state === 'running' && job.run && this.machine) {
-      const service = await this.scope.serviceActor('jobs', caller.projectId);
       live = await Promise.race([
-        this.machine.live(service, job.id, job.run.attempt).catch(() => null),
+        this.machine.live(caller, job.id, job.run.attempt).catch(() => null),
         new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
       ]);
     }
@@ -367,6 +367,7 @@ export class JobsService {
       if (!(error instanceof MervError) || error.status >= 500) throw error;
       progress = {
         state: 'failed',
+        started: false,
         workflowId: run.workflowId ?? '',
         costUsd: null,
         captureArtifactId: null,
@@ -374,12 +375,28 @@ export class JobsService {
         error: `The machine could not start: ${error.message}`,
       };
     }
-    if (progress.state === 'running') return;
+    if (progress.state === 'running') {
+      // The card says running once the command has begun on the machine.
+      if (progress.started && run.state === 'starting')
+        await this.machineMove(service, job, 'started', {
+          run: { ...run, state: 'running', workflowId: progress.workflowId },
+        });
+      return;
+    }
     // The record says released only once every machine of the job is.
     if (!(await machine.release(service, job.id))) return;
     await this.code.gitRemote.revokeRun(job.projectId, job.id);
     await this.machineMove(service, job, 'finish_run', {
-      run: { ...run, ...progress, workflowId: progress.workflowId || null, machineReleased: true },
+      run: {
+        ...run,
+        state: progress.state,
+        workflowId: progress.workflowId || null,
+        costUsd: progress.costUsd,
+        captureArtifactId: progress.captureArtifactId,
+        final: progress.final,
+        error: progress.error,
+        machineReleased: true,
+      },
     });
   }
 

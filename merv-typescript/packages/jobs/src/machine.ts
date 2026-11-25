@@ -32,6 +32,8 @@ export interface MachineRun {
 }
 export interface MachineProgress {
   state: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  /** Whether the command has begun on the machine (its run node left pending). */
+  started: boolean;
   workflowId: string;
   costUsd: number | null;
   captureArtifactId: string | null;
@@ -48,7 +50,7 @@ export interface JobMachine {
     run: MachineRun,
     grant: () => Promise<{ url: string; token: string }>,
   ): Promise<MachineProgress>;
-  /** The latest METRIC readings of a running attempt, or null. */
+  /** The latest METRIC readings of a running attempt, or null; as `caller`, who only reads. */
   live(caller: Caller, jobId: string, attempt: number): Promise<Record<string, number> | null>;
   /** Cancels all of the job's remote work; true once its machines are released. */
   release(caller: Caller, jobId: string): Promise<boolean>;
@@ -101,9 +103,9 @@ export class SandboxesMachine implements JobMachine {
     return !!(await this.sbx.sbxMerv.linked(projectId));
   }
 
-  private find(caller: Caller, jobId: string, attempt: number) {
+  private find(caller: Caller, jobId: string, attempt: number, need: 'read' | 'write' = 'write') {
     return refusals.call(async () => {
-      const principal = await this.sbx.sbxMerv.principal(caller, 'write', {
+      const principal = await this.sbx.sbxMerv.principal(caller, need, {
         workRef: jobId,
         attemptRef: `a${attempt}`,
       });
@@ -177,7 +179,13 @@ export class SandboxesMachine implements JobMachine {
     run: MachineRun,
     record: WorkflowRecord,
   ): Promise<MachineProgress> {
-    const base = { workflowId: record.id, error: null, final: null, captureArtifactId: null };
+    const base = {
+      workflowId: record.id,
+      started: (record.nodes.run?.state ?? 'pending') !== 'pending',
+      error: null,
+      final: null,
+      captureArtifactId: null,
+    };
     if (!workflowTerminal(record.state)) return { ...base, state: 'running', costUsd: null };
     const jobId = record.nodes.run?.result.job_id as string | undefined;
     const sandboxId = record.nodes.machine?.result.sandbox_id as string | undefined;
@@ -247,7 +255,7 @@ export class SandboxesMachine implements JobMachine {
   }
 
   async live(caller: Caller, jobId: string, attempt: number) {
-    const { principal, record } = await this.find(caller, jobId, attempt);
+    const { principal, record } = await this.find(caller, jobId, attempt, 'read');
     const job = record?.nodes.run?.result.job_id as string | undefined;
     return job ? metrics((await this.tail(principal.namespace, job)).text) : null;
   }

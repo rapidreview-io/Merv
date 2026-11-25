@@ -20,7 +20,7 @@ export const REVISIONS = 2;
 /**
  * One experiment job: the person's Mac writes the code, a rented machine runs exactly that
  * commit, and a fresh agent on the Mac reviews it. Stopping a running job waits in `stopping`
- * until its machine is released. Edge order is part of the fingerprint; never reorder it.
+ * until its machine is released; `started` records that the command began on the machine. Edge order is part of the fingerprint; never reorder it.
  */
 export const definition: WorkflowDefinition = {
   name: JOB_WORKFLOW,
@@ -39,6 +39,7 @@ export const definition: WorkflowDefinition = {
     { from: 'reviewing', action: 'stop', to: 'stopped' },
     { from: 'running', action: 'stop', to: 'stopping' },
     { from: 'stopping', action: 'released', to: 'stopped' },
+    { from: 'running', action: 'started', to: 'running' },
   ],
 };
 
@@ -150,6 +151,7 @@ export function policy(ctx: JobsContext): WorkflowPolicy {
         false,
       ),
       rule('released', ['stopping'], ['released'], 'job.machine', machine, false),
+      rule('started', ['running'], ['started'], 'job.machine', machine, false),
     ],
     assignments: [step('writing', writerExecution), step('reviewing', reviewerExecution)],
   };
@@ -169,22 +171,23 @@ export function assignment(
   ];
   const writing = state === 'writing';
   const tool = writing ? 'job.submit_code' : 'job.review';
+  // On the Mac the app hands the step in when the agent's turn ends: the agent has no Merv tools.
   const brief = writing
     ? [
-        'You write the code for one job, in your own worktree on the person’s Mac.',
+        'You write the code for one job, in the worktree and on the branch the app gave you, on the person’s Mac.',
         ...plan,
         'The command prints its readings as lines `METRIC {"step": 1, "loss": 1.93}` and writes files to keep under outputs/.',
         ...(job.result?.verdict === 'revise'
           ? [`The review of commit ${job.result.commitRead} sent it back: ${job.result.summary}`]
           : []),
-        'When the code is ready, commit it and push the branch to this project’s Merv git (a branch of your own such as desk-run/<name>, never merv/*). Then call job.submit_code with that branch as ref and the full commit id: Merv checks the branch points at it and runs exactly that commit. Then stop.',
+        'When the code is ready, commit it on the branch you were given and end your turn. Do not push: the app pushes the branch and hands in that commit, and the machine runs exactly it.',
       ]
     : [
         'You review one job’s run with fresh eyes. You only read: change nothing.',
         ...plan,
-        `Code: branch ${job.code?.ref}, commit ${job.code?.commit}. Read it with code.read at that commit.`,
-        `Run: ${JSON.stringify(job.run)}. Its outputs are the artifact captureArtifactId (artifact.read).`,
-        `Hand in job.review with commitRead ${job.code?.commit}: verdict accept when it meets what done means (optionally with next, the job worth proposing after it), or revise with what must change (${job.revisionsLeft} left). Then stop.`,
+        `Code: commit ${job.code?.commit} on branch ${job.code?.ref}. Read the diff it makes.`,
+        `Result of the run: ${JSON.stringify(job.run)}`,
+        `End your reply with a line \`VERDICT: pass\` if it meets what done means, or \`VERDICT: needs changes\` with what must change (${job.revisionsLeft} ${job.revisionsLeft === 1 ? 'round' : 'rounds'} of changes left), then a short summary. Optionally add a \`\`\`json block proposing the next job worth running: {"title", "goal", "doneMeans", "command", "gpu", "minutes", "estimateUsd"} (estimateUsd prices the whole machine lease, minutes plus about 7).`,
       ];
   return {
     role: writing ? 'producer' : 'reviewer',
@@ -193,7 +196,9 @@ export function assignment(
     brief: brief.join('\n'),
     references: [],
     handoff: {
-      instruction: `Hand in ${tool}, then stop.`,
+      instruction: writing
+        ? 'Commit on the branch you were given and end your turn; do not push.'
+        : 'End with VERDICT: pass or VERDICT: needs changes and a short summary.',
       tools: [tool, 'session.ask_owner'],
     },
     execution: {
