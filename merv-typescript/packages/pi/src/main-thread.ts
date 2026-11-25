@@ -534,6 +534,8 @@ export const mainThreadPlugin = {
     });
     ctx.effect(() =>
       ctx.tools.noun('main.read', {
+        // For Merv's own page and the person's Mac (POST /tools): never offered to an agent.
+        tier: 'ui',
         readOnly: true,
         description:
           'Read your main thread in this project: the one conversation your own desktop agent and Merv cloud both continue. page (its items, oldest first, and who has it now).',
@@ -549,6 +551,7 @@ export const mainThreadPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.noun('main.write', {
+        tier: 'ui',
         description:
           'Continue your main thread: say (your words from the web or a phone, answered by Merv cloud while your Mac is away) and sync (your own Mac only: its finished turns, and what it missed).',
         actions: {
