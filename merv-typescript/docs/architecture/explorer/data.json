@@ -89,7 +89,8 @@
         "purpose": "Choose and advance the research cycle using the capabilities below.",
         "members": [
           "research",
-          "autoresearch"
+          "autoresearch",
+          "jobs"
         ]
       }
     ],
@@ -149,6 +150,7 @@
           "merv-experiments-tools",
           "merv-feed-tools",
           "merv-fleet-tools",
+          "merv-jobs-tools",
           "merv-knowledge-tools",
           "merv-legacy-history-tools",
           "merv-metrics-tools",
@@ -206,6 +208,11 @@
         "optional": false
       },
       {
+        "from": "jobs",
+        "to": "autoresearch",
+        "optional": true
+      },
+      {
         "from": "mainThread",
         "to": "pi",
         "optional": true
@@ -259,7 +266,8 @@
         "board",
         "research",
         "legacyHistory",
-        "metrics"
+        "metrics",
+        "jobs"
       ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
@@ -1163,6 +1171,79 @@
       "label": "Issues",
       "purpose": "Keeps what owners report going wrong (agent tool errors, agent questions, platform failures) as fingerprinted issues with sampled cases, and alerts severe ones to Slack. Owners look it up at each report; nothing injects it.",
       "exposedTools": []
+    },
+    {
+      "plugin": "merv-jobs",
+      "source": "packages/jobs/src/index.ts",
+      "provides": [
+        "jobs"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "sessions",
+        "code"
+      ],
+      "optional": [
+        "autoresearch",
+        "sbxMerv",
+        "sbxPipelines",
+        "sbxJobs",
+        "sbxRegistry",
+        "sbxObjects",
+        "artifacts"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "jobs",
+      "group": "research",
+      "owner": "jobs",
+      "label": "Jobs",
+      "purpose": "One job type on the workflow engine: plan on the person's Mac, run exactly the job's commit on a rented machine, review with a fresh agent on the Mac. The server drives the machine step: a read-only run Git grant, one capped Sandboxes pipeline scoped to the job, and a Stop that waits for the machine's release. Runs are admitted against Autoresearch's cap.",
+      "exposedTools": [
+        {
+          "name": "job.review",
+          "description": "Job reviewer only: hand in your review of the commit you read (commitRead). accept ends the job, optionally proposing the next job worth running (next, priced as job.write propose); revise sends it back to be written again with summary as what must change. Stop after calling it.",
+          "readOnly": false
+        },
+        {
+          "name": "job.submit_code",
+          "description": "Job writer only: hand in the code. ref is the branch you pushed to this project’s Merv git, commit the full commit id it points at; Merv checks it and runs exactly that commit on the machine. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-jobs-tools",
+      "source": "packages/jobs/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "jobs",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-jobs-tools",
+      "group": "front",
+      "owner": "jobs",
+      "label": "Jobs · tools adapter",
+      "purpose": "Connects Jobs to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "job.review",
+          "description": "Job reviewer only: hand in your review of the commit you read (commitRead). accept ends the job, optionally proposing the next job worth running (next, priced as job.write propose); revise sends it back to be written again with summary as what must change. Stop after calling it.",
+          "readOnly": false
+        },
+        {
+          "name": "job.submit_code",
+          "description": "Job writer only: hand in the code. ref is the branch you pushed to this project’s Merv git, commit the full commit id it points at; Merv checks it and runs exactly that commit on the machine. Stop after calling it.",
+          "readOnly": false
+        }
+      ]
     },
     {
       "plugin": "merv-knowledge",
@@ -3333,6 +3414,76 @@
       "optional": false
     },
     {
+      "from": "jobs",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "jobs",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "jobs",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "jobs",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "jobs",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "jobs",
+      "to": "autoresearch",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "jobs",
+      "to": "artifacts",
+      "optional": true
+    },
+    {
+      "from": "merv-jobs-tools",
+      "to": "jobs",
+      "optional": false
+    },
+    {
+      "from": "merv-jobs-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -4169,10 +4320,10 @@
     }
   ],
   "counts": {
-    "plugins": 89,
-    "providers": 41,
-    "adapters": 48,
-    "dependencies": 285
+    "plugins": 91,
+    "providers": 42,
+    "adapters": 49,
+    "dependencies": 299
   },
   "network": [
     {

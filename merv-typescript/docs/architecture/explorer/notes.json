@@ -34,7 +34,8 @@
         "board",
         "research",
         "legacyHistory",
-        "metrics"
+        "metrics",
+        "jobs"
       ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
@@ -226,6 +227,10 @@
     "autoresearch": {
       "label": "Autoresearch",
       "purpose": "A manager agent per research project: a Sessions worker on the project's autoresearch workflow, woken when a task or experiment it started ends. It schedules the next work through the ordinary task and experiment tools within a spend cap (Sandboxes spend, admitted at each start through Workflows), asks the person only for real decisions, and pauses for them at the cap and after a run of automatic wakes."
+    },
+    "jobs": {
+      "label": "Jobs",
+      "purpose": "One job type on the workflow engine: plan on the person's Mac, run exactly the job's commit on a rented machine, review with a fresh agent on the Mac. The server drives the machine step: a read-only run Git grant, one capped Sandboxes pipeline scoped to the job, and a Stop that waits for the machine's release. Runs are admitted against Autoresearch's cap."
     }
   },
   "hierarchy": {
@@ -281,7 +286,7 @@
         "id": "coordination",
         "label": "Research coordination",
         "purpose": "Choose and advance the research cycle using the capabilities below.",
-        "members": ["research", "autoresearch"]
+        "members": ["research", "autoresearch", "jobs"]
       }
     ],
     "boundaries": [

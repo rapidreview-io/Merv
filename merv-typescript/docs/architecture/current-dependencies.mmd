@@ -32,6 +32,8 @@ flowchart BT
     merv_fleet_workflow["merv-fleet-workflow"]
     identity["identity"]
     issues["issues"]
+    jobs["jobs"]
+    merv_jobs_tools["merv-jobs-tools"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
     legacyHistory["legacyHistory"]
@@ -210,6 +212,20 @@ flowchart BT
   merv_fleet_workflow --> state
   merv_fleet_workflow --> tools
   issues --> state
+  jobs --> state
+  jobs --> scope
+  jobs --> workflows
+  jobs --> sessions
+  jobs --> code
+  jobs -. optional .-> autoresearch
+  jobs -. optional .-> sbxMerv
+  jobs -. optional .-> sbxMerv
+  jobs -. optional .-> sbxMerv
+  jobs -. optional .-> sbxMerv
+  jobs -. optional .-> sbxMerv
+  jobs -. optional .-> artifacts
+  merv_jobs_tools --> jobs
+  merv_jobs_tools --> tools
   knowledge --> state
   knowledge --> scope
   knowledge --> tasks
