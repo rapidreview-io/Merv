@@ -50,6 +50,7 @@ flowchart BT
     payments["payments"]
     pi["pi"]
     merv_pi_api["merv-pi-api"]
+    mainThread["mainThread"]
     merv_pi_tools["merv-pi-tools"]
     merv_pi_ui["merv-pi-ui"]
     reports["reports"]
@@ -258,6 +259,11 @@ flowchart BT
   pi -. optional .-> sessions
   merv_pi_api --> pi
   merv_pi_api --> api
+  mainThread --> state
+  mainThread --> scope
+  mainThread --> tools
+  mainThread -. optional .-> pi
+  mainThread -. optional .-> ui
   merv_pi_tools --> pi
   merv_pi_tools --> tools
   merv_pi_ui --> pi

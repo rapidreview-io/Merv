@@ -199,6 +199,10 @@
       "label": "Fleet Workflow",
       "purpose": "Connects workflow session dispatch to Fleet-hosted workers, preserving assignment authority, runtime identity and lease recovery."
     },
+    "mainThread": {
+      "label": "Main thread",
+      "purpose": "Keeps a project's one conversation as a log that a person's own Mac agent and Merv cloud both continue, with a lease that says which of them answers."
+    },
     "pi": {
       "label": "Pi",
       "purpose": "Owns interactive agent conversations, isolated warm workers, checkpoints, streaming and recovery of uncertain effects."
@@ -259,7 +263,7 @@
         "id": "domain",
         "label": "Domain & agent capabilities",
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
-        "members": ["paper", "reports", "board", "reviews", "codeWork", "pi"]
+        "members": ["paper", "reports", "board", "reviews", "codeWork", "pi", "mainThread"]
       },
       {
         "id": "work",

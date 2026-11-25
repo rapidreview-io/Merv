@@ -279,6 +279,11 @@
         "schemaEnv": "MERV_DB_SCHEMA",
         "schema": "merv"
       }
+    },
+    {
+      "id": "pi-main-thread",
+      "name": "@merv/pi/main-thread",
+      "required": false
     }
   ]
 }

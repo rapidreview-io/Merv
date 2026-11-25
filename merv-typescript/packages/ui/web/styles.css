@@ -1,5 +1,6 @@
 @import './views/work.css';
 @import './item-card.css';
+@import './views/main-thread.css';
 /* merv-desktop's chat panel and its first-run card (board-app/, panel/). */
 @import './board-app/web-panel.css';
 @import './panel/handoff.css';
