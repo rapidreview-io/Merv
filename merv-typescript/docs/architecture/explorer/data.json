@@ -213,8 +213,8 @@
         "optional": true
       },
       {
-        "from": "mainThread",
-        "to": "pi",
+        "from": "pi",
+        "to": "mainThread",
         "optional": true
       }
     ]
@@ -336,12 +336,12 @@
         "merv-fleet-workflow",
         "payments",
         "pi",
-        "mainThread",
         "sandboxEvidence",
         "merv-sandboxes-console",
         "merv-sandboxes-credits",
         "sandboxesPeople",
         "secrets",
+        "mainThread",
         "sbxMerv"
       ],
       "description": "These providers were discovered automatically and await a visual grouping in notes.json."
@@ -1187,6 +1187,7 @@
       ],
       "optional": [
         "autoresearch",
+        "mainThread",
         "sbxMerv",
         "sbxPipelines",
         "sbxJobs",
@@ -1640,7 +1641,8 @@
         "blobs"
       ],
       "optional": [
-        "sessions"
+        "sessions",
+        "mainThread"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1730,31 +1732,6 @@
       "owner": "pi",
       "label": "Pi · api adapter",
       "purpose": "Connects Pi to the API registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-pi-main-thread",
-      "source": "packages/pi/src/main-thread.ts",
-      "provides": [
-        "mainThread"
-      ],
-      "requires": [
-        "state",
-        "scope",
-        "tools"
-      ],
-      "optional": [
-        "pi",
-        "ui"
-      ],
-      "kind": "service",
-      "runtime": "server",
-      "defaultConfiguration": false,
-      "id": "mainThread",
-      "group": "other",
-      "owner": "mainThread",
-      "label": "Main thread",
-      "purpose": "Keeps a project's one conversation as a log that a person's own Mac agent and Merv cloud both continue, with a lease that says which of them answers.",
       "exposedTools": []
     },
     {
@@ -2429,6 +2406,30 @@
       "owner": "sessions",
       "label": "Agent Sessions · api adapter",
       "purpose": "Connects Agent Sessions to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-sessions-main-thread",
+      "source": "packages/sessions/src/main-thread.ts",
+      "provides": [
+        "mainThread"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "tools"
+      ],
+      "optional": [
+        "ui"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "mainThread",
+      "group": "other",
+      "owner": "mainThread",
+      "label": "Main thread",
+      "purpose": "Keeps a project's one conversation as a log that a person's own Mac agent and Merv cloud both continue, with a lease that says which of them answers.",
       "exposedTools": []
     },
     {
@@ -3445,6 +3446,11 @@
     },
     {
       "from": "jobs",
+      "to": "mainThread",
+      "optional": true
+    },
+    {
+      "from": "jobs",
       "to": "sbxMerv",
       "optional": true
     },
@@ -3719,6 +3725,11 @@
       "optional": true
     },
     {
+      "from": "pi",
+      "to": "mainThread",
+      "optional": true
+    },
+    {
       "from": "merv-pi-api",
       "to": "pi",
       "optional": false
@@ -3727,31 +3738,6 @@
       "from": "merv-pi-api",
       "to": "api",
       "optional": false
-    },
-    {
-      "from": "mainThread",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "mainThread",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "mainThread",
-      "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "mainThread",
-      "to": "pi",
-      "optional": true
-    },
-    {
-      "from": "mainThread",
-      "to": "ui",
-      "optional": true
     },
     {
       "from": "merv-pi-tools",
@@ -4174,6 +4160,26 @@
       "optional": false
     },
     {
+      "from": "mainThread",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "mainThread",
+      "to": "ui",
+      "optional": true
+    },
+    {
       "from": "merv-sessions-tools",
       "to": "sessions",
       "optional": false
@@ -4323,7 +4329,7 @@
     "plugins": 91,
     "providers": 42,
     "adapters": 49,
-    "dependencies": 299
+    "dependencies": 300
   },
   "network": [
     {

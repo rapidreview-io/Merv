@@ -30,22 +30,31 @@ interface Job {
   run: { costUsd: number | null; machineReleased: boolean } | null;
 }
 
+const UNDER_WAY = ['writing', 'running', 'reviewing'];
+
 /** The project's jobs, one line each; a job under way has one red Stop. */
 function Jobs() {
   const jobs = useTool<{ jobs: Job[] }>('job.read:list', {}, { every: 3000 });
   const [error, setError] = useState('');
   async function stop(job: Job) {
     setError('');
-    try {
-      await call('job.write:stop', {
+    const press = (revision: number) =>
+      call('job.write:stop', {
         jobId: job.id,
-        expectedRevision: job.revision,
+        expectedRevision: revision,
         requestId: crypto.randomUUID(),
       });
-      refreshTools('job.read:list');
+    try {
+      // The list may be a move behind (the machine starting bumps the revision): read the job
+      // again and press once more, unless it is no longer under way.
+      await press(job.revision).catch(async () => {
+        const now = (await call<{ job: Job }>('job.read:get', { jobId: job.id })).job;
+        if (UNDER_WAY.includes(now.state)) await press(now.revision);
+      });
     } catch (failed) {
-      setError((failed as Error).message);
+      setError(`${job.title} did not stop: ${(failed as Error).message}`);
     }
+    refreshTools('job.read:list');
   }
   if (!jobs.data?.jobs.length) return null;
   return (
@@ -61,7 +70,7 @@ function Jobs() {
           ]
             .filter(Boolean)
             .join(' · ')}
-          {['writing', 'running', 'reviewing'].includes(job.state) && (
+          {UNDER_WAY.includes(job.state) && (
             <button type="button" className="main-stop" onClick={() => void stop(job)}>
               Stop
             </button>

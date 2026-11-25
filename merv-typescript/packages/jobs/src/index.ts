@@ -1,5 +1,6 @@
 import {
   check,
+  clip,
   createService,
   digest,
   forRead,
@@ -17,10 +18,18 @@ import type { CodeService } from '@merv/code/service';
 import type {} from '@merv/api/types';
 import type {} from '@merv/autoresearch/types';
 import type { Sessions } from '@merv/sessions/types';
+import type {} from '@merv/sessions/main-thread';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { SandboxesMachine, type JobMachine, type MachineProgress } from './machine.js';
+import {
+  curve,
+  metrics,
+  SandboxesMachine,
+  type JobMachine,
+  type MachineProgress,
+  type MetricPoint,
+} from './machine.js';
 import { definition, JOB_WORKFLOW, pick, policy, view } from './program.js';
 import type { JobAllowance, JobMove, JobPlan, JobRun, JobView } from './types.js';
 export type * from './types.js';
@@ -111,15 +120,54 @@ export class JobsService {
       ...(await this.allowance(caller, tx)),
     }));
     let live: Record<string, number> | null = null;
-    // Live readings are best effort: a slow or failing read leaves them out.
-    // They are read as the reader, who may read the project: a read creates nothing in Merv.
-    if (job.state === 'running' && job.run && this.machine) {
-      live = await Promise.race([
-        this.machine.live(caller, job.id, job.run.attempt).catch(() => null),
+    let points: MetricPoint[] = [];
+    // Readings are best effort: a slow or failing read, or output Sandboxes no longer keeps,
+    // leaves them out. They are read as the reader, who may read the project: a read creates
+    // nothing in Merv. The curve is the run's whole output once it has ended, else its tail.
+    if (job.run && this.machine) {
+      const running = job.state === 'running';
+      const text = await Promise.race([
+        this.machine.output(caller, job.id, job.run.attempt, !running).catch(() => null),
         new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
       ]);
+      if (text) {
+        points = curve(text);
+        if (running) live = metrics(text);
+      }
     }
-    return { job, live, ...allowance };
+    return { job, live, points, ...allowance };
+  }
+
+  /**
+   * The newest jobs in a few short lines, read now: what the main thread's turn is told stands,
+   * rather than what the conversation last said. Null when the project has none.
+   */
+  async summary(caller: Caller): Promise<string | null> {
+    const all = (await forRead(this.state, (tx) => this.workflows.list(caller, tx, JOB_WORKFLOW)))
+      .reverse()
+      .map(view);
+    if (!all.length) return null;
+    const byId = new Map(all.map((job) => [job.id, job]));
+    const short = (value: number) => Number(value.toPrecision(4)).toString();
+    const line = ({ title, state, run, code, result }: JobView) => {
+      const next = result?.nextJobId ? byId.get(result.nextJobId) : undefined;
+      const parts = [
+        title,
+        state,
+        run?.costUsd != null && usd(run.costUsd),
+        code && `code ${code.commit.slice(0, 7)}`,
+        run?.final &&
+          Object.entries(run.final)
+            .slice(0, 6)
+            .map(([name, value]) => `${name} ${short(value)}`)
+            .join(', '),
+        run?.error && `error: ${run.error}`,
+        result && `review ${result.verdict}: ${result.summary.split(/(?<=[.!?])\s/)[0]}`,
+        next && `next: ${next.title} (${next.state}, about ${usd(next.estimateUsd)})`,
+      ];
+      return '- ' + clip(parts.filter(Boolean).join(' · '), 300);
+    };
+    return [`Jobs, newest first (${all.length} in all):`, ...all.slice(0, 5).map(line)].join('\n');
   }
 
   // ── The person's moves ───────────────────────────────────────────────────────────────────
@@ -473,6 +521,10 @@ export const jobsPlugin = {
           service.room = (projectId, tx, fresh) => ctx.autoresearch.room(projectId, tx, fresh);
           return () => void (service.room = undefined);
         });
+      });
+      // The main thread's turns are told where the jobs stand, wherever both are loaded.
+      ctx.inject(['mainThread'], (ctx) => {
+        ctx.effect(() => ctx.mainThread.presentWith((caller) => service.summary(caller)));
       });
       ctx.inject(
         ['sbxMerv', 'sbxPipelines', 'sbxJobs', 'sbxRegistry', 'sbxObjects', 'artifacts'],

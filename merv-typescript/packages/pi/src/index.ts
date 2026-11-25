@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from '@merv/fleet/types';
 import type {} from '@merv/sessions/types';
+import type {} from '@merv/sessions/main-thread';
 import { questionResponder } from './questions.js';
 import { check } from '@merv/contracts';
 import { reporter } from '@merv/contracts/issues';
@@ -35,6 +36,10 @@ export const piPlugin = {
     ctx.effect(() => ctx.tools.register(recordLookTool(ctx.tools)));
     ctx.inject(['sessions'], (ctx) => {
       ctx.effect(() => ctx.sessions.messaging.registerResponder(questionResponder(pi, ctx.scope)));
+    });
+    // While the person's Mac is away, Pi answers their main thread on their metered spending.
+    ctx.inject(['mainThread'], (ctx) => {
+      ctx.effect(() => ctx.mainThread.answerWith((caller, ask) => pi.turn(caller, ask)));
     });
   },
 };

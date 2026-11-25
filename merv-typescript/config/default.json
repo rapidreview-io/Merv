@@ -289,8 +289,8 @@
       }
     },
     {
-      "id": "pi-main-thread",
-      "name": "@merv/pi/main-thread",
+      "id": "main-thread",
+      "name": "@merv/sessions/main-thread",
       "required": false
     }
   ]
