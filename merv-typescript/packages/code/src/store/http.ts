@@ -54,10 +54,19 @@ interface AccountGitGrant {
   mode: 'read' | 'write';
   expiresAt: string;
 }
+/** A server-issued read of one project for one job's machine run, tied to no person's key. */
+interface RunGitGrant {
+  audience: 'run';
+  projectId: string;
+  jobId: string;
+  mode: 'read';
+  expiresAt: string;
+}
 interface Access {
   caller: Caller;
   grant?: Grant;
   accountGrant?: AccountGitGrant;
+  runGrant?: RunGitGrant;
 }
 interface Update {
   old: string;
@@ -288,6 +297,64 @@ $merv$;
       encryption: 'RSA-OAEP-SHA256',
       encryptedToken,
     };
+  }
+
+  /**
+   * Server-only, never a tool: a read-only bearer of the project for one job's machine run,
+   * minted by the job's owning service for its own service caller. Every request rechecks that
+   * caller's read and the expiry; `revokeRun` ends it when the run ends.
+   */
+  async issueRun(caller: Caller, input: { jobId: string; seconds: number }) {
+    check(
+      !caller.session && !caller.managed && !caller.key && !caller.human,
+      'code_git_run_service_only',
+      'Only a project service mints a run grant',
+      403,
+    );
+    check(
+      /^[A-Za-z0-9_.:-]{1,200}$/.test(input.jobId) &&
+        Number.isSafeInteger(input.seconds) &&
+        input.seconds >= 60 &&
+        input.seconds <= 4 * 3600,
+      'invalid_input',
+      'A run grant names its job and lasts 1 to 240 minutes',
+    );
+    const token = `mg_${randomBytes(32).toString('base64url')}`;
+    const grant: RunGitGrant = {
+      audience: 'run',
+      projectId: caller.projectId,
+      jobId: input.jobId,
+      mode: 'read',
+      expiresAt: new Date(Date.now() + input.seconds * 1000).toISOString(),
+    };
+    await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await tx.run(
+        'INSERT INTO code_git_credentials(token_hash,project_id,caller_json,grant_json,created_at) VALUES(?,?,?,?,?)',
+        hash(token),
+        caller.projectId,
+        canonical(caller),
+        canonical(grant),
+        now(),
+      );
+    });
+    return {
+      url: `/git/${encodeURIComponent(caller.projectId)}.git`,
+      token,
+      expiresAt: grant.expiresAt,
+    };
+  }
+
+  /** Ends every run grant of a job; a repeat changes nothing. */
+  async revokeRun(projectId: string, jobId: string): Promise<void> {
+    await this.state.transaction((tx) =>
+      tx.run(
+        `DELETE FROM code_git_credentials WHERE project_id=?
+         AND grant_json::jsonb ->> 'audience'='run' AND grant_json::jsonb ->> 'jobId'=?`,
+        projectId,
+        jobId,
+      ),
+    );
   }
 
   /** The workspace protocol checked runner ownership before minting these separate capabilities. */
@@ -803,9 +870,11 @@ $merv$;
         ),
       );
       check(row, 'unauthorized', 'Invalid Git credential', 401);
-      const grant = JSON.parse(row.grant_json) as Grant | AccountGitGrant;
-      if (grant.audience === 'account') {
-        const access = { caller: JSON.parse(row.caller_json) as Caller, accountGrant: grant };
+      const grant = JSON.parse(row.grant_json) as Grant | AccountGitGrant | RunGitGrant;
+      if (grant.audience === 'account' || grant.audience === 'run') {
+        const caller = JSON.parse(row.caller_json) as Caller;
+        const access =
+          grant.audience === 'run' ? { caller, runGrant: grant } : { caller, accountGrant: grant };
         await this.authorized(access, write);
         return access;
       }
@@ -863,6 +932,16 @@ $merv$;
   }
 
   private async authorized(access: Access, write: boolean, tx?: Transaction): Promise<void> {
+    if (access.runGrant) {
+      check(
+        access.runGrant.projectId === access.caller.projectId &&
+          Date.parse(access.runGrant.expiresAt) > Date.now(),
+        'unauthorized',
+        'Git credential expired',
+        401,
+      );
+      check(!write, 'code_git_read_only', 'This Git credential is read-only', 403);
+    }
     if (access.accountGrant) {
       const grant = access.accountGrant;
       check(

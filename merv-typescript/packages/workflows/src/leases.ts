@@ -117,7 +117,9 @@ export class WorkflowLeases extends WorkflowGuidance {
       // Only a step with a lease rule can be a candidate; finished work never is, and it is
       // most of a project's history.
       const leasable = (registration: Registration) =>
-        (registration.policy?.assignments ?? []).filter((rule) => rule.lease && rule.execution);
+        (registration.policy?.assignments ?? []).filter(
+          (rule) => rule.lease && rule.execution && !rule.manual,
+        );
       const registered = new Map(
         [...this.registrations].filter(([, registration]) => leasable(registration).length),
       );

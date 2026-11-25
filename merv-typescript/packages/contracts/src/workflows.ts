@@ -162,6 +162,8 @@ export interface WorkflowOwner {
 export interface WorkflowAssignmentRule {
   state: string;
   requiresDependencies?: boolean;
+  /** Offered only by hand (a person's own machine takes it): never an automatic dispatch candidate. */
+  manual?: true;
   /** Admission to do node work, independent of exit-action readiness. */
   check(context: WorkflowCheckContext): void | Promise<void>;
   build(

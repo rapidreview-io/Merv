@@ -90,6 +90,22 @@ interface WakeRow {
 }
 
 const cents = (usd: number) => Math.round(usd * 100);
+/** The settings of a project that never configured autoresearch. */
+const defaults = (projectId: string, actorId: string): Row => ({
+  project_id: projectId,
+  enabled: false,
+  manager_id: null,
+  goal: null,
+  cap_cents: cents(AUTORESEARCH_DEFAULTS.capUsd),
+  run_estimate_cents: cents(AUTORESEARCH_DEFAULTS.runEstimateUsd),
+  wake_limit: AUTORESEARCH_DEFAULTS.wakeLimit,
+  automatic_wakes: 0,
+  paused: null,
+  round_started_at: null,
+  source_json: null,
+  updated_at: now(),
+  updated_by: actorId,
+});
 const money = (value: unknown, what: string, max: number) =>
   check(
     typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max,
@@ -254,6 +270,14 @@ export class AutoresearchService implements Autoresearch {
     );
   }
 
+  /**
+   * The project's cap and what its round has spent and holds, read fresh: other programs admit
+   * their own runs against it (Jobs' Run). A project never configured has the default cap.
+   */
+  async room(projectId: string, tx: Transaction): Promise<AutoresearchSpend> {
+    return await this.spend((await this.row(projectId, tx)) ?? defaults(projectId, ''), tx);
+  }
+
   // ── Reads ────────────────────────────────────────────────────────────────────────────────
 
   async status(caller: Caller): Promise<AutoresearchStatus> {
@@ -279,21 +303,7 @@ export class AutoresearchService implements Autoresearch {
     tx: Transaction,
     writable: boolean,
   ): Promise<AutoresearchStatus> {
-    const settings = row ?? {
-      project_id: caller.projectId,
-      enabled: false,
-      manager_id: null,
-      goal: null,
-      cap_cents: cents(AUTORESEARCH_DEFAULTS.capUsd),
-      run_estimate_cents: cents(AUTORESEARCH_DEFAULTS.runEstimateUsd),
-      wake_limit: AUTORESEARCH_DEFAULTS.wakeLimit,
-      automatic_wakes: 0,
-      paused: null,
-      round_started_at: null,
-      source_json: null,
-      updated_at: now(),
-      updated_by: caller.actorId,
-    };
+    const settings = row ?? defaults(caller.projectId, caller.actorId);
     const manager = await this.manager(row, caller, tx);
     const runs = settings.manager_id
       ? await tx.all<RunRow>(

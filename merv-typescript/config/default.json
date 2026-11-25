@@ -27,6 +27,14 @@
       "name": "@merv/autoresearch"
     },
     {
+      "id": "jobs-tools",
+      "name": "@merv/jobs/tools"
+    },
+    {
+      "id": "jobs",
+      "name": "@merv/jobs"
+    },
+    {
       "id": "paper-tools",
       "name": "@merv/paper/tools"
     },

@@ -76,6 +76,85 @@ CREATE INDEX sandbox_capture_work ON sandbox_capture_index(project_id,work_ref,a
  *  retried, so it registers once its cause is fixed. */
 export const CAPTURE_STALL_MS = 10 * 60_000;
 
+async function held(objects: Pick<SbxObjects, 'evidence'>, namespace: string, objectId: string) {
+  const object = await refusals.call(() => objects.evidence(namespace, objectId));
+  check(
+    object.state === 'available',
+    'sandbox_evidence_pending',
+    'Captured object is not yet available held evidence',
+    503,
+  );
+  return object;
+}
+
+/**
+ * What one terminal capture registers as: its retained files, held in Sandboxes and read back
+ * through the `sbx-evidence` provider, titled and described as its workflow and node.
+ */
+export async function captureCollection(
+  sbx: {
+    pipelines: Pick<SbxPipelines, 'captureFiles'>;
+    objects: Pick<SbxObjects, 'evidence'>;
+  },
+  work: { namespace: string; account_id: string; work_ref: string },
+  workflow: WorkflowRecord,
+  node: CaptureSummary,
+): Promise<ArtifactCollectionInput> {
+  const files: ArtifactCollectionInput['files'] = [];
+  for (let after = 0; ;) {
+    const page = await sbx.pipelines.captureFiles(work.namespace, workflow.id, node.id, {
+      after,
+      limit: 500,
+    });
+    for (const file of page.files) {
+      const object = await held(sbx.objects, work.namespace, file.object_id);
+      files.push({
+        name: file.name,
+        hash: object.sha256,
+        size: object.size_bytes,
+        provider,
+        reference: JSON.stringify([work.namespace, work.account_id, file.object_id]),
+      });
+    }
+    if (page.next === null) break;
+    after = Number(page.next);
+  }
+  // A capture that did not succeed, or kept nothing, is kept as a record of that, and says so
+  // where it is listed: it is not evidence of results.
+  const kept = files.length
+    ? `${files.length} file${files.length === 1 ? '' : 's'} retained`
+    : 'nothing retained';
+  const outcome =
+    node.state !== 'succeeded' ? ` (${node.state}, ${kept})` : files.length ? '' : ` (${kept})`;
+  return {
+    // Ids first, so a clipped title still says which capture this is.
+    title: clip(
+      `${captureTitle(workflow.id, node.id)}${outcome}${
+        workflow.name && workflow.name !== workflow.id ? ` — ${workflow.name}` : ''
+      }`,
+      200,
+    ),
+    sourceKey: `sbx:${digest([work.namespace, workflow.id, node.id])}`,
+    files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    metadata: {
+      ownerId: work.work_ref,
+      attempt: workflow.attempt_ref,
+      workflowId: workflow.id,
+      captureNode: node.id,
+      captureState: node.state,
+      outputState:
+        node.result.output_state ??
+        (node.state === 'succeeded' ? 'committed' : files.length ? 'partial' : 'failed'),
+      evidenceLimitations: [...workflow.evidence_limitations],
+      // One held object per declared output, in this project's namespace: a later workflow
+      // stages it with a stage input {object_id, path} instead of downloading every member.
+      outputObjects: Object.fromEntries(
+        Object.entries(node.result.outputs).filter(([, id]) => typeof id === 'string'),
+      ),
+    },
+  };
+}
+
 export class SandboxEvidence implements SandboxCaptureEvidence {
   private reconciling?: Promise<void>;
   private readonly checkedWorks = new Map<string, number>();
@@ -325,77 +404,12 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     return done;
   }
 
-  private async held(namespace: string, objectId: string) {
-    const object = await refusals.call(() => this.objects.evidence(namespace, objectId));
-    check(
-      object.state === 'available',
-      'sandbox_evidence_pending',
-      'Captured object is not yet available held evidence',
-      503,
-    );
-    return object;
-  }
-
   private async register(work: Work, workflow: WorkflowRecord, node: CaptureSummary) {
-    const files: ArtifactCollectionInput['files'] = [];
-    for (let after = 0; ;) {
-      const page = await this.pipelines.captureFiles(work.namespace, workflow.id, node.id, {
-        after,
-        limit: 500,
-      });
-      for (const file of page.files) {
-        const object = await this.held(work.namespace, file.object_id);
-        files.push({
-          name: file.name,
-          hash: object.sha256,
-          size: object.size_bytes,
-          provider,
-          reference: JSON.stringify([work.namespace, work.account_id, file.object_id]),
-        });
-      }
-      if (page.next === null) break;
-      after = Number(page.next);
-    }
-    // A capture that did not succeed, or kept nothing, is kept as a record of that, and says so
-    // where it is listed: it is not evidence of results.
-    const kept = files.length
-      ? `${files.length} file${files.length === 1 ? '' : 's'} retained`
-      : 'nothing retained';
-    const outcome =
-      node.state !== 'succeeded' ? ` (${node.state}, ${kept})` : files.length ? '' : ` (${kept})`;
+    const sbx = { pipelines: this.pipelines, objects: this.objects };
+    const input = await captureCollection(sbx, work, workflow, node);
     await this.state.transaction(async (tx) => {
       const caller = await this.scope.serviceActor('sandboxes', work.project_id, tx);
-      const artifact = await this.artifacts.createCollection(
-        caller,
-        {
-          // Ids first, so a clipped title still says which capture this is.
-          title: clip(
-            `${captureTitle(workflow.id, node.id)}${outcome}${
-              workflow.name && workflow.name !== workflow.id ? ` — ${workflow.name}` : ''
-            }`,
-            200,
-          ),
-          sourceKey: `sbx:${digest([work.namespace, workflow.id, node.id])}`,
-          files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-          metadata: {
-            ownerId: work.work_ref,
-            attempt: workflow.attempt_ref,
-            workflowId: workflow.id,
-            captureNode: node.id,
-            captureState: node.state,
-            outputState:
-              node.result.output_state ??
-              (node.state === 'succeeded' ? 'committed' : files.length ? 'partial' : 'failed'),
-            evidenceLimitations: [...workflow.evidence_limitations],
-            // One held object per declared output, in this project's namespace: a later workflow
-            // stages it with a stage input {object_id, path} instead of downloading every member.
-            outputObjects: Object.fromEntries(
-              Object.entries(node.result.outputs).filter(([, id]) => typeof id === 'string'),
-            ),
-          },
-        },
-        tx,
-      );
+      const artifact = await this.artifacts.createCollection(caller, input, tx);
       // A capture shown as stalled is no longer refused once it registers.
       await tx.run(
         `INSERT INTO sandbox_capture_index AS i(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,artifact_id)
@@ -475,7 +489,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       'Retained namespace account changed',
       403,
     );
-    await this.held(namespace, objectId);
+    await held(this.objects, namespace, objectId);
     const { url } = await refusals.call(() =>
       this.objects.download(namespace, objectId, { ttlSeconds: 240 }),
     );

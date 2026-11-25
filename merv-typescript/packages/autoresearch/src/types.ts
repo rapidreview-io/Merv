@@ -1,6 +1,11 @@
-import type { Caller } from '@merv/contracts';
+import type { Caller, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
-import type { AutoresearchConfigure, AutoresearchDecide, AutoresearchStatus } from './models.js';
+import type {
+  AutoresearchConfigure,
+  AutoresearchDecide,
+  AutoresearchSpend,
+  AutoresearchStatus,
+} from './models.js';
 export type * from './models.js';
 
 export interface Autoresearch {
@@ -19,6 +24,8 @@ export interface Autoresearch {
     caller: Caller,
     input: AutoresearchDecide,
   ): Promise<{ decided: 'wait' | 'end'; state: string; next: string }>;
+  /** The project's cap and its round's spend, read fresh, that another program's run is admitted against. */
+  room(projectId: string, tx: Transaction): Promise<AutoresearchSpend>;
   close(): void;
 }
 declare module 'cordis' {
