@@ -260,8 +260,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
           from_state: string | null;
           to_state: string;
           n: number;
+          last_at: string;
         }>(
-          `SELECT instance_id,action,from_state,to_state,COUNT(*) AS n FROM wf_history WHERE project_id=? AND instance_id IN (${part.map(() => '?').join(',')}) GROUP BY instance_id,action,from_state,to_state`,
+          `SELECT instance_id,action,from_state,to_state,COUNT(*) AS n,MAX(created_at) AS last_at FROM wf_history WHERE project_id=? AND instance_id IN (${part.map(() => '?').join(',')}) GROUP BY instance_id,action,from_state,to_state`,
           projectId,
           ...part,
         ))
@@ -270,6 +271,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
             fromState: row.from_state,
             toState: row.to_state,
             count: Number(row.n),
+            lastAt: row.last_at,
           });
       return found;
     });

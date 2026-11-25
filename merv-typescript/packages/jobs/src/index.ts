@@ -31,7 +31,7 @@ import {
   type MetricPoint,
 } from './machine.js';
 import { definition, JOB_WORKFLOW, pick, policy, view } from './program.js';
-import type { JobAllowance, JobMove, JobPlan, JobRun, JobView } from './types.js';
+import type { JobAllowance, JobMove, JobPlan, JobRead, JobRun, JobView } from './types.js';
 export type * from './types.js';
 
 /** How long the machine's Git read lasts: renting and fetching happen well within it. */
@@ -107,33 +107,70 @@ export class JobsService {
     check(job.workflow === JOB_WORKFLOW, 'not_found', 'No such job', 404);
     return job;
   }
+  /**
+   * The jobs as they are read, with when the person pressed Run and when the latest attempt
+   * began and ended on its machine, from the workflow's history (one read for all of them).
+   */
+  private async read(jobs: WorkflowSnapshot[], tx: Transaction): Promise<JobRead[]> {
+    const moves = await this.workflows.transitionCounts(
+      jobs[0]?.projectId ?? '',
+      jobs.map((job) => job.id),
+      tx,
+    );
+    return jobs.map((snapshot) => {
+      const job = view(snapshot);
+      const last = (...actions: string[]) =>
+        (moves.get(job.id) ?? [])
+          .filter((move) => actions.includes(move.action))
+          .map((move) => move.lastAt)
+          .sort()
+          .at(-1) ?? null;
+      // The latest attempt began with the latest hand-in: an earlier attempt's times are not its.
+      const handed = last('submit_code');
+      const since = (at: string | null) => (at && handed && at >= handed ? at : null);
+      return {
+        ...job,
+        runRequestedAt: last('run'),
+        run: job.run && {
+          ...job.run,
+          startedAt: since(last('started')),
+          endedAt: since(last('finish_run', 'released')),
+        },
+      };
+    });
+  }
   async list(caller: Caller) {
     return await forRead(this.state, async (tx) => {
       const all = await this.workflows.list(caller, tx, JOB_WORKFLOW);
       const allowance = await this.allowance(caller, tx, false, all);
-      return { jobs: all.reverse().map(view), ...allowance };
+      return { jobs: await this.read(all.reverse(), tx), ...allowance };
     });
   }
   async get(caller: Caller, input: { jobId: string }) {
     const { job, ...allowance } = await forRead(this.state, async (tx) => ({
-      job: view(await this.snapshot(caller, input.jobId, tx)),
+      job: (await this.read([await this.snapshot(caller, input.jobId, tx)], tx))[0]!,
       ...(await this.allowance(caller, tx)),
     }));
     let live: Record<string, number> | null = null;
     let points: MetricPoint[] = [];
     // Readings are best effort: a slow or failing read, or output Sandboxes no longer keeps,
     // leaves them out. They are read as the reader, who may read the project: a read creates
-    // nothing in Merv. The curve is the run's whole output once it has ended, else its tail.
-    if (job.run && this.machine) {
+    // nothing in Merv. The curve is the run's whole output once it has ended, else its tail;
+    // while it runs, what its machine has cost so far and by the hour.
+    if (job.run) {
       const running = job.state === 'running';
-      const text = await Promise.race([
-        this.machine.output(caller, job.id, job.run.attempt, !running).catch(() => null),
-        new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
-      ]);
-      if (text) {
-        points = curve(text);
-        if (running) live = metrics(text);
+      const read = this.machine
+        ? await Promise.race([
+            this.machine.output(caller, job.id, job.run.attempt, !running).catch(() => null),
+            new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
+          ])
+        : null;
+      if (read?.text) {
+        points = curve(read.text);
+        if (running) live = metrics(read.text);
       }
+      job.run.costSoFarUsd = running ? (read?.costSoFarUsd ?? null) : null;
+      job.run.hourlyUsd = running ? (read?.hourlyUsd ?? null) : null;
     }
     return { job, live, points, ...allowance };
   }
@@ -271,12 +308,15 @@ export class JobsService {
       else if (job.run?.costUsd && (!room.since || job.updatedAt >= room.since))
         recorded += job.run.costUsd;
     const cents = (usd: number) => Math.round(usd * 100) / 100;
+    const spentUsd = cents(Math.max(room.spentUsd, recorded));
     const committedUsd = cents(
       room.committedUsd - room.spentUsd + Math.max(room.spentUsd, recorded) + held,
     );
     return {
       allowance: {
         capUsd: room.capUsd,
+        spentUsd,
+        heldUsd: cents(committedUsd - spentUsd),
         committedUsd,
         leftUsd: Math.max(0, cents(room.capUsd - committedUsd)),
       },

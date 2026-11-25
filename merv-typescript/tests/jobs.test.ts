@@ -7,7 +7,7 @@
  */
 import type { AutoresearchService } from '@merv/autoresearch';
 import type { Caller } from '@merv/contracts';
-import type { JobsService, JobView } from '@merv/jobs';
+import type { JobRead, JobsService } from '@merv/jobs';
 import {
   curve,
   MOST_POINTS,
@@ -52,7 +52,13 @@ function git(cwd: string, args: string[]) {
 }
 const code = (error: unknown) => (error as { code?: string }).code;
 type Allowance = {
-  allowance: { capUsd: number; committedUsd: number; leftUsd: number } | null;
+  allowance: {
+    capUsd: number;
+    spentUsd: number;
+    heldUsd: number;
+    committedUsd: number;
+    leftUsd: number;
+  } | null;
   allowanceReason: string | null;
 };
 
@@ -110,8 +116,12 @@ async function fixture(t: TestContext) {
     // The run's output as Sandboxes serves it: its tail while it runs, the whole once it ended.
     output: async (_caller, jobId, attempt, ended) => {
       if (printed === null) throw new Error('Sandboxes no longer keeps this output');
-      if (!runs.some((item) => item.jobId === jobId && item.attempt === attempt)) return null;
-      return ended ? printed : printed.split('\n').slice(-3).join('\n');
+      if (!runs.some((item) => item.jobId === jobId && item.attempt === attempt))
+        return { text: null, costSoFarUsd: null, hourlyUsd: null };
+      // While it runs, the registry says what its machine has cost so far and by the hour.
+      return ended
+        ? { text: printed, costSoFarUsd: null, hourlyUsd: null }
+        : { text: printed.split('\n').slice(-3).join('\n'), costSoFarUsd: 0.03, hourlyUsd: 0.59 };
     },
     release: async () => {
       releases++;
@@ -131,12 +141,12 @@ async function fixture(t: TestContext) {
     },
   };
 
-  const call = async <T = JobView>(name: string, caller: Caller, input: Record<string, unknown>) =>
+  const call = async <T = JobRead>(name: string, caller: Caller, input: Record<string, unknown>) =>
     (await app.ctx.tools.call(name, caller, input)) as T;
   const get = async (jobId: string) =>
     await call<
       {
-        job: JobView;
+        job: JobRead;
         live: Record<string, number> | null;
         points: { step: number; values: Record<string, number> }[];
       } & Allowance
@@ -151,14 +161,14 @@ async function fixture(t: TestContext) {
       estimateUsd,
       requestId: randomUUID(),
     });
-  const move = async (action: 'run' | 'stop', job: JobView) =>
+  const move = async (action: 'run' | 'stop', job: JobRead) =>
     await call(`job.write:${action}`, owner, {
       jobId: job.id,
       expectedRevision: job.revision,
       requestId: randomUUID(),
     });
   /** The Mac's offer and attach of the job's current step, as POST /sessions/offer. */
-  const offer = async (job: JobView) => {
+  const offer = async (job: JobRead) => {
     const input = {
       instanceId: job.id,
       expectedRevision: job.revision,
@@ -210,13 +220,22 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   let job = await f.propose();
   assert.equal(job.state, 'proposed');
   // What is left under the cap, as Run will admit it: autoresearch's default $20, nothing spent.
-  assert.deepEqual((await f.get(job.id)).allowance, { capUsd: 20, committedUsd: 0, leftUsd: 20 });
+  assert.deepEqual((await f.get(job.id)).allowance, {
+    capUsd: 20,
+    spentUsd: 0,
+    heldUsd: 0,
+    committedUsd: 0,
+    leftUsd: 20,
+  });
+  assert.equal((await f.get(job.id)).job.runRequestedAt, null);
   assert.deepEqual(
     job.steps.map((step) => step.place),
     ['mac', 'machine', 'mac'],
   );
   job = await f.move('run', job);
   assert.equal(job.state, 'writing');
+  const pressed = (await f.get(job.id)).job.runRequestedAt!;
+  assert.ok(pressed, 'when the person pressed Run');
   // Only the person's own Mac takes the writing step: dispatch never offers it to a machine.
   const candidates = await app.ctx.workflows.dispatchCandidates(owner);
   assert.ok(!candidates.some((item) => item.instanceId === job.id));
@@ -342,6 +361,11 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   await f.service.tick();
   const running = await f.get(job.id);
   assert.equal(running.job.run!.state, 'running');
+  // When the command began, and what its machine has cost so far and costs by the hour.
+  const began = running.job.run!.startedAt!;
+  assert.ok(began >= pressed);
+  assert.equal(running.job.run!.endedAt, null);
+  assert.deepEqual([running.job.run!.costSoFarUsd, running.job.run!.hourlyUsd], [0.03, 0.59]);
   assert.equal(running.job.run!.workflowId, 'wf_2');
   assert.deepEqual(running.live, { step: 10, loss: 1.5 });
   // The curve so far, from the same tail: every METRIC line a point.
@@ -350,7 +374,13 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
     { step: 10, values: { loss: 1.5 } },
   ]);
   // A running job holds its estimate.
-  assert.deepEqual(running.allowance, { capUsd: 20, committedUsd: 1.2, leftUsd: 18.8 });
+  assert.deepEqual(running.allowance, {
+    capUsd: 20,
+    spentUsd: 0,
+    heldUsd: 1.2,
+    committedUsd: 1.2,
+    leftUsd: 18.8,
+  });
   await f.ok('POST', `/sessions/${writer.session.id}/release`, f.token, { runnerId: 'mac-desk' });
 
   // The run ends: its cost and final readings are recorded, the machine released, the grant gone.
@@ -362,15 +392,32 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(job.run!.costUsd, 0.42);
   assert.deepEqual(job.run!.final, { step: 400, loss: 0.31 });
   assert.equal(job.run!.machineReleased, true);
+  // Its times stand; the machine's live cost is for a running job only.
+  assert.equal(job.run!.startedAt, began);
+  assert.ok(job.run!.endedAt! >= began);
+  assert.deepEqual([job.run!.costSoFarUsd, job.run!.hourlyUsd], [null, null]);
+  const listedRun = (await call<{ jobs: JobRead[] }>('job.read:list', owner, {})).jobs[0]!;
+  assert.deepEqual(
+    [listedRun.runRequestedAt, listedRun.run!.startedAt, listedRun.run!.endedAt],
+    [pressed, began, job.run!.endedAt],
+  );
   // Its cost counts against the cap at once, even before Sandboxes' report shows it; the
   // report counts when it says more. A project with no round reads its spend since ever.
   assert.deepEqual((await f.get(job.id)).allowance, {
     capUsd: 20,
+    spentUsd: 0.42,
+    heldUsd: 0,
     committedUsd: 0.42,
     leftUsd: 19.58,
   });
   f.setSpent(1);
-  assert.deepEqual((await f.get(job.id)).allowance, { capUsd: 20, committedUsd: 1, leftUsd: 19 });
+  assert.deepEqual((await f.get(job.id)).allowance, {
+    capUsd: 20,
+    spentUsd: 1,
+    heldUsd: 0,
+    committedUsd: 1,
+    leftUsd: 19,
+  });
   f.setSpent(0);
   // Read again later, or on another device: the whole curve, from the ended run's output; a
   // line without a step is placed by its order. Output Sandboxes no longer keeps: no curve.
@@ -450,7 +497,7 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(proposed.state, 'proposed');
   assert.equal(proposed.previousJobId, job.id);
   assert.deepEqual(
-    (await call<{ jobs: JobView[] }>('job.read:list', owner, {})).jobs.map((item) => item.id),
+    (await call<{ jobs: JobRead[] }>('job.read:list', owner, {})).jobs.map((item) => item.id),
     [proposed.id, job.id],
   );
 
@@ -504,6 +551,7 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   assert.equal(job.run!.state, 'cancelled');
   assert.equal(job.run!.machineReleased, true);
   assert.equal(job.run!.costUsd, 0.42, 'a stopped run records what its machine cost');
+  assert.ok(job.run!.endedAt, 'when it was stopped and its machine released');
   const revoked = await git(f.work, [...f.bearer(f.grants[0]!.token), 'ls-remote', f.remote]);
   assert.notEqual(revoked.code, 0);
 
@@ -526,8 +574,14 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   // $19 of the $20 cap spent: a $2 run does not fit and nothing starts; a $0.50 one does.
   f.setSpent(19);
   const dear = await f.propose('Dear', 2);
-  const listed = await call<{ jobs: JobView[] } & Allowance>('job.read:list', f.owner, {});
-  assert.deepEqual(listed.allowance, { capUsd: 20, committedUsd: 19, leftUsd: 1 });
+  const listed = await call<{ jobs: JobRead[] } & Allowance>('job.read:list', f.owner, {});
+  assert.deepEqual(listed.allowance, {
+    capUsd: 20,
+    spentUsd: 19,
+    heldUsd: 0,
+    committedUsd: 19,
+    leftUsd: 1,
+  });
   assert.equal(listed.allowanceReason, null);
   await assert.rejects(f.move('run', dear), (error) => {
     assert.equal(code(error), 'job_cap_reached');
@@ -670,6 +724,24 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
   machines[0] = { attempt_ref: 'a3', state: 'stopped', cost_so_far: usd('0.0985') };
   assert.deepEqual(await machine.release(caller, 'wf_job', 3), { costUsd: 0.0985 });
   assert.deepEqual(released[0], { namespace: 'ns', accountId: 'acct', workRef: 'wf_job' });
+  // While it runs, one registry read: the attempt's cost so far and its live machines' rate.
+  machines = [
+    { attempt_ref: 'a3', state: 'ready', cost_so_far: usd('0.02'), hourly_price: usd('0.59') },
+    { attempt_ref: 'a2', state: 'stopped', cost_so_far: usd('1.00'), hourly_price: usd('9') },
+  ];
+  assert.deepEqual(await machine.output(caller, 'wf_job', 3, false), {
+    text: null,
+    costSoFarUsd: 0.02,
+    hourlyUsd: 0.59,
+  });
+  sbx.sbxRegistry.list = async () => {
+    throw new Error('the registry is away');
+  };
+  assert.deepEqual(await machine.output(caller, 'wf_job', 3, false), {
+    text: null,
+    costSoFarUsd: null,
+    hourlyUsd: null,
+  });
 });
 
 test('jobs: a curve keeps at most 500 points, thinned evenly, the first and last kept', () => {
