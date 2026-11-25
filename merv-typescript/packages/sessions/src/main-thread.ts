@@ -33,8 +33,10 @@ export const MAC_LEASE_MS = 90_000;
 /** Long enough for one answer. A Mac that returns meanwhile waits for it. */
 const PI_LEASE_MS = 120_000;
 const TEXT = 256_000;
-/** Items one sync returns at most; `more` says there are others. */
+/** Items one sync returns unless it asks for up to 200; `more` says there are others. */
 const PAGE = 12;
+/** The most words one sync returns, whatever its limit (always at least one item). */
+const SYNC_BYTES = 1 << 20;
 
 /**
  * Step A of the move from the Pi plugin's tables: the thread, its items and its lease are copied
@@ -86,6 +88,8 @@ const macItem = z
     requestId: z.string().max(200).optional(),
     kind: z.enum(['person', 'answer']),
     text: words,
+    /** The native session that wrote it, which is never given it back (else `native.session`). */
+    native: z.string().min(1).max(300).optional(),
   })
   .strict();
 export const syncInput = z
@@ -99,9 +103,9 @@ export const syncInput = z
     /** The lease number this Mac holds: its items are refused (lease_stale) once the thread has
      *  another. A Mac that sends none is not checked. */
     lease: z.number().int().min(0).optional(),
-    /** The native session the items come from and are given to: the reply is its delta, the
-     *  items after its receipt (or `through`, what it already has) that it neither wrote nor was
-     *  given before. */
+    /** The native session given the reply: its delta, the items after its receipt (or `through`,
+     *  what it already has) that it neither wrote nor was given before; it also tags the items
+     *  sent without their own `native`. A heartbeat that delivers nothing leaves it out. */
     native: z
       .object({
         session: z.string().min(1).max(300),
@@ -109,6 +113,8 @@ export const syncInput = z
       })
       .strict()
       .optional(),
+    /** Items the reply holds at most (default 12), within 1 MiB of words. */
+    limit: z.number().int().min(1).max(200).default(PAGE),
     /** Ignored: an older Mac's experiment cards, which jobs replace. */
     cards: z.array(z.unknown()).max(20).optional(),
     /** The Mac is quitting or going to sleep: its hold ends now, so Merv cloud may answer at once. */
@@ -121,6 +127,9 @@ export const sayInput = z
 export const pageInput = z
   .object({
     before: z.number().int().positive().optional(),
+    /** The items after this sequence, oldest first, instead of the newest: a read that takes
+     *  no lease. */
+    after: z.number().int().min(0).optional(),
     limit: z.number().int().min(1).max(200).default(60),
   })
   .strict();
@@ -156,6 +165,17 @@ const itemOf = (row: Row): MainItem => ({
   at: row.created_at,
   ...(row.request_id && { requestId: row.request_id }),
 });
+/** The first `limit` rows within SYNC_BYTES of words, and always the first. */
+function within(rows: Row[], limit: number) {
+  let bytes = 0;
+  const kept: Row[] = [];
+  for (const row of rows.slice(0, limit)) {
+    bytes += Buffer.byteLength(row.words);
+    if (kept.length && bytes > SYNC_BYTES) break;
+    kept.push(row);
+  }
+  return kept;
+}
 /** Whose thread it is: a person's sign-in identity, else the acting actor (as Fleet keys a
  *  person's model spending, so the threads Pi's plugin kept are found under the same key). */
 const personKey = (user: { issuer: string; subject: string } | null, caller: Caller) =>
@@ -317,7 +337,7 @@ export class MainThreadService {
   /** The Mac's heartbeat: it takes or renews the lease, appends its finished turns, and reads
    *  what it has not seen. A retry of the same items writes nothing twice. */
   async sync(caller: Caller, input: unknown) {
-    const { device, engine, items, after, lease, native, release } = syncInput.parse(input);
+    const { device, engine, items, after, lease, native, limit, release } = syncInput.parse(input);
     caller = structuredClone(caller);
     const wait = await inTransaction(this.state, undefined, async (tx) =>
       JSON.stringify([caller.projectId, await this.person(caller, tx)]),
@@ -354,9 +374,10 @@ export class MainThreadService {
           ...item,
           localId: 'mac:' + item.localId,
           engine,
-          native: native?.session,
+          native: item.native ?? native?.session,
         });
       let rows: Row[];
+      let kept: Row[];
       let through: number | undefined;
       if (native) {
         // Its receipt only goes up: what was given once is never given again.
@@ -368,26 +389,31 @@ export class MainThreadService {
         const from = Math.max(Number(seen?.through_seq ?? 0), native.through);
         rows = await tx.all<Row>(
           `SELECT * FROM session_main_items WHERE thread_id=? AND seq>? AND NOT (engine=? AND native_session IS NOT DISTINCT FROM ?)
-           ORDER BY seq LIMIT ${PAGE + 1}`,
+           ORDER BY seq LIMIT ?`,
           thread.id,
           from,
           engine,
           native.session,
+          limit + 1,
         );
-        through = Math.max(from, ...rows.slice(0, PAGE).map((row) => Number(row.seq)));
+        kept = within(rows, limit);
+        through = Math.max(from, ...kept.map((row) => Number(row.seq)));
         await tx.run(
           `INSERT INTO session_main_deliveries (thread_id, engine, native_session, through_seq) VALUES (?,?,?,?)
            ON CONFLICT (thread_id, engine, native_session) DO UPDATE SET through_seq=excluded.through_seq`,
           ...receipt,
           through,
         );
-      } else
+      } else {
         rows = await tx.all<Row>(
           `SELECT * FROM session_main_items WHERE thread_id=? AND seq>? AND (engine='pi' OR kind='ready')
-           ORDER BY seq LIMIT ${PAGE + 1}`,
+           ORDER BY seq LIMIT ?`,
           thread.id,
           after,
+          limit + 1,
         );
+        kept = within(rows, limit);
+      }
       if (release)
         await tx.run(
           'UPDATE session_main_threads SET expires_at=? WHERE id=?',
@@ -398,8 +424,8 @@ export class MainThreadService {
         thread: thread.id,
         lease: taken.number,
         renewMs: 20_000,
-        items: rows.slice(0, PAGE).map(itemOf),
-        more: rows.length > PAGE,
+        items: kept.map(itemOf),
+        more: rows.length > kept.length,
         ...(through !== undefined && { through }),
       };
     });
@@ -407,20 +433,23 @@ export class MainThreadService {
 
   /** The thread as a page reads it, oldest first, and who has it now. */
   async page(caller: Caller, input: unknown) {
-    const { before, limit } = pageInput.parse(input ?? {});
+    const { before, after, limit } = pageInput.parse(input ?? {});
     return await inTransaction(this.state, undefined, async (tx) => {
       const thread = await this.thread(tx, caller.projectId, await this.person(caller, tx));
       const rows = thread
         ? await tx.all<Row>(
-            'SELECT * FROM session_main_items WHERE thread_id=? AND seq<? ORDER BY seq DESC LIMIT ?',
+            `SELECT * FROM session_main_items WHERE thread_id=? AND seq<? AND seq>?
+             ORDER BY seq ${after === undefined ? 'DESC' : 'ASC'} LIMIT ?`,
             thread.id,
             before ?? Number.MAX_SAFE_INTEGER,
+            after ?? 0,
             limit + 1,
           )
         : [];
+      const items = rows.slice(0, limit).map(itemOf);
       return {
         thread: thread?.id ?? null,
-        items: rows.slice(0, limit).reverse().map(itemOf),
+        items: after === undefined ? items.reverse() : items,
         more: rows.length > limit,
         /** `mac`: their own agent has the thread. `cloud`: Merv answers here. */
         engine: this.held(thread, 'mac') ? ('mac' as const) : ('cloud' as const),
@@ -547,7 +576,7 @@ export const mainThreadPlugin = {
         actions: {
           page: {
             description:
-              'Read the newest items of your main thread, or those before the sequence `before`. `engine` says who answers now: your Mac, or Merv cloud while it is away.',
+              'Read the newest items of your main thread, or those before the sequence `before`, or with `after` those after that sequence, oldest first. It never takes the thread. `engine` says who answers now: your Mac, or Merv cloud while it is away.',
             input: pageInput,
             handler: async (caller, input) => await service.page(caller, input),
           },
@@ -568,7 +597,7 @@ export const mainThreadPlugin = {
           },
           sync: {
             description:
-              "Your own Mac's heartbeat: it renews the Mac's hold on the thread, appends its finished turns and returns what Merv cloud said after `after`; with `native`, what that native session has not seen, once. With `lease`, its items are refused (lease_stale) once the thread has moved on. Not for agents.",
+              "Your own Mac's heartbeat: it renews the Mac's hold on the thread, appends its finished turns and returns what Merv cloud said after `after`; with `native`, what that native session has not seen, once (an item tagged with its own `native` is never given back to that session). `limit` up to 200 items within 1 MiB. With `lease`, its items are refused (lease_stale) once the thread has moved on. Not for agents.",
             input: syncInput,
             handler: async (caller, input) => await service.sync(caller, input),
           },

@@ -47,7 +47,7 @@ async function fixture(t: TestContext, before?: (state: State, owner: Caller) =>
 const code = (expected: string) => (error: unknown) =>
   error instanceof MervError && error.code === expected;
 const mac = (
-  items: { localId: string; kind: 'person' | 'answer'; text: string }[] = [],
+  items: { localId: string; kind: 'person' | 'answer'; text: string; native?: string }[] = [],
   after = 0,
 ) => ({
   device: 'mac-1',
@@ -241,6 +241,63 @@ test('a delta is never delivered twice to one native session, and a fact crosses
   assert.equal(all.length, 18);
   assert.deepEqual(seen, all);
   assert.deepEqual(texts(await sync('claude', 'c2')), []);
+});
+
+test('a heartbeat tags its own items without a delivery; a page reads after a seq without the lease; a delivery may be larger', async (t) => {
+  const f = await fixture(t);
+  const texts = (reply: { items: { text: string }[] }) => reply.items.map((item) => item.text);
+  await f.main.sync(f.owner, mac([{ localId: '1', kind: 'person', text: 'Use seed 3.' }]));
+  f.clock.now += MAC_LEASE_MS + 1;
+  await f.main.say(f.owner, { text: 'And batch size 64.', requestId: 'w1' });
+  // The heartbeat sends a turn native session c1 wrote, with no delivery: nothing is marked given.
+  const beat = await f.main.sync(f.owner, {
+    ...mac([{ localId: '2', kind: 'answer', text: 'Both noted.', native: 'c1' }], 0),
+  });
+  assert.deepEqual(texts(beat), ['And batch size 64.', 'Noted.', 'Your desktop is ready']);
+  // Delivered later, c1 gets everything but its own turn; codex's session gets that too.
+  const delta = await f.main.sync(f.owner, { ...mac(), native: { session: 'c1' } });
+  assert.deepEqual(texts(delta), [
+    'Use seed 3.',
+    'And batch size 64.',
+    'Noted.',
+    'Your desktop is ready',
+  ]);
+  const codex = await f.main.sync(f.owner, {
+    ...mac(),
+    engine: 'codex',
+    native: { session: 'x1' },
+  });
+  assert.ok(texts(codex).includes('Both noted.'));
+
+  // What was written after a cursor, read without taking the thread back.
+  f.clock.now += MAC_LEASE_MS + 1;
+  await f.main.say(f.owner, { text: 'Did the sweep finish?', requestId: 'w2' });
+  const page = await f.main.page(f.owner, { after: 5, limit: 2 });
+  assert.deepEqual(
+    page.items.map((item) => [item.seq, item.text]),
+    [
+      [6, 'Did the sweep finish?'],
+      [7, 'Noted.'],
+    ],
+  );
+  assert.equal(page.more, false);
+  assert.equal((await f.main.page(f.owner, {})).engine, 'cloud', 'the read took nothing');
+  await f.main.say(f.owner, { text: 'Still here?', requestId: 'w3' });
+
+  // A fresh native session asks for a larger page; 1 MiB of words caps it, always one item.
+  const big = 'x'.repeat(200_000);
+  for (let round = 0; round < 3; round++)
+    await f.main.sync(f.owner, {
+      ...mac(
+        [0, 1].map((i) => ({ localId: `big${round}.${i}`, kind: 'answer' as const, text: big })),
+      ),
+    });
+  const all = (await f.main.page(f.owner, {})).items.length;
+  const first = await f.main.sync(f.owner, { ...mac(), native: { session: 'c2' }, limit: 200 });
+  assert.equal(first.items.length, 10 + 5, 'every small item, then five of the six large ones');
+  assert.equal(first.more, true);
+  const rest = await f.main.sync(f.owner, { ...mac(), native: { session: 'c2' }, limit: 200 });
+  assert.deepEqual([rest.items.length, rest.more], [all - 15, false]);
 });
 
 test('the Pi plugin’s threads move over with their numbers, leases and who they belong to', async (t) => {
