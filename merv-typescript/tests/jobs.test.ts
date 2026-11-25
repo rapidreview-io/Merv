@@ -98,7 +98,6 @@ async function fixture(t: TestContext) {
         state: ending,
         started: started || ending !== 'running',
         workflowId: `wf_${run.attempt}`,
-        costUsd: ending === 'running' ? null : 0.42,
         captureArtifactId: null,
         final: ending === 'running' ? null : { step: 400, loss: 0.31 },
         error: null,
@@ -110,14 +109,17 @@ async function fixture(t: TestContext) {
         : null,
     release: async () => {
       releases++;
-      return released;
+      return released ? { costUsd: 0.42 } : null;
     },
   };
   service.machine = machine;
-  // What Sandboxes says the project has spent, against autoresearch's default $20 cap.
+  // What Sandboxes says the project has spent, against autoresearch's default $20 cap, and since when.
   let spent: number | null = 0;
-  (app.ctx.autoresearch as unknown as AutoresearchService).spendSource = {
-    since: async () => {
+  const windows: (string | null)[] = [];
+  const autoresearch = app.ctx.autoresearch as unknown as AutoresearchService;
+  autoresearch.spendSource = {
+    since: async (_projectId, since) => {
+      windows.push(since);
       if (spent === null) throw new Error('Sandboxes is unreachable');
       return { usd: spent };
     },
@@ -178,7 +180,12 @@ async function fixture(t: TestContext) {
     setStarted: (value: boolean) => void (started = value),
     setReleased: (value: boolean) => void (released = value),
     releases: () => releases,
-    setSpent: (usd: number | null) => void (spent = usd),
+    setSpent: (usd: number | null) => {
+      spent = usd;
+      // A page's read may be 15 s old: the next one asks Sandboxes again.
+      (autoresearch as unknown as { spent: Map<string, unknown> }).spent.clear();
+    },
+    windows,
     call,
     get,
     propose,
@@ -341,6 +348,17 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(job.run!.costUsd, 0.42);
   assert.deepEqual(job.run!.final, { step: 400, loss: 0.31 });
   assert.equal(job.run!.machineReleased, true);
+  // Its cost counts against the cap at once, even before Sandboxes' report shows it; the
+  // report counts when it says more. A project with no round reads its spend since ever.
+  assert.deepEqual((await f.get(job.id)).allowance, {
+    capUsd: 20,
+    committedUsd: 0.42,
+    leftUsd: 19.58,
+  });
+  f.setSpent(1);
+  assert.deepEqual((await f.get(job.id)).allowance, { capUsd: 20, committedUsd: 1, leftUsd: 19 });
+  f.setSpent(0);
+  assert.ok(f.windows.length > 0 && f.windows.every((since) => since === null));
   const revoked = await git(f.work, [...f.bearer(grant.token), 'ls-remote', grant.url]);
   assert.notEqual(revoked.code, 0, 'the grant ends with the run');
   assert.doesNotMatch(revoked.out, /error: 403/);
@@ -423,6 +441,7 @@ test('jobs: stop waits for the machine release; the cap refuses a run that does 
   assert.equal(job.state, 'stopped');
   assert.equal(job.run!.state, 'cancelled');
   assert.equal(job.run!.machineReleased, true);
+  assert.equal(job.run!.costUsd, 0.42, 'a stopped run records what its machine cost');
   const revoked = await git(f.work, [...f.bearer(f.grants[0]!.token), 'ls-remote', f.remote]);
   assert.notEqual(revoked.code, 0);
 
@@ -510,7 +529,9 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
   const submitted: { request: Record<string, any>; principal: Record<string, unknown> }[] = [];
   const released: unknown[] = [];
   const link = { namespace: 'ns', account_id: 'acct', member_id: 'mem' };
+  let machines: Record<string, unknown>[] = [];
   const sbx = {
+    sbxRegistry: { list: async () => machines },
     sbxMerv: {
       linked: async () => link,
       principal: async (_caller: Caller, _need: string, work: Record<string, string>) => ({
@@ -552,7 +573,6 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
     state: 'running',
     started: false,
     workflowId: 'wf_1',
-    costUsd: null,
     captureArtifactId: null,
     final: null,
     error: null,
@@ -577,6 +597,14 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
   assert.equal(run.env.MERV_GIT_COMMIT, 'a'.repeat(40));
   assert.doesNotMatch(run.command, /mg_secret/);
   assert.match(run.command, /'python train\.py'/);
-  assert.equal(await machine.release(caller, 'wf_job'), true);
-  assert.deepEqual(released, [{ namespace: 'ns', accountId: 'acct', workRef: 'wf_job' }]);
+  // Released once the attempt's machines have stopped, with what they cost; others are not its.
+  const usd = (amount: string) => ({ currency: 'USD', amount });
+  machines = [
+    { attempt_ref: 'a3', state: 'deleting', cost_so_far: usd('0.05') },
+    { attempt_ref: 'a2', state: 'stopped', cost_so_far: usd('1.00') },
+  ];
+  assert.equal(await machine.release(caller, 'wf_job', 3), null);
+  machines[0] = { attempt_ref: 'a3', state: 'stopped', cost_so_far: usd('0.0985') };
+  assert.deepEqual(await machine.release(caller, 'wf_job', 3), { costUsd: 0.0985 });
+  assert.deepEqual(released[0], { namespace: 'ns', accountId: 'acct', workRef: 'wf_job' });
 });

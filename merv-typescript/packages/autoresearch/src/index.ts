@@ -191,7 +191,12 @@ export class AutoresearchService implements Autoresearch {
    * What the round has spent, held and may still start. Sandboxes is asked afresh where a run
    * is admitted or a decision taken (`fresh`); a page's read may take one up to 15 s old.
    */
-  async spend(row: Row, tx: Transaction, fresh = true): Promise<AutoresearchSpend> {
+  async spend(
+    row: Row,
+    tx: Transaction,
+    fresh = true,
+    since: string | null = row.round_started_at ?? row.updated_at,
+  ): Promise<AutoresearchSpend> {
     const open = row.manager_id
       ? ((await tx.get<{ n: number | string }>(
           'SELECT count(*) AS n FROM autoresearch_runs WHERE project_id=? AND manager_id=? AND ended_at IS NULL',
@@ -202,7 +207,6 @@ export class AutoresearchService implements Autoresearch {
     const openRuns = Number(open);
     const capUsd = row.cap_cents / 100;
     const runEstimateUsd = row.run_estimate_cents / 100;
-    const since = row.round_started_at ?? row.updated_at;
     const key = `${row.project_id} ${since}`;
     const kept = this.spent.get(key);
     let spentUsd: number | null = null;
@@ -271,13 +275,14 @@ export class AutoresearchService implements Autoresearch {
   }
 
   /**
-   * The project's cap and what its round has spent and holds: other programs admit their own
-   * runs against it (Jobs' Run), read fresh; a page's read (`fresh` false) may be 15 s old. A
-   * project never configured has the default cap.
+   * The project's cap and what it has spent and holds since its round began, or ever when no
+   * round has: other programs admit their own runs against it (Jobs' Run), read fresh; a page's
+   * read (`fresh` false) may be 15 s old. A project never configured has the default cap.
    */
-  async room(projectId: string, tx: Transaction, fresh = true): Promise<AutoresearchSpend> {
+  async room(projectId: string, tx: Transaction, fresh = true) {
     const row = (await this.row(projectId, tx)) ?? defaults(projectId, '');
-    return await this.spend(row, tx, fresh);
+    const since = row.round_started_at;
+    return { ...(await this.spend(row, tx, fresh, since)), since };
   }
 
   // ── Reads ────────────────────────────────────────────────────────────────────────────────

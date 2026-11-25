@@ -34,7 +34,12 @@ type Room = (
   projectId: string,
   tx: Transaction,
   fresh?: boolean,
-) => Promise<{ capUsd: number; committedUsd: number | null }>;
+) => Promise<{
+  capUsd: number;
+  spentUsd: number | null;
+  committedUsd: number | null;
+  since: string | null;
+}>;
 /** What is left under the project's cap, or why it is not known. */
 type Allowance =
   { allowance: JobAllowance; allowanceReason: null } | { allowance: null; allowanceReason: string };
@@ -96,13 +101,14 @@ export class JobsService {
   async list(caller: Caller) {
     return await forRead(this.state, async (tx) => {
       const all = await this.workflows.list(caller, tx, JOB_WORKFLOW);
-      return { jobs: all.reverse().map(view), ...(await this.allowance(caller.projectId, tx)) };
+      const allowance = await this.allowance(caller, tx, false, all);
+      return { jobs: all.reverse().map(view), ...allowance };
     });
   }
   async get(caller: Caller, input: { jobId: string }) {
     const { job, ...allowance } = await forRead(this.state, async (tx) => ({
       job: view(await this.snapshot(caller, input.jobId, tx)),
-      ...(await this.allowance(caller.projectId, tx)),
+      ...(await this.allowance(caller, tx)),
     }));
     let live: Record<string, number> | null = null;
     // Live readings are best effort: a slow or failing read leaves them out.
@@ -148,7 +154,7 @@ export class JobsService {
     return await this.move(caller, input, 'run', async (job, tx) => {
       // A replay of an earlier Run is the engine's to answer, and is not admitted again.
       if (job.state === 'proposed' && job.revision === input.expectedRevision)
-        await this.admit(caller.projectId, view(job), tx);
+        await this.admit(caller, view(job), tx);
       return { ranBy: caller.actorId };
     });
   }
@@ -167,15 +173,15 @@ export class JobsService {
   }
 
   /** Spend is admitted where a run is started: Run, and each new commit a revision runs. */
-  private async admit(projectId: string, job: JobView, tx: Transaction) {
+  private async admit(caller: Caller, job: JobView, tx: Transaction) {
     check(this.machine, 'job_compute_unavailable', 'This server has no compute for jobs', 503);
     check(
-      await this.machine.linked(projectId),
+      await this.machine.linked(caller.projectId),
       'sandbox_not_connected',
       'Connect compute for this project before you run a job',
       409,
     );
-    const { allowance, allowanceReason } = await this.allowance(projectId, tx, true);
+    const { allowance, allowanceReason } = await this.allowance(caller, tx, true);
     if (!allowance) {
       // A server without Autoresearch has no cap to admit against.
       check(!this.room, 'job_spend_unavailable', `${allowanceReason} Nothing changed.`, 503);
@@ -191,23 +197,35 @@ export class JobsService {
   }
 
   /**
-   * The cap, what is spent or held under it (Sandboxes' spend and every running job's estimate)
-   * and what is left: the read Run is admitted on, which `fresh` false lets be 15 s old.
+   * The cap, what is spent or held under it and what is left: the read Run is admitted on, which
+   * `fresh` false lets be 15 s old. Spent is what Sandboxes reports for the project since the cap's
+   * window began, never less than the costs its jobs recorded since; every running or stopping
+   * job holds its estimate.
    */
-  async allowance(projectId: string, tx: Transaction, fresh = false): Promise<Allowance> {
+  async allowance(
+    caller: Caller,
+    tx: Transaction,
+    fresh = false,
+    jobs?: WorkflowSnapshot[],
+  ): Promise<Allowance> {
     if (!this.room) return { allowance: null, allowanceReason: 'No cap applies on this server.' };
-    const room = await this.room(projectId, tx, fresh);
-    if (room.committedUsd === null)
+    const room = await this.room(caller.projectId, tx, fresh);
+    if (room.committedUsd === null || room.spentUsd === null)
       return {
         allowance: null,
         allowanceReason:
           'Sandboxes did not say what this project has spent, so no run starts now. Try again in a minute.',
       };
-    const held = (await this.workflows.open(JOB_WORKFLOW, projectId, tx))
-      .filter((item) => ['running', 'stopping'].includes(item.state))
-      .reduce((sum, item) => sum + Number(item.data.estimateUsd), 0);
+    let held = 0;
+    let recorded = 0;
+    for (const job of (jobs ?? (await this.workflows.list(caller, tx, JOB_WORKFLOW))).map(view))
+      if (job.state === 'running' || job.state === 'stopping') held += job.estimateUsd;
+      else if (job.run?.costUsd && (!room.since || job.updatedAt >= room.since))
+        recorded += job.run.costUsd;
     const cents = (usd: number) => Math.round(usd * 100) / 100;
-    const committedUsd = cents(room.committedUsd + held);
+    const committedUsd = cents(
+      room.committedUsd - room.spentUsd + Math.max(room.spentUsd, recorded) + held,
+    );
     return {
       allowance: {
         capUsd: room.capUsd,
@@ -234,7 +252,7 @@ export class JobsService {
     );
     const moved = await this.move(caller, input, 'submit_code', async (job, tx) => {
       if (job.state === 'writing' && job.revision === input.expectedRevision)
-        await this.admit(caller.projectId, view(job), tx);
+        await this.admit(caller, view(job), tx);
       const run: JobRun = {
         attempt: job.revision + 1,
         state: 'starting',
@@ -340,10 +358,11 @@ export class JobsService {
     const run = read.run!;
     const service = await this.scope.serviceActor('jobs', job.projectId);
     if (job.state === 'stopping') {
-      if (!(await machine.release(service, job.id))) return;
+      const released = await machine.release(service, job.id, run.attempt);
+      if (!released) return;
       await this.code.gitRemote.revokeRun(job.projectId, job.id);
       return await this.machineMove(service, job, 'released', {
-        run: { ...run, state: 'cancelled', machineReleased: true },
+        run: { ...run, state: 'cancelled', costUsd: released.costUsd, machineReleased: true },
       });
     }
     let progress: MachineProgress;
@@ -369,7 +388,6 @@ export class JobsService {
         state: 'failed',
         started: false,
         workflowId: run.workflowId ?? '',
-        costUsd: null,
         captureArtifactId: null,
         final: null,
         error: `The machine could not start: ${error.message}`,
@@ -383,15 +401,16 @@ export class JobsService {
         });
       return;
     }
-    // The record says released only once every machine of the job is.
-    if (!(await machine.release(service, job.id))) return;
+    // The record says released only once every machine of the job is, with what they cost.
+    const released = await machine.release(service, job.id, run.attempt);
+    if (!released) return;
     await this.code.gitRemote.revokeRun(job.projectId, job.id);
     await this.machineMove(service, job, 'finish_run', {
       run: {
         ...run,
         state: progress.state,
         workflowId: progress.workflowId || null,
-        costUsd: progress.costUsd,
+        costUsd: released.costUsd,
         captureArtifactId: progress.captureArtifactId,
         final: progress.final,
         error: progress.error,

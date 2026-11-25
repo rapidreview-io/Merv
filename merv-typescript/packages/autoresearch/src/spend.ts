@@ -4,12 +4,13 @@ import type {} from '@sandboxes/billing';
 import { Instant } from '@sandboxes/kernel';
 
 /**
- * What a project's compute has cost since an instant, in US dollars: Sandboxes' accrued money
- * and what its live machines hold reserved, in the namespace linked to the project. `null` means
- * no compute is connected, so nothing can be spent; a rejection means the spend is not known now.
+ * What a project's compute has cost since an instant (null: ever), in US dollars: Sandboxes'
+ * accrued money and what its live machines hold reserved, in the namespace linked to the project.
+ * `null` means no compute is connected, so nothing can be spent; a rejection means the spend is
+ * not known now.
  */
 export interface SpendSource {
-  since(projectId: string, sinceIso: string): Promise<{ usd: number } | null>;
+  since(projectId: string, sinceIso: string | null): Promise<{ usd: number } | null>;
 }
 
 const usd = (rows: readonly { amount: string; currency: string }[]) =>
@@ -27,7 +28,8 @@ export function sandboxesSpend(ctx: Context): SpendSource {
       if (!merv || !billing) return null;
       const link = await merv.linked(projectId);
       if (!link) return null;
-      const report = await billing.report(link.namespace, { start: Instant.parseIso(sinceIso) });
+      const start = sinceIso === null ? null : Instant.parseIso(sinceIso);
+      const report = await billing.report(link.namespace, { start });
       return { usd: usd(report.accrued) + usd(report.reserved) };
     },
   };

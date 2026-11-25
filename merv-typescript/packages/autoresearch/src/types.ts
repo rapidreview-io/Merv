@@ -24,9 +24,13 @@ export interface Autoresearch {
     caller: Caller,
     input: AutoresearchDecide,
   ): Promise<{ decided: 'wait' | 'end'; state: string; next: string }>;
-  /** The project's cap and its round's spend that another program's run is admitted against;
-   *  `fresh` false lets a page's read be up to 15 s old. */
-  room(projectId: string, tx: Transaction, fresh?: boolean): Promise<AutoresearchSpend>;
+  /** The project's cap and its spend since `since` (its round's start; null: ever) that another
+   *  program's run is admitted against; `fresh` false lets a page's read be up to 15 s old. */
+  room(
+    projectId: string,
+    tx: Transaction,
+    fresh?: boolean,
+  ): Promise<AutoresearchSpend & { since: string | null }>;
   close(): void;
 }
 declare module 'cordis' {

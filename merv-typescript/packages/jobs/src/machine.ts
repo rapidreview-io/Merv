@@ -35,7 +35,6 @@ export interface MachineProgress {
   /** Whether the command has begun on the machine (its run node left pending). */
   started: boolean;
   workflowId: string;
-  costUsd: number | null;
   captureArtifactId: string | null;
   final: Record<string, number> | null;
   error: string | null;
@@ -52,8 +51,13 @@ export interface JobMachine {
   ): Promise<MachineProgress>;
   /** The latest METRIC readings of a running attempt, or null; as `caller`, who only reads. */
   live(caller: Caller, jobId: string, attempt: number): Promise<Record<string, number> | null>;
-  /** Cancels all of the job's remote work; true once its machines are released. */
-  release(caller: Caller, jobId: string): Promise<boolean>;
+  /** Cancels all of the job's remote work. Null until every machine of it has stopped; then
+   *  what the attempt's machines cost (costUsd null: not known). */
+  release(
+    caller: Caller,
+    jobId: string,
+    attempt: number,
+  ): Promise<{ costUsd: number | null } | null>;
 }
 
 /** The last value of each field of the `METRIC {json}` lines in `text`. */
@@ -186,14 +190,9 @@ export class SandboxesMachine implements JobMachine {
       final: null,
       captureArtifactId: null,
     };
-    if (!workflowTerminal(record.state)) return { ...base, state: 'running', costUsd: null };
+    if (!workflowTerminal(record.state)) return { ...base, state: 'running' };
     const jobId = record.nodes.run?.result.job_id as string | undefined;
-    const sandboxId = record.nodes.machine?.result.sandbox_id as string | undefined;
-    const [output, sandbox] = await Promise.all([
-      jobId ? this.tail(namespace, jobId) : { text: '', exit: null },
-      sandboxId ? refusals.call(() => this.sbx.sbxRegistry.get(namespace, sandboxId)) : null,
-    ]);
-    const cost = sandbox?.cost_so_far;
+    const output = jobId ? await this.tail(namespace, jobId) : { text: '', exit: null };
     return {
       ...base,
       state:
@@ -202,7 +201,6 @@ export class SandboxesMachine implements JobMachine {
           : record.state === 'cancelled'
             ? 'cancelled'
             : 'failed',
-      costUsd: cost && cost.currency === 'USD' ? Number(cost.amount.toString()) : null,
       final: metrics(output.text),
       error:
         output.exit === CODE_CHANGED
@@ -260,13 +258,24 @@ export class SandboxesMachine implements JobMachine {
     return job ? metrics((await this.tail(principal.namespace, job)).text) : null;
   }
 
-  async release(caller: Caller, jobId: string) {
+  async release(caller: Caller, jobId: string, attempt: number) {
     const link = await this.sbx.sbxMerv.linked(caller.projectId);
-    if (!link) return true;
-    return await this.sbx.sbxMerv.releaseWork(caller, {
-      namespace: link.namespace,
-      accountId: link.account_id,
-      workRef: jobId,
-    });
+    if (!link) return { costUsd: null };
+    const work = { namespace: link.namespace, accountId: link.account_id, workRef: jobId };
+    if (!(await this.sbx.sbxMerv.releaseWork(caller, work))) return null;
+    // Released once each machine has stopped, so its cost no longer grows; none rented costs 0.
+    const machines = (
+      await refusals.call(() =>
+        this.sbx.sbxRegistry.list(link.namespace, { workRef: jobId, includeStopped: true }),
+      )
+    ).filter((machine) => machine.attempt_ref === `a${attempt}`);
+    if (machines.some((machine) => machine.state !== 'stopped' && machine.state !== 'failed'))
+      return null;
+    const costs = machines.map((machine) => machine.cost_so_far);
+    return {
+      costUsd: costs.every((cost) => cost?.currency === 'USD')
+        ? costs.reduce((sum, cost) => sum + Number(cost!.amount.toString()), 0)
+        : null,
+    };
   }
 }
