@@ -9,6 +9,8 @@ import type { AutoresearchService } from '@merv/autoresearch';
 import type { Caller } from '@merv/contracts';
 import type { JobsService, JobView } from '@merv/jobs';
 import {
+  curve,
+  MOST_POINTS,
   runScript,
   SandboxesMachine,
   type JobMachine,
@@ -87,6 +89,8 @@ async function fixture(t: TestContext) {
   let started = false;
   let released = true;
   let releases = 0;
+  let printed: string | null =
+    'METRIC {"step": 5, "loss": 2.0}\nMETRIC {"step": 10, "loss": 1.5}\n';
   const machine: JobMachine = {
     linked: async () => true,
     advance: async (_caller, run, grant) => {
@@ -103,10 +107,12 @@ async function fixture(t: TestContext) {
         error: null,
       };
     },
-    live: async (_caller, jobId, attempt) =>
-      runs.some((item) => item.jobId === jobId && item.attempt === attempt)
-        ? { step: 10, loss: 1.5 }
-        : null,
+    // The run's output as Sandboxes serves it: its tail while it runs, the whole once it ended.
+    output: async (_caller, jobId, attempt, ended) => {
+      if (printed === null) throw new Error('Sandboxes no longer keeps this output');
+      if (!runs.some((item) => item.jobId === jobId && item.attempt === attempt)) return null;
+      return ended ? printed : printed.split('\n').slice(-3).join('\n');
+    },
     release: async () => {
       releases++;
       return released ? { costUsd: 0.42 } : null;
@@ -128,11 +134,13 @@ async function fixture(t: TestContext) {
   const call = async <T = JobView>(name: string, caller: Caller, input: Record<string, unknown>) =>
     (await app.ctx.tools.call(name, caller, input)) as T;
   const get = async (jobId: string) =>
-    await call<{ job: JobView; live: Record<string, number> | null } & Allowance>(
-      'job.read:get',
-      owner,
-      { jobId },
-    );
+    await call<
+      {
+        job: JobView;
+        live: Record<string, number> | null;
+        points: { step: number; values: Record<string, number> }[];
+      } & Allowance
+    >('job.read:get', owner, { jobId });
   const propose = async (title = 'Dropout sweep', estimateUsd = 1.2) =>
     await call('job.write:propose', owner, {
       title,
@@ -179,6 +187,7 @@ async function fixture(t: TestContext) {
     setEnding: (state: MachineProgress['state']) => void (ending = state),
     setStarted: (value: boolean) => void (started = value),
     setReleased: (value: boolean) => void (released = value),
+    setPrinted: (text: string | null) => void (printed = text),
     releases: () => releases,
     setSpent: (usd: number | null) => {
       spent = usd;
@@ -335,6 +344,11 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   assert.equal(running.job.run!.state, 'running');
   assert.equal(running.job.run!.workflowId, 'wf_2');
   assert.deepEqual(running.live, { step: 10, loss: 1.5 });
+  // The curve so far, from the same tail: every METRIC line a point.
+  assert.deepEqual(running.points, [
+    { step: 5, values: { loss: 2 } },
+    { step: 10, values: { loss: 1.5 } },
+  ]);
   // A running job holds its estimate.
   assert.deepEqual(running.allowance, { capUsd: 20, committedUsd: 1.2, leftUsd: 18.8 });
   await f.ok('POST', `/sessions/${writer.session.id}/release`, f.token, { runnerId: 'mac-desk' });
@@ -358,6 +372,22 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
   f.setSpent(1);
   assert.deepEqual((await f.get(job.id)).allowance, { capUsd: 20, committedUsd: 1, leftUsd: 19 });
   f.setSpent(0);
+  // Read again later, or on another device: the whole curve, from the ended run's output; a
+  // line without a step is placed by its order. Output Sandboxes no longer keeps: no curve.
+  f.setPrinted(
+    'warming up\nMETRIC {"step": 1, "loss": 2.5}\n' +
+      'METRIC {"step": 5, "loss": 2.0}\nMETRIC {"step": 10, "loss": 1.5}\nMETRIC {"acc": 0.9}\n',
+  );
+  const ended = await f.get(job.id);
+  assert.equal(ended.live, null);
+  assert.deepEqual(ended.points, [
+    { step: 1, values: { loss: 2.5 } },
+    { step: 5, values: { loss: 2 } },
+    { step: 10, values: { loss: 1.5 } },
+    { step: 4, values: { acc: 0.9 } },
+  ]);
+  f.setPrinted(null);
+  assert.deepEqual((await f.get(job.id)).points, []);
   assert.ok(f.windows.length > 0 && f.windows.every((since) => since === null));
   const revoked = await git(f.work, [...f.bearer(grant.token), 'ls-remote', grant.url]);
   assert.notEqual(revoked.code, 0, 'the grant ends with the run');
@@ -529,6 +559,7 @@ test('jobs: a read-only key reads a running job before any machine tick, writing
   assert.equal(read.body.result.job.state, 'running');
   assert.equal(read.body.result.job.run.state, 'starting');
   assert.deepEqual(read.body.result.live, null, 'nothing has started on the machine yet');
+  assert.deepEqual(read.body.result.points, []);
   const listed = await f.http('POST', '/tools/job.read', reader.token, { action: 'list' });
   assert.equal(listed.status, 200, listed.text);
   const after = await app.ctx.state.transaction((tx) =>
@@ -620,4 +651,17 @@ test('jobs: the machine step is one capped pipeline scoped to the job, its token
   machines[0] = { attempt_ref: 'a3', state: 'stopped', cost_so_far: usd('0.0985') };
   assert.deepEqual(await machine.release(caller, 'wf_job', 3), { costUsd: 0.0985 });
   assert.deepEqual(released[0], { namespace: 'ns', accountId: 'acct', workRef: 'wf_job' });
+});
+
+test('jobs: a curve keeps at most 500 points, thinned evenly, the first and last kept', () => {
+  const text = Array.from(
+    { length: 1200 },
+    (_, i) => `METRIC {"step": ${i + 1}, "loss": ${1 / (i + 1)}}`,
+  ).join('\n');
+  const points = curve(text);
+  assert.equal(points.length, MOST_POINTS);
+  assert.deepEqual(points[0], { step: 1, values: { loss: 1 } });
+  assert.equal(points.at(-1)!.step, 1200);
+  assert.ok(points.every((point, i) => i === 0 || point.step > points[i - 1]!.step));
+  assert.deepEqual(curve('METRIC {"step": 3}\nMETRIC not json\n'), []);
 });

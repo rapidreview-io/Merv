@@ -45,7 +45,7 @@ export const jobsToolsPlugin = {
           },
           get: {
             description:
-              'One job, with the project’s allowance as list gives it. While it runs, live holds the latest METRIC values its command printed (best effort, else null). After Stop, run.machineReleased says whether its machine is released.',
+              'One job, with the project’s allowance as list gives it. While it runs, live holds the latest METRIC values its command printed (best effort, else null). points is the run’s curve, [{step, values: {metric: number}}] from each METRIC line (step from its step field, else its place), at most 500 thinned evenly: from the end of the output while it runs, from the whole output once it ended, empty when Sandboxes no longer has it. After Stop, run.machineReleased says whether its machine is released.',
             input: z.strictObject({ jobId: z.string().min(1) }),
             handler: (caller, input) => jobs.get(caller, input),
           },

@@ -16,6 +16,10 @@ const SETUP_SECONDS = 300;
 const CAPTURE_SECONDS = 120;
 const OUTPUT_BYTES = 1 << 30;
 const TAIL_BYTES = 64 << 10;
+/** The most of an ended run's output read for its curve: Sandboxes' largest read. */
+const ENDED_BYTES = 4 << 20;
+/** The most points a curve has; more are thinned evenly. */
+export const MOST_POINTS = 500;
 /** The exit of a run whose branch no longer points at the job's commit. */
 const CODE_CHANGED = 97;
 
@@ -49,8 +53,9 @@ export interface JobMachine {
     run: MachineRun,
     grant: () => Promise<{ url: string; token: string }>,
   ): Promise<MachineProgress>;
-  /** The latest METRIC readings of a running attempt, or null; as `caller`, who only reads. */
-  live(caller: Caller, jobId: string, attempt: number): Promise<Record<string, number> | null>;
+  /** The end of an attempt's standard output (more of it once the run has `ended`), or null
+   *  when there is none; as `caller`, who only reads. */
+  output(caller: Caller, jobId: string, attempt: number, ended: boolean): Promise<string | null>;
   /** Cancels all of the job's remote work. Null until every machine of it has stopped; then
    *  what the attempt's machines cost (costUsd null: not known). */
   release(
@@ -60,21 +65,50 @@ export interface JobMachine {
   ): Promise<{ costUsd: number | null } | null>;
 }
 
-/** The last value of each field of the `METRIC {json}` lines in `text`. */
-export function metrics(text: string): Record<string, number> | null {
-  let found: Record<string, number> | null = null;
+/** One reading of a curve: its step, and each metric's value there. */
+export interface MetricPoint {
+  step: number;
+  values: Record<string, number>;
+}
+
+/** The numbers of each `METRIC {json}` line in `text`, in order. */
+function readings(text: string): Record<string, number>[] {
+  const found: Record<string, number>[] = [];
   for (const line of text.split('\n')) {
     if (!line.startsWith('METRIC ')) continue;
     try {
       const value = JSON.parse(line.slice(7)) as unknown;
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const numbers: Record<string, number> = {};
       for (const [key, number] of Object.entries(value))
-        if (typeof number === 'number' && Number.isFinite(number)) (found ??= {})[key] = number;
+        if (typeof number === 'number' && Number.isFinite(number)) numbers[key] = number;
+      if (Object.keys(numbers).length) found.push(numbers);
     } catch {
       // Ordinary output may start with METRIC too.
     }
   }
   return found;
+}
+
+/** The last value of each field of the `METRIC {json}` lines in `text`. */
+export function metrics(text: string): Record<string, number> | null {
+  const all = readings(text);
+  return all.length ? Object.assign({}, ...all) : null;
+}
+
+/**
+ * Every `METRIC {json}` line in `text` as a point: its `step` field (else its place among the
+ * lines, from 1) and its other numbers. At most `most`, thinned evenly, the first and last kept.
+ */
+export function curve(text: string, most = MOST_POINTS): MetricPoint[] {
+  const points = readings(text)
+    .map(({ step, ...values }, at) => ({ step: step ?? at + 1, values }))
+    .filter((point) => Object.keys(point.values).length);
+  if (points.length <= most) return points;
+  return Array.from(
+    { length: most },
+    (_, i) => points[Math.round((i * (points.length - 1)) / (most - 1))]!,
+  );
 }
 
 /**
@@ -233,29 +267,30 @@ export class SandboxesMachine implements JobMachine {
     return artifact.id;
   }
 
-  /** The end of the command's standard output, and how it exited. */
-  private async tail(namespace: string, jobId: string) {
+  /** The end of the command's standard output, `bytes` of it at most, and how it exited. */
+  private async tail(namespace: string, jobId: string, bytes = TAIL_BYTES) {
     return await refusals.call(async () => {
       const status = await this.sbx.sbxJobs.status({ namespace, jobId });
       const exit = status.exit_code;
       const extent = status.outputs.find((item) => item.stream === 'stdout');
       if (!extent) return { text: '', exit };
-      const start = Math.max(extent.available_start, extent.total_length - TAIL_BYTES);
+      const start = Math.max(extent.available_start, extent.total_length - bytes);
       const read = await this.sbx.sbxJobs.read({
         namespace,
         jobId,
         stream: extent.stream,
         ranges: [{ start, end: extent.total_length }],
-        maxBytes: TAIL_BYTES,
+        maxBytes: bytes,
       });
       return { text: read.data.toString('utf8'), exit };
     });
   }
 
-  async live(caller: Caller, jobId: string, attempt: number) {
+  async output(caller: Caller, jobId: string, attempt: number, ended: boolean) {
     const { principal, record } = await this.find(caller, jobId, attempt, 'read');
     const job = record?.nodes.run?.result.job_id as string | undefined;
-    return job ? metrics((await this.tail(principal.namespace, job)).text) : null;
+    const bytes = ended ? ENDED_BYTES : TAIL_BYTES;
+    return job ? (await this.tail(principal.namespace, job, bytes)).text : null;
   }
 
   async release(caller: Caller, jobId: string, attempt: number) {

@@ -20,7 +20,14 @@ import type { Sessions } from '@merv/sessions/types';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { SandboxesMachine, type JobMachine, type MachineProgress } from './machine.js';
+import {
+  curve,
+  metrics,
+  SandboxesMachine,
+  type JobMachine,
+  type MachineProgress,
+  type MetricPoint,
+} from './machine.js';
 import { definition, JOB_WORKFLOW, pick, policy, view } from './program.js';
 import type { JobAllowance, JobMove, JobPlan, JobRun, JobView } from './types.js';
 export type * from './types.js';
@@ -111,15 +118,22 @@ export class JobsService {
       ...(await this.allowance(caller, tx)),
     }));
     let live: Record<string, number> | null = null;
-    // Live readings are best effort: a slow or failing read leaves them out.
-    // They are read as the reader, who may read the project: a read creates nothing in Merv.
-    if (job.state === 'running' && job.run && this.machine) {
-      live = await Promise.race([
-        this.machine.live(caller, job.id, job.run.attempt).catch(() => null),
+    let points: MetricPoint[] = [];
+    // Readings are best effort: a slow or failing read, or output Sandboxes no longer keeps,
+    // leaves them out. They are read as the reader, who may read the project: a read creates
+    // nothing in Merv. The curve is the run's whole output once it has ended, else its tail.
+    if (job.run && this.machine) {
+      const running = job.state === 'running';
+      const text = await Promise.race([
+        this.machine.output(caller, job.id, job.run.attempt, !running).catch(() => null),
         new Promise<null>((resolve) => setTimeout(resolve, LIVE_MS, null).unref()),
       ]);
+      if (text) {
+        points = curve(text);
+        if (running) live = metrics(text);
+      }
     }
-    return { job, live, ...allowance };
+    return { job, live, points, ...allowance };
   }
 
   // ── The person's moves ───────────────────────────────────────────────────────────────────
