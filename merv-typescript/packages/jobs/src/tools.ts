@@ -4,17 +4,22 @@ import { z } from 'zod';
 import type {} from './types.js';
 
 const requestId = z.string().min(1).max(200);
+const text = (max: number) => z.string().trim().min(1).max(max);
+const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const move = {
   jobId: z.string().min(1),
   expectedRevision: z.number().int().nonnegative(),
   requestId,
 };
 const plan = z.strictObject({
-  title: z.string().min(1).max(200),
-  goal: z.string().min(1).max(4000),
-  doneMeans: z.string().min(1).max(4000),
-  command: z.string().min(1).max(4000),
-  gpu: z.string().min(1).max(32).default('T4'),
+  title: text(200),
+  goal: text(4000),
+  doneMeans: text(4000),
+  command: text(4000),
+  gpu: z
+    .string()
+    .regex(/^[A-Za-z0-9-]{1,32}$/)
+    .default('T4'),
   minutes: z.number().int().min(1).max(720),
   estimateUsd: z.number().positive().max(1000),
 });
@@ -72,7 +77,7 @@ export const jobsToolsPlugin = {
             act: { title: 'Stop the job' },
             description:
               'Stop a job. A running one is stopping until its machine is released, then stopped with run.machineReleased true.',
-            input: z.strictObject({ ...move, reason: z.string().min(1).max(2000).optional() }),
+            input: z.strictObject({ ...move, reason: text(2000).optional() }),
             handler: (caller, input) => jobs.stop(caller, input),
           },
         },
@@ -86,8 +91,8 @@ export const jobsToolsPlugin = {
           'Job writer only: hand in the code. ref is the branch you pushed to this project’s Merv git, commit the full commit id it points at; Merv checks it and runs exactly that commit on the machine. Stop after calling it.',
         inputSchema: z.strictObject({
           ...move,
-          ref: z.string().min(1).max(200),
-          commit: z.string().min(40).max(64),
+          ref: z.string().regex(/^(?!\/|.*(?:\.\.|\/\/|@\{|\.lock$|\/$))[A-Za-z0-9._/-]{1,200}$/),
+          commit: oid,
         }),
         handler: (caller, input) => jobs.submitCode(caller, input),
       }),
@@ -101,8 +106,8 @@ export const jobsToolsPlugin = {
         inputSchema: z.strictObject({
           ...move,
           verdict: z.enum(['accept', 'revise']),
-          commitRead: z.string().min(40).max(64),
-          summary: z.string().min(1).max(4000),
+          commitRead: oid,
+          summary: text(4000),
           next: plan.optional(),
         }),
         handler: (caller, input) => jobs.review(caller, input),

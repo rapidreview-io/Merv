@@ -1,4 +1,4 @@
-import type { Caller } from '@merv/contracts';
+import type { JobsService } from './index.js';
 import type {} from 'cordis';
 
 export type JobState =
@@ -51,26 +51,6 @@ export interface JobView extends JobPlan {
   createdAt: string;
   updatedAt: string;
 }
-export interface Jobs {
-  propose(caller: Caller, input: JobPlan & { requestId: string }): Promise<JobView>;
-  run(caller: Caller, input: JobMove): Promise<JobView>;
-  stop(caller: Caller, input: JobMove & { reason?: string }): Promise<JobView>;
-  list(caller: Caller): Promise<{ jobs: JobView[] }>;
-  get(
-    caller: Caller,
-    input: { jobId: string },
-  ): Promise<{ job: JobView; live: Record<string, number> | null }>;
-  submitCode(caller: Caller, input: JobMove & { ref: string; commit: string }): Promise<JobView>;
-  review(
-    caller: Caller,
-    input: JobMove & {
-      verdict: 'accept' | 'revise';
-      commitRead: string;
-      summary: string;
-      next?: JobPlan;
-    },
-  ): Promise<JobView>;
-}
 export interface JobMove {
   jobId: string;
   expectedRevision: number;
@@ -78,6 +58,6 @@ export interface JobMove {
 }
 declare module 'cordis' {
   interface Context {
-    jobs: Jobs;
+    jobs: JobsService;
   }
 }

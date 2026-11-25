@@ -4,7 +4,6 @@ import {
   digest,
   forRead,
   MervError,
-  visible,
   type Caller,
   type Data,
   type Scope,
@@ -22,8 +21,8 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxesMachine, type JobMachine, type MachineProgress } from './machine.js';
-import { definition, JOB_WORKFLOW, policy, view } from './program.js';
-import type { JobMove, JobPlan, JobRun, Jobs, JobView } from './types.js';
+import { definition, JOB_WORKFLOW, pick, policy, view } from './program.js';
+import type { JobMove, JobPlan, JobRun, JobView } from './types.js';
 export type * from './types.js';
 
 /** How long the machine's Git read lasts: renting and fetching happen well within it. */
@@ -36,41 +35,13 @@ type Room = (
   tx: Transaction,
 ) => Promise<{ capUsd: number; committedUsd: number | null }>;
 
-const text = (value: unknown, max: number, what: string) =>
-  check(
-    typeof value === 'string' && visible(value) && value.length <= max,
-    'invalid_input',
-    `${what} must be text of at most ${max} characters`,
-  );
-/** What a proposal must say, checked once for the tool and for a reviewer's next job. */
-export function plan(input: JobPlan): JobPlan {
-  text(input.title, 200, 'title');
-  text(input.goal, 4000, 'goal');
-  text(input.doneMeans, 4000, 'doneMeans');
-  text(input.command, 4000, 'command');
-  check(/^[A-Za-z0-9-]{1,32}$/.test(input.gpu), 'invalid_input', 'gpu names one GPU, as T4');
-  check(
-    Number.isSafeInteger(input.minutes) && input.minutes >= 1 && input.minutes <= 720,
-    'invalid_input',
-    'minutes is a whole number from 1 to 720',
-  );
-  check(
-    Number.isFinite(input.estimateUsd) && input.estimateUsd > 0 && input.estimateUsd <= 1000,
-    'invalid_input',
-    'estimateUsd is a positive number of US dollars up to 1000',
-  );
-  const { title, goal, doneMeans, command, gpu, minutes, estimateUsd } = input;
-  return { title, goal, doneMeans, command, gpu, minutes, estimateUsd };
-}
-const branch = /^(?!\/|.*(?:\.\.|\/\/|@\{|\.lock$|\/$))[A-Za-z0-9._/-]{1,200}$/;
-const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const usd = (value: number) => `$${value.toFixed(2)}`;
 
 /**
  * One job type on the workflow engine: its record is the instance's data, its steps the graph,
  * and its machine step is driven from here, never by an agent.
  */
-export class JobsService implements Jobs {
+export class JobsService {
   handle?: Awaited<ReturnType<Workflows['register']>>;
   machine?: JobMachine;
   room?: Room;
@@ -140,7 +111,7 @@ export class JobsService implements Jobs {
 
   async propose(caller: Caller, input: JobPlan & { requestId: string }) {
     check(!caller.session, 'people_only', 'A leased agent proposes a job with its review', 403);
-    const data = plan(input);
+    const data = pick(input);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return view(await this.begin(caller, data, null, input.requestId, tx));
@@ -174,7 +145,6 @@ export class JobsService implements Jobs {
   }
 
   async stop(caller: Caller, input: JobMove & { reason?: string }) {
-    if (input.reason !== undefined) text(input.reason, 2000, 'reason');
     const stopped = await this.move(caller, input, 'stop', async (job) => {
       const run = view(job).run;
       return {
@@ -221,8 +191,6 @@ export class JobsService implements Jobs {
 
   async submitCode(caller: Caller, input: JobMove & { ref: string; commit: string }) {
     check(caller.session, 'job_worker_only', 'Only the job’s leased writer hands in code', 403);
-    check(branch.test(input.ref), 'invalid_input', 'ref is a branch name, as desk-run/name');
-    check(oid.test(input.commit), 'invalid_input', 'commit is a full commit id');
     // Git never runs inside a transaction. The machine checks the commit again when it fetches.
     const found = await this.code.repositories.resolve(caller.projectId, `refs/heads/${input.ref}`);
     check(
@@ -268,17 +236,11 @@ export class JobsService implements Jobs {
       403,
     );
     check(
-      ['accept', 'revise'].includes(input.verdict),
-      'invalid_input',
-      'verdict is accept or revise',
-    );
-    text(input.summary, 4000, 'summary');
-    check(
       input.next === undefined || input.verdict === 'accept',
       'invalid_input',
       'Only an accepted job proposes a next one',
     );
-    const next = input.next && plan(input.next);
+    const next = input.next && pick(input.next);
     return await this.move(caller, input, input.verdict, async (job, tx) => {
       const read = view(job);
       check(

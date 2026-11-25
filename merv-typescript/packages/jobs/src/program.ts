@@ -11,7 +11,7 @@ import { check } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import { grant, target } from '@merv/workflows/rules';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
-import type { JobView } from './types.js';
+import type { JobPlan, JobView } from './types.js';
 
 export const JOB_WORKFLOW = 'job.experiment';
 /** How often a review may send the code back to be written again. */
@@ -167,17 +167,10 @@ export function assignment(
     `Done means: ${job.doneMeans}`,
     `The machine step runs this command from the repository root at the job’s commit, on one ${job.gpu}, for at most ${job.minutes} minutes: ${job.command}`,
   ];
-  const tool = state === 'writing' ? 'job.submit_code' : 'job.review';
-  const execution = {
-    readOnly: state === 'reviewing',
-    tools: [{ name: tool, arguments: { jobId: job.id, expectedRevision: job.revision } }],
-  };
-  if (state === 'writing')
-    return {
-      role: 'producer',
-      label: 'Work: write the code for this job',
-      name: job.title,
-      brief: [
+  const writing = state === 'writing';
+  const tool = writing ? 'job.submit_code' : 'job.review';
+  const brief = writing
+    ? [
         'You write the code for one job, in your own worktree on the person’s Mac.',
         ...plan,
         'The command prints its readings as lines `METRIC {"step": 1, "loss": 1.93}` and writes files to keep under outputs/.',
@@ -185,35 +178,37 @@ export function assignment(
           ? [`The review of commit ${job.result.commitRead} sent it back: ${job.result.summary}`]
           : []),
         'When the code is ready, commit it and push the branch to this project’s Merv git (a branch of your own such as desk-run/<name>, never merv/*). Then call job.submit_code with that branch as ref and the full commit id: Merv checks the branch points at it and runs exactly that commit. Then stop.',
-      ].join('\n'),
-      references: [],
-      handoff: {
-        instruction: 'Push the branch, hand in job.submit_code {ref, commit}, then stop.',
-        tools: ['job.submit_code', 'session.ask_owner'],
-      },
-      execution,
-      context: null,
-    };
+      ]
+    : [
+        'You review one job’s run with fresh eyes. You only read: change nothing.',
+        ...plan,
+        `Code: branch ${job.code?.ref}, commit ${job.code?.commit}. Read it with code.read at that commit.`,
+        `Run: ${JSON.stringify(job.run)}. Its outputs are the artifact captureArtifactId (artifact.read).`,
+        `Hand in job.review with commitRead ${job.code?.commit}: verdict accept when it meets what done means (optionally with next, the job worth proposing after it), or revise with what must change (${job.revisionsLeft} left). Then stop.`,
+      ];
   return {
-    role: 'reviewer',
-    label: 'Work: review this job’s run',
+    role: writing ? 'producer' : 'reviewer',
+    label: writing ? 'Work: write the code for this job' : 'Work: review this job’s run',
     name: job.title,
-    brief: [
-      'You review one job’s run with fresh eyes. You only read: change nothing.',
-      ...plan,
-      `Code: branch ${job.code?.ref}, commit ${job.code?.commit}. Read it with code.read at that commit.`,
-      `Run: ${JSON.stringify(job.run)}. Its outputs are the artifact captureArtifactId (artifact.read).`,
-      `Hand in job.review with commitRead ${job.code?.commit}: verdict accept when it meets what done means (optionally with next, the job worth proposing after it), or revise with what must change (${job.revisionsLeft} ${job.revisionsLeft === 1 ? 'revision' : 'revisions'} left). Then stop.`,
-    ].join('\n'),
+    brief: brief.join('\n'),
     references: [],
     handoff: {
-      instruction: 'Hand in job.review {verdict, commitRead, summary}, then stop.',
-      tools: ['job.review', 'session.ask_owner'],
+      instruction: `Hand in ${tool}, then stop.`,
+      tools: [tool, 'session.ask_owner'],
     },
-    execution,
+    execution: {
+      readOnly: !writing,
+      tools: [{ name: tool, arguments: { jobId: job.id, expectedRevision: job.revision } }],
+    },
     context: null,
   };
 }
+
+/** The fields a job's plan keeps; the tools' schemas have checked them. */
+export const pick = (plan: JobPlan): JobPlan => {
+  const { title, goal, doneMeans, command, gpu, minutes, estimateUsd } = plan;
+  return { title, goal, doneMeans, command, gpu, minutes, estimateUsd };
+};
 
 /** The job as its tools answer it. */
 export function view(snapshot: WorkflowSnapshot): JobView {
@@ -222,13 +217,7 @@ export function view(snapshot: WorkflowSnapshot): JobView {
     id: snapshot.id,
     state: snapshot.state as JobView['state'],
     revision: snapshot.revision,
-    title: String(data.title),
-    goal: String(data.goal),
-    doneMeans: String(data.doneMeans),
-    command: String(data.command),
-    gpu: String(data.gpu),
-    minutes: Number(data.minutes),
-    estimateUsd: Number(data.estimateUsd),
+    ...pick(data as unknown as JobPlan),
     steps: [
       { state: 'writing', place: 'mac' },
       { state: 'running', place: 'machine' },
