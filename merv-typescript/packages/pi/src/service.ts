@@ -578,6 +578,29 @@ export class PiService implements Pi {
     return { page: shot.path, seen: text };
   }
 
+  /** One metered answer with no conversation and no tools: Merv's model on the person's usual
+   *  Agent spending. The main thread uses it to stand in while their Mac is away. */
+  async turn(
+    caller: Caller,
+    { text, instructions, maxTokens }: { text: string; instructions: string; maxTokens: number },
+  ): Promise<string> {
+    this.core.ready();
+    const { userId, model } = await this.core.read(async (tx) => {
+      const userId = await this.user(caller, tx);
+      return { userId, model: this.core.model(await this.picked(tx, userId, caller.projectId)).id };
+    });
+    const request = piAsk(
+      this.config,
+      { model, text, effort: 'low', maxTokens, instructions },
+      60_000,
+    );
+    check(request, 'pi_unavailable', 'Merv cloud is not available for this', 503);
+    const reserved = await this.core.spend.reserve({ userId }, model, request.body);
+    const { texts, usage } = await request.send();
+    if (usage) await this.core.spend.settle(usage, { userId }, reserved);
+    return texts.join('\n');
+  }
+
   /** screen.show {record | page}: the person's open page goes there, as a link would take it, and
    *  says where it went; the person's own back returns them. */
   async show(
