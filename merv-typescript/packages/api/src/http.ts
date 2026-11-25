@@ -163,6 +163,15 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
 const namespaced = (token: string) =>
   /^[a-z]+_/.test(token) && !token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
 
+/** Besides `/mcp`, the only routes an OAuth access token (`mo_`) reaches: an app's account, its
+ *  projects, a new project and a key for one project (Scope's api.ts and memberships.ts). */
+const OAUTH_ACCOUNT_ROUTES = new Set([
+  'GET /account',
+  'GET /projects',
+  'POST /projects',
+  'POST /account/keys',
+]);
+
 /** Whether a request asks for platform read authority (`x-merv-platform: read`). Only a signed-in
  *  person may ask; the platform authority decides whether they administer the platform. */
 function platformRead(req: IncomingMessage, principal: ApiPrincipal): boolean {
@@ -498,7 +507,10 @@ export class ApiServer {
   private async authenticate(req: IncomingMessage, url: URL): Promise<ApiPrincipal> {
     const token = bearer(req);
     if (token.startsWith('mo_') && !/^[A-Za-z0-9_-]{43}$/.test(token)) {
-      if (url.pathname !== '/mcp' || !this.oauthProvider)
+      if (
+        !this.oauthProvider ||
+        (url.pathname !== '/mcp' && !OAUTH_ACCOUNT_ROUTES.has(`${req.method} ${url.pathname}`))
+      )
         throw new MervError('unauthorized', 'OAuth token is only valid for MCP', 401);
       return this.oauthProvider.authenticate(token);
     }

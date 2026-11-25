@@ -271,6 +271,9 @@ export const scopeApiPlugin = {
         );
       const oauth = new OAuth(ctx.state, ctx.scope as ProjectScope, config.oauth.publicOrigin);
       await oauth.initialize();
+      // A live grant may also create projects and mint project keys as its person (http.ts admits
+      // its token on those account routes).
+      ctx.effect(() => (ctx.scope as ProjectScope).members.installGrants(oauth.grants));
       const handler = oauthRoutes(oauth, ctx.identity, config.oauth.trustedProxyIps);
       ctx.effect(() => ctx.api.mount('/oauth', handler, { public: true }));
       ctx.effect(() => ctx.api.mount('/.well-known', handler, { public: true }));

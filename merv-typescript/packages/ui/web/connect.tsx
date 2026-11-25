@@ -74,6 +74,11 @@ export function ConnectConsent({ requestId }: { requestId: string }) {
               </li>
               <li>
                 <Icon name="check" size={14} />
+                May create projects for you, and make a key for one of your projects that ends no
+                later than this connection
+              </li>
+              <li>
+                <Icon name="check" size={14} />
                 Needs no repository and no project yet
               </li>
               <li className="consent-grant--not">

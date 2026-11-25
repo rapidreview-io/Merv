@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { z } from 'zod';
 import { MervError, type Principal, type State, type Sql } from '@merv/contracts';
 import type { ProjectScope } from './index.js';
+import type { GrantOwner } from './memberships.js';
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
@@ -390,6 +391,24 @@ export class OAuth {
     requireOAuth(result, 'invalid_grant', 'Authorization replay; sign in again');
     return result;
   }
+  /** For Scope (`members.installGrants`): the person behind a live grant whose key is `keyId`, and
+   *  when it ends, the earlier of the grant's and its key's end. Undefined for any other key. */
+  readonly grants: GrantOwner = async (keyId, tx) => {
+    if (typeof keyId !== 'string' || !keyId) return undefined;
+    const grant = await tx.get<{ expires_at: string }>(
+      'SELECT expires_at FROM oauth_grants WHERE key_id=? AND revoked=0 AND resource=? AND expires_at>? ORDER BY expires_at DESC LIMIT 1',
+      keyId,
+      this.resource,
+      iso(this.clock()),
+    );
+    if (!grant) return undefined;
+    // Refused unless the key is live: not revoked, not expired.
+    const key = await this.scope.userKeys.authenticateDelegation(keyId, tx);
+    if (key.grantScope !== 'account') return undefined;
+    const ends =
+      key.expiresAt && key.expiresAt < grant.expires_at ? key.expiresAt : grant.expires_at;
+    return { owner: key.owner, expiresAt: ends };
+  };
   async authenticate(token: string): Promise<Principal> {
     const t = await this.state.read((sql) => this.token(sql, token));
     if (!t || t.kind !== 'access' || t.revoked || t.expires_at <= iso(this.clock()))

@@ -89,7 +89,9 @@ The browser opens Merv's existing account sign-in. Sign in or sign up there. Che
 name and callback destination, then authorize your account. No project membership, project
 selection or Git repository is required. The client saves credentials and refreshes them itself.
 Authorization follows your current roles in your projects, including memberships added later;
-removed memberships stop granting access. It never adds permissions or creates a project.
+removed memberships stop granting access. It never adds permissions. With it the client may also
+create projects for you (you are their operator) and make a key for one of your projects, which
+ends no later than the authorization. An agent connecting here should do neither unless asked.
 
 ## Verify and use
 Call project.list (or project.read with action list), choose the intended project, and pass

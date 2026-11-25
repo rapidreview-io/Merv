@@ -128,6 +128,13 @@ function checkIdentity(identity: VerifiedIdentity, time: string): void {
   );
 }
 
+/** Who granted a live OAuth account grant whose key is `keyId`, and when the grant ends; undefined
+ *  for any key that is not one (oauth.ts). */
+export type GrantOwner = (
+  keyId: string,
+  tx: Transaction,
+) => Promise<{ owner: { issuer: string; subject: string }; expiresAt: string } | undefined>;
+
 /** Project membership storage, owned by Scope: projects, their members and the actors members act
  * as. Verifying an identity stays outside this layer. */
 export class Memberships {
@@ -142,6 +149,7 @@ export class Memberships {
   ) {}
   private readonly firstSignIns = new Set<(person: SharedUser) => void>();
   private readonly adminChanges = new Set<(projectId: string, admin: ProjectAdmin) => void>();
+  private grants?: GrantOwner;
   /** Each open write's admin changes, heard once it commits. */
   private readonly admins = new WeakMap<Transaction, Map<string, ProjectAdmin>>();
 
@@ -309,6 +317,30 @@ export class Memberships {
     return { kind: 'user', user, expiresAt: identity.expiresAt };
   }
 
+  /** Installed by the OAuth owner; the disposer withdraws it. */
+  installGrants(owner: GrantOwner): () => void {
+    this.grants = owner;
+    return () => {
+      if (this.grants === owner) this.grants = undefined;
+    };
+  }
+
+  /** A verified person, or the person behind a live OAuth account grant, as that person until the
+   *  grant ends. Only creating a project and minting a project key take a grant; an account or
+   *  project key is never one. */
+  async humanOrGrant(principal: Principal, tx: Transaction): Promise<HumanPrincipal> {
+    const grant =
+      principal?.kind === 'key' && this.grants
+        ? await this.grants(principal.key?.id, tx)
+        : undefined;
+    return await this.human(
+      grant
+        ? { kind: 'user', user: { ...grant.owner, createdAt: '' }, expiresAt: grant.expiresAt }
+        : principal,
+      tx,
+    );
+  }
+
   async resolve(
     principal: Principal,
     projectId: string | undefined,
@@ -405,7 +437,7 @@ export class Memberships {
     const name = input.name.trim();
     const fingerprint = digest({ name });
     return await this.write(async (tx) => {
-      const human = await this.human(principal, tx);
+      const human = await this.humanOrGrant(principal, tx);
       const old = await tx.get<{ fingerprint: string; project_id: string }>(
         'SELECT * FROM user_project_requests WHERE issuer=? AND subject=? AND request_id=?',
         human.user.issuer,

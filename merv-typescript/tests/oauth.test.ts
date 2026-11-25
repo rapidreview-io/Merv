@@ -160,9 +160,18 @@ test('role changes and membership removal immediately restrict an existing grant
   const caller = await f.scope.caller(principal, f.project.id);
   await f.scope.require(caller, 'read');
   await assert.rejects(f.scope.require(caller, 'write'), { status: 403 });
-  await assert.rejects(f.scope.userKeys.create(principal, { projectId: f.project.id }), {
-    status: 403,
-  });
+  f.scope.members.installGrants(f.oauth.grants);
+  await assert.rejects(
+    f.scope.userKeys.create(principal, { projectId: f.project.id, grantScope: 'account' }),
+    { status: 403 },
+  );
+  // A project key minted through the grant carries the reader's role, no more.
+  const minted = await f.scope.userKeys.create(principal, { projectId: f.project.id });
+  const keyCaller = await f.scope.caller(
+    { kind: 'key', key: await f.scope.userKeys.authenticate(minted.token) },
+    f.project.id,
+  );
+  await assert.rejects(f.scope.require(keyCaller, 'write'), { status: 403 });
   await f.scope.members.removeMember(f.person, f.project.id, 'reader');
   await assert.rejects(f.scope.require(caller, 'read'), { status: 403 });
   assert.deepEqual(await f.scope.projects(principal), []);

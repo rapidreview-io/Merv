@@ -72,7 +72,8 @@ export class UserKeys {
   }
 
   /** Internal OAuth delegation: the OAuth owner validates its access token first. */
-  async authenticateDelegation(id: string): Promise<UserKey> {
+  async authenticateDelegation(id: string, sql?: Sql): Promise<UserKey> {
+    if (sql) return hydrate(await this.current(sql, id));
     return this.state.read(async (sql) => hydrate(await this.current(sql, id)));
   }
 
@@ -274,9 +275,27 @@ export class UserKeys {
       'Key label must be nonblank text of 1–120 characters or null',
     );
     return await inTransaction(this.state, transaction, async (tx) => {
-      const human = await this.members.human(principal, tx);
+      // A person, or an app's live OAuth grant as its person: such an app mints project keys only,
+      // each ending no later than the grant.
+      const human = await this.members.humanOrGrant(principal, tx);
+      const grant = principal?.kind === 'key';
+      check(
+        !grant || grantScope === 'project',
+        'forbidden',
+        'An app connection makes keys for one project only',
+        403,
+      );
       const caller = await this.members.resolve(human, projectId, tx);
       const time = this.time();
+      let ends = expiry(expiresAt, time);
+      if (grant) {
+        check(
+          ends === null || ends <= human.expiresAt,
+          'invalid_expiry',
+          `A key made through an app connection ends with it, at ${human.expiresAt} at the latest`,
+        );
+        ends ??= human.expiresAt;
+      }
       const issued = await this.issue(
         tx,
         {
@@ -284,7 +303,7 @@ export class UserKeys {
           projectId: caller.projectId,
           grantScope,
           label: label?.trim() ?? null,
-          expiresAt: expiry(expiresAt, time),
+          expiresAt: ends,
           previousId: null,
         },
         time,
@@ -294,7 +313,12 @@ export class UserKeys {
         actorId: caller.actorId,
         type: 'actor.key_created',
         subjectId: issued.key.id,
-        data: { grantScope, label: issued.key.label, expiresAt: issued.key.expiresAt },
+        data: {
+          grantScope,
+          label: issued.key.label,
+          expiresAt: issued.key.expiresAt,
+          ...(grant && { via: 'oauth' }),
+        },
       });
       return issued;
     });
