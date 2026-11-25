@@ -1,0 +1,77 @@
+/* The main thread: words in open space, nothing around them. */
+.main-thread {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 32px 20px 24px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.main-engine {
+  margin: 0;
+  align-self: center;
+  font-size: 12px;
+  color: var(--muted, #6b6f76);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
+}
+.main-engine i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.main-engine[data-engine='mac'] i {
+  background: #d9a400;
+}
+.main-engine:not([data-engine]) i {
+  display: none;
+}
+.main-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.main-said {
+  margin: 0;
+  align-self: flex-end;
+  max-width: 85%;
+  font-weight: 600;
+  white-space: pre-wrap;
+  text-align: right;
+}
+.main-answer {
+  max-width: 92%;
+}
+.main-answer > :last-child {
+  margin-bottom: 0;
+}
+.main-by,
+.main-mark {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted, #6b6f76);
+}
+.main-error {
+  color: #c0392b;
+}
+.main-reply textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid var(--line, #d8d8d4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 10px 0;
+  resize: none;
+  outline: none;
+}
+.main-reply textarea:focus {
+  border-bottom-color: currentColor;
+}

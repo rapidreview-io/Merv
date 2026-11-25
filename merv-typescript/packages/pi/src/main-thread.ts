@@ -23,6 +23,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type {} from '@merv/api/types';
+import type {} from '@merv/ui/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import { piAsk } from './relay.js';
 
@@ -69,6 +70,8 @@ export const syncInput = z
     items: z.array(macItem).max(12).default([]),
     /** The last cloud item this Mac has kept. */
     after: z.number().int().min(0).default(0),
+    /** The Mac is quitting or going to sleep: its hold ends now, so Merv cloud may answer at once. */
+    release: z.boolean().optional(),
   })
   .strict();
 export const sayInput = z
@@ -243,7 +246,7 @@ export class MainThreadService {
   /** The Mac's heartbeat: it takes or renews the lease, appends its finished turns, and reads
    *  what Merv cloud said after `after`. A retry of the same items writes nothing twice. */
   async sync(caller: Caller, input: unknown) {
-    const { device, engine, items, after } = syncInput.parse(input);
+    const { device, engine, items, after, release } = syncInput.parse(input);
     caller = structuredClone(caller);
     const wait = await inTransaction(this.state, undefined, async (tx) =>
       JSON.stringify([caller.projectId, await this.person(caller, tx)]),
@@ -279,6 +282,13 @@ export class MainThreadService {
         person,
         after,
       );
+      if (release)
+        await tx.run(
+          'UPDATE pi_main_leases SET expires_at=? WHERE project_id=? AND person=?',
+          this.now(),
+          caller.projectId,
+          person,
+        );
       return {
         lease: taken.number,
         renewMs: 20_000,
@@ -423,6 +433,18 @@ export const mainThreadPlugin = {
       });
     });
     ctx.provide('mainThread', service);
+    ctx.inject(['ui'], (part) => {
+      part.effect(() =>
+        part.ui.register({
+          id: 'main',
+          label: 'Main thread',
+          group: 'operations',
+          order: 1,
+          path: '/main',
+          view: { kind: 'main' },
+        }),
+      );
+    });
     ctx.effect(() =>
       ctx.tools.noun('main.read', {
         readOnly: true,
