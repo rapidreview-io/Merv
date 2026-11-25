@@ -17,6 +17,7 @@ import { z } from 'zod';
 import {
   MervError,
   check,
+  clip,
   digest,
   inTransaction,
   type Caller,
@@ -221,9 +222,13 @@ export function selectHistory(items: Pick<MainItem, 'seq' | 'kind' | 'text'>[], 
 }
 
 const instructions =
-  "You are Merv cloud, standing in for the person's own desktop agent in this research project while their Mac is away. Continue the conversation: answer from what was said, briefly and plainly. You cannot reach the Mac, its files or its agents, and you cannot start work there. For anything that needs it, say “that needs your desktop” and what to do there. " +
+  "You are Merv cloud, standing in for the person's own desktop agent in this research project while their Mac is away. Continue the conversation: answer from what was said, briefly and plainly. You cannot reach the Mac, its files or its agents, and you cannot start work there. For anything that needs it, say “that needs your desktop” and what to do there. The current state, when given, was read at this turn: it is not conversation, and where the conversation says otherwise it is right. " +
   historyRule;
+/** The most of the current state one turn is given. */
+const STATE_CHARS = 2000;
 
+/** What stands in the project now, as the person may read it, in a few lines (null: nothing). */
+export type MainState = (caller: Caller) => Promise<string | null>;
 /** One answer of Merv's own model, metered to the person: Pi registers it. */
 export type MainTurn = (
   caller: Caller,
@@ -233,6 +238,8 @@ export type MainTurn = (
 export class MainThreadService {
   /** Unset, nobody can be answered here. */
   turn?: MainTurn;
+  /** Read fresh at each turn rather than replayed: Jobs registers it where it is loaded. */
+  present?: MainState;
   /** One answer at a time for a thread; a returning Mac waits behind it. */
   private readonly active = new Map<string, Promise<unknown>>();
   constructor(
@@ -247,6 +254,11 @@ export class MainThreadService {
   answerWith(turn: MainTurn) {
     this.turn = turn;
     return () => void (this.turn === turn && (this.turn = undefined));
+  }
+  /** Each turn is told what `state` reads at that moment. */
+  presentWith(state: MainState) {
+    this.present = state;
+    return () => void (this.present === state && (this.present = undefined));
   }
 
   /** The person this caller acts for: a signed-in person or their own key, never a worker. */
@@ -502,10 +514,15 @@ export class MainThreadService {
       });
       if ('done' in start)
         return { person: itemOf(start.done![0]!), answer: itemOf(start.done![1]!) };
+      // Best effort: a state that cannot be read now is left out, never the answer.
+      const now = await this.present?.(caller).catch(() => null);
+      const state = now
+        ? `\n\nCurrent state (read now, not conversation):\n${clip(now, STATE_CHARS)}`
+        : '';
       const answer = (
         await this.turn!(caller, {
           instructions,
-          text: selectHistory(start.history).text + '\n\nCurrent request:\n' + text,
+          text: selectHistory(start.history).text + state + '\n\nCurrent request:\n' + text,
           maxTokens: 2400,
         })
       ).trim();

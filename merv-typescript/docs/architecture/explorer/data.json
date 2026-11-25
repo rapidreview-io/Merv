@@ -1187,6 +1187,7 @@
       ],
       "optional": [
         "autoresearch",
+        "mainThread",
         "sbxMerv",
         "sbxPipelines",
         "sbxJobs",
@@ -3445,6 +3446,11 @@
     },
     {
       "from": "jobs",
+      "to": "mainThread",
+      "optional": true
+    },
+    {
+      "from": "jobs",
       "to": "sbxMerv",
       "optional": true
     },
@@ -4323,7 +4329,7 @@
     "plugins": 91,
     "providers": 42,
     "adapters": 49,
-    "dependencies": 299
+    "dependencies": 300
   },
   "network": [
     {

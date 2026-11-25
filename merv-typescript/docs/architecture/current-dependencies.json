@@ -10,8 +10,8 @@
   "apiEntries": 50,
   "serverPlugins": 90,
   "machinePlugins": 1,
-  "directDependencyCount": 299,
-  "optionalDependencyCount": 32,
+  "directDependencyCount": 300,
+  "optionalDependencyCount": 33,
   "directConsumers": {
     "api": 15,
     "artifacts": 15,
@@ -47,7 +47,7 @@
     "scripts": 1,
     "secrets": 2,
     "sessions": 12,
-    "mainThread": 1,
+    "mainThread": 2,
     "state": 32,
     "tasks": 4,
     "tools": 34,
@@ -590,6 +590,7 @@
       ],
       "optional": [
         "autoresearch",
+        "mainThread",
         "sbxMerv",
         "sbxPipelines",
         "sbxJobs",

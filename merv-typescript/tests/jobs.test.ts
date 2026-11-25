@@ -453,6 +453,25 @@ test('jobs: plan on the Mac, run the exact commit, review fresh, propose the nex
     (await call<{ jobs: JobView[] }>('job.read:list', owner, {})).jobs.map((item) => item.id),
     [proposed.id, job.id],
   );
+
+  // Merv cloud's main-thread turn is told where the jobs stand now, apart from the conversation.
+  const asked: string[] = [];
+  app.ctx.mainThread.answerWith(async (_caller, ask) => {
+    asked.push(ask.text);
+    return 'Dropout 0.1 helped.';
+  });
+  await call('main.write:say', owner, { text: 'Did the sweep finish?', requestId: randomUUID() });
+  const [state, request] = asked[0]!.split('\n\nCurrent request:\n');
+  assert.equal(request, 'Did the sweep finish?');
+  const told = state!.split('Current state (read now, not conversation):\n')[1]!;
+  assert.equal(
+    told,
+    [
+      'Jobs, newest first (2 in all):',
+      '- Dropout 0.2 · proposed',
+      `- Dropout sweep · done · $0.42 · code ${commit.slice(0, 7)} · loss 0.31, step 400 · review accept: Dropout 0.1 lowers validation loss. · next: Dropout 0.2 (proposed, about $1.20)`,
+    ].join('\n'),
+  );
 });
 
 test('jobs: stop waits for the machine release; the cap refuses a run that does not fit', async (t) => {

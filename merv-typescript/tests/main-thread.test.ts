@@ -84,6 +84,8 @@ test('a fact told on the Mac is known in the cloud, and a fact told in the cloud
   assert.equal(a.answer.text, 'You said seed 3.');
   assert.equal(a.answer.engine, 'pi');
   assert.match(f.asked[0]!, /> person: Use seed 3 for everything\./);
+  // Without Jobs loaded there is no current state to tell: the turn is the conversation alone.
+  assert.doesNotMatch(f.asked[0]!, /Current state/);
   // The same message again is the same answer, and no second model call.
   assert.deepEqual(await f.main.say(f.owner, { text: 'What seed did I say?', requestId: 'w1' }), a);
   assert.equal(f.asked.length, 1);
