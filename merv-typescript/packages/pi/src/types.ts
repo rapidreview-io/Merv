@@ -234,6 +234,11 @@ export interface Pi {
   /** See pi.prompt. */
   prompt(caller: Caller, id: string): Promise<PiPrompt>;
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
+  /** One metered, tool-free answer outside any conversation. */
+  turn(
+    caller: Caller,
+    input: { text: string; instructions: string; maxTokens: number },
+  ): Promise<string>;
   /** Open voice for this conversation. allowProfile is a trusted adapter option, never tool input. */
   voice(
     caller: Caller,
