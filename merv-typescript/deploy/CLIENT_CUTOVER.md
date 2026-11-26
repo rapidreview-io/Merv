@@ -43,7 +43,12 @@ reuse revokes the whole grant. The grant has a 30-day absolute lifetime. Revocat
 is available through RFC 7009, Settings → Keys, and `/ui/account/keys`
 (`OAuth: <client name>`), including after the last membership is removed.
 Clients own credential persistence; Merv never copies credentials into skills or
-asks for tokens in a conversation. OAuth bearers are accepted only on `/mcp`.
+asks for tokens in a conversation. OAuth bearers are accepted only on `/mcp` and on four
+account routes an app needs: `GET /account`, `GET /projects`, `POST /projects` (the grant's
+person becomes the new project's operator) and `POST /account/keys`, which through a grant
+mints only `grantScope: "project"` keys for the person's own projects, expiring no later
+than the grant. Revoking the grant does not revoke keys minted through it; each is listed
+under Account keys by its own label and lapses at the grant's end at the latest.
 
 ## Existing installations: migrate one client and one origin at a time
 
@@ -119,7 +124,6 @@ published skill with their saved OAuth grants: clone/fetch, an authorized revers
 user-branch push, fresh-chat renewal, and a project switch. Confirm no plaintext
 credential in tool output, command arguments, remote URLs or config. The machine/CI
 key path remains supported, but is not the default user onboarding path.
-
 
 Code-linked work now follows the active sync workflow in research, owners-agent and
 git-access: preserve origin, sync the selected user branch and verify the fetched
