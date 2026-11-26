@@ -53,9 +53,10 @@ export interface JobMachine {
     run: MachineRun,
     grant: () => Promise<{ url: string; token: string }>,
   ): Promise<MachineProgress>;
-  /** The end of an attempt's standard output (more of it once the run has `ended`), or null
-   *  when there is none; as `caller`, who only reads. */
-  output(caller: Caller, jobId: string, attempt: number, ended: boolean): Promise<string | null>;
+  /** The end of an attempt's standard output (more of it once the run has `ended`, else also
+   *  what its machines cost so far and by the hour), each null where it is not known; as
+   *  `caller`, who only reads. */
+  output(caller: Caller, jobId: string, attempt: number, ended: boolean): Promise<MachineOutput>;
   /** Cancels all of the job's remote work. Null until every machine of it has stopped; then
    *  what the attempt's machines cost (costUsd null: not known). */
   release(
@@ -64,6 +65,19 @@ export interface JobMachine {
     attempt: number,
   ): Promise<{ costUsd: number | null } | null>;
 }
+
+export interface MachineOutput {
+  text: string | null;
+  costSoFarUsd: number | null;
+  hourlyUsd: number | null;
+}
+const dollars = (money: { currency: string; amount: { toString(): string } } | null) =>
+  money?.currency === 'USD' ? Number(money.amount.toString()) : null;
+/** The sum of what each item says, or null when any of them does not say it in dollars. */
+const total = (values: (number | null)[]) =>
+  values.length && values.every((value) => value !== null)
+    ? values.reduce<number>((sum, value) => sum + value!, 0)
+    : null;
 
 /** One reading of a curve: its step, and each metric's value there. */
 export interface MetricPoint {
@@ -288,9 +302,34 @@ export class SandboxesMachine implements JobMachine {
 
   async output(caller: Caller, jobId: string, attempt: number, ended: boolean) {
     const { principal, record } = await this.find(caller, jobId, attempt, 'read');
+    const namespace = principal.namespace;
     const job = record?.nodes.run?.result.job_id as string | undefined;
     const bytes = ended ? ENDED_BYTES : TAIL_BYTES;
-    return job ? (await this.tail(principal.namespace, job, bytes)).text : null;
+    // While it runs, one registry read says what its machines cost so far; each part is best effort.
+    const [text, machines] = await Promise.all([
+      job
+        ? this.tail(namespace, job, bytes).then(
+            (read) => read.text,
+            () => null,
+          )
+        : null,
+      ended
+        ? []
+        : refusals
+            .call(() =>
+              this.sbx.sbxRegistry.list(namespace, { workRef: jobId, includeStopped: true }),
+            )
+            .then(
+              (all) => all.filter((machine) => machine.attempt_ref === `a${attempt}`),
+              () => [],
+            ),
+    ]);
+    const live = machines.filter((machine) => machine.state !== 'stopped');
+    return {
+      text,
+      costSoFarUsd: total(machines.map((machine) => dollars(machine.cost_so_far))),
+      hourlyUsd: total(live.map((machine) => dollars(machine.hourly_price))),
+    };
   }
 
   async release(caller: Caller, jobId: string, attempt: number) {
@@ -306,11 +345,8 @@ export class SandboxesMachine implements JobMachine {
     ).filter((machine) => machine.attempt_ref === `a${attempt}`);
     if (machines.some((machine) => machine.state !== 'stopped' && machine.state !== 'failed'))
       return null;
-    const costs = machines.map((machine) => machine.cost_so_far);
-    return {
-      costUsd: costs.every((cost) => cost?.currency === 'USD')
-        ? costs.reduce((sum, cost) => sum + Number(cost!.amount.toString()), 0)
-        : null,
-    };
+    const costs = machines.map((machine) => dollars(machine.cost_so_far));
+    // No machine rented costs nothing.
+    return { costUsd: costs.length ? total(costs) : 0 };
   }
 }

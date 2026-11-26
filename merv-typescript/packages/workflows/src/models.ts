@@ -31,12 +31,13 @@ export interface WorkflowHistoryEntry {
   createdAt: string;
 }
 
-/** A move as history records it, and how many times the instance made it. */
+/** A move as history records it, how many times the instance made it, and when it last did. */
 export type WorkflowTransitionCount = Pick<
   WorkflowHistoryEntry,
   'action' | 'fromState' | 'toState'
 > & {
   count: number;
+  lastAt: string;
 };
 
 export interface WorkflowExecutionTarget {

@@ -408,7 +408,8 @@ export interface Workflows {
     instanceIds: readonly string[],
     tx?: Transaction,
   ): Promise<Map<string, Omit<WorkflowSnapshot, 'data'>>>;
-  /** How often each instance made each move, without the moves' data, in one read per batch. */
+  /** How often and when last each instance made each move, without the moves' data, in one
+   *  read per batch. */
   transitionCounts(
     projectId: string,
     instanceIds: readonly string[],
